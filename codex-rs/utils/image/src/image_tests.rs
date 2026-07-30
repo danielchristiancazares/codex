@@ -344,7 +344,7 @@ async fn reprocesses_updated_file_contents() {
 async fn bounds_cache_by_encoded_byte_size() {
     let cache = ImageCache::new(NonZeroUsize::new(4).expect("non-zero cache capacity"));
     let key = |digest_byte| ImageCacheKey {
-        digest: [digest_byte; 20],
+        digest: [digest_byte; 32],
         mode: PromptImageMode::Original,
     };
     let image = |size| EncodedImage {
