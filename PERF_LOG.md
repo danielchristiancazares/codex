@@ -1,0 +1,129 @@
+# Performance Log
+
+Record performance experiments here so future work starts from measured results instead of
+repeating discarded ideas.
+
+## Benchmark rules
+
+- Compare release-mode runs using the same benchmark command and fixtures.
+- Warm the build before recording numbers, then run each comparison at least twice.
+- Prefer medians; treat small changes inside run-to-run variance as noise.
+- Keep a code change only when the improvement is repeatable and behavior remains covered by tests.
+- `BlockingLruCache` is disabled outside a Tokio runtime. Benchmarks intended to measure cache hits
+  must enter a runtime or they will silently measure the miss path.
+
+## 2026-07-30: prompt-image preparation
+
+Scope: `codex-utils-image` attachment loading, caching, and data-URL generation.
+
+Primary benchmark:
+
+```sh
+cd codex-rs
+cargo bench -p codex-utils-image --bench prompt_images -- \
+  --sample-count 20 --sample-size 1
+```
+
+Targeted cache-hit benchmarks used larger sample sizes:
+
+```sh
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 50 --sample-size 500 small_png_screenshot_repeated_load
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 50 --sample-size 100 large_jpeg_photo_repeated_load
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 100 --sample-size 1000 tiny_png
+```
+
+All results below are release-benchmark medians from the same development machine. Ranges contain
+repeated runs, not confidence intervals.
+
+### Current baseline
+
+Use these post-change numbers as the starting point for the next experiment. Compare against the
+table produced by the same command and sampling configuration.
+
+Primary benchmark, `--sample-count 20 --sample-size 1`:
+
+| Benchmark | Current median |
+| --- | ---: |
+| `small_png_screenshot_fresh_attachment` | 5.47-5.54 ms |
+| `large_png_screenshot_fresh_attachment` | 163.5-163.6 ms |
+| `large_jpeg_photo_fresh_attachment` | 408.9-414.9 ms |
+| `one_megabyte_data_url` | 583.7-584.2 us |
+| `small_png_screenshot_repeated_attachment` | 42.8-43.6 us |
+
+Targeted cache-hit benchmarks:
+
+| Benchmark | Sampling | Current median |
+| --- | --- | ---: |
+| `small_png_screenshot_repeated_load` | 50 samples x 500 iterations | 28.8-30.3 us |
+| `large_jpeg_photo_repeated_load` | 50 samples x 100 iterations | 2.17-2.22 ms |
+| `tiny_png_repeated_load` | 100 samples x 1,000 iterations | 279-297 ns |
+
+### Retained wins
+
+| Change | Workload | Before | After | Approx. result |
+| --- | --- | ---: | ---: | ---: |
+| Encode base64 directly into one pre-sized `String` | 1 MiB data URL | 705-716 us | 582-584 us | 18% faster |
+| Replace SHA-1 image cache keys with BLAKE3 | Repeated 51 KiB PNG load | 99-106 us | 28-29 us | 72% faster |
+| Use Rayon-backed BLAKE3 for inputs at least 1 MiB | Repeated 4.4 MiB JPEG load | 2.68-2.83 ms | 2.03 ms | 24-28% faster |
+| Try the uncontended Tokio mutex path before `block_in_place` | Repeated tiny cached load | 479 ns | 416-418 ns | 13% faster |
+| Allocate the error-reporting `PathBuf` only after a cache miss | Repeated tiny cached load | 325 ns | 279 ns | 14% faster |
+| Combined retained changes | Repeated screenshot attachment | 111-112 us | 43 us | 61% faster |
+
+Cold-cache JPEG decode/resize remained about 410-420 ms. These changes intentionally target cache
+hits and data-URL construction; do not attribute noisy cold-path movement to them.
+
+### Rejected or corrected experiments
+
+#### Borrow RGBA bytes during PNG/WebP encoding
+
+The candidate used `DynamicImage::as_rgba8()` and borrowed existing bytes when possible instead of
+always calling `to_rgba8()`. Large PNG attachment medians overlapped the unchanged implementation
+and varied substantially between runs (roughly 165-210 ms). There was no repeatable improvement, so
+the change was reverted.
+
+Do not retry this without an isolated encode-only benchmark or evidence that the resized image
+still owns an avoidable RGBA copy.
+
+#### Use parallel BLAKE3 for every input
+
+Parallel hashing improved the 4.4 MiB fixture, but regressed the 51 KiB fixture from about 28-29 us
+to 145-147 us because Rayon scheduling dominated small inputs. The retained implementation hashes
+sequentially below 1 MiB and uses `update_rayon` at or above that threshold.
+
+Re-evaluate the threshold only with a size sweep; do not remove it based only on a large-file case.
+
+#### Benchmark repeated attachments without a Tokio runtime
+
+The original benchmark ran `BlockingLruCache` outside a runtime, where the cache intentionally
+becomes a no-op. The apparent repeated-attachment result of roughly 5-6 ms was another full image
+load, not a cache hit. The benchmark now enters a Tokio runtime before warming and measuring.
+
+Do not use the pre-runtime numbers as a baseline.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-utils-cache -p codex-utils-image
+just fix -p codex-utils-cache -p codex-utils-image
+just fmt
+```
+
+## Entry template
+
+```md
+## YYYY-MM-DD: area
+
+Hypothesis:
+
+Benchmark command and fixture:
+
+Baseline:
+
+Candidate result:
+
+Decision: retained or reverted, with the reason.
+```

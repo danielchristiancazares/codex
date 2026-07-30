@@ -4548,6 +4548,7 @@ name = "codex-utils-image"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "blake3",
  "codex-utils-cache",
  "divan",
  "image",

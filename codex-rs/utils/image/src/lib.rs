@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_utils_cache::BlockingLruCache;
-use codex_utils_cache::sha1_digest;
 use image::ColorType;
 use image::DynamicImage;
 use image::GenericImageView;
@@ -21,6 +20,8 @@ use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 
 const DATA_URL_PREFIX: &str = "data:";
+const DATA_URL_BASE64_MARKER: &str = ";base64,";
+const PARALLEL_HASH_MIN_BYTES: usize = 1024 * 1024;
 pub const PROMPT_IMAGE_PATCH_SIZE: u32 = 32;
 /// Maximum width or height used when resizing images before uploading.
 pub const MAX_DIMENSION: u32 = 2048;
@@ -53,8 +54,15 @@ impl EncodedImage {
 
 /// Wraps image bytes in a data URL without decoding or validating them.
 pub fn data_url_from_bytes(mime: &str, bytes: &[u8]) -> String {
-    let encoded = BASE64_STANDARD.encode(bytes);
-    format!("data:{mime};base64,{encoded}")
+    let encoded_len = bytes.len().div_ceil(3) * 4;
+    let mut data_url = String::with_capacity(
+        DATA_URL_PREFIX.len() + mime.len() + DATA_URL_BASE64_MARKER.len() + encoded_len,
+    );
+    data_url.push_str(DATA_URL_PREFIX);
+    data_url.push_str(mime);
+    data_url.push_str(DATA_URL_BASE64_MARKER);
+    BASE64_STANDARD.encode_string(bytes, &mut data_url);
+    data_url
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,7 +85,7 @@ struct ImageMetadata {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ImageCacheKey {
-    digest: [u8; 20],
+    digest: [u8; 32],
     mode: PromptImageMode,
 }
 
@@ -91,10 +99,8 @@ pub fn load_for_prompt_bytes(
     file_bytes: Vec<u8>,
     mode: PromptImageMode,
 ) -> Result<EncodedImage, ImageProcessingError> {
-    let path_buf = path.to_path_buf();
-
     let key = ImageCacheKey {
-        digest: sha1_digest(&file_bytes),
+        digest: blake3_digest(&file_bytes),
         mode,
     };
 
@@ -102,7 +108,7 @@ pub fn load_for_prompt_bytes(
         return Ok(image);
     }
 
-    let image = load_for_prompt_bytes_uncached(&path_buf, file_bytes, mode)?;
+    let image = load_for_prompt_bytes_uncached(path, file_bytes, mode)?;
     cache_image(&IMAGE_CACHE, key, image.clone(), MAX_IMAGE_CACHE_BYTES);
     Ok(image)
 }
@@ -206,6 +212,16 @@ fn load_for_prompt_bytes_uncached(
 
         Ok(encoded)
     })()
+}
+
+fn blake3_digest(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    if bytes.len() >= PARALLEL_HASH_MIN_BYTES {
+        hasher.update_rayon(bytes);
+    } else {
+        hasher.update(bytes);
+    }
+    *hasher.finalize().as_bytes()
 }
 
 fn cache_image(cache: &ImageCache, key: ImageCacheKey, image: EncodedImage, byte_capacity: usize) {

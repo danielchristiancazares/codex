@@ -124,6 +124,9 @@ where
     K: Eq + Hash,
 {
     tokio::runtime::Handle::try_current().ok()?;
+    if let Ok(guard) = m.try_lock() {
+        return Some(guard);
+    }
     Some(tokio::task::block_in_place(|| m.blocking_lock()))
 }
 
