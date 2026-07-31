@@ -79,9 +79,6 @@ pub(super) async fn load_host_skill_metadata(
     plugin_root: Option<&AbsolutePathBuf>,
 ) -> LoadedSkillMetadata {
     // Fail open: optional metadata should not block loading SKILL.md.
-    let Some(skill_dir) = skill_path.parent() else {
-        return LoadedSkillMetadata::default();
-    };
     let metadata_path = match metadata {
         SkillMetadataDiscovery::Present(path) => path,
         SkillMetadataDiscovery::Absent => return LoadedSkillMetadata::default(),
@@ -118,17 +115,27 @@ pub(super) async fn load_host_skill_metadata(
         }
     };
 
-    let parsed: SkillMetadataFile = match serde_yaml::from_str(&contents) {
+    match parse_host_skill_metadata(&contents, skill_path, plugin_root) {
         Ok(parsed) => parsed,
         Err(error) => {
             tracing::warn!(
                 "ignoring {metadata_path}: invalid {label}: {error}",
                 label = SKILLS_METADATA_FILENAME
             );
-            return LoadedSkillMetadata::default();
+            LoadedSkillMetadata::default()
         }
-    };
+    }
+}
 
+pub(super) fn parse_host_skill_metadata(
+    contents: &str,
+    skill_path: &AbsolutePathBuf,
+    plugin_root: Option<&AbsolutePathBuf>,
+) -> Result<LoadedSkillMetadata, serde_yaml::Error> {
+    let Some(skill_dir) = skill_path.parent() else {
+        return Ok(LoadedSkillMetadata::default());
+    };
+    let parsed: SkillMetadataFile = serde_yaml::from_str(contents)?;
     let SkillMetadataFile {
         interface,
         dependencies,
@@ -138,12 +145,13 @@ pub(super) async fn load_host_skill_metadata(
         Some(plugin_root) => SkillInterfaceAssetPolicy::PluginShared { plugin_root },
         None => SkillInterfaceAssetPolicy::LocalOnly,
     };
-    LoadedSkillMetadata {
+    Ok(LoadedSkillMetadata {
         interface: resolve_skill_interface(interface, &skill_dir, asset_policy),
         dependencies: resolve_dependencies(dependencies),
         policy: resolve_policy(policy),
-    }
+    })
 }
+
 pub(super) fn resolve_dependencies(
     dependencies: Option<Dependencies>,
 ) -> Option<SkillDependencies> {

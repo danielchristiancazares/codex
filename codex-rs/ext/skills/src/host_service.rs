@@ -27,6 +27,7 @@ use codex_skills::SkillRootLoadRequest;
 use codex_skills::SkillRootLoader;
 use codex_skills::SkillRootSnapshots;
 use codex_skills::install_system_skills;
+use codex_skills::system_cache_root_dir;
 
 use crate::HostSkillsSnapshot;
 use crate::SkillLoadOutcome;
@@ -347,12 +348,14 @@ impl HostSkillsService {
         skill_config_rules: &SkillConfigRules,
         request_root_snapshots: Option<&RequestSkillRootSnapshots>,
     ) -> SkillLoadOutcome {
+        let embedded_system_root = system_cache_root_dir(&self.codex_home);
         let outcome = load_and_merge_host_skill_roots_with_request_snapshots(
             roots,
             &self.root_scan_slots,
             self.restriction_product,
             input.plugin_skill_snapshots.as_ref(),
             request_root_snapshots,
+            Some(&embedded_system_root),
         )
         .await;
         let disabled_paths = skill_config_rules.resolve_disabled_paths(

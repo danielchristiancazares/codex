@@ -10,6 +10,8 @@ use codex_skills::SkillMetadata;
 use codex_skills::SkillModel;
 use codex_skills::SkillPolicy;
 use codex_skills::SkillToolDependency;
+use codex_skills::install_system_skills;
+use codex_skills::system_cache_root_dir;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_plugins::PluginIdentity;
 use codex_utils_plugins::PluginSkillRoot;
@@ -20,6 +22,8 @@ use tempfile::TempDir;
 use crate::loader::MAX_NAME_LEN;
 
 use super::HostSkillRoot;
+use super::HostSkillRootSnapshot;
+use super::load_embedded_system_skill_root;
 use super::load_host_skill_root;
 
 fn write_skill(root: &TempDir, directory: &str, frontmatter: &str) -> AbsolutePathBuf {
@@ -717,4 +721,58 @@ async fn follows_directory_symlinks_except_for_system_scope() {
     let system_snapshot = load_host_skill_root(root_for(&root, SkillScope::System)).await;
     assert_eq!(system_snapshot.errors, Vec::new());
     assert_eq!(system_snapshot.skills, Vec::new());
+}
+
+#[tokio::test]
+async fn embedded_system_skill_loader_matches_disk_loader() {
+    let codex_home = TempDir::new().expect("temp dir");
+    let codex_home_path =
+        AbsolutePathBuf::from_absolute_path(codex_home.path()).expect("absolute codex home");
+    install_system_skills(&codex_home_path).expect("install system skills");
+    let system_root = system_cache_root_dir(&codex_home_path);
+    let make_root = || {
+        HostSkillRoot::host(
+            system_root.clone(),
+            SkillScope::System,
+            Arc::clone(&LOCAL_FS),
+        )
+    };
+
+    let disk_snapshot = load_host_skill_root(make_root()).await;
+    let embedded_snapshot = load_embedded_system_skill_root(make_root()).await;
+    let HostSkillRootSnapshot {
+        root: disk_root,
+        skills: disk_skills,
+        skill_discovery_path_by_path: disk_discovery_paths,
+        errors: disk_errors,
+        file_system: disk_file_system,
+        is_agent_plugin: disk_is_agent_plugin,
+    } = disk_snapshot;
+    let HostSkillRootSnapshot {
+        root: embedded_root,
+        skills: embedded_skills,
+        skill_discovery_path_by_path: embedded_discovery_paths,
+        errors: embedded_errors,
+        file_system: embedded_file_system,
+        is_agent_plugin: embedded_is_agent_plugin,
+    } = embedded_snapshot;
+
+    assert_eq!(
+        (
+            embedded_root,
+            embedded_skills,
+            embedded_discovery_paths,
+            embedded_errors,
+            embedded_is_agent_plugin,
+            Arc::ptr_eq(&embedded_file_system, &disk_file_system),
+        ),
+        (
+            disk_root,
+            disk_skills,
+            disk_discovery_paths,
+            disk_errors,
+            disk_is_agent_plugin,
+            true,
+        )
+    );
 }
