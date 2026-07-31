@@ -70,6 +70,32 @@ fn bash_snapshot_preserves_multiline_exports() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn zsh_snapshot_filters_invalid_exports() -> Result<()> {
+    let output = Command::new("/bin/zsh")
+        .arg("-f")
+        .arg("-c")
+        .arg(snapshot_script(ShellType::Zsh).expect("zsh supports snapshots"))
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("VALID_NAME", "ok")
+        .env("PWD", "/tmp/stale")
+        .env("NEXTEST_BIN_EXE_codex-write-config-schema", "/path/to/bin")
+        .env("BAD-NAME", "broken")
+        .output()?;
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("VALID_NAME"));
+    assert!(!stdout.contains("PWD=/tmp/stale"));
+    assert!(!stdout.contains("NEXTEST_BIN_EXE_codex-write-config-schema"));
+    assert!(!stdout.contains("BAD-NAME"));
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn zsh_snapshot_restores_tied_path() -> Result<()> {
     let dir = tempdir()?;
     let path_with_spaces = dir.path().join("path with spaces").join("bin");

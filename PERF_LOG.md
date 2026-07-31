@@ -329,6 +329,49 @@ just fmt
 All 361 `codex-core-plugins` tests passed. Both post-change optimized `codex-exec` benchmark runs
 passed. Scoped Clippy autofix and formatting passed.
 
+## 2026-07-30: zsh shell snapshot capture
+
+Scope: local zsh environment capture during persistent CLI thread startup.
+
+Benchmark:
+
+```sh
+cd codex-rs
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/exec:codex-exec-bench
+```
+
+The paired runs used the old and candidate scripts on the same warmed Intel Mac build. Each run
+contained 20 complete persistent turns and 20 response-to-exit samples.
+
+### Retained win
+
+| Change | Workload | Before | After | Result |
+| --- | --- | ---: | ---: | ---: |
+| Replace zsh snapshot counting and export-filter pipelines with zsh builtins | Complete persistent turn | 547.9 ms | 442.0 ms | 19% faster |
+| Same change | Response start to process exit | 249.6 ms | 247.4 ms | Flat, as expected |
+
+The old capture script launched nine external `awk`, `sed`, `wc`, and `tr` processes while
+serializing shell options, aliases, and exports. The replacement performs those operations with
+zsh arrays, pattern matching, and parameter expansion. Shell startup, `.zshrc` loading, functions,
+aliases, options, exports, and snapshot validation retain their existing behavior.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-core shell_snapshot
+just test -p codex-core
+just fix -p codex-core
+just fmt
+```
+
+The focused run passed all 20 shell-snapshot unit and integration tests, including tied `PATH`,
+readonly export, invalid export-name, shell environment, `apply_patch`, and cleanup coverage.
+The full `codex-core` run completed 3,196 tests: 3,051 passed, 142 failed, and 3 timed out.
+Every shell-snapshot test passed; the failures were in process cleanup, code mode, MCP, hooks,
+sandboxing, and other integration areas outside this change.
+
 ## Entry template
 
 ```md
