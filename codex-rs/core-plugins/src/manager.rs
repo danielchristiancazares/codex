@@ -1256,7 +1256,7 @@ impl PluginsManager {
         config: &PluginsConfigInput,
         auth: Option<&CodexAuth>,
     ) -> Result<Vec<String>, RemotePluginFetchError> {
-        if !config.plugins_enabled {
+        if !config.plugins_enabled || auth.is_some_and(|auth| !auth.uses_codex_backend()) {
             return Ok(Vec::new());
         }
 
