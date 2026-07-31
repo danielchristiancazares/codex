@@ -35,11 +35,8 @@ use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadHistoryMode;
-use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadSortKey;
@@ -1067,7 +1064,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 handle_server_request(&client, *request, &mut error_seen).await;
             }
             InProcessServerEvent::ServerNotification(notification) => {
-                let mut notification = *notification;
+                let notification = *notification;
                 if let ServerNotification::Error(payload) = &notification {
                     if payload.thread_id == primary_thread_id_for_requests
                         && payload.turn_id == task_id
@@ -1092,14 +1089,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     &primary_thread_id_for_requests,
                     &task_id,
                 ) {
-                    maybe_backfill_turn_completed_items(
-                        config.ephemeral,
-                        &client,
-                        &mut request_ids,
-                        &mut notification,
-                    )
-                    .await;
-
                     match event_processor.process_server_notification(notification) {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
@@ -1452,73 +1441,6 @@ fn should_process_notification(
         }
         _ => false,
     }
-}
-
-async fn maybe_backfill_turn_completed_items(
-    thread_ephemeral: bool,
-    client: &InProcessAppServerClient,
-    request_ids: &mut RequestIdSequencer,
-    notification: &mut ServerNotification,
-) {
-    // In-process delivery may drop non-terminal item notifications under backpressure while still
-    // guaranteeing `turn/completed`. Because app-server currently emits that completion with an
-    // empty `turn.items`, exec does one last `thread/read` here so human/json output can recover
-    // the final message and reconcile any still-running items before shutdown.
-    if !should_backfill_turn_completed_items(thread_ephemeral, notification) {
-        return;
-    }
-
-    let ServerNotification::TurnCompleted(payload) = notification else {
-        return;
-    };
-
-    let response = send_request_with_response::<ThreadReadResponse>(
-        client,
-        ClientRequest::ThreadRead {
-            request_id: request_ids.next(),
-            params: ThreadReadParams {
-                thread_id: payload.thread_id.clone(),
-                include_turns: true,
-            },
-        },
-        "thread/read",
-    )
-    .await;
-
-    match response {
-        Ok(response) => {
-            if let Some(items) = turn_items_for_thread(&response.thread, &payload.turn.id) {
-                payload.turn.items = items;
-            }
-        }
-        Err(err) => {
-            warn!("thread/read failed while backfilling turn items for turn completion: {err}");
-        }
-    }
-}
-
-/// Returns true only when `exec` can safely recover missing turn items from
-/// rollout-backed thread history.
-fn should_backfill_turn_completed_items(
-    thread_ephemeral: bool,
-    notification: &ServerNotification,
-) -> bool {
-    let ServerNotification::TurnCompleted(payload) = notification else {
-        return false;
-    };
-
-    !thread_ephemeral && payload.turn.items_view != codex_app_server_protocol::TurnItemsView::Full
-}
-
-fn turn_items_for_thread(
-    thread: &AppServerThread,
-    turn_id: &str,
-) -> Option<Vec<AppServerThreadItem>> {
-    thread
-        .turns
-        .iter()
-        .find(|turn| turn.id == turn_id)
-        .map(|turn| turn.items.clone())
 }
 
 fn all_thread_source_kinds() -> Vec<ThreadSourceKind> {

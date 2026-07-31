@@ -238,6 +238,53 @@ just fmt
 The affected crate run passed all 348 tests, including the root-flag boundary and synchronous
 preflight coverage.
 
+## 2026-07-30: `codex exec` terminal completion
+
+Scope: the persistent `codex exec` path from the first local Responses API byte through item
+handling, rollout persistence, turn completion, and process shutdown.
+
+Benchmark:
+
+```sh
+cd codex-rs
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/exec:codex-exec-bench
+```
+
+The permanent benchmark runs a real optimized `codex-exec` child against a local streaming mock.
+It reuses one Codex home so measured turns include the normal persistent-session path. The
+`response_to_exit` case starts the process outside the timed region and begins timing when the mock
+starts its response. The broader `persistent_turn` case measures the complete child lifetime.
+
+All ranges below contain medians from repeated warmed runs on the same Intel Mac.
+
+### Retained win
+
+| Change | Workload | Before | After | Approx. result |
+| --- | --- | ---: | ---: | ---: |
+| Process lossless terminal notifications directly, avoiding a redundant `thread/read` history reload | Response start to process exit | 285.8-308.1 ms | 230.6-288.4 ms | 3-19% faster in paired runs |
+| Same change | Complete persistent turn | 520.2-560.7 ms | 509.3-519.0 ms | 0-9% faster |
+
+The in-process app-server transport classifies item and turn completion notifications as lossless,
+and terminal turn notifications carry the last agent message summary. The additional `thread/read`
+therefore repeated rollout loading immediately before `thread/unsubscribe` and shutdown. Removing
+that request retains direct item processing and primary-thread completion behavior while shortening
+the terminal path. The complete-turn measurement includes startup noise, so the targeted
+response-to-exit result is the more sensitive comparison.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-exec
+just fix -p codex-exec
+just fmt
+```
+
+The optimized Bazel benchmark passed with final medians of 250.6 ms for `response_to_exit` and
+519.0 ms for `persistent_turn`. All 126 `codex-exec` tests passed; two existing timing-sensitive
+tests passed on their configured retry. Scoped Clippy autofix and formatting passed.
+
 ## Entry template
 
 ```md
