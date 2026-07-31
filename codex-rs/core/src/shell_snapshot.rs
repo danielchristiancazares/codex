@@ -333,38 +333,40 @@ print 'unalias -a 2>/dev/null || true'
 print '# Functions'
 functions
 print ''
-setopt_count=$(setopt | wc -l | tr -d ' ')
-print "# setopts $setopt_count"
-setopt | sed 's/^/setopt /'
+setopts=("${(@f)$(setopt)}")
+print "# setopts ${#setopts}"
+for option in "${setopts[@]}"; do
+  print "setopt $option"
+done
 print ''
-alias_count=$(alias -L | wc -l | tr -d ' ')
-print "# aliases $alias_count"
-alias -L
+alias_lines=("${(@f)$(alias -L)}")
+print "# aliases ${#alias_lines}"
+if (( ${#alias_lines} )); then
+  print -r -- "${(F)alias_lines}"
+fi
 print ''
-export_lines=$(export -p | awk '
-/^(export|declare -x|typeset -x) / {
-  line=$0
-  name=line
-  sub(/^(export|declare -x|typeset -x) /, "", name)
-  if (name ~ /^-[A-Za-z]*r[A-Za-z]* /) {
-    next
-  }
-  if (name ~ /^-[A-Za-z]*T[A-Za-z]* /) {
-    sub(/^-[A-Za-z]*T[A-Za-z]* /, "", name)
-    sub(/ [A-Za-z_][A-Za-z0-9_]*=.*/, "", name)
-  }
-  sub(/=.*/, "", name)
-  if (name ~ /^(EXCLUDED_EXPORTS)$/) {
-    next
-  }
-  if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
-    print line
-  }
-}')
-export_count=$(printf '%s\n' "$export_lines" | sed '/^$/d' | wc -l | tr -d ' ')
-print "# exports $export_count"
-if [[ -n "$export_lines" ]]; then
-  print -r -- "$export_lines"
+export_lines=()
+for line in "${(@f)$(export -p)}"; do
+  name=${line#export }
+  if [[ $name =~ '^-[A-Za-z]*r[A-Za-z]* ' ]]; then
+    continue
+  fi
+  if [[ $name =~ '^-[A-Za-z]*T[A-Za-z]* ' ]]; then
+    name=${name#* }
+    name=${name%% *}
+  else
+    name=${name%%=*}
+  fi
+  if [[ $name =~ '^(EXCLUDED_EXPORTS)$' ]]; then
+    continue
+  fi
+  if [[ $name =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]]; then
+    export_lines+=("$line")
+  fi
+done
+print "# exports ${#export_lines}"
+if (( ${#export_lines} )); then
+  print -r -- "${(F)export_lines}"
 fi
 "##;
     script.replace("EXCLUDED_EXPORTS", &excluded)
