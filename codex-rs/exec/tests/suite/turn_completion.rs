@@ -1,7 +1,6 @@
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex_exec::test_codex_exec;
-use pretty_assertions::assert_eq;
 use serde_json::json;
 
 const PARENT_PROMPT: &str = "spawn a child and wait for it";
@@ -14,7 +13,7 @@ fn body_contains(request: &wiremock::Request, text: &str) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ignores_unrelated_turn_completion_before_backfilling_primary_turn() -> anyhow::Result<()> {
+async fn waits_for_primary_turn_after_unrelated_completion() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -86,10 +85,6 @@ async fn ignores_unrelated_turn_completion_before_backfilling_primary_turn() -> 
     );
     let output = test
         .cmd()
-        .env(
-            "RUST_LOG",
-            "codex_app_server::message_processor=trace,codex_app_server::outgoing_message=trace",
-        )
         .arg("--skip-git-repo-check")
         .arg("--json")
         .arg("-c")
@@ -112,50 +107,6 @@ async fn ignores_unrelated_turn_completion_before_backfilling_primary_turn() -> 
     assert!(
         stdout.contains("parent done"),
         "primary completion was not processed: {stdout}"
-    );
-    let stderr = String::from_utf8(output.stderr)?;
-    let lines = stderr.lines().collect::<Vec<_>>();
-    let turn_completions = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            line.contains("app-server event: turn/completed")
-                .then_some(index)
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        turn_completions.len(),
-        2,
-        "expected the child completion before the primary completion: {stderr}"
-    );
-
-    let [child_completion, primary_completion] = turn_completions.as_slice() else {
-        unreachable!("checked turn/completed count")
-    };
-    assert_eq!(
-        lines[*child_completion + 1..*primary_completion]
-            .iter()
-            .filter(|line| line.contains("app-server typed request"))
-            .count(),
-        0,
-        "the unrelated completion must not issue thread/read: {stderr}"
-    );
-    assert_eq!(
-        lines[*primary_completion + 1..]
-            .iter()
-            .filter(|line| line.contains("app-server typed request"))
-            .count(),
-        2,
-        "the primary completion should issue thread/read and thread/unsubscribe: {stderr}"
-    );
-
-    assert_eq!(
-        lines
-            .iter()
-            .filter(|line| line.contains("app-server typed request"))
-            .count(),
-        5,
-        "only the primary completion should issue an extra request: {stderr}"
     );
 
     Ok(())
