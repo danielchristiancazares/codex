@@ -8,6 +8,10 @@ version.workspace = true
 name = "codex_core"
 path = "src/lib.rs"
 
+[[bench]]
+name = "latency_paths"
+harness = false
+
 [[bin]]
 name = "codex-write-config-schema"
 path = "src/bin/config_schema.rs"
@@ -90,7 +94,6 @@ eventsource-stream = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 iana-time-zone = { workspace = true }
-image = { workspace = true, features = ["jpeg", "png", "webp"] }
 indexmap = { workspace = true }
 libc = { workspace = true }
 once_cell = { workspace = true }
@@ -149,7 +152,9 @@ codex-utils-cargo-bin = { workspace = true }
 codex-web-search-extension = { workspace = true }
 core_test_support = { workspace = true }
 ctor = { workspace = true }
+divan = { workspace = true }
 insta = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
 maplit = { workspace = true }
 opentelemetry = { workspace = true }
 predicates = { workspace = true }
