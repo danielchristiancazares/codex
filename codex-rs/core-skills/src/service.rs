@@ -24,9 +24,10 @@ use crate::config_rules::resolve_disabled_skill_paths;
 use crate::config_rules::skill_config_rules_from_stack;
 use crate::loader::MAX_CONCURRENT_ROOT_SCANS;
 use crate::loader::SkillRoot;
-use crate::loader::load_skills_from_roots;
+use crate::loader::load_skills_from_roots_with_embedded_system_root;
 use crate::loader::skill_roots;
 use crate::system::install_system_skills;
+use crate::system::system_cache_root_dir;
 use crate::system::uninstall_system_skills;
 use codex_config::SkillsConfig;
 
@@ -219,9 +220,11 @@ impl SkillsService {
         roots: Vec<SkillRoot>,
         skill_config_rules: &SkillConfigRules,
     ) -> SkillLoadOutcome {
-        let outcome = load_skills_from_roots(
+        let embedded_system_root = system_cache_root_dir(&self.codex_home);
+        let outcome = load_skills_from_roots_with_embedded_system_root(
             roots,
             input.plugin_skill_snapshots.as_ref(),
+            &embedded_system_root,
             Arc::clone(&self.root_scan_slots),
         )
         .await;

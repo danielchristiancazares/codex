@@ -27,6 +27,7 @@ use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
+use codex_skills::embedded_system_skills;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use codex_utils_path_uri::PathUri;
@@ -211,9 +212,34 @@ where
     I: IntoIterator<Item = SkillRoot> + Send,
     I::IntoIter: Send,
 {
-    crate::root_loader::load_and_merge_skill_roots(roots, plugin_skill_snapshots, &root_scan_slots)
-        .boxed()
-        .await
+    crate::root_loader::load_and_merge_skill_roots(
+        roots,
+        plugin_skill_snapshots,
+        /*embedded_system_root*/ None,
+        &root_scan_slots,
+    )
+    .boxed()
+    .await
+}
+
+pub(crate) async fn load_skills_from_roots_with_embedded_system_root<I>(
+    roots: I,
+    plugin_skill_snapshots: Option<&crate::PluginSkillSnapshots>,
+    embedded_system_root: &AbsolutePathBuf,
+    root_scan_slots: Arc<Semaphore>,
+) -> SkillLoadOutcome
+where
+    I: IntoIterator<Item = SkillRoot> + Send,
+    I::IntoIter: Send,
+{
+    crate::root_loader::load_and_merge_skill_roots(
+        roots,
+        plugin_skill_snapshots,
+        Some(embedded_system_root),
+        &root_scan_slots,
+    )
+    .boxed()
+    .await
 }
 
 #[derive(Clone)]
@@ -233,6 +259,53 @@ pub(crate) async fn load_skill_root(root: SkillRoot) -> SkillRootSnapshot {
         root: canonical_root,
         skills: outcome.skills,
         errors: outcome.errors,
+        file_system: root.file_system,
+    }
+}
+
+pub(crate) async fn load_embedded_system_skill_root(root: SkillRoot) -> SkillRootSnapshot {
+    let canonical_root =
+        canonicalize_for_skill_identity(root.file_system.as_ref(), &root.path).await;
+    let mut skills = Vec::new();
+    for embedded_skill in embedded_system_skills() {
+        let path = canonical_root.join(embedded_skill.relative_path_to_skills_md);
+        let parsed_frontmatter =
+            parse_skill_frontmatter_metadata_inner(embedded_skill.skills_md, || {
+                default_skill_name(&path)
+            });
+        let Ok(ParsedSkillFrontmatter {
+            name,
+            description,
+            short_description,
+        }) = parsed_frontmatter
+        else {
+            continue;
+        };
+        let metadata = embedded_skill.openai_yaml.and_then(|contents| {
+            parse_skill_metadata(contents, &path, /*plugin_root*/ None).ok()
+        });
+        let LoadedSkillMetadata {
+            interface,
+            dependencies,
+            policy,
+        } = metadata.unwrap_or_default();
+        skills.push(SkillMetadata {
+            name,
+            description,
+            short_description,
+            interface,
+            dependencies,
+            policy,
+            path_to_skills_md: path,
+            scope: SkillScope::System,
+            plugin_id: None,
+            remote_plugin_id: None,
+        });
+    }
+    SkillRootSnapshot {
+        root: canonical_root,
+        skills,
+        errors: Vec::new(),
         file_system: root.file_system,
     }
 }
@@ -810,9 +883,6 @@ async fn load_skill_metadata(
     plugin_root: Option<&AbsolutePathBuf>,
 ) -> LoadedSkillMetadata {
     // Fail open: optional metadata should not block loading SKILL.md.
-    let Some(skill_dir) = skill_path.parent() else {
-        return LoadedSkillMetadata::default();
-    };
     let metadata_path_uri = match metadata {
         SkillMetadataDiscovery::Present(path) => path,
         SkillMetadataDiscovery::Absent => return LoadedSkillMetadata::default(),
@@ -848,19 +918,30 @@ async fn load_skill_metadata(
         }
     };
 
+    match parse_skill_metadata(&contents, skill_path, plugin_root) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            tracing::warn!(
+                "ignoring {path}: invalid {label}: {error}",
+                path = metadata_path_uri,
+                label = SKILLS_METADATA_FILENAME
+            );
+            LoadedSkillMetadata::default()
+        }
+    }
+}
+
+fn parse_skill_metadata(
+    contents: &str,
+    skill_path: &AbsolutePathBuf,
+    plugin_root: Option<&AbsolutePathBuf>,
+) -> Result<LoadedSkillMetadata, serde_yaml::Error> {
+    let Some(skill_dir) = skill_path.parent() else {
+        return Ok(LoadedSkillMetadata::default());
+    };
     let parsed: SkillMetadataFile = {
         let _guard = AbsolutePathBufGuard::new(skill_dir.as_path());
-        match serde_yaml::from_str(&contents) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                tracing::warn!(
-                    "ignoring {path}: invalid {label}: {error}",
-                    path = metadata_path_uri,
-                    label = SKILLS_METADATA_FILENAME
-                );
-                return LoadedSkillMetadata::default();
-            }
-        }
+        serde_yaml::from_str(contents)?
     };
 
     let SkillMetadataFile {
@@ -868,11 +949,11 @@ async fn load_skill_metadata(
         dependencies,
         policy,
     } = parsed;
-    LoadedSkillMetadata {
+    Ok(LoadedSkillMetadata {
         interface: resolve_interface(interface, &skill_dir, plugin_root),
         dependencies: resolve_dependencies(dependencies),
         policy: resolve_policy(policy),
-    }
+    })
 }
 
 fn resolve_interface(

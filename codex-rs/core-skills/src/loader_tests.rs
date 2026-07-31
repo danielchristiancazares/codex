@@ -1426,6 +1426,40 @@ async fn system_scope_ignores_symlinked_subdir() {
 }
 
 #[tokio::test]
+async fn embedded_system_skill_loader_matches_disk_loader() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let codex_home_path = codex_home.path().abs();
+    codex_skills::install_system_skills(&codex_home_path).expect("install system skills");
+    let system_root = codex_skills::system_cache_root_dir(&codex_home_path);
+    let make_root = || SkillRoot {
+        path: system_root.clone(),
+        scope: SkillScope::System,
+        file_system: Arc::clone(&LOCAL_FS),
+        plugin_identity: None,
+        plugin_namespace: None,
+        plugin_root: None,
+        discovery_mode: SkillDiscoveryMode::Recursive,
+    };
+
+    let disk_outcome = load_skills_from_roots(
+        [make_root()],
+        /*plugin_skill_snapshots*/ None,
+        Arc::new(Semaphore::new(MAX_CONCURRENT_ROOT_SCANS)),
+    )
+    .await;
+    let embedded_outcome = load_skills_from_roots_with_embedded_system_root(
+        [make_root()],
+        /*plugin_skill_snapshots*/ None,
+        &system_root,
+        Arc::new(Semaphore::new(MAX_CONCURRENT_ROOT_SCANS)),
+    )
+    .await;
+
+    assert_eq!(embedded_outcome.skills, disk_outcome.skills);
+    assert_eq!(embedded_outcome.errors, disk_outcome.errors);
+}
+
+#[tokio::test]
 async fn respects_max_scan_depth_for_user_scope() {
     let codex_home = tempfile::tempdir().expect("tempdir");
 
@@ -2522,6 +2556,7 @@ async fn merges_root_results_in_input_order_when_scans_finish_out_of_order() {
         crate::root_loader::load_and_merge_skill_roots(
             skill_roots,
             /*plugin_skill_snapshots*/ None,
+            /*embedded_system_root*/ None,
             &root_scan_slots,
         )
         .await
@@ -2583,6 +2618,7 @@ async fn skill_root_scans_wait_for_shared_capacity() {
             discovery_mode: SkillDiscoveryMode::Recursive,
         }],
         /*plugin_skill_snapshots*/ None,
+        /*embedded_system_root*/ None,
         &root_scan_slots,
     );
     tokio::pin!(load);

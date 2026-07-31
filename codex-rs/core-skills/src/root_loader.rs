@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_plugins::PluginSkillRoot;
 use futures::StreamExt;
 use tokio::sync::Semaphore;
@@ -12,6 +13,7 @@ use crate::SkillLoadOutcome;
 use crate::loader::MAX_CONCURRENT_ROOT_SCANS;
 use crate::loader::SkillRoot;
 use crate::loader::SkillRootSnapshot;
+use crate::loader::load_embedded_system_skill_root;
 use crate::loader::load_skill_root;
 use crate::model::SkillFileSystemsByPath;
 
@@ -43,6 +45,7 @@ impl fmt::Debug for PluginSkillSnapshots {
 pub(crate) async fn load_and_merge_skill_roots<I>(
     roots: I,
     plugin_skill_snapshots: Option<&PluginSkillSnapshots>,
+    embedded_system_root: Option<&AbsolutePathBuf>,
     root_scan_slots: &Semaphore,
 ) -> SkillLoadOutcome
 where
@@ -55,6 +58,7 @@ where
                 .acquire()
                 .await
                 .unwrap_or_else(|_| unreachable!());
+            let is_embedded_system_root = embedded_system_root == Some(&root.path);
             let cache_key = match (
                 root.plugin_identity.clone(),
                 root.plugin_namespace.clone(),
@@ -84,7 +88,11 @@ where
             let snapshot = match cached_snapshot {
                 Some(snapshot) => snapshot,
                 None => {
-                    let snapshot = load_skill_root(root).await;
+                    let snapshot = if is_embedded_system_root {
+                        load_embedded_system_skill_root(root).await
+                    } else {
+                        load_skill_root(root).await
+                    };
                     if let Some(plugin_skill_snapshots) = plugin_skill_snapshots
                         && let Some(cache_key) = cache_key
                     {

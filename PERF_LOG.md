@@ -372,6 +372,52 @@ The full `codex-core` run completed 3,196 tests: 3,051 passed, 142 failed, and 3
 Every shell-snapshot test passed; the failures were in process cleanup, code mode, MCP, hooks,
 sandboxing, and other integration areas outside this change.
 
+## 2026-07-31: bundled system-skill startup loading
+
+Scope: bundled system-skill discovery and metadata loading during persistent CLI thread startup.
+
+Benchmark:
+
+```sh
+cd codex-rs
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/exec:codex-exec-bench
+```
+
+Temporary span-close diagnostics measured `session_init.plugin_skill_warmup` around the permanent
+optimized benchmark. The baseline and candidate used the same generated `CODEX_HOME` fixture on
+the same Intel Mac.
+
+### Retained win
+
+| Change | Workload | Before | After | Result |
+| --- | --- | ---: | ---: | ---: |
+| Parse bundled system-skill metadata from the assets already embedded in the binary | Plugin and skill warmup during thread creation | 101-337 ms | 4.9-7.4 ms | 93-98% faster |
+
+The system skills remain installed under `CODEX_HOME/skills/.system`, and their loaded metadata
+continues to contain those absolute filesystem paths. Startup now parses the embedded `SKILL.md`
+and `agents/openai.yaml` contents directly, avoiding a recursive walk, canonicalization of every
+skill file, and rereading files that were generated from those same embedded assets. A parity test
+compares complete `SkillMetadata` objects from the embedded and disk loaders.
+
+Complete-turn medians overlapped because process, shell, and response-side variance dominates this
+benchmark: the prior range was 465.8-506.0 ms and candidate runs were 489.2 ms and 500.0 ms. The
+retained claim is the instrumented startup-phase improvement. The phase measurements were stable
+across four baseline and six candidate processes.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-skills
+just test -p codex-core-skills
+just fix -p codex-skills -p codex-core-skills
+just fmt
+```
+
+All 4 `codex-skills` tests and all 128 `codex-core-skills` tests passed. The optimized end-to-end
+benchmark passed twice, and the instrumented candidate run passed with six startup samples.
+
 ## Entry template
 
 ```md
