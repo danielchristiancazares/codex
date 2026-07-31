@@ -285,6 +285,50 @@ The optimized Bazel benchmark passed with final medians of 250.6 ms for `respons
 519.0 ms for `persistent_turn`. All 126 `codex-exec` tests passed; two existing timing-sensitive
 tests passed on their configured retry. Scoped Clippy autofix and formatting passed.
 
+## 2026-07-30: API-key plugin discovery
+
+Scope: featured-plugin cache warming during CLI startup and the synchronous `plugin/list` path for
+API-key sessions.
+
+Network baseline:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' \
+  'https://chatgpt.com/backend-api/plugins/featured?platform=codex'
+```
+
+Three calls from the same machine all returned 401 and took 107.4 ms, 312.6 ms, and 1.412 s. This
+matches the API-key code path: it could not attach ChatGPT backend authentication, yet still sent
+the featured-plugin request.
+
+### Retained win
+
+| Change | Workload | Before | After | Result |
+| --- | --- | ---: | ---: | ---: |
+| Return an empty featured set when auth cannot use the ChatGPT backend | API-key featured-plugin lookup | 107.4 ms-1.412 s, then HTTP 401 | No HTTP request | Eliminates the failed network wait |
+
+The early return happens before cache lookup, so it does not populate the cache key shared with an
+anonymous caller. ChatGPT-backed auth and the existing anonymous lookup retain their request paths.
+A Wiremock test verifies that API-key lookup returns an empty set with zero requests.
+
+The optimized full-turn benchmark did not isolate a wall-time improvement because startup cache
+warming is asynchronous: the prior median was 519.0 ms, while two candidate runs were 467.4 ms and
+524.8 ms. Response-to-exit medians also overlapped at 244.7-309.8 ms versus 250.6 ms. The retained
+result is the failed-request elimination and the corresponding synchronous `plugin/list` wait, not
+a claimed full-turn speedup.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-core-plugins
+just fix -p codex-core-plugins
+just fmt
+```
+
+All 361 `codex-core-plugins` tests passed. Both post-change optimized `codex-exec` benchmark runs
+passed. Scoped Clippy autofix and formatting passed.
+
 ## Entry template
 
 ```md

@@ -5607,6 +5607,42 @@ plugins = true
 }
 
 #[tokio::test]
+async fn featured_plugin_ids_for_config_skips_api_key_auth() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+"#,
+    );
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/plugins/featured"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut config = load_config(tmp.path(), tmp.path()).await;
+    config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
+    let manager = PluginsManager::new_with_options(
+        tmp.path().to_path_buf(),
+        /*restriction_product*/ None,
+        Some(AuthMode::ApiKey),
+    );
+    let auth = CodexAuth::from_api_key("test-api-key");
+
+    let featured_plugin_ids = manager
+        .featured_plugin_ids_for_config(&config, Some(&auth))
+        .await
+        .unwrap();
+
+    assert_eq!(featured_plugin_ids, Vec::<String>::new());
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn remote_plugin_caches_refresh_warms_recommended_plugins_cache() {
     let tmp = tempfile::tempdir().unwrap();
     write_file(
