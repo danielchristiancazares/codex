@@ -1,8 +1,15 @@
 use std::io::Cursor;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_utils_cache::BlockingLruCache;
+use codex_utils_cache::blake3_digest;
+use codex_utils_cache::sha1_digest;
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::data_url_from_bytes;
+use codex_utils_image::dimensions_from_base64;
 use codex_utils_image::load_for_prompt_bytes;
 use divan::Bencher;
 use image::DynamicImage;
@@ -101,6 +108,132 @@ fn tiny_png_repeated_load(bencher: Bencher) {
 fn one_megabyte_data_url(bencher: Bencher) {
     let bytes = vec![0xa5; DATA_URL_INPUT_BYTES];
     bencher.bench_local(move || data_url_from_bytes("image/png", &bytes));
+}
+
+#[divan::bench]
+fn large_png_screenshot_base64_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(LARGE_SCREENSHOT));
+    bencher.bench_local(move || dimensions_from_base64(&encoded));
+}
+
+#[divan::bench]
+fn large_jpeg_photo_base64_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(photo_jpeg(LARGE_PHOTO));
+    bencher.bench_local(move || dimensions_from_base64(&encoded));
+}
+
+#[divan::bench]
+fn tiny_png_base64_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(TINY_IMAGE));
+    bencher.bench_local(move || dimensions_from_base64(&encoded));
+}
+
+#[divan::bench]
+fn small_png_screenshot_base64_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(SMALL_SCREENSHOT));
+    bencher.bench_local(move || dimensions_from_base64(&encoded));
+}
+
+#[divan::bench]
+fn large_png_screenshot_full_decode_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(LARGE_SCREENSHOT));
+    bencher.bench_local(move || {
+        #[allow(clippy::expect_used)]
+        let bytes = BASE64_STANDARD
+            .decode(&encoded)
+            .expect("benchmark fixture should decode");
+        #[allow(clippy::expect_used)]
+        let image = image::load_from_memory(&bytes).expect("benchmark fixture should load");
+        (image.width(), image.height())
+    });
+}
+
+#[divan::bench]
+fn large_jpeg_photo_full_decode_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(photo_jpeg(LARGE_PHOTO));
+    bencher.bench_local(move || {
+        #[allow(clippy::expect_used)]
+        let bytes = BASE64_STANDARD
+            .decode(&encoded)
+            .expect("benchmark fixture should decode");
+        #[allow(clippy::expect_used)]
+        let image = image::load_from_memory(&bytes).expect("benchmark fixture should load");
+        (image.width(), image.height())
+    });
+}
+
+#[divan::bench]
+fn tiny_png_full_decode_dimensions(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(TINY_IMAGE));
+    bencher.bench_local(move || {
+        #[allow(clippy::expect_used)]
+        let bytes = BASE64_STANDARD
+            .decode(&encoded)
+            .expect("benchmark fixture should decode");
+        #[allow(clippy::expect_used)]
+        let image = image::load_from_memory(&bytes).expect("benchmark fixture should load");
+        (image.width(), image.height())
+    });
+}
+
+#[divan::bench]
+fn large_png_screenshot_sha1_cache_key(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(screenshot_png(LARGE_SCREENSHOT));
+    bencher.bench_local(move || sha1_digest(encoded.as_bytes()));
+}
+
+#[divan::bench]
+fn large_jpeg_photo_sha1_cache_key(bencher: Bencher) {
+    let encoded = BASE64_STANDARD.encode(photo_jpeg(LARGE_PHOTO));
+    bencher.bench_local(move || sha1_digest(encoded.as_bytes()));
+}
+
+#[divan::bench]
+fn tiny_png_sha1_cache_hit(bencher: Bencher) {
+    bench_sha1_cache_hit(bencher, screenshot_png(TINY_IMAGE));
+}
+
+#[divan::bench]
+fn small_png_screenshot_sha1_cache_hit(bencher: Bencher) {
+    bench_sha1_cache_hit(bencher, screenshot_png(SMALL_SCREENSHOT));
+}
+
+#[divan::bench]
+fn tiny_png_blake3_cache_hit(bencher: Bencher) {
+    bench_blake3_cache_hit(bencher, screenshot_png(TINY_IMAGE));
+}
+
+#[divan::bench]
+fn small_png_screenshot_blake3_cache_hit(bencher: Bencher) {
+    bench_blake3_cache_hit(bencher, screenshot_png(SMALL_SCREENSHOT));
+}
+
+fn bench_sha1_cache_hit(bencher: Bencher, image: Vec<u8>) {
+    #[allow(clippy::expect_used)]
+    let runtime = tokio::runtime::Runtime::new().expect("benchmark runtime should start");
+    let _runtime_guard = runtime.enter();
+    let encoded = BASE64_STANDARD.encode(image);
+    let cache = BlockingLruCache::new(NonZeroUsize::MIN);
+    let key = sha1_digest(encoded.as_bytes());
+    let _ = cache.get_or_insert_with(key, || (1u32, 1u32));
+
+    bencher.bench_local(move || {
+        cache.get_or_insert_with(sha1_digest(encoded.as_bytes()), || (1u32, 1u32))
+    });
+}
+
+fn bench_blake3_cache_hit(bencher: Bencher, image: Vec<u8>) {
+    #[allow(clippy::expect_used)]
+    let runtime = tokio::runtime::Runtime::new().expect("benchmark runtime should start");
+    let _runtime_guard = runtime.enter();
+    let encoded = BASE64_STANDARD.encode(image);
+    let cache = BlockingLruCache::new(NonZeroUsize::MIN);
+    let key = blake3_digest(encoded.as_bytes());
+    let _ = cache.get_or_insert_with(key, || (1u32, 1u32));
+
+    bencher.bench_local(move || {
+        cache.get_or_insert_with(blake3_digest(encoded.as_bytes()), || (1u32, 1u32))
+    });
 }
 
 fn bench_fresh_attachment(bencher: Bencher, path: &'static str, images: Vec<Vec<u8>>) {

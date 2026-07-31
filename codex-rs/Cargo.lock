@@ -2813,6 +2813,7 @@ dependencies = [
  "core_test_support",
  "ctor 0.6.3",
  "dirs",
+ "divan",
  "dunce",
  "eventsource-stream",
  "futures",
@@ -4499,6 +4500,8 @@ dependencies = [
 name = "codex-utils-cache"
 version = "0.0.0"
 dependencies = [
+ "blake3",
+ "divan",
  "lru",
  "sha1 0.10.6",
  "tokio",
@@ -4548,7 +4551,6 @@ name = "codex-utils-image"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
- "blake3",
  "codex-utils-cache",
  "divan",
  "image",

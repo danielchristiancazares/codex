@@ -8,12 +8,18 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+blake3 = { workspace = true }
 lru = { workspace = true }
 sha1 = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
 
 [dev-dependencies]
+divan = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [lib]
 doctest = false
+
+[[bench]]
+name = "digests"
+harness = false

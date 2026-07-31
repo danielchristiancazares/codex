@@ -112,6 +112,91 @@ just fix -p codex-utils-cache -p codex-utils-image
 just fmt
 ```
 
+## 2026-07-30: model-visible attachment and JSON accounting
+
+Scope: prompt audio validation and duration estimation, original-detail image dimension accounting,
+large JSON byte accounting, and the shared content-digest implementation used by attachment caches.
+
+Benchmarks:
+
+```sh
+cd codex-rs
+cargo bench -q -p codex-core --bench latency_paths -- \
+  --sample-count 20 --sample-size 1
+cargo bench -q -p codex-core --bench latency_paths -- \
+  --sample-count 50 --sample-size 20 json
+cargo bench -q -p codex-core --bench latency_paths -- \
+  --sample-count 50 --sample-size 100 8000
+cargo bench -q -p codex-utils-cache --bench digests -- \
+  --sample-count 30 --sample-size 20
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 20 --sample-size 1 dimensions
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 30 --sample-size 20 sha1_cache_key
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 50 --sample-size 100 base64_dimensions
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 50 --sample-size 500 sha1_cache_hit
+cargo bench -q -p codex-utils-image --bench prompt_images -- \
+  --sample-count 50 --sample-size 500 blake3_cache_hit
+```
+
+All ranges below contain medians from two warmed release-benchmark runs on the same machine. The
+paired legacy functions used for before measurements were removed after comparison; the permanent
+benchmarks retain the current baselines.
+
+### Retained wins
+
+| Change | Workload | Before | After | Approx. result |
+| --- | --- | ---: | ---: | ---: |
+| Validate base64 audio in a streaming pass and preserve its payload | Prepare 5 MiB PCM WAV data URL | 11.68-12.83 ms | 4.89-4.94 ms | 58-62% faster |
+| Validate base64 audio in a streaming pass and preserve its payload | Prepare one-second PCM WAV | 11.71-11.75 us | 7.47-7.48 us | 36% faster |
+| Read PCM WAV duration from a decoded header prefix | Estimate tokens for 5 MiB PCM WAV | 16.36-16.40 ms | 0.49-0.50 us | about 33,000x faster |
+| Cache small audio estimates with BLAKE3 | Repeated one-second PCM WAV estimate | 16.71-16.73 us | 3.81-3.82 us | 77% faster |
+| Count serialized JSON bytes through a writer | Measure 1 MiB JSON value | 729-738 us | 562-563 us | 23-24% faster |
+| Read original-detail image dimensions from a base64 prefix | 2,560x1,440 PNG, first estimate | 11.93-12.04 ms | 1.59-1.68 us | over 7,100x faster |
+| Read original-detail image dimensions from a base64 prefix | 3,264x2,448 JPEG, first estimate | 94.46-94.61 ms | 11.58-11.81 us | about 8,000x faster |
+| Cache tiny original-detail image estimates with BLAKE3 | Repeated 1x1 PNG estimate | 292-293 ns | 198 ns | 32% faster |
+| Bypass the image cache above 16 KiB | Repeated 1,536x864 PNG estimate | 106.0-106.7 us | 1.59-1.69 us | 63-67x faster |
+| Replace SHA-1 audio keys with shared BLAKE3 | 1 MiB digest | 1.619-1.620 ms | 59.5-64.6 us | 25-27x faster |
+| Replace SHA-1 audio keys with shared parallel BLAKE3 | 5 MiB digest | 8.10-8.12 ms | 229-235 us | 34-35x faster |
+
+The prior original-detail image cache still had to SHA-1 the complete data URL before every lookup.
+Hash-only lower-bound medians were 308 us for the PNG fixture and 9.07 ms for the JPEG fixture;
+the prefix reader took 1.59-1.68 us and 11.58-11.81 us respectively. Removing that cache therefore
+also improves repeated estimates by at least 183x for the PNG and 768x for the JPEG in these fixtures.
+
+The WAV header fast path applies to uncompressed PCM and IEEE-float WAV files whose `fmt` and
+`data` chunks appear within the progressive 256 KiB prefix, starting with a 256-byte probe. Inputs up to 16 KiB retain a small
+BLAKE3-keyed cache because cache hits beat reparsing at that size. Other WAV layouts and compressed
+audio formats retain the duration-probe fallback, also keyed with BLAKE3. Original-detail images use
+the same 16 KiB split: tiny payloads keep the faster BLAKE3 cache, while larger payloads bypass
+whole-input hashing and read dimensions from the decoded header prefix.
+
+A 256-byte-only first image probe reduced PNG latency but moved JPEG from 12.18-12.61 us to
+14.63 us. Adding a 1 KiB intermediate probe retained the PNG win and brought JPEG to 11.58-11.81 us.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-utils-cache -p codex-utils-image
+just test -p codex-core
+just test -p codex-core audio_preparation
+just test -p codex-core original_detail
+just test -p codex-core executed_tool_call_recorder
+just test -p codex-core counts_serialized_json_bytes
+cargo clippy --benches -p codex-core -p codex-utils-cache -p codex-utils-image -- -D warnings
+just fix -p codex-core -p codex-utils-cache -p codex-utils-image
+just fmt
+```
+
+The utility run passed all 18 tests. Focused audio, recorder, and JSON runs passed 6, 1, and 1
+tests. The original-detail filter passed its four applicable tests and also selected an RMCP test
+whose local `test_stdio_server` helper was absent. The full core run passed 3,055 of 3,195 tests;
+its 140 failures were in unchanged areas and clustered around missing auxiliary binaries and
+timing-sensitive integration tests. Benchmark Clippy, scoped autofix, and formatting passed.
+
 ## Entry template
 
 ```md

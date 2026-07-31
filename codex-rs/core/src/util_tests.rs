@@ -16,6 +16,19 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[test]
+fn counts_serialized_json_bytes_without_materializing_json() {
+    let value = serde_json::json!({
+        "escaped": "line one\nline two",
+        "items": [1, 2, 3],
+    });
+
+    assert_eq!(
+        serialized_json_bytes(&value).unwrap(),
+        serde_json::to_string(&value).unwrap().len()
+    );
+}
+
+#[test]
 fn feedback_tags_macro_compiles() {
     #[derive(Debug)]
     struct OnlyDebug;
