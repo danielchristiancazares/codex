@@ -418,6 +418,52 @@ just fmt
 All 4 `codex-skills` tests and all 128 `codex-core-skills` tests passed. The optimized end-to-end
 benchmark passed twice, and the instrumented candidate run passed with six startup samples.
 
+## 2026-07-31: fresh-thread name lookup
+
+Scope: persistent CLI thread creation for new, cleared, and forked sessions.
+
+Benchmark:
+
+```sh
+cd codex-rs
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/exec:codex-exec-bench
+```
+
+Temporary span-close diagnostics measured `session_init.thread_name_lookup`,
+`app_server.thread_start.create_thread`, and the complete thread-start request around the permanent
+optimized benchmark. The source-only diagnostic changes were reverted before validation.
+
+### Retained win
+
+| Change | Workload | Before | After | Result |
+| --- | --- | ---: | ---: | ---: |
+| Read the thread-name store only when resuming an existing thread ID | Warm persistent thread start | 49-51 ms | 19-20 ms | About 60% faster |
+| Same change | `thread/start` thread creation | 39-41 ms | 10-11 ms | About 73% faster |
+
+New, cleared, and forked sessions receive fresh thread IDs, so those IDs cannot have persisted
+names. Their name-lookup future now resolves locally. Resumed sessions retain the store lookup and
+continue to load persisted names. The warm phase measurements exclude the first sample, which also
+contained one-time process startup work.
+
+Complete-turn medians remained within the existing variance: the prior two runs were 489.2 ms and
+500.0 ms, while the candidate runs were 508.5 ms and 491.3 ms. The retained claim is the measured
+thread-start phase reduction.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-app-server thread_start_creates_thread_and_emits_started
+just test -p codex-app-server thread_fork_creates_new_thread_and_emits_started
+just test -p codex-app-server paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
+just fix -p codex-core
+just fmt
+```
+
+The fresh-thread, fork, and named-resume app-server contracts passed. Both optimized end-to-end
+benchmark runs passed.
+
 ## Entry template
 
 ```md

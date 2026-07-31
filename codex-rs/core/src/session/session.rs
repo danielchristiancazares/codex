@@ -1116,12 +1116,25 @@ impl Session {
                 "session_init.plugin_skill_warmup",
                 otel.name = "session_init.plugin_skill_warmup",
             ));
-            let thread_name_lookup =
-                thread_title_from_thread_store(live_thread_init.as_ref(), &thread_store, thread_id)
-                    .instrument(info_span!(
-                        "session_init.thread_name_lookup",
-                        otel.name = "session_init.thread_name_lookup",
-                    ));
+            let thread_name_lookup = async {
+                match &initial_history {
+                    InitialHistory::Resumed(_) => {
+                        thread_title_from_thread_store(
+                            live_thread_init.as_ref(),
+                            &thread_store,
+                            thread_id,
+                        )
+                        .await
+                    }
+                    InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => {
+                        None
+                    }
+                }
+            }
+            .instrument(info_span!(
+                "session_init.thread_name_lookup",
+                otel.name = "session_init.thread_name_lookup",
+            ));
             let ((), plugin_skill_errors, thread_name) = tokio::join!(
                 agents_md_manager.refresh(config.as_ref(), &resolved_environments),
                 plugin_skill_warmup,
