@@ -58,6 +58,11 @@ impl Arg0PathEntryGuard {
 }
 
 pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
+    dispatch_arg0_helpers();
+    prepare_main_process()
+}
+
+fn dispatch_arg0_helpers() {
     // Determine if we were invoked via the special alias.
     let mut args = std::env::args_os();
     let argv0 = args.next().unwrap_or_default();
@@ -150,7 +155,9 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
         };
         std::process::exit(exit_code);
     }
+}
 
+fn prepare_main_process() -> Option<Arg0PathEntryGuard> {
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
     load_dotenv();
@@ -218,11 +225,35 @@ where
     F: FnOnce(Arg0DispatchPaths) -> Fut + Send + 'static,
     Fut: Future<Output = anyhow::Result<()>>,
 {
+    arg0_dispatch_or_else_with_preflight(|| None, main_fn)
+}
+
+/// Runs a synchronous preflight after special arg0 helper dispatch and before main-process setup.
+///
+/// Returning `Some` finishes the invocation with that result. Returning `None` continues through
+/// `.env` loading, helper alias creation, and asynchronous runtime startup.
+pub fn arg0_dispatch_or_else_with_preflight<P, F, Fut>(
+    preflight: P,
+    main_fn: F,
+) -> anyhow::Result<()>
+where
+    P: FnOnce() -> Option<anyhow::Result<()>>,
+    F: FnOnce(Arg0DispatchPaths) -> Fut + Send + 'static,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    dispatch_arg0_helpers();
+    if let Some(result) = preflight() {
+        return result;
+    }
+
     // Retain the TempDir so it exists for the lifetime of the invocation of
     // this executable. Admittedly, we could invoke `keep()` on it, but it
     // would be nice to avoid leaving temporary directories behind, if possible.
-    let path_entry_guard = arg0_dispatch();
-    let current_exe = std::env::current_exe().ok();
+    let path_entry_guard = prepare_main_process();
+    let current_exe = path_entry_guard
+        .as_ref()
+        .and_then(|path_entry| path_entry.paths().codex_self_exe.clone())
+        .or_else(|| std::env::current_exe().ok());
 
     // Regular invocation. Run the async entry point on a thread with the same
     // stack budget as Tokio workers; `Runtime::block_on` otherwise runs the
@@ -371,6 +402,7 @@ fn prepare_path_entry_for_codex_aliases(
         .prefix("codex-arg0")
         .tempdir_in(&temp_root)?;
     let path = temp_dir.path();
+    let current_exe = std::env::current_exe()?;
 
     let lock_path = path.join(LOCK_FILENAME);
     let lock_file = File::options()
@@ -389,18 +421,16 @@ fn prepare_path_entry_for_codex_aliases(
         #[cfg(unix)]
         EXECVE_WRAPPER_ARG0,
     ] {
-        let exe = std::env::current_exe()?;
-
         #[cfg(unix)]
         {
             let link = path.join(filename);
-            symlink(&exe, &link)?;
+            symlink(&current_exe, &link)?;
         }
 
         #[cfg(windows)]
         {
             let batch_script = path.join(format!("{filename}.bat"));
-            let exe = exe.display();
+            let exe = current_exe.display();
             std::fs::write(
                 &batch_script,
                 format!(
@@ -415,7 +445,7 @@ fn prepare_path_entry_for_codex_aliases(
     let updated_path_env_var = path_env_with_entry(path, existing_path);
 
     let paths = Arg0DispatchPaths {
-        codex_self_exe: std::env::current_exe().ok(),
+        codex_self_exe: Some(current_exe),
         codex_linux_sandbox_exe: {
             #[cfg(target_os = "linux")]
             {
@@ -540,6 +570,14 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn preflight_can_finish_before_async_main() -> anyhow::Result<()> {
+        super::arg0_dispatch_or_else_with_preflight(
+            || Some(Ok(())),
+            |_paths| async { anyhow::bail!("async main should not run") },
+        )
+    }
 
     struct PackagePathTestFixture {
         _temp_dir: TempDir,

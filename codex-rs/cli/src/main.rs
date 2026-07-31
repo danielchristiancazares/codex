@@ -7,7 +7,7 @@ use codex_app_server_daemon::BootstrapOptions as AppServerBootstrapOptions;
 use codex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
 use codex_app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use codex_arg0::Arg0DispatchPaths;
-use codex_arg0::arg0_dispatch_or_else;
+use codex_arg0::arg0_dispatch_or_else_with_preflight;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
 use codex_cli::read_access_token_from_stdin;
@@ -38,6 +38,7 @@ use codex_utils_cli::ProfileV2Name;
 use codex_utils_cli::SharedCliOptions;
 use owo_colors::OwoColorize;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
@@ -982,12 +983,56 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopLevelDisplay {
+    ShortHelp,
+    LongHelp,
+    ShortVersion,
+    LongVersion,
+}
+
+fn top_level_display_from_args(
+    mut args: impl Iterator<Item = OsString>,
+) -> Option<TopLevelDisplay> {
+    let _argv0 = args.next()?;
+    let flag = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    match flag.to_str()? {
+        "-h" => Some(TopLevelDisplay::ShortHelp),
+        "--help" => Some(TopLevelDisplay::LongHelp),
+        "-V" => Some(TopLevelDisplay::ShortVersion),
+        "--version" => Some(TopLevelDisplay::LongVersion),
+        _ => None,
+    }
+}
+
+fn print_top_level_display() -> Option<anyhow::Result<()>> {
+    let display = top_level_display_from_args(std::env::args_os())?;
+    let mut command = MultitoolCli::command();
+    let result = match display {
+        TopLevelDisplay::ShortHelp => command.print_help(),
+        TopLevelDisplay::LongHelp => command.print_long_help(),
+        TopLevelDisplay::ShortVersion => {
+            std::io::stdout().write_all(command.render_version().as_bytes())
+        }
+        TopLevelDisplay::LongVersion => {
+            std::io::stdout().write_all(command.render_long_version().as_bytes())
+        }
+    };
+    Some(result.map_err(anyhow::Error::from))
+}
+
 fn main() -> anyhow::Result<()> {
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
-    arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
-        cli_main(arg0_paths, remote_control_disabled).await?;
-        Ok(())
-    })
+    arg0_dispatch_or_else_with_preflight(
+        print_top_level_display,
+        move |arg0_paths: Arg0DispatchPaths| async move {
+            cli_main(arg0_paths, remote_control_disabled).await?;
+            Ok(())
+        },
+    )
 }
 
 async fn cli_main(
@@ -2684,6 +2729,36 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_tui::TokenUsage;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn top_level_display_fast_path_only_matches_single_root_flag() {
+        let cases: [&[&str]; 8] = [
+            &["codex", "-h"],
+            &["codex", "--help"],
+            &["codex", "-V"],
+            &["codex", "--version"],
+            &["codex"],
+            &["codex", "help"],
+            &["codex", "exec", "--help"],
+            &["codex", "--help", "exec"],
+        ];
+        let actual =
+            cases.map(|args| top_level_display_from_args(args.iter().copied().map(OsString::from)));
+
+        assert_eq!(
+            actual,
+            [
+                Some(TopLevelDisplay::ShortHelp),
+                Some(TopLevelDisplay::LongHelp),
+                Some(TopLevelDisplay::ShortVersion),
+                Some(TopLevelDisplay::LongVersion),
+                None,
+                None,
+                None,
+                None,
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn updater_http_client_factory_honors_respect_system_proxy() {

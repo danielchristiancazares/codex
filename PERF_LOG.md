@@ -197,6 +197,47 @@ whose local `test_stdio_server` helper was absent. The full core run passed 3,05
 its 140 failures were in unchanged areas and clustered around missing auxiliary binaries and
 timing-sensitive integration tests. Benchmark Clippy, scoped autofix, and formatting passed.
 
+## 2026-07-30: CLI startup
+
+Scope: root help and version rendering, plus executable-path discovery during the regular CLI
+bootstrap.
+
+Benchmark:
+
+```sh
+cd codex-rs
+just bench-e2e
+```
+
+All ranges below contain medians from two warmed optimized Bazel benchmark runs on the same Intel
+Mac. First-build outliers were excluded from the ranges; subsequent samples and repeated runs
+confirmed each retained result.
+
+### Retained wins
+
+| Change | Workload | Before | After | Approx. result |
+| --- | --- | ---: | ---: | ---: |
+| Render a sole root help flag before main-process setup | `codex --help` | 43.97-44.18 ms | 35.98-36.62 ms | 17-19% faster |
+| Render a sole root version flag before main-process setup | `codex --version` | 43.77-43.90 ms | 35.38-36.01 ms | 18-19% faster |
+| Resolve the current executable once and reuse it | `codex features list` | 53.81-54.33 ms | 51.75-52.95 ms | 2-5% faster |
+
+The root display path still performs special arg0 helper dispatch, then prints through Clap's
+existing renderers before `.env` loading, helper-alias creation, thread startup, and Tokio runtime
+construction. Every other invocation follows the complete bootstrap. The full-bootstrap change
+shares one successful `current_exe` lookup between alias creation and async-main startup.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-arg0 -p codex-cli
+just fix -p codex-arg0 -p codex-cli
+just fmt
+```
+
+The affected crate run passed all 348 tests, including the root-flag boundary and synchronous
+preflight coverage.
+
 ## Entry template
 
 ```md
