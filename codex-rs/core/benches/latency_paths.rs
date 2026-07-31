@@ -1,10 +1,11 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
+use codex_utils_audio::estimate_audio_token_count;
+use codex_utils_audio::prepare_response_items;
 use divan::Bencher;
 
-#[path = "../src/audio_preparation.rs"]
-#[allow(dead_code, unused_imports)]
-mod audio_preparation;
 #[path = "../src/util.rs"]
 #[allow(dead_code, unused_imports)]
 mod util;
@@ -17,14 +18,20 @@ fn main() {
 
 #[divan::bench(args = PCM_SAMPLE_COUNTS)]
 fn pcm_wav_prepare(bencher: Bencher, sample_count: usize) {
-    let audio_url = pcm_wav_data_url(sample_count);
+    let items = vec![ResponseItem::Message {
+        id: Default::default(),
+        role: "user".to_string(),
+        content: vec![ContentItem::InputAudio {
+            audio_url: pcm_wav_data_url(sample_count),
+        }],
+        phase: Default::default(),
+        internal_chat_message_metadata_passthrough: Default::default(),
+    }];
     bencher
-        .with_inputs(move || audio_url.clone())
-        .bench_local_values(|mut audio_url| {
-            #[allow(clippy::expect_used)]
-            audio_preparation::prepare_audio(&mut audio_url)
-                .expect("benchmark fixture should prepare");
-            audio_url
+        .with_inputs(move || items.clone())
+        .bench_local_values(|mut items| {
+            prepare_response_items(&mut items);
+            items
         });
 }
 
@@ -34,8 +41,8 @@ fn pcm_wav_estimate(bencher: Bencher, sample_count: usize) {
     #[allow(clippy::expect_used)]
     let runtime = tokio::runtime::Runtime::new().expect("benchmark runtime should start");
     let _runtime_guard = runtime.enter();
-    let _ = audio_preparation::estimate_audio_token_count(&audio_url);
-    bencher.bench_local(move || audio_preparation::estimate_audio_token_count(&audio_url));
+    let _ = estimate_audio_token_count(&audio_url);
+    bencher.bench_local(move || estimate_audio_token_count(&audio_url));
 }
 
 #[divan::bench]
