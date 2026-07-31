@@ -49,6 +49,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::path::Path;
 
 use thiserror::Error;
 
@@ -58,6 +59,34 @@ const SYSTEM_SKILLS_DIR_NAME: &str = ".system";
 const SKILLS_DIR_NAME: &str = "skills";
 const SYSTEM_SKILLS_MARKER_FILENAME: &str = ".codex-system-skills.marker";
 const SYSTEM_SKILLS_MARKER_SALT: &str = "v1";
+
+/// Embedded metadata needed to load one bundled system skill without rescanning its disk cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddedSystemSkill {
+    /// Path to the skill definition relative to the bundled system skills root.
+    pub relative_path_to_skills_md: &'static Path,
+    /// UTF-8 contents of the bundled `SKILL.md` file.
+    pub skills_md: &'static str,
+    /// UTF-8 contents of the optional bundled `agents/openai.yaml` file.
+    pub openai_yaml: Option<&'static str>,
+}
+
+/// Returns the bundled system skill definitions embedded in this binary.
+pub fn embedded_system_skills() -> impl Iterator<Item = EmbeddedSystemSkill> {
+    SYSTEM_SKILLS_DIR.dirs().filter_map(|dir| {
+        let relative_path_to_skills_md = dir.path().join("SKILL.md");
+        let skill_file = SYSTEM_SKILLS_DIR.get_file(&relative_path_to_skills_md)?;
+        let skills_md = skill_file.contents_utf8()?;
+        let openai_yaml = SYSTEM_SKILLS_DIR
+            .get_file(dir.path().join("agents/openai.yaml"))
+            .and_then(include_dir::File::contents_utf8);
+        Some(EmbeddedSystemSkill {
+            relative_path_to_skills_md: skill_file.path(),
+            skills_md,
+            openai_yaml,
+        })
+    })
+}
 
 /// Returns the on-disk cache location for embedded system skills from an absolute CODEX_HOME.
 pub fn system_cache_root_dir(codex_home: &AbsolutePathBuf) -> AbsolutePathBuf {
@@ -192,6 +221,7 @@ impl SystemSkillsError {
 mod tests {
     use super::SYSTEM_SKILLS_DIR;
     use super::collect_fingerprint_items;
+    use super::embedded_system_skills;
 
     #[test]
     fn fingerprint_traverses_nested_entries() {
@@ -210,5 +240,18 @@ mod tests {
                 .binary_search_by(|probe| probe.as_str().cmp("skill-creator/scripts/init_skill.py"))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn embedded_system_skills_expose_skill_and_metadata_contents() {
+        let skills = embedded_system_skills().collect::<Vec<_>>();
+
+        assert_eq!(skills.len(), SYSTEM_SKILLS_DIR.dirs().count());
+        assert!(
+            skills
+                .iter()
+                .all(|skill| skill.skills_md.starts_with("---"))
+        );
+        assert!(skills.iter().all(|skill| skill.openai_yaml.is_some()));
     }
 }

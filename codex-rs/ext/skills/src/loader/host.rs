@@ -8,6 +8,7 @@ use codex_protocol::protocol::SkillScope;
 use codex_skills::ParsedSkillFrontmatter;
 use codex_skills::SkillError;
 use codex_skills::SkillMetadata;
+use codex_skills::embedded_system_skills;
 use codex_skills::parse_skill_frontmatter_metadata;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
@@ -30,6 +31,7 @@ use super::discovery::SkillMetadataDiscovery;
 use super::discovery::discover_skills;
 use super::metadata::LoadedSkillMetadata;
 use super::metadata::load_host_skill_metadata;
+use super::metadata::parse_host_skill_metadata;
 use super::metadata::sanitize_single_line;
 use super::metadata::validate_len;
 use super::namespace::SkillNamespaceResolver;
@@ -139,6 +141,57 @@ pub(crate) async fn load_host_skill_root(root: HostSkillRoot) -> HostSkillRootSn
         errors,
         file_system: root.file_system,
         is_agent_plugin,
+    }
+}
+
+pub(crate) async fn load_embedded_system_skill_root(
+    root: HostSkillRoot,
+) -> HostSkillRootSnapshot {
+    let canonical_root =
+        canonicalize_for_skill_identity(root.file_system.as_ref(), &root.path).await;
+    let mut skills = Vec::new();
+    let mut skill_discovery_path_by_path = HashMap::new();
+    for embedded_skill in embedded_system_skills() {
+        let path = canonical_root.join(embedded_skill.relative_path_to_skills_md);
+        let Ok(ParsedSkillFrontmatter {
+            name,
+            description,
+            short_description,
+        }) = parse_skill_frontmatter_metadata(embedded_skill.skills_md, || {
+            default_skill_name(&path)
+        })
+        else {
+            continue;
+        };
+        let LoadedSkillMetadata {
+            interface,
+            dependencies,
+            policy,
+        } = embedded_skill
+            .openai_yaml
+            .and_then(|contents| parse_host_skill_metadata(contents, &path, None).ok())
+            .unwrap_or_default();
+        skill_discovery_path_by_path.insert(path.clone(), path.clone());
+        skills.push(SkillMetadata {
+            name,
+            description,
+            short_description,
+            interface,
+            dependencies,
+            policy,
+            path_to_skills_md: path,
+            scope: SkillScope::System,
+            plugin_id: None,
+            remote_plugin_id: None,
+        });
+    }
+    HostSkillRootSnapshot {
+        root: canonical_root,
+        skills,
+        skill_discovery_path_by_path: Arc::new(skill_discovery_path_by_path),
+        errors: Vec::new(),
+        file_system: root.file_system,
+        is_agent_plugin: false,
     }
 }
 
