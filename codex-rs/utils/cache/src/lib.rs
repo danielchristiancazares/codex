@@ -8,6 +8,8 @@ use sha1::Sha1;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 
+const PARALLEL_BLAKE3_MIN_BYTES: usize = 1024 * 1024;
+
 /// A minimal LRU cache protected by a Tokio mutex.
 /// Calls outside a Tokio runtime are no-ops.
 pub struct BlockingLruCache<K, V> {
@@ -142,6 +144,18 @@ pub fn sha1_digest(bytes: &[u8]) -> [u8; 20] {
     let mut out = [0; 20];
     out.copy_from_slice(&result);
     out
+}
+
+/// Computes a BLAKE3 digest, using its Rayon implementation for large inputs.
+#[must_use]
+pub fn blake3_digest(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    if bytes.len() >= PARALLEL_BLAKE3_MIN_BYTES {
+        hasher.update_rayon(bytes);
+    } else {
+        hasher.update(bytes);
+    }
+    *blake3::Hasher::finalize(&hasher).as_bytes()
 }
 
 #[cfg(test)]

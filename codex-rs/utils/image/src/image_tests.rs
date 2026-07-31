@@ -262,6 +262,30 @@ async fn data_url_processing_converts_gif_to_png() {
 }
 
 #[test]
+fn reads_dimensions_from_base64_prefix() {
+    for format in [ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::WebP] {
+        let image = ImageBuffer::from_pixel(320, 180, Rgba([10u8, 20, 30, 255]));
+        let encoded = BASE64_STANDARD.encode(image_bytes(&image, format));
+
+        assert_eq!(dimensions_from_base64(&encoded).unwrap(), (320, 180));
+    }
+}
+
+#[test]
+fn reads_jpeg_dimensions_after_large_metadata_prefix() {
+    let image = ImageBuffer::from_pixel(320, 180, Rgba([10u8, 20, 30, 255]));
+    let jpeg = image_bytes(&image, ImageFormat::Jpeg);
+    let mut jpeg_with_metadata = Vec::with_capacity(jpeg.len() + u16::MAX as usize + 1);
+    jpeg_with_metadata.extend_from_slice(&jpeg[..2]);
+    jpeg_with_metadata.extend_from_slice(&[0xff, 0xe1, 0xff, 0xff]);
+    jpeg_with_metadata.resize(jpeg_with_metadata.len() + u16::MAX as usize - 2, 0);
+    jpeg_with_metadata.extend_from_slice(&jpeg[2..]);
+    let encoded = BASE64_STANDARD.encode(jpeg_with_metadata);
+
+    assert_eq!(dimensions_from_base64(&encoded).unwrap(), (320, 180));
+}
+
+#[test]
 fn data_url_processing_rejects_malformed_input() {
     for image_url in [
         "image/png;base64,AAAA",
