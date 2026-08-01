@@ -43,6 +43,8 @@ pub use crate::error::ImageProcessingError;
 pub struct EncodedImage {
     pub bytes: Arc<[u8]>,
     pub mime: String,
+    pub source_width: u32,
+    pub source_height: u32,
     pub width: u32,
     pub height: u32,
 }
@@ -206,7 +208,7 @@ pub fn load_for_prompt_bytes(
             PromptImageMode::ResizeToFit | PromptImageMode::Original => None,
         };
 
-        let encoded = if let Some((width, height, resized)) = target_dimensions {
+        let encoded = if let Some((prepared_width, prepared_height, resized)) = target_dimensions {
             let target_format = format
                 .filter(|format| can_preserve_source_bytes(*format))
                 .unwrap_or(ImageFormat::Png);
@@ -215,8 +217,10 @@ pub fn load_for_prompt_bytes(
             EncodedImage {
                 bytes: bytes.into(),
                 mime,
-                width,
-                height,
+                source_width: width,
+                source_height: height,
+                width: prepared_width,
+                height: prepared_height,
             }
         } else {
             if let Some(format) = format.filter(|format| can_preserve_source_bytes(*format)) {
@@ -224,6 +228,8 @@ pub fn load_for_prompt_bytes(
                 EncodedImage {
                     bytes: file_bytes.into(),
                     mime,
+                    source_width: width,
+                    source_height: height,
                     width,
                     height,
                 }
@@ -233,6 +239,8 @@ pub fn load_for_prompt_bytes(
                 EncodedImage {
                     bytes: bytes.into(),
                     mime,
+                    source_width: width,
+                    source_height: height,
                     width,
                     height,
                 }

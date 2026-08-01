@@ -316,7 +316,15 @@ async fn resize_with_limits_respects_dimension_and_patch_budgets() {
     )
     .expect("process image with explicit limits");
 
-    assert_eq!((processed.width, processed.height), (1600, 1600));
+    assert_eq!(
+        (
+            processed.source_width,
+            processed.source_height,
+            processed.width,
+            processed.height,
+        ),
+        (2048, 2048, 1600, 1600)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -374,6 +382,8 @@ async fn bounds_cache_by_encoded_byte_size() {
     let image = |size| EncodedImage {
         bytes: vec![0; size].into(),
         mime: "image/png".to_string(),
+        source_width: 1,
+        source_height: 1,
         width: 1,
         height: 1,
     };
