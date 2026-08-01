@@ -28,7 +28,6 @@ use crossterm::cursor::MoveTo;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::queue;
 use crossterm::style::Colors;
-use crossterm::style::Print;
 use crossterm::style::SetAttribute;
 use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
@@ -251,19 +250,9 @@ where
         }
     }
 
-    /// Gets the current buffer as a reference.
-    fn current_buffer(&self) -> &Buffer {
-        &self.buffers[self.current]
-    }
-
     /// Gets the current buffer as a mutable reference.
     fn current_buffer_mut(&mut self) -> &mut Buffer {
         &mut self.buffers[self.current]
-    }
-
-    /// Gets the previous buffer as a reference.
-    fn previous_buffer(&self) -> &Buffer {
-        &self.buffers[1 - self.current]
     }
 
     /// Gets the previous buffer as a mutable reference.
@@ -284,12 +273,25 @@ where
     /// Obtains a difference between the previous and the current buffer, passes it to the current
     /// backend for drawing, and advances the buffers for the next frame.
     pub fn flush(&mut self) -> io::Result<()> {
-        let updates = diff_buffers(self.previous_buffer(), self.current_buffer());
-        let last_put_command = updates.iter().rfind(|command| command.is_put());
-        if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
-            self.last_known_cursor_pos = Position { x, y };
+        let last_put_position = {
+            let (previous, current) = if self.current == 0 {
+                let [current, previous] = &self.buffers;
+                (previous, current)
+            } else {
+                let [previous, current] = &self.buffers;
+                (previous, current)
+            };
+            let updates = diff_buffers(previous, current);
+            let last_put_position = updates.iter().rev().find_map(|command| match command {
+                DrawCommand::Put { x, y, .. } => Some(Position { x: *x, y: *y }),
+                DrawCommand::ClearToEnd { .. } => None,
+            });
+            draw(&mut self.backend, updates.into_iter())?;
+            last_put_position
+        };
+        if let Some(position) = last_put_position {
+            self.last_known_cursor_pos = position;
         }
-        draw(&mut self.backend, updates.into_iter())?;
         self.swap_buffers();
         Ok(())
     }
@@ -569,17 +571,23 @@ where
 
 use ratatui::buffer::Cell;
 
-#[derive(Debug, IsVariant)]
-enum DrawCommand {
-    Put { x: u16, y: u16, cell: Cell },
+#[derive(Debug, Eq, IsVariant, PartialEq)]
+enum DrawCommand<'a> {
+    Put { x: u16, y: u16, cell: &'a Cell },
     ClearToEnd { x: u16, y: u16, bg: Color },
 }
 
-fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
+fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
     let next_buffer = &b.content;
+    let visible_on_blank = Modifier::REVERSED
+        .union(Modifier::UNDERLINED)
+        .union(Modifier::SLOW_BLINK)
+        .union(Modifier::RAPID_BLINK)
+        .union(Modifier::CROSSED_OUT);
 
     let mut updates = vec![];
     let mut last_nonblank_columns = vec![0; a.area.height as usize];
+    let mut needs_forced_width_repair = false;
     for y in 0..a.area.height {
         let row_start = y as usize * a.area.width as usize;
         let row_end = row_start + a.area.width as usize;
@@ -598,6 +606,13 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
         while column < row.len() {
             let cell = &row[column];
             let width = usize::from(cell.cell_width());
+            if let CellDiffOption::ForcedWidth(current_width) = cell.diff_option {
+                let previous = &a.content[row_start + column];
+                needs_forced_width_repair |= usize::from(previous.cell_width())
+                    > usize::from(current_width.get())
+                    && (previous.bg != Color::Reset
+                        || previous.modifier.intersects(visible_on_blank));
+            }
             // Keep AlwaysUpdate blanks in the drawable prefix; otherwise filtering the tail
             // would discard the repaint explicitly requested by Ratatui.
             if cell.symbol() != " "
@@ -635,14 +650,19 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
         last_nonblank_columns[y as usize] = last_nonblank_column as u16;
     }
 
-    // Preserve Ratatui's native Skip, AlwaysUpdate, and multi-width diff semantics.
+    if !needs_forced_width_repair {
+        // Preserve Ratatui's native Skip, AlwaysUpdate, and multi-width diff semantics.
+        for (x, y, cell) in a.diff_iter(b) {
+            let row = usize::from(y - a.area.y);
+            if x <= last_nonblank_columns[row] {
+                updates.push(DrawCommand::Put { x, y, cell });
+            }
+        }
+        return updates;
+    }
+
     let mut cell_updates = a.diff_iter(b).collect::<Vec<_>>();
     // Ratatui's ForcedWidth path skips trailing-cell invalidation when a styled wide cell shrinks.
-    let visible_on_blank = Modifier::REVERSED
-        .union(Modifier::UNDERLINED)
-        .union(Modifier::SLOW_BLINK)
-        .union(Modifier::RAPID_BLINK)
-        .union(Modifier::CROSSED_OUT);
     for (i, (current, previous)) in next_buffer.iter().zip(a.content.iter()).enumerate() {
         let CellDiffOption::ForcedWidth(current_width) = current.diff_option else {
             continue;
@@ -676,19 +696,15 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
     for (x, y, cell) in cell_updates {
         let row = usize::from(y - a.area.y);
         if x <= last_nonblank_columns[row] {
-            updates.push(DrawCommand::Put {
-                x,
-                y,
-                cell: cell.clone(),
-            });
+            updates.push(DrawCommand::Put { x, y, cell });
         }
     }
     updates
 }
 
-fn draw<I>(writer: &mut impl Write, commands: I) -> io::Result<()>
+fn draw<'a, I>(writer: &mut impl Write, commands: I) -> io::Result<()>
 where
-    I: Iterator<Item = DrawCommand>,
+    I: Iterator<Item = DrawCommand<'a>>,
 {
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
@@ -707,7 +723,7 @@ where
         let destination = hyperlink.map(|(destination, _)| destination);
         let hyperlink_changed = active_hyperlink.as_deref() != destination;
         if hyperlink_changed && active_hyperlink.is_some() {
-            queue!(writer, Print("\x1b]8;;\x07"))?;
+            writer.write_all(b"\x1b]8;;\x07")?;
         }
         // Move the cursor if the previous location was not (x - 1, y)
         if !matches!(last_pos, Some(p) if *x == p.x + 1 && *y == p.y) {
@@ -737,10 +753,10 @@ where
                 }
 
                 if hyperlink_changed && let Some(destination) = destination {
-                    queue!(writer, Print(format!("\x1b]8;;{destination}\x07")))?;
+                    write!(writer, "\x1b]8;;{destination}\x07")?;
                 }
                 let symbol = hyperlink.map_or_else(|| cell.symbol(), |(_, visible)| visible);
-                queue!(writer, Print(symbol))?;
+                writer.write_all(symbol.as_bytes())?;
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
@@ -755,7 +771,7 @@ where
         }
     }
     if active_hyperlink.is_some() {
-        queue!(writer, Print("\x1b]8;;\x07"))?;
+        writer.write_all(b"\x1b]8;;\x07")?;
     }
 
     queue!(
@@ -1226,6 +1242,30 @@ mod tests {
                 "expected the always-update cell in {text:?} to be emitted; commands: {commands:?}"
             );
         }
+    }
+
+    #[test]
+    fn diff_buffers_updates_equal_width_forced_cell_without_suffix_repair() {
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 3, /*height*/ 1,
+        );
+        let mut previous = Buffer::empty(area);
+        let mut next = Buffer::empty(area);
+        previous[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com/old\x07a\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+        next[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com/new\x07b\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+
+        assert_eq!(
+            diff_buffers(&previous, &next),
+            vec![DrawCommand::Put {
+                x: 0,
+                y: 0,
+                cell: &next[(0, 0)],
+            }]
+        );
     }
 
     #[test]
