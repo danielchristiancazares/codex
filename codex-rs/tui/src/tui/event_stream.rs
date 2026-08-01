@@ -156,6 +156,7 @@ pub struct TuiEventStream<S: EventSource + Default + Unpin = CrosstermEventSourc
     resume_stream: WatchStream<()>,
     terminal_focused: Arc<AtomicBool>,
     poll_draw_first: bool,
+    skip_next_draw: bool,
     #[cfg(unix)]
     suspend_context: crate::tui::job_control::SuspendContext,
     #[cfg(unix)]
@@ -177,6 +178,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
             resume_stream,
             terminal_focused,
             poll_draw_first: false,
+            skip_next_draw: false,
             #[cfg(unix)]
             suspend_context,
             #[cfg(unix)]
@@ -237,13 +239,23 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
 
     /// Poll the draw broadcast stream for the next draw event. Draw events are used to trigger a redraw of the TUI.
     pub fn poll_draw_event(&mut self, cx: &mut Context<'_>) -> Poll<Option<TuiEvent>> {
-        match Pin::new(&mut self.draw_stream).poll_next(cx) {
-            Poll::Ready(Some(Ok(()))) => Poll::Ready(Some(TuiEvent::Draw)),
-            Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => {
-                Poll::Ready(Some(TuiEvent::Draw))
+        loop {
+            match Pin::new(&mut self.draw_stream).poll_next(cx) {
+                Poll::Ready(Some(Ok(()))) if self.skip_next_draw => {
+                    self.skip_next_draw = false;
+                }
+                Poll::Ready(Some(Ok(()))) => return Poll::Ready(Some(TuiEvent::Draw)),
+                Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => {
+                    // The next item is the retained notification represented by this lag.
+                    self.skip_next_draw = true;
+                    return Poll::Ready(Some(TuiEvent::Draw));
+                }
+                Poll::Ready(None) => {
+                    self.skip_next_draw = false;
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
         }
     }
 
@@ -495,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn lagged_draw_maps_to_draw() {
+    async fn lagged_draw_coalesces_retained_notification() {
         let (broker, _handle, draw_tx, draw_rx, terminal_focused) = setup();
         let mut stream = make_stream(broker, draw_rx.resubscribe(), terminal_focused);
 
@@ -505,6 +517,22 @@ mod tests {
 
         let first = stream.next().await;
         assert!(matches!(first, Some(TuiEvent::Draw)));
+
+        assert!(
+            timeout(Duration::from_millis(25), stream.next())
+                .await
+                .is_err(),
+            "retained draw notification was not coalesced"
+        );
+
+        let _ = draw_tx.send(());
+        let next = timeout(Duration::from_millis(100), stream.next())
+            .await
+            .expect("timed out waiting for a new draw notification");
+        assert!(matches!(next, Some(TuiEvent::Draw)));
+
+        drop(draw_tx);
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]

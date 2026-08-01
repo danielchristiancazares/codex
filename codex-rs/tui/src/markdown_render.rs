@@ -463,7 +463,15 @@ where
     }
 
     fn run(&mut self) {
+        self.run_with_event_observer(|_, _, _| {});
+    }
+
+    fn run_with_event_observer(
+        &mut self,
+        mut observe: impl FnMut(&mut Self, &Event<'a>, &Range<usize>),
+    ) {
         while let Some((ev, range)) = self.iter.next() {
+            observe(self, &ev, &range);
             self.handle_event(ev, range);
         }
         self.flush_current_line();

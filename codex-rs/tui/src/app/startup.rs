@@ -418,7 +418,7 @@ See the Codex keymap documentation for supported actions and examples."
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
             scrollback_has_older_history: false,
-            commit_anim_running: Arc::new(AtomicBool::new(false)),
+            commit_animation_ticker: CommitAnimationTicker::default(),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
             skill_load_warnings: SkillLoadWarningState::default(),

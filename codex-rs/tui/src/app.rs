@@ -190,8 +190,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::select;
@@ -211,6 +209,7 @@ mod app_server_event_targets;
 mod app_server_events;
 pub(crate) mod app_server_requests;
 mod background_requests;
+mod commit_animation_ticker;
 mod config_persistence;
 mod event_dispatch;
 mod history_pagination;
@@ -239,6 +238,7 @@ mod working_directory;
 use self::agent_navigation::AgentNavigationDirection;
 use self::agent_navigation::AgentNavigationState;
 use self::app_server_requests::PendingAppServerRequests;
+use self::commit_animation_ticker::CommitAnimationTicker;
 use self::loaded_threads::find_loaded_subagent_threads_for_primary;
 use self::pending_interactive_replay::PendingInteractiveReplayState;
 use self::platform_actions::*;
@@ -553,7 +553,7 @@ pub(crate) struct App {
     pub(crate) key_chord_matcher: KeyChordMatcher,
 
     /// Controls the animation thread that sends CommitTick events.
-    pub(crate) commit_anim_running: Arc<AtomicBool>,
+    commit_animation_ticker: CommitAnimationTicker,
     // Shared across ChatWidget instances so invalid status-line config warnings only emit once.
     status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared across ChatWidget instances so invalid terminal-title config warnings only emit once.
