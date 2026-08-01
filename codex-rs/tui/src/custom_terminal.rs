@@ -587,7 +587,19 @@ fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
 
     let mut updates = vec![];
     let mut last_nonblank_columns = vec![0; a.area.height as usize];
-    let mut needs_forced_width_repair = false;
+    let needs_forced_width_repair =
+        next_buffer
+            .iter()
+            .zip(a.content.iter())
+            .any(|(current, previous)| match current.diff_option {
+                CellDiffOption::ForcedWidth(current_width) => {
+                    let previous_width = usize::from(previous.cell_width());
+                    previous_width > usize::from(current_width.get())
+                        && (previous.bg != Color::Reset
+                            || previous.modifier.intersects(visible_on_blank))
+                }
+                _ => false,
+            });
     for y in 0..a.area.height {
         let row_start = y as usize * a.area.width as usize;
         let row_end = row_start + a.area.width as usize;
@@ -600,21 +612,13 @@ fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
         // After that point the rest of the row can be cleared with a single ClearToEnd, a perf win
         // versus emitting multiple space Put commands.
         let mut last_nonblank_column = 0usize;
-        let mut column = 0usize;
-        while column < row.len() {
+        for column in (0..row.len()).rev() {
             let cell = &row[column];
-            let width = usize::from(cell.cell_width());
-            if let CellDiffOption::ForcedWidth(current_width) = cell.diff_option {
-                let previous = &a.content[row_start + column];
-                needs_forced_width_repair |= usize::from(previous.cell_width())
-                    > usize::from(current_width.get())
-                    && (previous.bg != Color::Reset
-                        || previous.modifier.intersects(visible_on_blank));
-            }
             if cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty() {
+                let width = usize::from(cell.cell_width());
                 last_nonblank_column = column + (width.saturating_sub(1));
+                break;
             }
-            column += width.max(1); // treat zero-width symbols as width 1
         }
 
         if last_nonblank_column + 1 < row.len() {

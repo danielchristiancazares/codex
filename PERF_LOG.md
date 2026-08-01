@@ -12,6 +12,62 @@ repeating discarded ideas.
 - `BlockingLruCache` is disabled outside a Tokio runtime. Benchmarks intended to measure cache hits
   must enter a runtime or they will silently measure the miss path.
 
+## 2026-08-01: TUI suffix diff scanning
+
+Scope: `codex-tui` custom-terminal buffer diffing and ANSI serialization for the existing 120x40
+rendering fixtures. The optimization retains the styled wide-glyph repair path while finding each
+row's last visible cell from the right.
+
+Environment: Intel Xeon W-3223, 16 logical CPUs, macOS x86_64, Rust 1.95.0. The pre-change
+baseline was commit `e42dfa73e305971f958a88a8b0a5780e80b76844`.
+
+### Methodology
+
+The benchmark command was run once to warm the optimized build and twice more for each recorded
+configuration:
+
+```sh
+cd codex-rs
+cargo bench -q -p codex-tui --bench rendering -- --color never
+```
+
+All runs used the same existing Divan fixtures and sampling: 50 samples x 500 iterations for
+unchanged, sparse-update, and hyperlink cases; 30 samples x 100 iterations for dense repaint.
+The table reports the median of the two recorded run medians and their minimum-to-maximum range.
+
+### Current baseline
+
+| Benchmark | Pre-change median | Final median | Result |
+| --- | ---: | ---: | ---: |
+| `buffer_diff_unchanged` | 128.1 us (127.6-128.5) | 113.9 us (113.8-113.9) | 11.1% faster |
+| `buffer_diff_sparse_update` | 127.8 us (127.7-127.8) | 113.8 us (113.7-113.9) | 10.9% faster |
+| `buffer_diff_dense_repaint` | 173.2 us (172.3-174.1) | 153.5 us (153.4-153.6) | 11.4% faster |
+| `ansi_sparse_update` | 128.1 us (128.0-128.2) | 114.2 us (114.0-114.3) | 10.9% faster |
+| `ansi_hyperlink_update` | 128.0 us (127.9-128.0) | 113.7 us (113.4-113.9) | 11.2% faster |
+| `ansi_dense_repaint` | 251.0 us (250.8-251.1) | 232.9 us (232.6-233.2) | 7.2% faster |
+
+### Retained win
+
+`diff_buffers` now precomputes the exact rare styled `ForcedWidth` repair predicate once and scans
+each row from right to left to locate its last visible cell. This removes common full-row symbol,
+width, and repair checks while preserving clear-to-end and wide-glyph behavior. The improvement was
+repeatable across both recorded runs, with 7.2%-11.4% lower medians across the rendering fixtures.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-tui
+just test -p codex-tui custom_terminal::tests
+just test -p codex-tui terminal_hyperlinks::tests
+just fix -p codex-tui
+just fmt
+```
+
+The focused custom-terminal (12 tests) and hyperlink (14 tests) suites passed. The full TUI run
+reported 3292 passed, 23 failures, and 4 skipped; the failures were existing time/update/status
+snapshot cases. The final `just fix` and `just fmt` passes completed successfully.
+
 ## 2026-08-01: code-mode-host transport throughput
 
 Scope: end-to-end `codex-code-mode-host` stdio and WebSocket execution throughput, with emphasis on
