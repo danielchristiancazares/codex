@@ -396,8 +396,20 @@ impl ChatWidget {
             self.bottom_pane.hide_status_indicator();
             self.add_boxed_history(cell);
         }
-        if scope == CommitTickScope::AnyMode || outcome.has_controller {
-            self.sync_active_stream_tail();
+        if scope == CommitTickScope::AnyMode
+            && self.active_cell_is_stream_tail()
+            && self
+                .stream_controller
+                .as_ref()
+                .is_none_or(|controller| !controller.has_live_tail())
+            && self
+                .plan_stream_controller
+                .as_ref()
+                .is_none_or(|controller| !controller.has_live_tail())
+        {
+            // Deltas and resize/render-mode changes synchronize live tails at the mutation site.
+            // Regular ticks only need to clear an orphaned tail after its controller disappears.
+            self.clear_active_stream_tail();
         }
 
         if outcome.has_controller && outcome.all_idle {

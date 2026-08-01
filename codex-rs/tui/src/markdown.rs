@@ -126,10 +126,14 @@ pub(crate) fn render_streaming_markdown_agent_with_links_and_cwd(
         // Fence unwrapping removes opening/closing lines. A normalized tail that is still a raw
         // suffix necessarily begins after those removed lines, so its boundary can safely be
         // mapped back to the raw source; otherwise leave the transformed block mutable.
-        rendered.last_top_level_block_start = rendered
+        let mapped_boundary = rendered
             .last_top_level_block_start
             .and_then(|boundary| markdown_source.strip_suffix(&normalized[boundary..]))
             .map(str::len);
+        if mapped_boundary.is_none() {
+            rendered.stable_prefix_rendered_len = None;
+        }
+        rendered.last_top_level_block_start = mapped_boundary;
     }
     rendered
 }

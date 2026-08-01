@@ -1657,6 +1657,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
+        let streams_were_idle = self.stream_controllers_idle();
         self.raw_output_mode = enabled;
         self.config.tui_raw_output_mode = enabled;
         let render_mode = self.history_render_mode();
@@ -1666,7 +1667,15 @@ impl ChatWidget {
         if let Some(controller) = self.plan_stream_controller.as_mut() {
             controller.set_render_mode(render_mode);
         }
+        let stream_tail_changed = self.sync_active_stream_tail();
+        if streams_were_idle && !self.stream_controllers_idle() {
+            self.app_event_tx.send(AppEvent::StartCommitAnimation);
+            self.run_catch_up_commit_tick();
+        }
         self.refresh_status_surfaces();
+        if stream_tail_changed {
+            self.request_redraw();
+        }
     }
 
     pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {

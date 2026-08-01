@@ -6,6 +6,7 @@
 use super::resize_reflow::trailing_run_start;
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
+use crate::app::commit_animation_ticker::run_commit_animation_ticks;
 use crate::app_server_session::ForkGoalContinuation;
 use crate::app_server_session::UnsupportedLegacyPermissionProfile;
 use crate::app_server_session::turn_permissions_overrides;
@@ -16,6 +17,7 @@ use crate::session_resume::cwds_differ;
 use codex_app_server_protocol::ThreadGoalStatus;
 #[cfg(target_os = "windows")]
 use codex_config::types::WindowsSandboxModeToml;
+use std::thread;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
@@ -576,26 +578,24 @@ impl App {
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::StartCommitAnimation => {
-                if self
-                    .commit_anim_running
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                    .is_ok()
-                {
+                if let Some(generation) = self.commit_animation_ticker.start() {
                     let tx = self.app_event_tx.clone();
-                    let running = self.commit_anim_running.clone();
                     thread::spawn(move || {
-                        while running.load(Ordering::Relaxed) {
-                            thread::sleep(COMMIT_ANIMATION_TICK);
-                            tx.send(AppEvent::CommitTick);
-                        }
+                        run_commit_animation_ticks(
+                            generation,
+                            || thread::sleep(COMMIT_ANIMATION_TICK),
+                            |generation| tx.send(AppEvent::CommitTick(generation)),
+                        );
                     });
                 }
             }
             AppEvent::StopCommitAnimation => {
-                self.commit_anim_running.store(false, Ordering::Release);
+                self.commit_animation_ticker.stop();
             }
-            AppEvent::CommitTick => {
-                self.chat_widget.on_commit_tick();
+            AppEvent::CommitTick(generation) => {
+                if self.commit_animation_ticker.accepts_tick(generation) {
+                    self.chat_widget.on_commit_tick();
+                }
             }
             AppEvent::Exit(mode) => {
                 if mode == ExitMode::ShutdownFirst {

@@ -281,15 +281,17 @@ where
         &mut self.backend
     }
 
-    /// Obtains a difference between the previous and the current buffer and passes it to the
-    /// current backend for drawing.
+    /// Obtains a difference between the previous and the current buffer, passes it to the current
+    /// backend for drawing, and advances the buffers for the next frame.
     pub fn flush(&mut self) -> io::Result<()> {
         let updates = diff_buffers(self.previous_buffer(), self.current_buffer());
         let last_put_command = updates.iter().rfind(|command| command.is_put());
         if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
             self.last_known_cursor_pos = Position { x, y };
         }
-        draw(&mut self.backend, updates.into_iter())
+        draw(&mut self.backend, updates.into_iter())?;
+        self.swap_buffers();
+        Ok(())
     }
 
     /// Updates the Terminal so that internal buffers match the requested area.
@@ -433,8 +435,6 @@ where
                 self.set_cursor_position(position)?;
             }
         }
-
-        self.swap_buffers();
 
         Backend::flush(&mut self.backend)?;
 
@@ -1116,6 +1116,34 @@ mod tests {
     }
 
     #[test]
+    fn diff_buffers_does_not_clear_unchanged_trailing_blanks() {
+        let previous = Buffer::with_lines(["a  "]);
+        let next = previous.clone();
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            !commands.iter().any(DrawCommand::is_clear_to_end),
+            "expected unchanged trailing blanks not to be cleared; commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn diff_buffers_clears_changed_trailing_suffix() {
+        let previous = Buffer::with_lines(["abc"]);
+        let next = Buffer::with_lines(["a  "]);
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 1, y: 0, .. })),
+            "expected the changed trailing suffix to be cleared; commands: {commands:?}"
+        );
+    }
+
+    #[test]
     fn diff_buffers_clear_to_end_starts_after_wide_char() {
         let area = Rect::new(0, 0, 10, 1);
         for (before, after) in [("中文", "中"), ("ｶﾞﾞ", "ｶﾞ")] {
@@ -1198,6 +1226,32 @@ mod tests {
                 "expected the always-update cell in {text:?} to be emitted; commands: {commands:?}"
             );
         }
+    }
+
+    #[test]
+    fn diff_buffers_clears_suffix_after_forced_width_hyperlink_shrinks() {
+        use ratatui::buffer::CellDiffOption;
+
+        let area = Rect::new(0, 0, 4, 1);
+        let mut previous = Buffer::empty(area);
+        let mut next = Buffer::empty(area);
+        previous[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com\x07ab\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(
+                NonZeroU16::new(2).expect("non-zero width"),
+            ));
+        next[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com\x07a\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 1, y: 0, .. })),
+            "expected the old forced-width hyperlink suffix to be cleared; commands: {commands:?}"
+        );
     }
 
     #[test]
