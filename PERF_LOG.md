@@ -12,6 +12,126 @@ repeating discarded ideas.
 - `BlockingLruCache` is disabled outside a Tokio runtime. Benchmarks intended to measure cache hits
   must enter a runtime or they will silently measure the miss path.
 
+## 2026-08-01: code-mode-host transport throughput
+
+Scope: end-to-end `codex-code-mode-host` stdio and WebSocket execution throughput, with emphasis on
+serving concurrent WebSocket clients without changing the stdio runtime model.
+
+Environment: Intel Xeon W-3223, 16 logical CPUs, macOS x86_64, Rust 1.95.0, Bazel 9.0.0. The
+comparison baseline commit was `ebf7d28aa1926c767646e40b2fc78e96b03b6fa9`.
+
+### Fixtures and methodology
+
+The Bazel-only Divan fixtures spawn the optimized host binary as a child, negotiate protocol v1,
+open sessions, and complete an untimed warm-up execution before collecting samples. The matched
+stdio and WebSocket cases execute eight concurrent cells with 64-byte payloads and four concurrent
+cells with 8 KiB payloads. Additional WebSocket coverage measures one 64-byte cell sequentially,
+eight clients each executing eight 64-byte cells, 12 same-connection delegates carrying 64 KiB
+inputs with small outputs, and 32 concurrent trivial cells without delegates.
+
+The WebSocket command was run once to warm the optimized build and then three more times for the
+recorded results:
+
+```sh
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/code-mode-host:websocket-throughput-bench
+```
+
+The matched stdio command was likewise run once to warm the build and twice more for the recorded
+results:
+
+```sh
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  //codex-rs/code-mode-host:stdio-throughput-bench
+```
+
+The table reports the median of the recorded run medians and their minimum-to-maximum range. These
+ranges are medians across repeated warmed runs, not confidence intervals. The excluded warm-up
+command produced valid benchmark output but was used only to establish the optimized build state.
+
+### Current baseline
+
+| Transport | Benchmark fixture | Divan sampling | Median of run medians | Range of run medians |
+| --- | --- | --- | ---: | ---: |
+| WebSocket | `small_payload_batch` (8 x 64 B) | 20 x 1 | 5.186 ms | 5.013-5.207 ms |
+| WebSocket | `large_payload_batch` (4 x 8 KiB) | 20 x 1 | 3.226 ms | 3.184-3.243 ms |
+| WebSocket | `sequential_payload_round_trip` (1 x 64 B) | 50 x 1 | 1.658 ms | 1.651-1.673 ms |
+| WebSocket | `multi_client_small_payload_round_trips` (8 clients x 8 x 64 B) | 20 x 1 | 25.66 ms | 25.52-25.85 ms |
+| WebSocket | `concurrent_large_delegate_serialization` (12 x 64 KiB) | 20 x 1 | 7.925 ms | 7.892-8.320 ms |
+| WebSocket | `concurrent_trivial_cells` (32 cells) | 30 x 1 | 16.00 ms | 15.93-16.13 ms |
+| stdio | `small_delegate_batch` (8 x 64 B) | 20 x 1 | 5.814 ms | 5.779-5.849 ms |
+| stdio | `large_delegate_batch` (4 x 8 KiB) | 20 x 1 | 3.434 ms | 3.286-3.581 ms |
+
+### Retained win
+
+The standalone binary now selects a two-worker Tokio runtime only for `ws://` listeners and retains
+the current-thread runtime for stdio. The WebSocket comparison used three warmed optimized runs;
+the multi-client before and after ranges did not overlap.
+
+| Workload | Before | After | Result |
+| --- | ---: | ---: | ---: |
+| 8 clients x 8 small-payload cells | 42.00 ms | 25.68 ms | 38.86% faster |
+| Sequential small-payload round trip | 1.633 ms | 1.650 ms | 1.04% slower |
+| 8-cell small-payload batch | 5.490 ms | 5.064 ms | 7.76% faster |
+| 4-cell large-payload batch | 3.381 ms | 3.263 ms | 3.49% faster |
+
+The small sequential regression was accepted because it stayed near 1%, while the retained runtime
+substantially improved the targeted multi-client workload and also improved both matched batch
+cases. Stdio does not pay for a multi-thread runtime.
+
+### Rejected experiments
+
+#### Default Tokio stdio `BufReader` and `BufWriter`
+
+Interleaved small-payload medians were A 5.844/6.124/6.049 ms versus B
+5.770/5.424/5.639 ms. The 6.778% median paired gain was below the retention threshold and within
+observed variation. Large-payload medians were A 3.350/3.340/3.404 ms versus B
+3.315/3.153/4.055 ms, including one 19.125% regression. The change was reverted.
+
+#### `TCP_NODELAY`
+
+The sequential median moved from 1.623 ms to 1.580 ms, a 2.65% improvement below the retention
+threshold. The small batch regressed from 5.515 ms to 5.589 ms (1.34%), and the large batch
+regressed from 3.384 ms to 3.981 ms (17.64%). The change was reverted; the sequential benchmark was
+retained to keep this tradeoff visible.
+
+#### Encode delegate frames before locking pending requests
+
+The targeted 12 x 64 KiB same-connection workload moved from 7.836 ms to 7.820 ms (0.20%), while
+the large batch regressed from 3.230 ms to 3.416 ms (5.76%). The change was reverted; the delegate
+serialization benchmark was retained.
+
+#### Supervise all cells in one task
+
+The 32-cell trivial workload moved from 16.050 ms to 16.100 ms (0.312% slower), and the sequential
+case moved from 1.652 ms to 1.705 ms (3.208% slower). The change was reverted; the trivial-cell
+benchmark was retained.
+
+### Validation
+
+```sh
+bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed \
+  --test_arg=--test \
+  //codex-rs/code-mode-host:stdio-throughput-bench \
+  //codex-rs/code-mode-host:websocket-throughput-bench
+bazel test --cache_test_results=no --test_output=errors \
+  //codex-rs/code-mode-host:code-mode-host-unit-tests \
+  //codex-rs/code-mode-host:code-mode-host-stdio-test \
+  //codex-rs/code-mode-host:code-mode-host-websocket-test
+cd codex-rs
+just test -p codex-code-mode-host
+just fix -p codex-code-mode-host
+just fmt
+```
+
+Both optimized benchmark smoke targets passed, covering both stdio cases and all six WebSocket
+cases. The uncached Bazel unit, stdio integration, and WebSocket integration targets all passed.
+The Cargo test command was attempted once and was externally blocked because the `v8` 150.4.0
+build requested an unpublished Intel macOS `rusty_v8` archive whose GitHub URL returned HTTP 404.
+The scoped `just fix` command reached the same external archive failure and was not retried.
+Workspace formatting passed. `just bazel-lock-update` had already passed with no changes to
+`Cargo.lock` or `MODULE.bazel.lock`.
+
 ## 2026-07-30: prompt-image preparation
 
 Scope: `codex-utils-image` attachment loading, caching, and data-URL generation.
