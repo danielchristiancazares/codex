@@ -602,31 +602,41 @@ fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
         if last_nonblank_column + 1 < row.len() {
             let clear_from = last_nonblank_column + 1;
             let previous_row = &a.content[row_start..row_end];
-            let mut previous_column = 0usize;
             let mut needs_clear = false;
-            while previous_column < previous_row.len() {
+            let mut previous_column = previous_row.len();
+            while previous_column > 0 {
+                previous_column -= 1;
                 let cell = &previous_row[previous_column];
-                let width = usize::from(cell.cell_width()).max(1);
-                if previous_column + width > clear_from
-                    && (cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty())
-                {
+                let width = usize::from(cell.cell_width());
+                if width == 0 && cell.symbol().is_empty() {
+                    continue;
+                }
+                let width = width.max(1);
+                if previous_column + width <= clear_from {
+                    break;
+                }
+                if cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty() {
                     needs_clear = true;
                     break;
                 }
-                previous_column += width;
             }
 
-            let mut next_column = 0usize;
-            while !needs_clear && next_column < row.len() {
+            let mut next_column = row.len();
+            while !needs_clear && next_column > 0 {
+                next_column -= 1;
                 let cell = &row[next_column];
-                let width = usize::from(cell.cell_width()).max(1);
-                if next_column + width > clear_from
-                    && cell.diff_option == CellDiffOption::AlwaysUpdate
-                {
+                let width = usize::from(cell.cell_width());
+                if width == 0 && cell.symbol().is_empty() {
+                    continue;
+                }
+                let width = width.max(1);
+                if next_column + width <= clear_from {
+                    break;
+                }
+                if cell.diff_option == CellDiffOption::AlwaysUpdate {
                     needs_clear = true;
                     break;
                 }
-                next_column += width;
             }
 
             if needs_clear {

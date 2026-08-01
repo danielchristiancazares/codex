@@ -68,6 +68,64 @@ The focused custom-terminal (12 tests) and hyperlink (14 tests) suites passed. T
 reported 3292 passed, 23 failures, and 4 skipped; the failures were existing time/update/status
 snapshot cases. The final `just fix` and `just fmt` passes completed successfully.
 
+## 2026-08-01: TUI suffix-clear eligibility scans
+
+Scope: `codex-tui` custom-terminal buffer diffing for the existing 120x40 rendering fixtures. The
+optimization narrows the previous-buffer and current-buffer suffix checks to the displayed region
+that can intersect `ClearToEnd`.
+
+Environment: Intel Xeon W-3223, 16 logical CPUs, macOS x86_64, Rust 1.95.0. The pre-change
+baseline was commit `238e038d16de203d7b7c9a56fe4342626db81320`.
+
+### Methodology
+
+The benchmark command was run three warmed times for each state after the build was ready. The
+table reports the median of the three run medians and their minimum-to-maximum range:
+
+```sh
+cd codex-rs
+cargo bench -q -p codex-tui --bench rendering -- --color never
+```
+
+All runs used the same existing Divan fixtures and sampling: 50 samples x 500 iterations for
+unchanged, sparse-update, and hyperlink cases; 30 samples x 100 iterations for dense repaint.
+
+### Current baseline
+
+| Benchmark | Pre-change median | Final median | Result |
+| --- | ---: | ---: | ---: |
+| `buffer_diff_unchanged` | 113.6 us (113.6-113.8) | 98.22 us (98.08-98.53) | 13.5% faster |
+| `buffer_diff_sparse_update` | 113.9 us (113.8-113.9) | 98.10 us (98.09-98.37) | 13.9% faster |
+| `buffer_diff_dense_repaint` | 153.4 us (153.3-154.2) | 133.4 us (133.2-133.4) | 13.0% faster |
+| `ansi_sparse_update` | 114.2 us (114.1-114.4) | 98.59 us (98.55-98.63) | 13.7% faster |
+| `ansi_hyperlink_update` | 113.4 us (113.4-113.5) | 98.88 us (98.77-99.38) | 12.8% faster |
+| `ansi_dense_repaint` | 233.0 us (232.7-233.1) | 211.5 us (210.4-213.0) | 9.2% faster |
+
+### Retained win
+
+The suffix-clear checks now scan from the right edge and stop after the displayed range ends before
+the clear boundary. Zero-width empty trailing cells remain traversable so a preceding wide cell is
+still considered, while zero-width symbols with content retain the existing one-column treatment.
+The change preserves styled-cell clearing, `AlwaysUpdate`, wide-glyph, and hyperlink behavior.
+The final three warmed runs show 9.2%-13.9% lower medians across every fixture.
+
+### Validation
+
+```sh
+cd codex-rs
+just test -p codex-tui custom_terminal::tests
+just test -p codex-tui terminal_hyperlinks::tests
+just test -p codex-tui
+just fix -p codex-tui
+just fmt
+cargo bench -q -p codex-tui --bench rendering -- --color never
+```
+
+The focused custom-terminal (12 tests) and hyperlink (14 tests) suites passed. The full TUI run
+reported 3292 passed, 23 failures, and 4 skipped; its failures were the existing time/update/status
+snapshot cases. The scoped fixer, formatter, and final post-format benchmark completed
+successfully.
+
 ## 2026-08-01: code-mode-host transport throughput
 
 Scope: end-to-end `codex-code-mode-host` stdio and WebSocket execution throughput, with emphasis on
