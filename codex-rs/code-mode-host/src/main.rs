@@ -11,13 +11,23 @@ struct Cli {
     listen: String,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
 
-    codex_code_mode_host::run_main(&Cli::parse().listen).await
+    let listen = Cli::parse().listen;
+    let mut runtime_builder = if listen.starts_with("ws://") {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder.worker_threads(/*worker_threads*/ 2);
+        builder
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    runtime_builder
+        .enable_all()
+        .build()?
+        .block_on(codex_code_mode_host::run_main(&listen))
 }
