@@ -464,6 +464,101 @@ just fmt
 The fresh-thread, fork, and named-resume app-server contracts passed. Both optimized end-to-end
 benchmark runs passed.
 
+## 2026-08-01: TUI buffer diff and ANSI serialization
+
+Scope: `codex-tui` custom terminal buffer diffing and ANSI serialization for 120x40 transcript
+frames. Widget computation was intentionally excluded so buffer comparison and output encoding
+could be measured independently.
+
+The pre-edit baseline and candidate comparisons used an isolated release harness outside the
+worktree that included `tui/src/custom_terminal.rs` directly:
+
+```sh
+cargo run --release --offline \
+  --manifest-path /Users/daniel/.copilot/session-state/54b039a9-3fdb-4501-88e2-f135c9b98838/files/tui-render-bench/Cargo.toml \
+  -- --bench --color never
+```
+
+Each result below is the median range from three warmed runs with the same fixture and sampling:
+
+- unchanged and sparse frames: 50 samples x 500 iterations
+- dense repaint: 30 samples x 100 iterations
+- sparse update: one changed status cell at `(31, 37)`
+- dense repaint: all 4,800 cells changed
+- hyperlink update: one OSC 8 forced-width cell changed
+
+The retained fixture is now checked in as `tui/benches/rendering.rs`. Use this command for future
+measurements:
+
+```sh
+cd codex-rs
+cargo bench -p codex-tui --bench rendering -- --color never
+```
+
+### Combined result
+
+| Benchmark | Before | After | Result |
+| --- | ---: | ---: | ---: |
+| Unchanged buffer diff | 111.8-112.0 us | 104.6-105.3 us | 6-7% faster |
+| Sparse buffer diff | 112.1-112.4 us | 106.0-107.5 us | 4-6% faster |
+| Dense buffer diff | 241.7-247.8 us | 163.3-164.0 us | 32-34% faster |
+| Sparse diff + ANSI | 112.1-112.4 us | 105.6-106.2 us | 5-6% faster |
+| Hyperlink diff + ANSI | 112.7-113.4 us | 105.5-105.9 us | 6-7% faster |
+| Dense diff + ANSI | 356.6-362.4 us | 243.4-244.4 us | 32-33% faster |
+
+### Retained wins
+
+| Change | Workload | Before | After | Result |
+| --- | --- | ---: | ---: | ---: |
+| Skip forced-width repair collection, sorting, and deduplication unless a styled wide cell actually shrank | Dense buffer diff | 241.7-247.8 us | 206.8-208.1 us | 14-16% faster |
+| Borrow changed cells in draw commands instead of cloning each `Cell` | Dense buffer diff | 206.8-208.1 us | 163.3-163.6 us | 21-22% faster |
+| Write visible text and OSC 8 delimiters directly instead of formatting a `Print` command per cell | Dense diff + ANSI | 295.4-295.6 us | 243.4-244.4 us | 17-18% faster |
+
+The forced-width fallback is still used when a styled wide cell shrinks, preserving the trailing
+cell repair needed by OSC 8 hyperlinks and wide glyphs. Equal-width hyperlinks use the fast path.
+The borrowed commands remain valid through serialization because they reference the current frame
+buffer, which is not reset until drawing completes.
+
+### Current baseline
+
+The permanent workspace benchmark uses Cargo's `bench` profile, so its absolute timings should not
+be compared to the isolated release harness above. Three warmed post-change runs produced:
+
+| Benchmark | Current median |
+| --- | ---: |
+| `buffer_diff_unchanged` | 129.8-130.2 us |
+| `buffer_diff_sparse_update` | 129.7-130.0 us |
+| `buffer_diff_dense_repaint` | 174.8-176.4 us |
+| `ansi_sparse_update` | 130.1-130.8 us |
+| `ansi_hyperlink_update` | 130.3-130.5 us |
+| `ansi_dense_repaint` | 253.2-255.2 us |
+
+### Rejected experiments
+
+#### Compare unchanged row slices before suffix scans
+
+Checking full row equality to skip trailing-clear scans regressed unchanged and sparse medians from
+106.2-106.8 us to 117.3-117.8 us. `Cell` equality cost more than the scans it replaced, so the
+change was reverted.
+
+#### Return before emitting reset codes for an empty draw-command iterator
+
+The isolated empty-iterator microbenchmark became faster and emitted no bytes, but complete
+unchanged-frame medians remained 106.4-107.3 us and dense medians moved from 243.5-245.6 us to
+247.5-248.3 us. With no end-to-end latency win and a possible dense regression, the change was
+reverted.
+
+### Validation
+
+```sh
+just test -p codex-tui custom_terminal::tests
+just test -p codex-tui terminal_hyperlinks::tests
+cargo bench -p codex-tui --bench rendering -- --test
+just bazel-lock-update
+just fix -p codex-tui
+just fmt
+```
+
 ## Entry template
 
 ```md
