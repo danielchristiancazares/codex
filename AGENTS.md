@@ -1,4 +1,51 @@
-# Rust/codex-rs
+# Codex repository instructions
+
+Read the nearest `AGENTS.md` before editing. The root file contains the authoritative Rust,
+testing, TUI, protocol, and app-server rules; nested files add local requirements.
+
+## Repository shape
+
+- `codex-rs/` is the primary implementation and Cargo workspace.
+- `codex-rs/cli/` contains the Rust CLI entry point.
+- `codex-rs/core/` contains shared agent business logic. Resist adding new concepts here; prefer
+  an existing focused crate or a new crate with a small integration seam.
+- `codex-rs/tui/` is the Ratatui interface, event loop, rendering, transcript, and widget code.
+  `codex-rs/tui/src/bottom_pane/AGENTS.md` requires state-machine documentation to stay aligned
+  with chat-composer and paste-burst behavior.
+- `codex-rs/protocol/` defines shared internal and external types. Keep dependencies minimal and
+  material business logic elsewhere.
+- `codex-rs/app-server/` and `codex-rs/app-server-protocol/` expose the JSON-RPC API used by rich
+  clients. New API development belongs in v2.
+- `codex-rs/model-provider/`, `codex-rs/models-manager/`, and `codex-rs/codex-api/` cover provider
+  selection, model catalogs, and model transport.
+- `codex-cli/` is the thin npm launcher package, not the main implementation.
+- The root `package.json` is for repository-wide maintenance tooling.
+
+## Commands and working directory
+
+Run root `just` recipes from the repository root. The root `justfile` automatically executes its
+Rust recipes in `codex-rs/`.
+
+```sh
+# Build or run
+cd codex-rs && cargo check -p codex-tui
+just codex -- <args>
+
+# Test one crate or one test/filter
+just test -p codex-tui
+just test -p codex-tui custom_terminal::tests::diff_buffers
+
+# Lint and format
+just fix -p codex-tui
+just fmt
+just fmt-check
+
+# Benchmarks
+just bench-smoke
+just bench -- <divan-args>
+```
+
+## Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
 
@@ -46,6 +93,7 @@ In the codex-rs folder where the rust code lives:
   `#[tracing::instrument(...)]` instead of attaching spans to futures with
   `.instrument(...)` at call sites. Before adding instrumentation, check whether the callee—or
   the implementation method it immediately delegates to—is already instrumented.
+- Before editing, inspect the target file size and nearby modules.
 - Avoid large modules:
   - Prefer adding new modules instead of growing existing ones.
   - Target Rust modules under 500 LoC, excluding tests.
@@ -64,10 +112,60 @@ In the codex-rs folder where the rust code lives:
 Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
 
 1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.
-2. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
-3. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `just test`. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
+2. Use the smallest crate or test filter that covers the change. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
+3. For TUI-only work, run `just test -p codex-tui`, then `just fix -p codex-tui`, then `just fmt`.
+4. Once targeted tests pass, if changes were made in common, core, or protocol, run the complete test suite with `just test`. Before starting, explain why targeted coverage is insufficient, give a rough duration estimate, and get explicit user approval. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage.
+
+- Do not rerun tests after the final `just fix` and `just fmt`.
+- Before a long validation run, ensure the required repository tools are installed: `just`,
+  `cargo-nextest`, `dotslash`, and `uv`; TUI snapshot work also needs `cargo-insta`.
+- These command rules also apply to delegated agents and reviewers. Include the exact repository
+  validation commands in their prompts; do not substitute direct `cargo test`, `cargo fmt`, or
+  `cargo clippy` commands when a root `just` recipe exists.
+- Targeted `argument-comment-lint` runs use a prebuilt package that does not support Intel macOS.
+  On `x86_64-apple-darwin`, use the repo-wide Bazel path when appropriate or leave the targeted
+  check to CI; do not bootstrap the source fallback toolchain during routine changes.
+- When parallel agents edit the same worktree, partition ownership by non-overlapping files and
+  defer final tests, Clippy, and formatting until all edits have landed. A half-written file from
+  another agent can make an otherwise unrelated targeted test fail.
 
 Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+
+### Intel macOS rusty_v8 fallback
+
+On this x86_64 macOS host, the `v8` 150.4.0 prebuilt archive may return HTTP 404. Do not retry the
+same download. If the verified local source build exists, pass both its archive and generated
+sandbox binding to Cargo-backed `just` commands:
+
+```sh
+env \
+  V8_FROM_SOURCE=0 \
+  V8_FORCE_DEBUG=0 \
+  MACOSX_DEPLOYMENT_TARGET=12.0 \
+  RUSTY_V8_ARCHIVE=/Users/daniel/rusty_v8/target/release/gn_out/obj/librusty_v8.a \
+  RUSTY_V8_SRC_BINDING_PATH=/Users/daniel/rusty_v8/target/release/gn_out/src_binding.rs \
+  just test -p <crate>
+```
+
+- Verify both files are nonempty and `lipo -info "$RUSTY_V8_ARCHIVE"` reports `x86_64`; the archive
+  alone is insufficient for the sandbox-enabled build.
+- Use the same environment for `just fix`.
+- Before rebuilding rusty_v8 from source, check available disk space. If cleanup is necessary, use
+  a targeted Cargo profile cleanup rather than deleting source or unrelated caches.
+
+## Install and release packaging
+
+- Distinguish a developer build from an installable release artifact. Before giving install
+  instructions, inspect `scripts/install/`, `codex-cli/`, and the current release workflow; do not
+  present `cargo install` of one crate as equivalent to the packaged distribution.
+- Use `scripts/build_codex_package.py` and `scripts/codex_package/layout.py` as the source of truth
+  for package construction. Do not hand-roll a parallel bundle layout.
+- A canonical package includes `codex-package.json`, `bin/`, `codex-resources/`, and `codex-path/`.
+  Release staging should pass already built or signed binaries to the package builder rather than
+  silently rebuilding different artifacts.
+- For cross-target builds, verify every bundled executable, including `rg`, zsh, and platform
+  helpers, matches the requested target. Only execute smoke tests on a compatible host
+  architecture; otherwise use target-aware static layout and binary checks.
 
 ## The `codex-core` crate
 
@@ -81,6 +179,23 @@ Particularly when introducing a new concept/feature/API, before adding to `codex
 - It is time to introduce a new crate to the Cargo workspace for your new functionality. Refactor existing code as necessary to make this happen.
 
 Likewise, when reviewing code, do not hesitate to push back on PRs that would unnecessarily add code to `codex-core`.
+
+## Performance changes
+
+Performance work must be evidence-driven:
+
+1. Record a warmed release-mode baseline before editing.
+2. Change and measure one candidate at a time with identical fixtures and sampling.
+3. Keep only repeatable improvements outside run-to-run variance; revert regressions and noise.
+4. Add correctness coverage for retained behavior changes.
+5. Update `PERF_LOG.md` with a current-baseline section, retained wins, rejected experiments, exact
+   commands, fixtures, and medians so future sessions do not repeat failed work.
+6. Before declaring completion, rerun the retained final state and make the current-baseline
+   section describe that state. The final handoff must name the updated `PERF_LOG.md` section and
+   summarize retained and rejected experiments.
+
+For TUI performance, separate widget computation, buffer diff/ANSI serialization, and terminal or
+VT100 end-to-end costs. Use the requested benchmark as the primary performance evidence.
 
 ## Code Review Rules
 
@@ -108,6 +223,27 @@ Search for breaking changes in external integration surfaces:
 - CLI parameters
 - configuration loading
 - resuming sessions from existing rollouts
+
+### Compatibility tracing
+
+Before changing an event, protocol type, request pipeline, or authentication path, search every
+producer and consumer.
+
+- For TUI `AppEvent` changes, inspect `tui/src/session_log.rs`, replay fixtures, exhaustive matches,
+  and snapshots. Session logging currently derives generic event names from `Debug` output, so
+  changing a variant between unit, tuple, and struct forms can change recorded compatibility.
+- For model transport/auth changes, trace request construction through normalization,
+  serialization/compression, authentication, and every retry path. A mutation hook that runs after
+  the body is encoded does not affect the transmitted request; retries should reuse the intended
+  prepared representation.
+- Keep authentication providers and token managers shared for the lifetime expected by their
+  callers. Do not hold locks across network or device-flow awaits; refresh must be single-flight
+  and cancellation-safe, and invalidation must target the exact rejected token generation or
+  fingerprint so a delayed failure cannot evict newer state.
+- Treat credential persistence as best-effort after valid credentials are stored in memory. Failed
+  writes or deletions must not cause repeated login or reload a rejected credential. Resolve
+  credential paths through `codex_utils_home_dir::find_codex_home()` or an injected resolved
+  `codex_home`, never directly from `HOME` or `USERPROFILE`.
 
 ### Test authoring guidance
 
@@ -304,6 +440,39 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Validate with `just test -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
+
+## Safe upstream synchronization
+
+For requests to update this fork and reapply local behavior, first record the parent gitlink or
+pin, the submodule HEAD and upstream, staged/unstaged/untracked changes in both worktrees, and every
+stash or autostash. Treat a stale checkout or dirty prototype as evidence. For "pre-modified"
+behavior, inspect the pinned or merge-base commit, and report this state map before mutating it.
+
+1. Inspect `git status --short`, remotes, branch/upstream configuration, merge-base, and divergence.
+2. Preserve the complete staged, unstaged, and untracked behavior patch before moving the branch.
+   Never use a destructive reset to discard local work.
+3. Sync the upstream branch cleanly, then reapply the behavior semantically against current APIs.
+   Do not assume the old integration seam still affects the current request or rendering path.
+4. Review every conflict and newly introduced upstream abstraction before choosing where the local
+   behavior belongs.
+5. Validate the affected crates first; broaden only when shared crates require it.
+
+Keep upstream-facing changes small and isolated so future release updates remain easy to reconcile.
+
+## Commit and push completion
+
+When the user requests a commit or push, treat it as part of the task's completion criteria.
+
+1. Re-read `git status --short` and classify every staged, unstaged, and untracked path as
+   task-owned or unrelated before staging.
+2. Stage task-owned paths with explicit pathspecs. Do not use `git add -A` or absorb unrelated
+   worktree changes into the commit.
+3. Review `git diff --cached --check`, the staged stat, and the staged patch before committing.
+4. Include `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` unless the user
+   explicitly asks not to.
+5. Push without force unless the user explicitly requested history rewriting, then verify the
+   remote/upstream contains the new commit. The requested commit or push must be complete before
+   reporting the task complete.
 
 ## Python Development Best Practices
 
