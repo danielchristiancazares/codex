@@ -259,6 +259,39 @@ async fn raw_output_mode_can_change_without_inserting_notice() {
 }
 
 #[tokio::test]
+async fn raw_output_mode_requeues_a_held_table_tail_and_restarts_commits() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.handle_streaming_delta("| Key | Value |\n| --- | --- |\n| alpha | beta |\n".to_string());
+    assert!(chat.active_cell_is_stream_tail());
+    assert!(chat.stream_controllers_idle());
+    while rx.try_recv().is_ok() {}
+
+    chat.set_raw_output_mode(/*enabled*/ true);
+
+    assert!(!chat.active_cell_is_stream_tail());
+    assert!(!chat.stream_controllers_idle());
+    let mut restarted_commits = false;
+    while let Ok(event) = rx.try_recv() {
+        restarted_commits |= matches!(event, AppEvent::StartCommitAnimation);
+    }
+    assert!(
+        restarted_commits,
+        "raw mode should restart commits for lines released from table holdback",
+    );
+
+    chat.on_commit_tick();
+    let history = drain_insert_history(&mut rx)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert!(
+        history.contains("| Key | Value |"),
+        "expected the released raw table header to render, got {history:?}",
+    );
+    assert_chatwidget_snapshot!("raw_output_mode_releases_held_stream_table", history);
+}
+
+#[tokio::test]
 async fn flush_answer_stream_keeps_default_reflow_for_plain_text_tail() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let cwd = chat.config.cwd.to_path_buf();

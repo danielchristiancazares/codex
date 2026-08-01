@@ -135,9 +135,50 @@ fn growing_single_top_level_blocks_render_and_scan_in_one_pass() {
                 Some(cwd.as_path()),
             );
             assert_eq!(pending.last_top_level_block_start, None);
+            assert_eq!(pending.stable_prefix_rendered_len, None);
             assert_eq!(render.lines, pending.lines);
             assert_eq!(render.stable_source_len, 0);
         }
+    }
+}
+
+#[test]
+fn streaming_metadata_tracks_stable_rendered_boundary_in_the_parser_pass() {
+    let cwd = test_cwd();
+    let width = Some(48);
+    let sources = [
+        "First paragraph.\n\nSecond paragraph.\n",
+        "# Heading\n\nFollowing paragraph.\n",
+        "1. First item\n2. Second item\n\n> Quoted paragraph\n",
+        "```rust\nfn main() {}\n```\n\nFollowing paragraph.\n",
+        "| Key | Value |\n| --- | --- |\n| alpha | beta |\n\nFollowing paragraph.\n",
+        "<div>Raw HTML.</div>\n\nFollowing paragraph.\n",
+        "Before.\n\n---\n\nAfter.\n",
+        "```markdown\n| Key | Value |\n| --- | --- |\n| alpha | beta |\n```\n\nAfter.\n",
+    ];
+
+    for source in sources {
+        let rendered =
+            render_streaming_markdown_agent_with_links_and_cwd(source, width, Some(&cwd));
+        let source_boundary = rendered
+            .last_top_level_block_start
+            .expect("expected a completed top-level block");
+        let rendered_boundary = rendered
+            .stable_prefix_rendered_len
+            .expect("expected a rendered-line boundary");
+        let stable_prefix = render_source(
+            &source[..source_boundary],
+            width,
+            &cwd,
+            HistoryRenderMode::Rich,
+            /*inline_visualization_context*/ None,
+        );
+
+        assert_eq!(
+            rendered_boundary,
+            stable_prefix.len(),
+            "rendered boundary diverged for source {source:?}",
+        );
     }
 }
 

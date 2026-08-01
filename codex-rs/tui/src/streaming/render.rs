@@ -145,19 +145,13 @@ impl StreamingRender {
             return;
         }
 
-        let mut newly_stable_rendered_len = None;
-        if let Some(boundary) = pending.last_top_level_block_start {
-            let newly_stable_source = &pending_source[..boundary];
-            let newly_stable = render_source(
-                newly_stable_source,
-                width,
-                cwd,
-                render_mode,
-                inline_visualization_context,
-            );
-            self.stable_source_len += boundary;
-            newly_stable_rendered_len = Some(newly_stable.len());
-        }
+        let newly_stable_rendered_len = pending
+            .last_top_level_block_start
+            .zip(pending.stable_prefix_rendered_len)
+            .map(|(source_boundary, rendered_boundary)| {
+                self.stable_source_len += source_boundary;
+                rendered_boundary
+            });
 
         self.lines.truncate(self.stable_rendered_len);
         if !self.lines.is_empty()
