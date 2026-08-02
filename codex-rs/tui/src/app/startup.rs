@@ -72,6 +72,7 @@ impl App {
         environment_manager: Arc<EnvironmentManager>,
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
+        mut startup_resume_response: Option<Result<ThreadResumeResponse>>,
         startup_hooks_browser: Option<HooksListEntry>,
         mut startup_draft: StartupDraftPump,
     ) -> Result<AppExitInfo> {
@@ -279,20 +280,38 @@ impl App {
                     &config,
                     &harness_overrides,
                 );
-                let resumed = match startup_draft
-                    .run_until(
-                        tui,
-                        app_server.resume_thread(
-                            config.clone(),
-                            target_session.thread_id,
-                            model_settings,
-                        ),
-                    )
-                    .await
-                {
-                    Ok(resumed) => resumed
-                        .map_err(|err| session_start_error("resume", &target_session, err))?,
-                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                let resumed = if let Some(response) = startup_resume_response.take() {
+                    match startup_draft
+                        .run_until(tui, async {
+                            let response = response.map_err(|err| {
+                                session_start_error("resume", &target_session, err)
+                            })?;
+                            app_server
+                                .complete_resume_thread(response, &config)
+                                .await
+                                .map_err(|err| session_start_error("resume", &target_session, err))
+                        })
+                        .await
+                    {
+                        Ok(resumed) => resumed?,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
+                } else {
+                    match startup_draft
+                        .run_until(
+                            tui,
+                            app_server.resume_thread(
+                                config.clone(),
+                                target_session.thread_id,
+                                model_settings,
+                            ),
+                        )
+                        .await
+                    {
+                        Ok(resumed) => resumed
+                            .map_err(|err| session_start_error("resume", &target_session, err))?,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
                 };
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
