@@ -1,5 +1,8 @@
 # Codex repository instructions
 
+This is a personal fork of upstream Codex. Keep all changes surgical and
+narrowly scoped so future upstream merges stay easy to reconcile.
+
 Read the nearest `AGENTS.md` before editing. The root file contains the authoritative Rust,
 testing, TUI, protocol, and app-server rules; nested files add local requirements.
 
