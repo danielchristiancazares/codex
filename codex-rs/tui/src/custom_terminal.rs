@@ -713,13 +713,14 @@ where
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
-    let mut last_pos: Option<Position> = None;
+    let mut next_cursor_pos: Option<Position> = None;
     let mut active_hyperlink: Option<String> = None;
     for command in commands {
         let (x, y) = match &command {
             DrawCommand::Put { x, y, .. } => (x, y),
             DrawCommand::ClearToEnd { x, y, .. } => (x, y),
         };
+        let command_pos = Position { x: *x, y: *y };
         let hyperlink = match &command {
             DrawCommand::Put { cell, .. } => osc8_hyperlink_parts(cell.symbol()),
             DrawCommand::ClearToEnd { .. } => None,
@@ -729,11 +730,9 @@ where
         if hyperlink_changed && active_hyperlink.is_some() {
             writer.write_all(b"\x1b]8;;\x07")?;
         }
-        // Move the cursor if the previous location was not (x - 1, y)
-        if !matches!(last_pos, Some(p) if *x == p.x + 1 && *y == p.y) {
+        if next_cursor_pos != Some(command_pos) {
             queue!(writer, MoveTo(*x, *y))?;
         }
-        last_pos = Some(Position { x: *x, y: *y });
         match &command {
             DrawCommand::Put { cell, .. } => {
                 if cell.modifier != modifier {
@@ -761,6 +760,10 @@ where
                 }
                 let symbol = hyperlink.map_or_else(|| cell.symbol(), |(_, visible)| visible);
                 writer.write_all(symbol.as_bytes())?;
+                next_cursor_pos = Some(Position {
+                    x: x.saturating_add(cell.cell_width()),
+                    y: *y,
+                });
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
@@ -768,6 +771,7 @@ where
                 queue!(writer, SetBackgroundColor((*clear_bg).into_crossterm()))?;
                 bg = *clear_bg;
                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
+                next_cursor_pos = Some(command_pos);
             }
         }
         if hyperlink_changed {
@@ -1191,6 +1195,37 @@ mod tests {
                 .expect("draw");
         }
         assert_snapshot!(terminal.backend().vt100().screen().contents(), @"ｶﾞ");
+    }
+
+    #[test]
+    fn draw_repositions_for_vs16_trailing_cell_repair() {
+        let previous = Buffer::with_lines(["abX"]);
+        let next = Buffer::with_lines(["⚠️X"]);
+        let commands = diff_buffers(&previous, &next);
+
+        assert_eq!(
+            commands,
+            vec![
+                DrawCommand::Put {
+                    x: 0,
+                    y: 0,
+                    cell: &next[(0, 0)],
+                },
+                DrawCommand::Put {
+                    x: 1,
+                    y: 0,
+                    cell: &next[(1, 0)],
+                },
+            ]
+        );
+
+        let mut output = Vec::new();
+        draw(&mut output, commands.into_iter()).expect("Vec writes should succeed");
+
+        assert_eq!(
+            output,
+            b"\x1b[1;1H\xe2\x9a\xa0\xef\xb8\x8f\x1b[1;2H \x1b[m\x1b[m\x1b[0m"
+        );
     }
 
     #[test]
