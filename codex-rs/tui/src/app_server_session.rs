@@ -1445,6 +1445,28 @@ pub(crate) async fn start_thread_with_request_handle(
     started_thread_from_start_response(response, &config, thread_params_mode).await
 }
 
+pub(crate) async fn resume_thread_with_request_handle(
+    request_handle: AppServerRequestHandle,
+    config: Config,
+    thread_id: ThreadId,
+    thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<PathBuf>,
+) -> Result<ThreadResumeResponse> {
+    request_handle
+        .request_typed(ClientRequest::ThreadResume {
+            request_id: RequestId::String(format!("startup-thread-resume-{}", Uuid::new_v4())),
+            params: thread_resume_params_from_config(
+                config,
+                thread_id,
+                thread_params_mode,
+                remote_cwd_override.as_deref(),
+                ResumeModelSettings::RestoreFromThread,
+            ),
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("thread/resume failed during TUI bootstrap", err))
+}
+
 pub(crate) fn status_account_display_from_auth_mode(
     auth_mode: Option<AuthMode>,
     plan_type: Option<codex_protocol::account::PlanType>,
@@ -2970,6 +2992,53 @@ mod tests {
             .await?;
 
         assert_eq!(resumed.session.service_tier, None);
+        app_server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn startup_resume_request_restores_persisted_history() -> Result<()> {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&codex_home).await;
+        let thread_id = ThreadId::from_string(
+            &create_fake_rollout(
+                codex_home.path(),
+                "2025-01-05T12-00-00",
+                "2025-01-05T12:00:00Z",
+                "Saved user message",
+                Some(config.model_provider_id.as_str()),
+                /*git_info*/ None,
+            )
+            .expect("create source rollout"),
+        )?;
+        let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
+
+        let response = resume_thread_with_request_handle(
+            app_server.request_handle(),
+            config.clone(),
+            thread_id,
+            app_server.thread_params_mode(),
+            app_server
+                .remote_cwd_override()
+                .map(std::path::Path::to_path_buf),
+        )
+        .await?;
+        let resumed = app_server.complete_resume_thread(response, &config).await?;
+
+        assert_eq!(resumed.session.thread_id, thread_id);
+        assert!(matches!(
+            resumed.turns.as_slice(),
+            [Turn { items, .. }]
+                if matches!(
+                    items.as_slice(),
+                    [codex_app_server_protocol::ThreadItem::UserMessage { content, .. }]
+                        if content == &[UserInput::Text {
+                            text: "Saved user message".to_string(),
+                            text_elements: Vec::new(),
+                        }]
+                )
+        ));
+        assert!(!resumed.blocks_direct_input);
         app_server.shutdown().await?;
         Ok(())
     }

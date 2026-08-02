@@ -76,6 +76,7 @@ impl App {
         environment_manager: Arc<EnvironmentManager>,
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
+        mut startup_resume_response: Option<Result<ThreadResumeResponse>>,
         startup_hooks_browser: Option<HooksListEntry>,
         mut startup_draft: StartupDraftPump,
     ) -> Result<AppExitInfo> {
@@ -297,19 +298,32 @@ impl App {
                     &config,
                     &harness_overrides,
                 );
-                let resumed = match startup_draft
-                    .run_until(
-                        tui,
-                        app_server.resume_thread(
-                            config.clone(),
-                            target_session.thread_id,
-                            model_settings,
-                        ),
-                    )
-                    .await
-                {
-                    Ok(resumed) => resumed,
-                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                let resumed = if let Some(response) = startup_resume_response.take() {
+                    match startup_draft
+                        .run_until(tui, async {
+                            let response = response?;
+                            app_server.complete_resume_thread(response, &config).await
+                        })
+                        .await
+                    {
+                        Ok(resumed) => resumed,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
+                } else {
+                    match startup_draft
+                        .run_until(
+                            tui,
+                            app_server.resume_thread(
+                                config.clone(),
+                                target_session.thread_id,
+                                model_settings,
+                            ),
+                        )
+                        .await
+                    {
+                        Ok(resumed) => resumed,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
                 };
                 let action = SessionStartAction::Resume(model_settings);
                 let Some(resumed) = complete_session_start(

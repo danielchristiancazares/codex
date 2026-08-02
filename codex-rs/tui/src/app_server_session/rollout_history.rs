@@ -107,7 +107,7 @@ impl AppServerSession {
             })
             .await;
         drop(rollout_maintenance_guard);
-        let mut response: ThreadResumeResponse = match resume_response {
+        let response: ThreadResumeResponse = match resume_response {
             Ok(response) => response,
             Err(TypedRequestError::Server { source, .. })
                 if params.exclude_turns && is_history_pagination_unsupported(&source) =>
@@ -129,11 +129,19 @@ impl AppServerSession {
                 ));
             }
         };
+        self.complete_resume_thread(response, &config).await
+    }
+
+    pub(crate) async fn complete_resume_thread(
+        &mut self,
+        mut response: ThreadResumeResponse,
+        config: &Config,
+    ) -> Result<AppServerStartedThread> {
         self.hydrate_initial_thread_history(
             &mut response.thread,
             response.turns_backwards_cursor.clone(),
             response.items_backwards_cursor.clone(),
-            Some(&config),
+            Some(config),
             HistoryHydrationScope::Initial,
         )
         .await?;
@@ -141,7 +149,7 @@ impl AppServerSession {
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
         let mut started =
-            started_thread_from_resume_response(response, &config, self.thread_params_mode())
+            started_thread_from_resume_response(response, config, self.thread_params_mode())
                 .await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
