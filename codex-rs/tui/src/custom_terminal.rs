@@ -144,6 +144,7 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    cursor_positioning: CursorPositioning,
     #[cfg(test)]
     screen_size_override: Option<Size>,
 }
@@ -223,6 +224,11 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            cursor_positioning: if cfg!(windows) || std::env::var_os("WT_SESSION").is_some() {
+                CursorPositioning::Explicit
+            } else {
+                CursorPositioning::Predicted
+            },
             #[cfg(test)]
             screen_size_override: None,
         }
@@ -286,7 +292,11 @@ where
                 DrawCommand::Put { x, y, .. } => Some(Position { x: *x, y: *y }),
                 DrawCommand::ClearToEnd { .. } => None,
             });
-            draw(&mut self.backend, updates.into_iter())?;
+            draw(
+                &mut self.backend,
+                updates.into_iter(),
+                self.cursor_positioning,
+            )?;
             last_put_position
         };
         if let Some(position) = last_put_position {
@@ -571,6 +581,13 @@ where
 
 use ratatui::buffer::Cell;
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+enum CursorPositioning {
+    #[default]
+    Predicted,
+    Explicit,
+}
+
 #[derive(Debug, Eq, IsVariant, PartialEq)]
 enum DrawCommand<'a> {
     Put { x: u16, y: u16, cell: &'a Cell },
@@ -721,7 +738,11 @@ fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
     updates
 }
 
-fn draw<'a, I>(writer: &mut impl Write, commands: I) -> io::Result<()>
+fn draw<'a, I>(
+    writer: &mut impl Write,
+    commands: I,
+    cursor_positioning: CursorPositioning,
+) -> io::Result<()>
 where
     I: Iterator<Item = DrawCommand<'a>>,
 {
@@ -745,7 +766,8 @@ where
         if hyperlink_changed && active_hyperlink.is_some() {
             writer.write_all(b"\x1b]8;;\x07")?;
         }
-        if next_cursor_pos != Some(command_pos) {
+        if cursor_positioning == CursorPositioning::Explicit || next_cursor_pos != Some(command_pos)
+        {
             queue!(writer, MoveTo(*x, *y))?;
         }
         match &command {
@@ -1072,10 +1094,11 @@ mod tests {
                 })
                 .expect("draw resized frame");
 
+            let rendered_buffer = terminal.previous_buffer_mut();
             let rendered = (0..size.height)
                 .map(|y| {
                     (0..size.width)
-                        .map(|x| terminal.previous_buffer()[(x, y)].symbol())
+                        .map(|x| rendered_buffer[(x, y)].symbol())
                         .collect::<String>()
                         .trim_end()
                         .to_string()
@@ -1173,6 +1196,25 @@ mod tests {
     }
 
     #[test]
+    fn explicit_cursor_positioning_keeps_text_visible() {
+        let area = Rect::new(0, 0, 5, 1);
+        let mut terminal =
+            Terminal::with_options(VT100Backend::new(area.width, area.height)).expect("terminal");
+        terminal.set_viewport_area(area);
+        terminal.cursor_positioning = CursorPositioning::Explicit;
+
+        for _ in 0..2 {
+            terminal
+                .draw_with_size(area.as_size(), |frame| {
+                    frame.buffer_mut().set_string(0, 0, "⚠️x", Style::default());
+                })
+                .expect("draw explicitly positioned text");
+        }
+
+        assert_snapshot!(terminal.backend().vt100().screen().contents(), @"⚠️ x");
+    }
+
+    #[test]
     fn draw_repositions_for_vs16_trailing_cell_repair() {
         let previous = Buffer::with_lines(["abX"]);
         let next = Buffer::with_lines(["⚠️X"]);
@@ -1195,12 +1237,34 @@ mod tests {
         );
 
         let mut output = Vec::new();
-        draw(&mut output, commands.into_iter()).expect("Vec writes should succeed");
+        draw(
+            &mut output,
+            commands.into_iter(),
+            CursorPositioning::Predicted,
+        )
+        .expect("Vec writes should succeed");
 
         assert_eq!(
             output,
             b"\x1b[1;1H\xe2\x9a\xa0\xef\xb8\x8f\x1b[1;2H \x1b[m\x1b[m\x1b[0m"
         );
+    }
+
+    #[test]
+    fn explicit_cursor_positioning_moves_before_each_cell() {
+        let previous = Buffer::with_lines(["   "]);
+        let next = Buffer::with_lines(["abc"]);
+        let commands = diff_buffers(&previous, &next);
+        let mut output = Vec::new();
+
+        draw(
+            &mut output,
+            commands.into_iter(),
+            CursorPositioning::Explicit,
+        )
+        .expect("Vec writes should succeed");
+
+        assert_eq!(output, b"\x1b[1;1Ha\x1b[1;2Hb\x1b[1;3Hc\x1b[m\x1b[m\x1b[0m");
     }
 
     #[test]

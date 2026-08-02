@@ -471,9 +471,8 @@ When the user requests a commit or push, treat it as part of the task's completi
 2. Stage task-owned paths with explicit pathspecs. Do not use `git add -A` or absorb unrelated
    worktree changes into the commit.
 3. Review `git diff --cached --check`, the staged stat, and the staged patch before committing.
-4. Include `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` unless the user
    explicitly asks not to.
-5. Push without force unless the user explicitly requested history rewriting, then verify the
+4. Push without force unless the user explicitly requested history rewriting, then verify the
    remote/upstream contains the new commit. The requested commit or push must be complete before
    reporting the task complete.
 
