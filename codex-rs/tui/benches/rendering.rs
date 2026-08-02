@@ -20,7 +20,8 @@ mod custom_terminal {
     pub(super) fn serialize(previous: &Buffer, next: &Buffer, output: &mut Vec<u8>) -> usize {
         output.clear();
         let commands = diff_buffers(previous, next);
-        draw(output, commands.into_iter()).expect("Vec writes should succeed");
+        draw(output, commands.into_iter(), CursorPositioning::Predicted)
+            .expect("Vec writes should succeed");
         output.len()
     }
 }
