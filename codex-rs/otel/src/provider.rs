@@ -37,7 +37,6 @@ use opentelemetry_sdk::trace::SpanProcessor;
 use opentelemetry_sdk::trace::Tracer;
 use opentelemetry_sdk::trace::TracerProviderBuilder;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor as TokioBatchSpanProcessor;
-use opentelemetry_semantic_conventions as semconv;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::io;
@@ -311,10 +310,7 @@ fn resource_attributes(
     kind: ResourceKind,
 ) -> Vec<KeyValue> {
     let mut attributes = vec![
-        KeyValue::new(
-            semconv::attribute::SERVICE_VERSION,
-            settings.service_version.clone(),
-        ),
+        KeyValue::new("service.version", settings.service_version.clone()),
         KeyValue::new(ENV_ATTRIBUTE, settings.environment.clone()),
     ];
     if kind == ResourceKind::Logs

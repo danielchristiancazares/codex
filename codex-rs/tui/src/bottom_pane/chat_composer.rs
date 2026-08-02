@@ -382,8 +382,7 @@ fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
     args.is_empty()
         && matches!(
             command,
-            SlashCommand::Feedback
-                | SlashCommand::New
+            SlashCommand::New
                 | SlashCommand::Clear
                 | SlashCommand::Resume
                 | SlashCommand::App

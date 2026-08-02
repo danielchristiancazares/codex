@@ -43,6 +43,7 @@ pub fn global() -> Option<MetricsClient> {
     GLOBAL_METRICS.get().cloned()
 }
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) fn install_global_statsig_settings(settings: StatsigMetricsSettings) {
     let _ = GLOBAL_STATSIG_METRICS_SETTINGS.set(settings);
 }
