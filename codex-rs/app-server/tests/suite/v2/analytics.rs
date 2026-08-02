@@ -78,7 +78,7 @@ async fn app_server_default_analytics_disabled_without_flag() -> Result<()> {
 }
 
 #[tokio::test]
-async fn app_server_default_analytics_enabled_with_flag() -> Result<()> {
+async fn app_server_analytics_remains_disabled_with_flag() -> Result<()> {
     let codex_home = TempDir::new()?;
     let mut config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
@@ -95,9 +95,8 @@ async fn app_server_default_analytics_enabled_with_flag() -> Result<()> {
     )
     .map_err(|err| anyhow::anyhow!(err.to_string()))?;
 
-    // With analytics unset in the config and the default flag is true, metrics are enabled.
     let has_metrics = provider.as_ref().and_then(|otel| otel.metrics()).is_some();
-    assert_eq!(has_metrics, true);
+    assert_eq!(has_metrics, false);
     Ok(())
 }
 

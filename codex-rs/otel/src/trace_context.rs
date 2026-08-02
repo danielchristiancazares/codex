@@ -81,6 +81,7 @@ pub fn inject_span_w3c_trace_headers(span: &Span, headers: &mut http::HeaderMap)
     true
 }
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) fn set_tracestate_entries(
     entries: BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {

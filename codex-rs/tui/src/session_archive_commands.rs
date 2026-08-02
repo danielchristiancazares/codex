@@ -457,7 +457,6 @@ pub(super) async fn start_app_server_for_session_command(
         loader_overrides,
         strict_config,
         cloud_config_bundle,
-        codex_feedback::CodexFeedback::new(),
         /*log_db*/ None,
         state_db,
         environment_manager,

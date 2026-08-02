@@ -481,10 +481,6 @@ pub(super) async fn run_main_inner(
         (None, None)
     };
 
-    let feedback = codex_feedback::CodexFeedback::new();
-    let feedback_layer = feedback.logger_layer();
-    let feedback_metadata_layer = feedback.metadata_layer();
-
     if cli.oss && model_provider_override.is_some() {
         // We're in the oss section, so provider_id should be Some
         // Let's handle None case gracefully though just in case
@@ -520,8 +516,6 @@ pub(super) async fn run_main_inner(
 
     let _ = tracing_subscriber::registry()
         .with(tui_file_layer)
-        .with(feedback_layer)
-        .with(feedback_metadata_layer)
         .with(log_db_layer)
         .with(otel_logger_layer)
         .with(otel_tracing_layer)
@@ -539,7 +533,6 @@ pub(super) async fn run_main_inner(
         overrides,
         cli_kv_overrides,
         cloud_config_bundle,
-        feedback,
         log_db,
         state_db,
         environment_manager,
