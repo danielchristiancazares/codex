@@ -1075,7 +1075,6 @@ mod tests {
                 auth_route_config,
             )
             .await,
-            feedback: codex_feedback::CodexFeedback::new(),
             log_db: None,
             state_db: None,
             environment_manager: Arc::new(

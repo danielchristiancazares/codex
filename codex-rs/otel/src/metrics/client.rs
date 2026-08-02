@@ -1,4 +1,6 @@
+#[cfg(feature = "otel-exporter")]
 use crate::config::OtelExporter;
+#[cfg(feature = "otel-exporter")]
 use crate::config::OtelHttpProtocol;
 use crate::metrics::MetricsError;
 use crate::metrics::Result;
@@ -16,12 +18,19 @@ use opentelemetry::metrics::Gauge;
 use opentelemetry::metrics::Histogram;
 use opentelemetry::metrics::Meter;
 use opentelemetry::metrics::MeterProvider as _;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::OTEL_EXPORTER_OTLP_METRICS_TIMEOUT;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::Protocol;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::WithExportConfig;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::WithHttpConfig;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::WithTonicConfig;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
+#[cfg(feature = "otel-exporter")]
 use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::InstrumentKind;
@@ -32,7 +41,6 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::reader::MetricReader;
-use opentelemetry_semantic_conventions as semconv;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -306,10 +314,7 @@ impl MetricsClient {
         validate_tags(&default_tags)?;
 
         let mut resource_attributes = Vec::with_capacity(4);
-        resource_attributes.push(KeyValue::new(
-            semconv::attribute::SERVICE_VERSION,
-            service_version,
-        ));
+        resource_attributes.push(KeyValue::new("service.version", service_version));
         resource_attributes.push(KeyValue::new(ENV_ATTRIBUTE, environment));
         resource_attributes.extend(os_resource_attributes());
 
@@ -330,10 +335,13 @@ impl MetricsClient {
             MetricsExporter::InMemory(exporter) => {
                 build_provider(resource, exporter, export_interval, runtime_reader.clone())
             }
+            #[cfg(feature = "otel-exporter")]
             MetricsExporter::Otlp(exporter) => {
                 let exporter = build_otlp_metric_exporter(exporter, Temporality::Delta)?;
                 build_provider(resource, exporter, export_interval, runtime_reader.clone())
             }
+            #[cfg(not(feature = "otel-exporter"))]
+            MetricsExporter::Otlp(_) => return Err(MetricsError::ExporterDisabled),
         };
 
         Ok(Self(std::sync::Arc::new(MetricsClientInner {
@@ -515,6 +523,7 @@ where
     (provider, meter)
 }
 
+#[cfg(feature = "otel-exporter")]
 fn build_otlp_metric_exporter(
     exporter: OtelExporter,
     temporality: Temporality,

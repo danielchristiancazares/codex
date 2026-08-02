@@ -1,9 +1,14 @@
 pub(crate) mod config;
 mod events;
 pub(crate) mod metrics;
+#[cfg(feature = "otel-exporter")]
+pub(crate) mod provider;
+#[cfg(not(feature = "otel-exporter"))]
+#[path = "provider_noop.rs"]
 pub(crate) mod provider;
 pub(crate) mod trace_context;
 
+#[cfg(feature = "otel-exporter")]
 mod otlp;
 mod targets;
 

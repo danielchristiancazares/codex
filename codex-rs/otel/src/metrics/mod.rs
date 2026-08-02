@@ -24,6 +24,7 @@ pub use tags::bounded_originator_tag_value;
 static GLOBAL_METRICS: OnceLock<MetricsClient> = OnceLock::new();
 static GLOBAL_STATSIG_METRICS_SETTINGS: OnceLock<StatsigMetricsSettings> = OnceLock::new();
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) fn install_global(metrics: MetricsClient) {
     let _ = GLOBAL_METRICS.set(metrics);
 }
@@ -32,6 +33,7 @@ pub fn global() -> Option<MetricsClient> {
     GLOBAL_METRICS.get().cloned()
 }
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) fn install_global_statsig_settings(settings: StatsigMetricsSettings) {
     let _ = GLOBAL_STATSIG_METRICS_SETTINGS.set(settings);
 }

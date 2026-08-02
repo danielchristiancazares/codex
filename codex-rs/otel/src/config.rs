@@ -6,10 +6,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) const STATSIG_OTLP_HTTP_ENDPOINT: &str = "https://ab.chatgpt.com/otlp/v1/metrics";
+#[cfg(feature = "otel-exporter")]
 pub(crate) const STATSIG_API_KEY_HEADER: &str = "statsig-api-key";
+#[cfg(feature = "otel-exporter")]
 pub(crate) const STATSIG_API_KEY: &str = "client-MkRuleRQBd6qakfnDYqJVR9JuXcY57Ljly3vi5JVUIO";
 
+#[cfg(feature = "otel-exporter")]
 pub(crate) fn resolve_exporter(exporter: &OtelExporter) -> OtelExporter {
     match exporter {
         OtelExporter::Statsig => {
@@ -104,7 +108,7 @@ pub enum OtelExporter {
     },
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "otel-exporter"))]
 mod tests {
     use super::OtelExporter;
     use super::resolve_exporter;

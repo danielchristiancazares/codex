@@ -1,10 +1,8 @@
-mod amazon_bedrock;
 mod auth;
 mod bearer_auth_provider;
 mod models_endpoint;
 mod provider;
 
-pub use amazon_bedrock::is_supported_amazon_bedrock_region;
 pub use auth::AgentIdentitySessionFallback;
 pub use auth::ProviderAuthScope;
 pub use auth::ResolvedProviderAuth;

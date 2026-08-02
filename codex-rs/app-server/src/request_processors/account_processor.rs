@@ -1,10 +1,8 @@
 use super::bedrock_auth::clear_user_model_provider_if_bedrock;
-use super::bedrock_auth::set_user_model_provider_to_bedrock;
 use super::*;
 use crate::auth_mode::auth_mode_to_api;
 use crate::external_auth::ExternalAuthBridge;
 use chrono::DateTime;
-use codex_model_provider::is_supported_amazon_bedrock_region;
 
 mod rate_limit_resets;
 
@@ -393,60 +391,15 @@ impl AccountRequestProcessor {
     async fn login_amazon_bedrock_v2(
         &self,
         request_id: ConnectionRequestId,
-        api_key: String,
-        region: String,
+        _api_key: String,
+        _region: String,
     ) {
-        let result = async {
-            if self.auth_manager.is_external_chatgpt_auth_active() {
-                return Err(self.external_auth_active_error());
-            }
-            if matches!(
-                self.config.forced_login_method,
-                Some(ForcedLoginMethod::Chatgpt)
-            ) {
-                return Err(invalid_request(
-                    "Amazon Bedrock login is disabled. Use ChatGPT login instead.",
-                ));
-            }
-
-            let api_key = api_key.trim();
-            if api_key.is_empty() {
-                return Err(invalid_request("Amazon Bedrock API key must not be empty."));
-            }
-            let region = region.trim();
-            if !is_supported_amazon_bedrock_region(region) {
-                return Err(invalid_request(format!(
-                    "Amazon Bedrock Mantle does not support region `{region}`"
-                )));
-            }
-
-            {
-                let mut guard = self.active_login.lock().await;
-                if let Some(active) = guard.take() {
-                    drop(active);
-                }
-            }
-
-            set_user_model_provider_to_bedrock(&self.config_manager).await?;
-            login_with_bedrock_api_key(
-                &self.config.codex_home,
-                api_key,
-                region,
-                self.config.cli_auth_credentials_store_mode,
-                self.config.auth_keyring_backend_kind(),
+        self.outgoing
+            .send_error(
+                request_id,
+                invalid_request("Amazon Bedrock support is not available in this build"),
             )
-            .map_err(|err| internal_error(format!("failed to save Amazon Bedrock auth: {err}")))?;
-            self.auth_manager.reload().await;
-            Ok(LoginAccountResponse::AmazonBedrock {})
-        }
-        .await;
-        let logged_in = result.is_ok();
-        self.outgoing.send_result(request_id, result).await;
-
-        if logged_in {
-            self.send_login_success_notifications(/*login_id*/ None)
-                .await;
-        }
+            .await;
     }
 
     // Build options for a ChatGPT login attempt; performs validation.
