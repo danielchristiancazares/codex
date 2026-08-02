@@ -127,6 +127,7 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadMemoryMode;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartSource;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -208,6 +209,7 @@ pub(crate) mod app_server_requests;
 mod background_requests;
 mod commit_animation_ticker;
 mod config_persistence;
+pub(crate) use config_persistence::resume_model_settings_for_overrides;
 mod event_dispatch;
 mod history_ui;
 mod input;
@@ -786,6 +788,7 @@ impl App {
         environment_manager: Arc<EnvironmentManager>,
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
+        mut startup_resume_response: Option<Result<ThreadResumeResponse>>,
         startup_hooks_browser: Option<HooksListEntry>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
@@ -936,14 +939,21 @@ impl App {
                 (chat_widget, None)
             }
             SessionSelection::Resume(target_session) => {
-                let model_settings = config_persistence::resume_model_settings_for_overrides(
-                    &config,
-                    &harness_overrides,
-                );
-                let resumed = app_server
-                    .resume_thread(config.clone(), target_session.thread_id, model_settings)
-                    .await
-                    .map_err(|err| session_start_error("resume", &target_session, err))?;
+                let model_settings =
+                    resume_model_settings_for_overrides(&config, &harness_overrides);
+                let resumed = if let Some(response) = startup_resume_response.take() {
+                    let response = response
+                        .map_err(|err| session_start_error("resume", &target_session, err))?;
+                    app_server
+                        .complete_resume_thread(response, &config)
+                        .await
+                        .map_err(|err| session_start_error("resume", &target_session, err))?
+                } else {
+                    app_server
+                        .resume_thread(config.clone(), target_session.thread_id, model_settings)
+                        .await
+                        .map_err(|err| session_start_error("resume", &target_session, err))?
+                };
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),

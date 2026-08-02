@@ -12,6 +12,119 @@ repeating discarded ideas.
 - `BlockingLruCache` is disabled outside a Tokio runtime. Benchmarks intended to measure cache hits
   must enter a runtime or they will silently measure the miss path.
 
+## 2026-08-01: TUI large-thread resume critical path
+
+Scope: end-to-end time from launching `codex resume <thread-id>` to scheduling the first TUI frame
+for a large local thread. The retained change overlaps the app-server `thread/resume` request with
+startup bootstrap and hook discovery when the resumed thread supplies its saved model settings.
+
+Environment: Intel Xeon W-3223, 16 logical CPUs, macOS x86_64, Rust 1.95.0, Bazel 9.0.0. The
+preserved pre-change binary was built from commit `a003a5a499b27689d992abb8a84f6c1a510b8059`.
+
+### Methodology
+
+The fixture was
+`sessions/2026/07/24/rollout-2026-07-24T10-49-31-019f953f-2447-7960-a979-725ad1e4bf27.jsonl`:
+116,304,980 bytes, 5,142 JSONL records, and 101 turns. A mode-0700 temporary `CODEX_HOME` held an
+identical private copy of the fixture, config, model cache, and app-server state for both binaries.
+Each launch used that same warmed home and repository. The final comparison alternated baseline
+and final binaries; one final launch that emitted no startup timing was discarded and replaced.
+
+Both binaries were built in release mode with:
+
+```sh
+bazel build --compilation_mode=opt //codex-rs/cli:codex
+cp bazel-bin/codex-rs/cli/codex /private/tmp/codex-perf-final-prefetch
+```
+
+The baseline binary had been preserved as `/private/tmp/codex-perf-baseline-a003a5a`. Each sample
+ran in the same PTY for five seconds, changing only the binary path:
+
+```sh
+/usr/bin/expect -c '
+log_user 0
+spawn env TERM=xterm-256color CODEX_HOME=/private/tmp/codex-resume-bench.y9kbpJ \
+  /private/tmp/codex-perf-final-prefetch resume \
+  019f953f-2447-7960-a979-725ad1e4bf27 -C /Users/daniel/codex
+after 5000
+send "\003"
+after 500
+send "\003"
+after 500
+catch close
+catch wait
+'
+sqlite3 /private/tmp/codex-resume-bench.y9kbpJ/logs_2.sqlite \
+  "select feedback_log_body from logs where feedback_log_body like \
+  'tui startup initial frame scheduled%' order by id desc limit 1;"
+```
+
+### Current baseline
+
+All values are milliseconds from the structured `tui startup initial frame scheduled` event. The
+table reports the three final interleaved samples and their median.
+
+| State | First-frame samples | Median | Bootstrap median | Thread/widget median | Initial-session median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Pre-change | 2706 / 2454 / 2343 | 2454 | 622 | 1161 | 664 |
+| Current final state | 1932 / 1882 / 1984 | 1932 | 499 | 52 | 717 |
+
+The current final median is 522 ms lower: **21.3% less end-to-end first-frame latency and a 1.27x
+speedup**. The sample ranges do not overlap (baseline 2343-2706 ms; final 1882-1984 ms). The
+sequential thread/widget phase falls from a 1161 ms median to 52 ms because the resume request is
+mostly hidden behind other startup work.
+
+### Retained win
+
+Normal persistent resumes now begin `thread/resume` through the existing app-server request handle
+before startup bootstrap and hook discovery, and await all three with `tokio::join!`. The response
+is completed through the same fork-parent title lookup and resumed-session construction as the
+existing sequential path. Resumes with explicit model or provider overrides retain their existing
+current-config request path.
+
+The added async regression test resumes a real temporary rollout through the prefetched request,
+then verifies the persisted user history, thread ID, and direct-input state.
+
+### Rejected experiment
+
+An initial candidate requested only the newest 100 turns and excluded the full turn payload from
+the resume response. This 101-turn fixture omitted only one turn, and its 2.361 s and 2.225 s
+samples overlapped the original 2.268-2.405 s baseline range. The candidate was reverted before
+the retained concurrency change.
+
+### Validation
+
+```sh
+env \
+  V8_FROM_SOURCE=0 \
+  V8_FORCE_DEBUG=0 \
+  MACOSX_DEPLOYMENT_TARGET=12.0 \
+  RUSTY_V8_ARCHIVE=/Users/daniel/rusty_v8/target/release/gn_out/obj/librusty_v8.a \
+  RUSTY_V8_SRC_BINDING_PATH=/Users/daniel/rusty_v8/target/release/gn_out/src_binding.rs \
+  just test -p codex-tui startup_resume_request_restores_persisted_history
+env \
+  V8_FROM_SOURCE=0 \
+  V8_FORCE_DEBUG=0 \
+  MACOSX_DEPLOYMENT_TARGET=12.0 \
+  RUSTY_V8_ARCHIVE=/Users/daniel/rusty_v8/target/release/gn_out/obj/librusty_v8.a \
+  RUSTY_V8_SRC_BINDING_PATH=/Users/daniel/rusty_v8/target/release/gn_out/src_binding.rs \
+  just test -p codex-tui
+env \
+  V8_FROM_SOURCE=0 \
+  V8_FORCE_DEBUG=0 \
+  MACOSX_DEPLOYMENT_TARGET=12.0 \
+  RUSTY_V8_ARCHIVE=/Users/daniel/rusty_v8/target/release/gn_out/obj/librusty_v8.a \
+  RUSTY_V8_SRC_BINDING_PATH=/Users/daniel/rusty_v8/target/release/gn_out/src_binding.rs \
+  just fix -p codex-tui
+just fmt
+bazel build --compilation_mode=opt //codex-rs/cli:codex
+```
+
+The focused resume test passed. The full TUI run completed all 3,316 tests: 3,293 passed and 23
+version-bearing snapshots failed because this fork renders `0.146.0-daniel` while those fixtures
+expect `0.0.0`; four additional tests were skipped. The scoped fixer, formatter, optimized build,
+and final interleaved PTY benchmark completed successfully.
+
 ## 2026-08-01: TUI workspace-settings tail latency
 
 Scope: end-to-end TUI time to the first rendered frame for ChatGPT workspace accounts. Startup
