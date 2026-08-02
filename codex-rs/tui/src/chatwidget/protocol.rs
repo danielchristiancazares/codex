@@ -375,6 +375,9 @@ impl ChatWidget {
                 reasoning_effort,
                 agents_states,
             }),
+            // Subagent activity is a one-shot item. Its completed notification owns transcript
+            // rendering; the started notification exists for lifecycle timing.
+            ThreadItem::SubAgentActivity { .. } => {}
             ThreadItem::EnteredReviewMode { review, .. } if !from_replay => {
                 self.enter_review_mode_with_hint(review, /*from_replay*/ false);
             }
