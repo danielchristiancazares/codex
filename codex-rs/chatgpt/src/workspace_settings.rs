@@ -1,15 +1,20 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::RwLock;
 use std::time::Duration;
 use std::time::Instant;
 
+use anyhow::Context;
 use codex_core::config::Config;
 use codex_login::CodexAuth;
 use serde::Deserialize;
 
-use crate::chatgpt_client::chatgpt_get_request_with_timeout;
+use crate::chatgpt_client::chatgpt_get_request;
 
 const WORKSPACE_SETTINGS_TIMEOUT: Duration = Duration::from_secs(10);
+// Workspace settings gates the TUI's first frame. Healthy requests finish before this delay;
+// tail requests gain a second connection while the original total timeout remains in force.
+const WORKSPACE_SETTINGS_HEDGE_DELAY: Duration = Duration::from_secs(1);
 const WORKSPACE_SETTINGS_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const CODEX_PLUGINS_BETA_SETTING: &str = "enable_plugins";
 
@@ -111,12 +116,15 @@ pub async fn codex_plugins_enabled_for_workspace(
     }
 
     let encoded_account_id = encode_path_segment(&account_id);
-    let settings: WorkspaceSettingsResponse = chatgpt_get_request_with_timeout(
-        config,
-        format!("/accounts/{encoded_account_id}/settings"),
-        Some(WORKSPACE_SETTINGS_TIMEOUT),
+    let path = format!("/accounts/{encoded_account_id}/settings");
+    let settings: WorkspaceSettingsResponse = tokio::time::timeout(
+        WORKSPACE_SETTINGS_TIMEOUT,
+        first_success_with_hedge(WORKSPACE_SETTINGS_HEDGE_DELAY, || {
+            chatgpt_get_request(config, path.clone())
+        }),
     )
-    .await?;
+    .await
+    .context("workspace settings request timed out")??;
 
     let codex_plugins_enabled = settings
         .beta_settings
@@ -129,6 +137,39 @@ pub async fn codex_plugins_enabled_for_workspace(
     }
 
     Ok(codex_plugins_enabled)
+}
+
+async fn first_success_with_hedge<T, Request, RequestFuture>(
+    hedge_delay: Duration,
+    mut request: Request,
+) -> anyhow::Result<T>
+where
+    Request: FnMut() -> RequestFuture,
+    RequestFuture: Future<Output = anyhow::Result<T>>,
+{
+    let first = request();
+    tokio::pin!(first);
+    tokio::select! {
+        result = &mut first => return result,
+        () = tokio::time::sleep(hedge_delay) => {}
+    }
+
+    let hedge = request();
+    tokio::pin!(hedge);
+    tokio::select! {
+        first_result = &mut first => match first_result {
+            Ok(value) => Ok(value),
+            Err(first_error) => hedge.await.with_context(|| {
+                format!("initial request failed: {first_error:#}")
+            }),
+        },
+        hedge_result = &mut hedge => match hedge_result {
+            Ok(value) => Ok(value),
+            Err(hedge_error) => first.await.with_context(|| {
+                format!("hedged request failed: {hedge_error:#}")
+            }),
+        },
+    }
 }
 
 fn encode_path_segment(value: &str) -> String {
