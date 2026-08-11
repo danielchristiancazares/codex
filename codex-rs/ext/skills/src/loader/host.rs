@@ -142,9 +142,7 @@ pub(crate) async fn load_host_skill_root(root: HostSkillRoot) -> HostSkillRootSn
     }
 }
 
-pub(crate) async fn load_embedded_system_skill_root(
-    root: HostSkillRoot,
-) -> HostSkillRootSnapshot {
+pub(crate) async fn load_embedded_system_skill_root(root: HostSkillRoot) -> HostSkillRootSnapshot {
     let canonical_root =
         canonicalize_for_skill_identity(root.file_system.as_ref(), &root.path).await;
     let mut skills = Vec::new();

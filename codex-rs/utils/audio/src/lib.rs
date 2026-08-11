@@ -43,7 +43,7 @@ static AUDIO_TOKEN_ESTIMATE_CACHE: LazyLock<BlockingLruCache<[u8; 32], usize>> =
     });
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum AudioPreparationError {
+enum AudioPreparationError {
     #[error("invalid audio data URL: {reason}")]
     InvalidDataUrl { reason: &'static str },
     #[error("unsupported audio format")]
@@ -301,7 +301,7 @@ fn audio_duration_seconds(canonical_mime: &str, payload: &str) -> Option<f64> {
     duration_seconds.is_finite().then_some(duration_seconds)
 }
 
-pub(super) fn prepare_audio(audio_url: &mut String) -> Result<(), AudioPreparationError> {
+fn prepare_audio(audio_url: &mut String) -> Result<(), AudioPreparationError> {
     if !is_data_url(audio_url) {
         return Err(AudioPreparationError::InvalidDataUrl {
             reason: "audio input must be a data URL",

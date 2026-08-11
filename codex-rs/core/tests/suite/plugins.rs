@@ -13,7 +13,6 @@ use codex_extension_api::ExtensionRegistryBuilder;
 use codex_features::Feature;
 use codex_login::CodexAuth;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_plugin::PluginId;
 use codex_protocol::auth::AuthMode;
@@ -804,7 +803,6 @@ async fn agent_turns_route_curated_plugin_skills_after_auth_switch() -> Result<(
     enum TargetAuth {
         Chatgpt,
         ApiKey,
-        BedrockApiKey,
         NoCodexAuth,
     }
 
@@ -840,22 +838,6 @@ async fn agent_turns_route_curated_plugin_skills_after_auth_switch() -> Result<(
             target_auth: TargetAuth::ApiKey,
             target_model_provider_id: OPENAI_PROVIDER_ID,
             target_prompt: "api key target turn",
-            expected_target_loaded_plugin_skills: &[API_CURATED_PLUGIN_SKILL],
-            expected_target_skill_description: "api description before",
-        },
-        Fixture {
-            name: "Bedrock API key",
-            target_auth: TargetAuth::BedrockApiKey,
-            target_model_provider_id: AMAZON_BEDROCK_PROVIDER_ID,
-            target_prompt: "bedrock key target turn",
-            expected_target_loaded_plugin_skills: &[API_CURATED_PLUGIN_SKILL],
-            expected_target_skill_description: "api description before",
-        },
-        Fixture {
-            name: "ambient Bedrock",
-            target_auth: TargetAuth::NoCodexAuth,
-            target_model_provider_id: AMAZON_BEDROCK_PROVIDER_ID,
-            target_prompt: "ambient bedrock target turn",
             expected_target_loaded_plugin_skills: &[API_CURATED_PLUGIN_SKILL],
             expected_target_skill_description: "api description before",
         },
@@ -1028,9 +1010,6 @@ enabled = true
             TargetAuth::Chatgpt => {}
             TargetAuth::ApiKey => {
                 plugins_manager.set_auth_mode(Some(AuthMode::ApiKey));
-            }
-            TargetAuth::BedrockApiKey => {
-                plugins_manager.set_auth_mode(Some(AuthMode::BedrockApiKey));
             }
             TargetAuth::NoCodexAuth => {
                 test_codex.thread_manager.auth_manager().logout().await?;

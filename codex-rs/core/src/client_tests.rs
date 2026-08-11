@@ -18,7 +18,6 @@ use crate::test_support::responses_metadata as test_responses_metadata;
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
-use codex_api::TransportError;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
 use codex_login::AuthCredentialsStoreMode;
@@ -28,7 +27,6 @@ use codex_login::CodexAuth;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_model_provider::BearerAuthProvider;
 use codex_model_provider::SharedModelProvider;
-use codex_model_provider::create_model_provider;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
@@ -649,39 +647,6 @@ async fn response_stream_records_last_model_feedback_ids() {
     assert_eq!(
         tags.get("last_model_response_id").map(String::as_str),
         Some("\"resp-123\"")
-    );
-}
-
-#[tokio::test]
-async fn bedrock_unauthorized_error_uses_provider_mapping() {
-    let provider = create_model_provider(
-        ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
-        /*auth_manager*/ None,
-    );
-    let mut auth_recovery = None;
-    let url = "https://bedrock-mantle.us-east-2.api.aws/openai/v1/responses";
-    let error = super::handle_unauthorized(
-        TransportError::Http {
-            status: http::StatusCode::UNAUTHORIZED,
-            url: Some(url.to_string()),
-            headers: None,
-            body: Some(
-                "Signature expired: 20260609T133205Z is now earlier than 20260614T062525Z"
-                    .to_string(),
-            ),
-        },
-        &mut auth_recovery,
-        &test_session_telemetry(),
-        &provider,
-    )
-    .await
-    .expect_err("expired Bedrock signature should fail");
-
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "Amazon Bedrock rejected the request because its AWS signature has expired. Refresh your AWS credentials and retry. If `AWS_BEARER_TOKEN_BEDROCK` is set, update or unset it, then restart Codex, url: {url}"
-        )
     );
 }
 

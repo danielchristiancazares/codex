@@ -16,6 +16,7 @@ use crate::metrics::RESPONSES_API_ENGINE_SERVICE_TBT_DURATION_METRIC;
 use crate::metrics::RESPONSES_API_ENGINE_SERVICE_TTFT_DURATION_METRIC;
 use crate::metrics::RESPONSES_API_INFERENCE_TIME_DURATION_METRIC;
 use crate::metrics::RESPONSES_API_OVERHEAD_DURATION_METRIC;
+use crate::metrics::ResourceMetrics;
 use crate::metrics::Result as MetricsResult;
 use crate::metrics::SSE_EVENT_COUNT_METRIC;
 use crate::metrics::SSE_EVENT_DURATION_METRIC;
@@ -47,7 +48,6 @@ use codex_protocol::protocol::TokenUsage;
 use codex_protocol::user_input::UserInput;
 use eventsource_stream::Event as StreamEvent;
 use eventsource_stream::EventStreamError as StreamError;
-use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use reqwest::Error;
 use reqwest::Response;
 use std::borrow::Cow;
@@ -355,7 +355,7 @@ impl SessionTelemetry {
         metrics.shutdown()
     }
 
-    pub fn snapshot_metrics(&self) -> MetricsResult<ResourceMetrics> {
+    pub fn snapshot_metrics<T: Default>(&self) -> MetricsResult<T> {
         let Some(metrics) = &self.metrics else {
             return Err(MetricsError::ExporterDisabled);
         };
@@ -367,14 +367,14 @@ impl SessionTelemetry {
         if self.metrics.is_none() {
             return;
         }
-        if let Err(err) = self.snapshot_metrics() {
+        if let Err(err) = self.snapshot_metrics::<ResourceMetrics>() {
             tracing::debug!("runtime metrics reset skipped: {err}");
         }
     }
 
     /// Collect a runtime metrics summary if debug snapshots are available.
     pub fn runtime_metrics_summary(&self) -> Option<RuntimeMetricsSummary> {
-        let snapshot = match self.snapshot_metrics() {
+        let snapshot: ResourceMetrics = match self.snapshot_metrics() {
             Ok(snapshot) => snapshot,
             Err(_) => {
                 return None;

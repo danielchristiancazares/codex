@@ -136,7 +136,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.146.0-daniel"
+version = "0.148.636478"
 # Track the edition for all workspace crates in one place. Individual
 # crates can still override this value, but keeping it here means new
 # crates created with `cargo new -w ...` automatically inherit the 2024
@@ -366,7 +366,7 @@ opentelemetry = "0.31.0"
 opentelemetry-appender-tracing = "0.31.0"
 opentelemetry-otlp = "0.31.0"
 opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
 os_info = "3.12.0"
 owo-colors = "4.3.0"
 pathdiff = "0.2"
