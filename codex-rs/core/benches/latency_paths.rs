@@ -18,7 +18,7 @@ fn main() {
 
 #[divan::bench(args = PCM_SAMPLE_COUNTS)]
 fn pcm_wav_prepare(bencher: Bencher, sample_count: usize) {
-    let items = vec![ResponseItem::Message {
+    let item = ResponseItem::Message {
         id: Default::default(),
         role: "user".to_string(),
         content: vec![ContentItem::InputAudio {
@@ -26,9 +26,9 @@ fn pcm_wav_prepare(bencher: Bencher, sample_count: usize) {
         }],
         phase: Default::default(),
         internal_chat_message_metadata_passthrough: Default::default(),
-    }];
+    };
     bencher
-        .with_inputs(move || items.clone())
+        .with_inputs(move || vec![item.clone()])
         .bench_local_values(|mut items| {
             prepare_response_items(&mut items);
             items
