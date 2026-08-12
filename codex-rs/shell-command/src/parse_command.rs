@@ -1395,7 +1395,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn powershell_wrapped_rg_commands_are_classified() {
+    fn powershell_wrapped_exploration_commands_are_classified() {
         assert_parsed(
             &vec_str(&[
                 "powershell.exe",
@@ -1421,6 +1421,35 @@ mod tests {
                 cmd: "rg -n -C 4 rmcp codex-rs/app-server-protocol/BUILD.bazel".to_string(),
                 query: "rmcp".to_string().into(),
                 path: "BUILD.bazel".to_string().into(),
+            }],
+        );
+
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "sed -n '1525,1805p' codex-rs/shell-command/src/parse_command.rs",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "sed -n '1525,1805p' codex-rs/shell-command/src/parse_command.rs".to_string(),
+                name: "parse_command.rs".to_string(),
+                path: PathBuf::from("codex-rs/shell-command/src/parse_command.rs"),
+            }],
+        );
+
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "Get-Content -LiteralPath codex-rs/shell-command/src/parse_command.rs",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content -LiteralPath codex-rs/shell-command/src/parse_command.rs"
+                    .to_string(),
+                name: "parse_command.rs".to_string(),
+                path: PathBuf::from("codex-rs/shell-command/src/parse_command.rs"),
             }],
         );
     }
@@ -2701,6 +2730,21 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                     cmd: shlex_join(main_cmd),
                 }
             }
+        }
+        _ if main_cmd
+            .first()
+            .is_some_and(|head| head.eq_ignore_ascii_case("Get-Content")) =>
+        {
+            single_non_flag_operand(&main_cmd[1..], &[]).map_or_else(
+                || ParsedCommand::Unknown {
+                    cmd: shlex_join(main_cmd),
+                },
+                |path| ParsedCommand::Read {
+                    cmd: shlex_join(main_cmd),
+                    name: short_display_path(&path),
+                    path: PathBuf::from(path),
+                },
+            )
         }
         Some((head, tail)) if is_python_command(head) => {
             if python_walks_files(tail) {

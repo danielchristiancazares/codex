@@ -55,6 +55,11 @@ function Install-Binaries {
             throw "Staging path already exists: $stagedPath."
         }
 
+        $destinationParent = Split-Path -Parent $destination
+        if (-not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
+        }
+
         $operations.Add([pscustomobject]@{
             Source = $source
             Destination = $destination
@@ -142,20 +147,22 @@ Invoke-Checked -FilePath $python -Arguments @(
     "--force"
 )
 
-Write-Step "Installing Windows binaries in $installDir"
+Write-Step "Installing Codex package in $cargoHome"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $binaries = [ordered]@{
-    "codex-resources\codex-command-runner.exe" = "codex-command-runner.exe"
-    "codex-resources\codex-windows-sandbox-setup.exe" = "codex-windows-sandbox-setup.exe"
-    "bin\codex-code-mode-host.exe" = "codex-code-mode-host.exe"
-    "bin\codex.exe" = "codex.exe"
+    "bin\codex.exe" = "bin\codex.exe"
+    "bin\codex-code-mode-host.exe" = "bin\codex-code-mode-host.exe"
+    "codex-resources\codex-command-runner.exe" = "codex-resources\codex-command-runner.exe"
+    "codex-resources\codex-windows-sandbox-setup.exe" = "codex-resources\codex-windows-sandbox-setup.exe"
+    "codex-path\rg.exe" = "codex-path\rg.exe"
+    "codex-package.json" = "codex-package.json"
 }
 
 $codexPath = Join-Path $installDir "codex.exe"
 Install-Binaries `
     -Binaries $binaries `
     -PackageDir $packageDir `
-    -InstallDir $installDir `
+    -InstallDir $cargoHome `
     -Verify {
         Write-Step "Verifying installation"
         $reportedVersionLines = @(& $codexPath --version)
