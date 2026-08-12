@@ -19,7 +19,6 @@ use codex_cli::run_login_with_chatgpt;
 use codex_cli::run_login_with_device_code;
 use codex_cli::run_logout;
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
-use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
@@ -48,6 +47,7 @@ use supports_color::Stream;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
 mod cloud_config;
+mod cloud_cmd;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;
@@ -211,9 +211,9 @@ enum Subcommand {
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
 
-    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
+    /// Codex Cloud is disabled in this build.
     #[clap(name = "cloud", alias = "cloud-tasks")]
-    Cloud(CloudTasksCli),
+    Cloud(cloud_cmd::CloudCommand),
 
     /// Internal: run the responses API proxy.
     #[clap(hide = true)]
@@ -1653,8 +1653,7 @@ async fn cli_main(
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            codex_cloud_tasks::run_main(cloud_cli, arg0_paths.codex_linux_sandbox_exe.clone())
-                .await?;
+            cloud_cmd::run(cloud_cli)?;
         }
         Some(Subcommand::Sandbox(mut sandbox_cli)) => {
             let config_profile = sandbox_cli
