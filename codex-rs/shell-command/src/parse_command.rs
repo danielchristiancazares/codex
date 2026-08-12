@@ -2,6 +2,8 @@ use crate::bash::extract_bash_command;
 use crate::bash::try_parse_shell;
 use crate::bash::try_parse_word_only_commands_sequence;
 use crate::powershell::extract_powershell_command;
+#[cfg(windows)]
+use crate::powershell::parse_powershell_command_into_plain_commands;
 use codex_protocol::parse_command::ParsedCommand;
 use shlex::split as shlex_split;
 use shlex::try_join as shlex_try_join;
@@ -1390,6 +1392,38 @@ mod tests {
             }],
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_wrapped_rg_commands_are_classified() {
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "rg --files -g AGENTS.md -g plan.md -g README.md -g SECURITY.md -g 'docs/IFA*.md'",
+            ]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "rg --files -g AGENTS.md -g plan.md -g README.md -g SECURITY.md -g 'docs/IFA*.md'"
+                    .to_string(),
+                path: Default::default(),
+            }],
+        );
+
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "rg -n -C 4 \"rmcp\" codex-rs/app-server-protocol/BUILD.bazel",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "rg -n -C 4 rmcp codex-rs/app-server-protocol/BUILD.bazel".to_string(),
+                query: "rmcp".to_string().into(),
+                path: "BUILD.bazel".to_string().into(),
+            }],
+        );
+    }
 }
 
 pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
@@ -1405,6 +1439,16 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
             normalized[0] = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_owned();
             normalized
         });
+
+    #[cfg(windows)]
+    if let Some(command) = parse_powershell_command_into_plain_commands(
+        powershell_command.as_deref().unwrap_or(command),
+    )
+    .and_then(|mut commands| (commands.len() == 1).then(|| commands.remove(0)))
+    {
+        return parse_plain_command(&command);
+    }
+
     if let Some((_, script)) =
         extract_powershell_command(powershell_command.as_deref().unwrap_or(command))
     {
@@ -1425,6 +1469,10 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
         }];
     }
 
+    parse_plain_command(command)
+}
+
+fn parse_plain_command(command: &[String]) -> Vec<ParsedCommand> {
     let normalized = normalize_tokens(command);
 
     let parts = if contains_connectors(&normalized) {
