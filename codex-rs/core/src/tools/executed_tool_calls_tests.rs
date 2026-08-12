@@ -192,7 +192,7 @@ fn executed_tool_call_recorder_bounds_retained_history_and_reports_omissions() {
     let retained_bytes = state
         .retained_calls
         .values()
-        .map(serialized_json_bytes)
+        .map(|calls| serialized_json_bytes(calls).expect("retained calls must serialize"))
         .sum::<usize>();
     assert!(retained_bytes <= MAX_EXECUTED_TOOL_CALL_FULL_ARGUMENT_BYTES_PER_OUTPUT);
 
