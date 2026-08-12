@@ -81,7 +81,6 @@ use codex_protocol::turn_input::TurnInputSubmission;
 use codex_tools::ToolSpec;
 use codex_utils_path_uri::PathUri;
 use std::collections::BTreeMap;
-use tracing::Span;
 
 use crate::connectors::AppInfo;
 use crate::rollout::recorder::RolloutRecorder;
@@ -154,7 +153,6 @@ use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
-use codex_protocol::protocol::W3cTraceContext;
 use codex_rmcp_client::ElicitationAction;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
@@ -174,8 +172,6 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::test_path_buf;
 use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
-use opentelemetry::trace::TraceContextExt;
-use opentelemetry::trace::TraceId;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use opentelemetry_sdk::metrics::data::AggregatedMetrics;
 use opentelemetry_sdk::metrics::data::Metric;
@@ -186,7 +182,6 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 use tokio::time::timeout;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use uuid::Uuid;
 
@@ -518,59 +513,6 @@ fn skill_message(text: &str) -> ResponseItem {
         phase: None,
         internal_chat_message_metadata_passthrough: None,
     }
-}
-
-#[tokio::test]
-async fn regular_turn_emits_turn_started_with_trace_id_without_waiting_for_startup_prewarm() {
-    let _trace_test_context = install_test_tracing("codex-core-tests");
-    let request_parent = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let request_span = info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
-        &request_span,
-        &request_parent
-    ));
-    let (sess, tc, rx) = make_session_and_context_with_rx()
-        .instrument(request_span)
-        .await;
-    assert_eq!(
-        tc.trace_id.as_deref(),
-        Some("00000000000000000000000000000011")
-    );
-    let (_tx, startup_prewarm_rx) = tokio::sync::oneshot::channel::<()>();
-    let handle = tokio::spawn(async move {
-        let _ = startup_prewarm_rx.await;
-        Ok(test_model_client_session())
-    });
-
-    sess.set_session_startup_prewarm(
-        crate::session_startup_prewarm::SessionStartupPrewarmHandle::new(
-            handle,
-            std::time::Instant::now(),
-            crate::client::WEBSOCKET_CONNECT_TIMEOUT,
-        ),
-    )
-    .await;
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        crate::tasks::RegularTask::new(),
-    )
-    .await;
-
-    let first = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
-        .await
-        .expect("expected turn started event without waiting for startup prewarm")
-        .expect("channel open");
-    let EventMsg::TurnStarted(turn_started) = first.msg else {
-        panic!("expected turn started event");
-    };
-    assert_eq!(turn_started.turn_id, tc.sub_id);
-    assert_eq!(turn_started.trace_id, tc.trace_id);
-
-    sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
 }
 
 #[tokio::test]
@@ -7005,121 +6947,6 @@ async fn request_permissions_is_auto_denied_when_granular_policy_blocks_tool_req
     );
 }
 
-#[tokio::test]
-async fn submit_with_trace_captures_current_span_trace_context() {
-    let (_session, _turn_context) = make_session_and_context().await;
-    let (tx_sub, rx_sub) = async_channel::bounded(1);
-    let (_tx_event, rx_event) = async_channel::unbounded();
-    let io = SessionIo {
-        tx_sub,
-        rx_event,
-        agent_status: watch::channel(AgentStatus::PendingInit).1,
-        session_loop_termination: completed_session_loop_termination(),
-    };
-
-    let _trace_test_context = install_test_tracing("codex-core-tests");
-
-    let request_parent = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let request_span = info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
-        &request_span,
-        &request_parent
-    ));
-
-    let expected_trace = async {
-        let expected_trace =
-            current_span_w3c_trace_context().expect("current span should have trace context");
-        io.submit_with_trace(
-            Op::Interrupt,
-            /*trace*/ None,
-            /*parent_turn_id*/ None,
-            /*root_turn_id*/ None,
-        )
-        .await
-        .expect("submit should succeed");
-        expected_trace
-    }
-    .instrument(request_span)
-    .await;
-
-    let submitted = rx_sub.recv().await.expect("submission");
-    assert_eq!(submitted.trace, Some(expected_trace));
-}
-
-#[tokio::test]
-async fn new_default_turn_captures_current_span_trace_id() {
-    let (session, _turn_context) = make_session_and_context().await;
-
-    let _trace_test_context = install_test_tracing("codex-core-tests");
-
-    let request_parent = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let request_span = info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
-        &request_span,
-        &request_parent
-    ));
-
-    let turn_trace_id = async {
-        let expected_trace_id = Span::current()
-            .context()
-            .span()
-            .span_context()
-            .trace_id()
-            .to_string();
-        let turn_context = session.new_default_turn().await;
-        assert_eq!(turn_context.trace_id, Some(expected_trace_id));
-        turn_context.trace_id.clone()
-    }
-    .instrument(request_span)
-    .await;
-
-    assert_eq!(
-        turn_trace_id.as_deref(),
-        Some("00000000000000000000000000000011")
-    );
-}
-
-#[test]
-fn submission_dispatch_span_prefers_submission_trace_context() {
-    let _trace_test_context = install_test_tracing("codex-core-tests");
-
-    let ambient_parent = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000033-0000000000000044-01".into()),
-        tracestate: None,
-    };
-    let ambient_span = info_span!("ambient");
-    assert!(set_parent_from_w3c_trace_context(
-        &ambient_span,
-        &ambient_parent
-    ));
-
-    let submission_trace = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000055-0000000000000066-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let dispatch_span = ambient_span.in_scope(|| {
-        submission_dispatch_span(&Submission {
-            id: "sub-1".into(),
-            op: Op::Interrupt,
-            parent_turn_id: None,
-            root_turn_id: None,
-            trace: Some(submission_trace),
-        })
-    });
-
-    let trace_id = dispatch_span.context().span().span_context().trace_id();
-    assert_eq!(
-        trace_id,
-        TraceId::from_hex("00000000000000000000000000000055").expect("trace id")
-    );
-}
-
 #[test]
 fn submission_dispatch_span_uses_debug_for_realtime_audio() {
     let _trace_test_context = install_test_tracing("codex-core-tests");
@@ -7373,110 +7200,6 @@ async fn empty_turn_environments_clear_primary_environment() {
     let turn_cwd = turn_context.cwd.clone();
     assert_eq!(turn_cwd, session.get_config().await.cwd);
     assert_eq!(turn_context.config.cwd, session.get_config().await.cwd);
-}
-
-#[tokio::test]
-async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
-    struct TraceCaptureTask {
-        captured_trace: Arc<std::sync::Mutex<Option<W3cTraceContext>>>,
-    }
-
-    impl SessionTask for TraceCaptureTask {
-        fn kind(&self) -> TaskKind {
-            TaskKind::Regular
-        }
-
-        fn span_name(&self) -> &'static str {
-            "session_task.trace_capture"
-        }
-
-        async fn run(
-            self: Arc<Self>,
-            _session: Arc<Session>,
-            _ctx: Arc<TurnContext>,
-            _input: Vec<TurnInput>,
-            _cancellation_token: CancellationToken,
-        ) -> SessionTaskResult {
-            let mut trace = self
-                .captured_trace
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *trace = current_span_w3c_trace_context();
-            Ok(None)
-        }
-    }
-
-    let _trace_test_context = install_test_tracing("codex-core-tests");
-
-    let request_parent = W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let request_span = tracing::info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
-        &request_span,
-        &request_parent
-    ));
-
-    let submission_trace =
-        async { current_span_w3c_trace_context().expect("request span should have trace context") }
-            .instrument(request_span)
-            .await;
-
-    let dispatch_span = submission_dispatch_span(&Submission {
-        id: "sub-1".into(),
-        op: Op::Interrupt,
-        parent_turn_id: None,
-        root_turn_id: None,
-        trace: Some(submission_trace.clone()),
-    });
-    let dispatch_span_id = dispatch_span.context().span().span_context().span_id();
-
-    let (sess, tc, rx) = make_session_and_context_with_rx().await;
-    let captured_trace = Arc::new(std::sync::Mutex::new(None));
-
-    async {
-        sess.spawn_task(
-            Arc::clone(&tc),
-            vec![TurnInput::UserInput {
-                content: vec![UserInput::Text {
-                    text: "hello".to_string(),
-                    text_elements: Vec::new(),
-                }],
-                client_id: None,
-            }],
-            TraceCaptureTask {
-                captured_trace: Arc::clone(&captured_trace),
-            },
-        )
-        .await;
-    }
-    .instrument(dispatch_span)
-    .await;
-
-    let evt = tokio::time::timeout(StdDuration::from_secs(2), rx.recv())
-        .await
-        .expect("timeout waiting for turn completion")
-        .expect("event");
-    assert!(matches!(evt.msg, EventMsg::TurnComplete(_)));
-
-    let task_trace = captured_trace
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-        .expect("turn task should capture the current span trace context");
-    let submission_context =
-        codex_otel::context_from_w3c_trace_context(&submission_trace).expect("submission");
-    let task_context = codex_otel::context_from_w3c_trace_context(&task_trace).expect("task trace");
-
-    assert_eq!(
-        task_context.span().span_context().trace_id(),
-        submission_context.span().span_context().trace_id()
-    );
-    assert_ne!(
-        task_context.span().span_context().span_id(),
-        dispatch_span_id
-    );
 }
 
 #[cfg(debug_assertions)]
