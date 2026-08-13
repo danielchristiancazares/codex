@@ -17,6 +17,7 @@ use crate::pager_overlay::TranscriptOverlay;
 use crate::status::StatusAccountDisplay;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::test_support::PathBufExt;
+use crate::test_support::sanitize_codex_version;
 use crate::test_support::test_path_buf;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
@@ -188,6 +189,7 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
         .map(|line| UnicodeWidthStr::width(line.as_str()));
     lines
         .into_iter()
+        .map(|line| sanitize_codex_version(&line))
         .map(|line| {
             if let (Some(frame_width), Some(dir_pos), Some(pipe_idx)) =
                 (frame_width, line.find("Directory: "), line.rfind('│'))

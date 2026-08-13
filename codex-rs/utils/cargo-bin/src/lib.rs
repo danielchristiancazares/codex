@@ -43,6 +43,25 @@ pub fn cargo_bin(name: &str) -> Result<PathBuf, CargoBinError> {
             return resolve_bin_from_env(key, value);
         }
     }
+
+    // assert_cmd 2.2 panics when neither an env var nor its legacy target-dir
+    // fallback exists. Check that fallback explicitly so callers still receive
+    // the error promised by this API.
+    let mut fallback_path =
+        std::env::current_exe().map_err(|source| CargoBinError::CurrentExe { source })?;
+    let _test_binary = fallback_path.pop();
+    if fallback_path.ends_with("deps") {
+        let _deps = fallback_path.pop();
+    }
+    fallback_path.push(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    if !fallback_path.exists() {
+        return Err(CargoBinError::NotFound {
+            name: name.to_owned(),
+            env_keys,
+            fallback: format!("assert_cmd fallback path does not exist: {fallback_path:?}"),
+        });
+    }
+
     match assert_cmd::Command::cargo_bin(name) {
         Ok(cmd) => {
             let mut path = PathBuf::from(cmd.get_program());

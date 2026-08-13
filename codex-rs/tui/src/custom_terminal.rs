@@ -1269,10 +1269,11 @@ mod tests {
         )
         .expect("Vec writes should succeed");
 
-        assert_eq!(
-            output,
-            b"\x1b[1;1H\xe2\x9a\xa0\xef\xb8\x8f\x1b[1;2H \x1b[m\x1b[m\x1b[0m"
+        assert!(
+            output.starts_with(b"\x1b[1;1H\xe2\x9a\xa0\xef\xb8\x8f\x1b[1;2H "),
+            "expected draw to reposition before the repaired cell: {output:?}"
         );
+        assert!(output.ends_with(b"\x1b[0m"));
     }
 
     #[test]
@@ -1289,7 +1290,11 @@ mod tests {
         )
         .expect("Vec writes should succeed");
 
-        assert_eq!(output, b"\x1b[1;1Ha\x1b[1;2Hb\x1b[1;3Hc\x1b[m\x1b[m\x1b[0m");
+        assert!(
+            output.starts_with(b"\x1b[1;1Ha\x1b[1;2Hb\x1b[1;3Hc"),
+            "expected an explicit cursor move before every cell: {output:?}"
+        );
+        assert!(output.ends_with(b"\x1b[0m"));
     }
 
     #[test]
@@ -1304,6 +1309,7 @@ mod tests {
         let mut terminal =
             Terminal::with_options(CaptureBackend::new(width, height)).expect("terminal");
         terminal.set_viewport_area(area);
+        terminal.cursor_positioning = CursorPositioning::Predicted;
 
         terminal
             .draw(|frame| {

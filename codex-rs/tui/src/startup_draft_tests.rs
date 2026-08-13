@@ -19,6 +19,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
+use crate::test_support::sanitize_codex_version;
 use crate::tui::FrameRequester;
 use crate::tui::TuiEvent;
 
@@ -95,17 +96,19 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         let cursor = renderable
             .cursor_pos(area)
             .expect("keep the editable composer cursor visible below its header");
-        let frame = (0..area.height)
-            .map(|row| {
-                (0..area.width)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+        let frame = sanitize_codex_version(
+            &(0..area.height)
+                .map(|row| {
+                    (0..area.width)
+                        .map(|column| buffer[(column, row)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .replace("0.0.0", "<VERSION>");
 
         assert!(
             cursor.1 >= pump.header.desired_height(width),
@@ -684,17 +687,19 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
     let renderable = startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action);
     let mut buffer = Buffer::empty(area);
     renderable.render(area, &mut buffer);
-    let visible_frame = (area.top()..area.bottom())
-        .map(|row| {
-            (area.left()..area.right())
-                .map(|column| buffer[(column, row)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+    let visible_frame = sanitize_codex_version(
+        &(area.top()..area.bottom())
+            .map(|row| {
+                (area.left()..area.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .replace("0.0.0", "<VERSION>");
     drop(renderable);
     frames.push_str(&format!("\n---\nafter onboarding:\n{visible_frame}"));
     insta::assert_snapshot!("startup_draft_onboarding_transition", frames);

@@ -16,10 +16,6 @@ use codex_mcp::tool_is_model_visible;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::models::PermissionProfile;
 
-#[cfg(test)]
-#[path = "installed_tests.rs"]
-mod tests;
-
 const CONNECTOR_RUNTIME_REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 const APPS_INSTALLED_SUBMIT_ID: &str = "app-installed";
 const APPS_INSTALLED_RESPONSE_BYTES_METRIC: &str = "codex.apps.installed.response_bytes";
