@@ -1531,20 +1531,9 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
             normalized[0] = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_owned();
             normalized
         });
+    let powershell_command = powershell_command.as_deref().unwrap_or(command);
 
-    #[cfg(windows)]
-    if let Some(command) = parse_powershell_command_into_plain_commands(
-        powershell_command.as_deref().unwrap_or(command),
-    )
-    .map(drop_small_formatting_commands)
-    .and_then(|mut commands| (commands.len() == 1).then(|| commands.remove(0)))
-    {
-        return parse_plain_command(&command);
-    }
-
-    if let Some((_, script)) =
-        extract_powershell_command(powershell_command.as_deref().unwrap_or(command))
-    {
+    if let Some((_, script)) = extract_powershell_command(powershell_command) {
         let tokens = tokenize_powershell_command(script);
         if tokens
             .first()
@@ -1557,6 +1546,17 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
                 path: path.clone(),
             }];
         }
+    }
+
+    #[cfg(windows)]
+    if let Some(command) = parse_powershell_command_into_plain_commands(powershell_command)
+        .map(drop_small_formatting_commands)
+        .and_then(|mut commands| (commands.len() == 1).then(|| commands.remove(0)))
+    {
+        return parse_plain_command(&command);
+    }
+
+    if let Some((_, script)) = extract_powershell_command(powershell_command) {
         return vec![ParsedCommand::Unknown {
             cmd: script.to_string(),
         }];
@@ -2567,9 +2567,7 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                         || (argument.eq_ignore_ascii_case("-TotalCount")
                             && tail.get(index + 1).is_some_and(|count| {
                                 !count.is_empty()
-                                    && count
-                                        .chars()
-                                        .all(|character| character.is_ascii_digit())
+                                    && count.chars().all(|character| character.is_ascii_digit())
                             }))
                 }) {
                     single_non_flag_operand(tail, &["-TotalCount"])

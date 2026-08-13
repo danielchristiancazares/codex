@@ -153,6 +153,7 @@ pub(crate) async fn load_embedded_system_skill_root(root: HostSkillRoot) -> Host
             name,
             description,
             short_description,
+            model,
         }) = parse_skill_frontmatter_metadata(embedded_skill.skills_md, || {
             default_skill_name(&path)
         })
@@ -172,6 +173,7 @@ pub(crate) async fn load_embedded_system_skill_root(root: HostSkillRoot) -> Host
             name,
             description,
             short_description,
+            model,
             interface,
             dependencies,
             policy,

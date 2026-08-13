@@ -24,7 +24,7 @@ pub(super) fn approval_not_required_for_repo_read(
             McpServerTransportConfig::Stdio { cwd, .. } => {
                 if cwd.is_some() {
                     cwd.as_ref()
-                        .and_then(|cwd| cwd.to_inferred_abs_path())
+                        .and_then(codex_utils_path_uri::LegacyAppPathString::to_inferred_abs_path)
                         .ok_or(())?
                 } else {
                     project_cwd.clone()
