@@ -910,6 +910,57 @@ async fn overlapping_exploring_exec_end_is_not_misclassified_as_orphan() {
 }
 
 #[tokio::test]
+async fn overlapping_mixed_exec_calls_update_the_original_active_cell() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let begin_search = begin_exec(&mut chat, "call-search", "rg needle src");
+    let begin_read = begin_exec(&mut chat, "call-read", "sed -n '1,20p' src/lib.rs");
+    let begin_run = begin_exec(&mut chat, "call-run", "git status --short");
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    assert_chatwidget_snapshot!("overlapping_mixed_exec_calls_active", active_blob(&chat));
+
+    end_exec(
+        &mut chat,
+        begin_search,
+        "src/lib.rs\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    end_exec(
+        &mut chat,
+        begin_read,
+        "contents\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completions should update the original active cell"
+    );
+    assert_chatwidget_snapshot!(
+        "overlapping_mixed_exec_calls_partially_completed",
+        active_blob(&chat)
+    );
+
+    end_exec(
+        &mut chat,
+        begin_run,
+        " M src/lib.rs\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "successful commands should remain grouped until the next boundary"
+    );
+    assert_chatwidget_snapshot!(
+        "overlapping_mixed_exec_calls_completed",
+        active_blob(&chat)
+    );
+}
+
+#[tokio::test]
 async fn exec_history_shows_unified_exec_startup_commands() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
