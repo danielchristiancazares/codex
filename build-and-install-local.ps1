@@ -30,9 +30,9 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
-function Install-Binaries {
+function Install-PackageFiles {
     param(
-        [System.Collections.IDictionary]$Binaries,
+        [System.Collections.IDictionary]$Files,
         [string]$PackageDir,
         [string]$InstallDir,
         [scriptblock]$Verify
@@ -40,9 +40,9 @@ function Install-Binaries {
 
     $stagingSuffix = "$PID.$([System.Guid]::NewGuid().ToString("N"))"
     $operations = [System.Collections.Generic.List[object]]::new()
-    foreach ($relativeSource in $Binaries.Keys) {
+    foreach ($relativeSource in $Files.Keys) {
         $source = Join-Path $PackageDir $relativeSource
-        $destination = Join-Path $InstallDir $Binaries[$relativeSource]
+        $destination = Join-Path $InstallDir $Files[$relativeSource]
         $stagedPath = "$destination.installing.$stagingSuffix"
 
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
@@ -51,13 +51,11 @@ function Install-Binaries {
         if (Test-Path -LiteralPath $destination -PathType Container) {
             throw "Install destination is a directory: $destination."
         }
+        if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+            throw "Installed package is missing $destination."
+        }
         if (Test-Path -LiteralPath $stagedPath) {
             throw "Staging path already exists: $stagedPath."
-        }
-
-        $destinationParent = Split-Path -Parent $destination
-        if (-not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
-            New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
         }
 
         $operations.Add([pscustomobject]@{
@@ -74,7 +72,7 @@ function Install-Binaries {
                 -Destination $operation.StagedPath
 
             if ((Get-FileSha256 $operation.Source) -ne (Get-FileSha256 $operation.StagedPath)) {
-                throw "Staged binary does not match the build output: $($operation.Source)."
+                throw "Staged file does not match the build output: $($operation.Source)."
             }
         }
 
@@ -89,7 +87,7 @@ function Install-Binaries {
 
         foreach ($operation in $operations) {
             if ((Get-FileSha256 $operation.Source) -ne (Get-FileSha256 $operation.Destination)) {
-                throw "Installed binary does not match the build output: $($operation.Destination)."
+                throw "Installed file does not match the build output: $($operation.Destination)."
             }
         }
     } finally {
@@ -109,11 +107,22 @@ $repoRoot = $PSScriptRoot
 Set-Location $repoRoot
 
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-$target = switch ($architecture) {
-    "X64" { "x86_64-pc-windows-msvc" }
-    "Arm64" { "aarch64-pc-windows-msvc" }
+$targetInfo = switch ($architecture) {
+    "X64" {
+        [pscustomobject]@{
+            Target = "x86_64-pc-windows-msvc"
+            PlatformPackage = "codex-win32-x64"
+        }
+    }
+    "Arm64" {
+        [pscustomobject]@{
+            Target = "aarch64-pc-windows-msvc"
+            PlatformPackage = "codex-win32-arm64"
+        }
+    }
     default { throw "Unsupported Windows architecture: $architecture" }
 }
+$target = $targetInfo.Target
 
 $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
 if ($null -eq $pythonCommand) {
@@ -131,12 +140,28 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
 }
 
 $packageDir = Join-Path $repoRoot "dist\codex-package-$target"
-$cargoHome = if ([string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
-    Join-Path $env:USERPROFILE ".cargo"
-} else {
-    $env:CARGO_HOME
+$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if ($null -eq $npmCommand) {
+    throw "npm is required to locate the installed Codex executables."
 }
-$installDir = Join-Path $cargoHome "bin"
+
+$npmRootLines = @(& $npmCommand.Source root --global)
+$npmRoot = ($npmRootLines -join [Environment]::NewLine).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmRoot)) {
+    throw "Could not locate the global npm package directory."
+}
+
+$codexPackageDir = Join-Path $npmRoot "@openai\codex"
+$nestedPlatformPackageDir = Join-Path $codexPackageDir "node_modules\@openai\$($targetInfo.PlatformPackage)"
+$hoistedPlatformPackageDir = Join-Path $npmRoot "@openai\$($targetInfo.PlatformPackage)"
+if (Test-Path -LiteralPath $nestedPlatformPackageDir -PathType Container) {
+    $platformPackageDir = $nestedPlatformPackageDir
+} elseif (Test-Path -LiteralPath $hoistedPlatformPackageDir -PathType Container) {
+    $platformPackageDir = $hoistedPlatformPackageDir
+} else {
+    throw "Could not find the installed @openai/$($targetInfo.PlatformPackage) package."
+}
+$installDir = Join-Path $platformPackageDir "vendor\$target"
 
 Write-Step "Building Codex $version for $target"
 Invoke-Checked -FilePath $python -Arguments @(
@@ -147,9 +172,8 @@ Invoke-Checked -FilePath $python -Arguments @(
     "--force"
 )
 
-Write-Step "Installing Codex package in $cargoHome"
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-$binaries = [ordered]@{
+Write-Step "Replacing installed Codex executables in $installDir"
+$packageFiles = [ordered]@{
     "bin\codex.exe" = "bin\codex.exe"
     "bin\codex-code-mode-host.exe" = "bin\codex-code-mode-host.exe"
     "codex-resources\codex-command-runner.exe" = "codex-resources\codex-command-runner.exe"
@@ -158,11 +182,11 @@ $binaries = [ordered]@{
     "codex-package.json" = "codex-package.json"
 }
 
-$codexPath = Join-Path $installDir "codex.exe"
-Install-Binaries `
-    -Binaries $binaries `
+$codexPath = Join-Path $installDir "bin\codex.exe"
+Install-PackageFiles `
+    -Files $packageFiles `
     -PackageDir $packageDir `
-    -InstallDir $cargoHome `
+    -InstallDir $installDir `
     -Verify {
         Write-Step "Verifying installation"
         $reportedVersionLines = @(& $codexPath --version)
