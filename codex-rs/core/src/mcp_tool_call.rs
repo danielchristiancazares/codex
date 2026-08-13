@@ -89,6 +89,7 @@ use tracing::error;
 use tracing::field::Empty;
 use url::Url;
 
+mod repo_read_approval;
 mod telemetry;
 
 use telemetry::McpCallMetricOutcome;
@@ -1327,7 +1328,26 @@ async fn maybe_request_mcp_tool_approval(
     }
 
     let annotations = metadata.annotations.as_ref();
-    if !strict_auto_review && !requires_mcp_tool_approval_for_mode(annotations, policy.mode) {
+    if !strict_auto_review
+        && (!requires_mcp_tool_approval_for_mode(annotations, policy.mode)
+            || (policy.mode == AppToolApproval::Auto
+                && annotations.is_none_or(|annotations| {
+                    !annotations
+                        .destructive_hint
+                        .is_some_and(std::convert::identity)
+                        && !annotations
+                            .open_world_hint
+                            .is_some_and(std::convert::identity)
+                        && !annotations
+                            .read_only_hint
+                            .is_some_and(|read_only| !read_only)
+                })
+                && repo_read_approval::approval_not_required_for_repo_read(
+                    config,
+                    &turn_context.config.cwd,
+                    invocation,
+                )))
+    {
         return None;
     }
 
