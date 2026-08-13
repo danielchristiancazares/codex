@@ -1,8 +1,8 @@
 //! Data model for grouped exec-call history cells in the TUI transcript.
 //!
-//! An `ExecCell` can represent either a single command or an "exploring" group of related read/
-//! list/search commands. The chat widget relies on stable `call_id` matching to route progress and
-//! end events into the right cell, and it treats "call id not found" as a real signal (for
+//! An `ExecCell` can represent overlapping commands, with contiguous read/list/search calls shown
+//! as an "exploring" group. The chat widget relies on stable `call_id` matching to route progress
+//! and end events into the right cell, and it treats "call id not found" as a real signal (for
 //! example, an orphan end that should render as a separate history entry).
 
 use std::borrow::Cow;
@@ -137,7 +137,9 @@ impl ExecCell {
                     .as_ref()
                     .is_some_and(|output| output.exit_code == 0)
         });
-        if continues_exploration || continues_compact_group {
+        // Keep overlapping calls in one mutable cell so their matching completion events update
+        // the original live action. Completed calls still follow the normal grouping rules.
+        if self.is_active() || continues_exploration || continues_compact_group {
             self.calls.push(call);
             true
         } else {
@@ -191,7 +193,7 @@ impl ExecCell {
             return false;
         }
 
-        !self.is_exploring_cell() && self.calls.iter().all(|c| c.duration.is_some())
+        !self.is_exploring_cell() && !self.is_active()
     }
 
     pub(crate) fn mark_failed(&mut self) {
@@ -216,13 +218,6 @@ impl ExecCell {
 
     pub(crate) fn is_active(&self) -> bool {
         self.calls.iter().any(|c| c.duration.is_none())
-    }
-
-    pub(crate) fn active_start_time(&self) -> Option<Instant> {
-        self.calls
-            .iter()
-            .find(|c| c.duration.is_none())
-            .and_then(|c| c.start_time)
     }
 
     pub(crate) fn animations_enabled(&self) -> bool {

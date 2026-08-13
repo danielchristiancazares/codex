@@ -185,13 +185,36 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
 
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.calls.len() > 1 && (!self.is_exploring_cell() || !self.is_active()) {
-            self.compact_group_display_lines(width)
-        } else if self.is_exploring_cell() {
-            self.exploring_display_lines(width)
-        } else {
-            self.command_display_lines(width)
+        if self.calls.len() > 1 && !self.is_active() {
+            return self.compact_group_display_lines(width);
         }
+
+        let mut out = Vec::new();
+        let mut calls = self.calls.as_slice();
+        let mut first_group = true;
+        while let [first, remaining @ ..] = calls {
+            let group_len = if Self::is_exploring_call(first) {
+                1 + remaining
+                    .iter()
+                    .take_while(|call| Self::is_exploring_call(call))
+                    .count()
+            } else {
+                1
+            };
+            let (group, remaining) = calls.split_at(group_len);
+            calls = remaining;
+            if first_group {
+                first_group = false;
+            } else {
+                out.push("".into());
+            }
+            if group.iter().all(Self::is_exploring_call) {
+                out.extend(self.exploring_display_lines(group, width));
+            } else {
+                out.extend(self.command_display_lines(&group[0], width));
+            }
+        }
+        out
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -277,7 +300,7 @@ impl ExecCell {
             ]));
         }
         for call in &self.calls[completed_commands..] {
-            lines.extend(self.command_call_display_lines(width, call));
+            lines.extend(self.command_display_lines(call, width));
         }
         lines
     }
@@ -290,23 +313,28 @@ impl ExecCell {
         Line::from(vec![Self::output_ellipsis_text(omitted).dim()])
     }
 
-    fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn exploring_display_lines(&self, calls: &[ExecCall], width: u16) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
+        let active_start_time = calls
+            .iter()
+            .find(|call| call.duration.is_none())
+            .and_then(|call| call.start_time);
+        let is_active = calls.iter().any(|call| call.duration.is_none());
         out.push(Line::from(vec![
-            if self.is_active() {
-                activity_marker(self.active_start_time(), self.animations_enabled())
+            if is_active {
+                activity_marker(active_start_time, self.animations_enabled())
             } else {
                 "•".dim()
             },
             " ".into(),
-            if self.is_active() {
+            if is_active {
                 "Exploring".bold()
             } else {
                 "Explored".bold()
             },
         ]));
 
-        let mut calls = self.calls.as_slice();
+        let mut calls = calls;
         let mut out_indented = Vec::new();
         while let Some((call, remaining)) = calls.split_first() {
             let reads_only = call
@@ -387,14 +415,7 @@ impl ExecCell {
         out
     }
 
-    fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let [call] = &self.calls.as_slice() else {
-            panic!("Expected exactly one call in a command display cell");
-        };
-        self.command_call_display_lines(width, call)
-    }
-
-    fn command_call_display_lines(&self, width: u16, call: &ExecCall) -> Vec<Line<'static>> {
+    fn command_display_lines(&self, call: &ExecCall, width: u16) -> Vec<Line<'static>> {
         let layout = EXEC_DISPLAY_LAYOUT;
         let success = call
             .duration
@@ -819,7 +840,7 @@ mod tests {
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
 
         // Use a narrow width so each logical line wraps into many on-screen lines.
-        let lines = cell.command_display_lines(width);
+        let lines = cell.command_display_lines(&cell.calls[0], width);
         let rendered_rows = Paragraph::new(Text::from(lines.clone()))
             .wrap(Wrap { trim: false })
             .line_count(width);
@@ -1087,7 +1108,7 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let rendered: Vec<String> = cell
-            .command_display_lines(/*width*/ 36)
+            .command_display_lines(&cell.calls[0], /*width*/ 36)
             .iter()
             .map(|line| {
                 line.spans
@@ -1119,12 +1140,12 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let first: Vec<String> = cell
-            .command_display_lines(/*width*/ 80)
+            .command_display_lines(&cell.calls[0], /*width*/ 80)
             .iter()
             .map(render_line_text)
             .collect();
         let second: Vec<String> = cell
-            .command_display_lines(/*width*/ 80)
+            .command_display_lines(&cell.calls[0], /*width*/ 80)
             .iter()
             .map(render_line_text)
             .collect();
@@ -1190,7 +1211,7 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let rendered: Vec<String> = cell
-            .command_display_lines(/*width*/ 36)
+            .command_display_lines(&cell.calls[0], /*width*/ 36)
             .iter()
             .map(|line| {
                 line.spans
