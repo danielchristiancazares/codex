@@ -16,6 +16,23 @@ pub fn shlex_join(tokens: &[String]) -> String {
 
 /// Tokenizes a PowerShell command while preserving Windows paths and reader aliases.
 pub fn tokenize_powershell_command(command: &str) -> Vec<String> {
+    let command = command
+        .strip_prefix('(')
+        .and_then(|command| {
+            let (command, index) = command.rsplit_once(")[")?;
+            let index = index.strip_suffix(']')?;
+            let is_static_index = (!index.is_empty()
+                && index.chars().all(|character| character.is_ascii_digit()))
+                || index.split_once("..").is_some_and(|(start, end)| {
+                    !start.is_empty()
+                        && !end.is_empty()
+                        && !end.contains("..")
+                        && start.chars().all(|character| character.is_ascii_digit())
+                        && end.chars().all(|character| character.is_ascii_digit())
+                });
+            is_static_index.then_some(command)
+        })
+        .unwrap_or(command);
     let normalized = command.replace('\\', "/");
     let mut tokens = shlex_split(&normalized)
         .unwrap_or_else(|| normalized.split_whitespace().map(str::to_string).collect());
@@ -1316,6 +1333,16 @@ mod tests {
             ),
             (
                 "powershell",
+                "(Get-Content -LiteralPath 'codex-rs/core/src/session/tests.rs')[7228..7362]",
+                "codex-rs/core/src/session/tests.rs",
+            ),
+            (
+                "powershell",
+                "Get-Content -LiteralPath codex-rs/core/src/session/tests.rs -TotalCount 210",
+                "codex-rs/core/src/session/tests.rs",
+            ),
+            (
+                "powershell",
                 "gc C:/skills/demo/SKILL.md",
                 "C:/skills/demo/SKILL.md",
             ),
@@ -1452,6 +1479,42 @@ mod tests {
                 path: PathBuf::from("codex-rs/shell-command/src/parse_command.rs"),
             }],
         );
+
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "Get-Content codex-rs/shell-command/src/parse_command.rs | Select-Object -Skip 2018 -First 150",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content codex-rs/shell-command/src/parse_command.rs".to_string(),
+                name: "parse_command.rs".to_string(),
+                path: PathBuf::from("codex-rs/shell-command/src/parse_command.rs"),
+            }],
+        );
+
+        let rg_command = vec_str(&[
+            "rg",
+            "-n",
+            "-o",
+            ".{0,180}offscreen.{0,280}",
+            "background.js",
+            r"chunks\*.js",
+        ]);
+        assert_parsed(
+            &vec_str(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                r#"rg -n -o ".{0,180}offscreen.{0,280}" background.js chunks\*.js | Select-Object -First 80"#,
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: shlex_join(&rg_command),
+                query: Some(".{0,180}offscreen.{0,280}".to_string()),
+                path: Some("background.js".to_string()),
+            }],
+        );
     }
 }
 
@@ -1473,6 +1536,7 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
     if let Some(command) = parse_powershell_command_into_plain_commands(
         powershell_command.as_deref().unwrap_or(command),
     )
+    .map(drop_small_formatting_commands)
     .and_then(|mut commands| (commands.len() == 1).then(|| commands.remove(0)))
     {
         return parse_plain_command(&command);
@@ -2238,6 +2302,23 @@ fn is_small_formatting_command(tokens: &[String]) -> bool {
             // otherwise consider it a formatting helper in a pipeline.
             sed_read_path(&tokens[1..]).is_none()
         }
+        cmd if cmd.eq_ignore_ascii_case("Select-Object") => {
+            let mut args = tokens[1..].iter();
+            let mut has_limit = false;
+            while let Some(arg) = args.next() {
+                if !(arg.eq_ignore_ascii_case("-First")
+                    || arg.eq_ignore_ascii_case("-Last")
+                    || arg.eq_ignore_ascii_case("-Skip"))
+                    || !args
+                        .next()
+                        .is_some_and(|count| count.parse::<usize>().is_ok())
+                {
+                    return false;
+                }
+                has_limit = true;
+            }
+            has_limit
+        }
         _ => false,
     }
 }
@@ -2478,13 +2559,20 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
             } else {
                 // Intentionally miss complex reads: conservative presentation should not
                 // require implementing PowerShell's full expression and argument grammar.
-                if tail.iter().all(|argument| {
+                if tail.iter().enumerate().all(|(index, argument)| {
                     !argument.starts_with('-')
                         || ["-Raw", "-Path", "-LiteralPath"]
                             .iter()
                             .any(|flag| argument.eq_ignore_ascii_case(flag))
+                        || (argument.eq_ignore_ascii_case("-TotalCount")
+                            && tail.get(index + 1).is_some_and(|count| {
+                                !count.is_empty()
+                                    && count
+                                        .chars()
+                                        .all(|character| character.is_ascii_digit())
+                            }))
                 }) {
-                    single_non_flag_operand(tail, &[])
+                    single_non_flag_operand(tail, &["-TotalCount"])
                 } else {
                     None
                 }
@@ -2726,21 +2814,6 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                     cmd: shlex_join(main_cmd),
                 }
             }
-        }
-        _ if main_cmd
-            .first()
-            .is_some_and(|head| head.eq_ignore_ascii_case("Get-Content")) =>
-        {
-            single_non_flag_operand(&main_cmd[1..], &[]).map_or_else(
-                || ParsedCommand::Unknown {
-                    cmd: shlex_join(main_cmd),
-                },
-                |path| ParsedCommand::Read {
-                    cmd: shlex_join(main_cmd),
-                    name: short_display_path(&path),
-                    path: PathBuf::from(path),
-                },
-            )
         }
         Some((head, tail)) if is_python_command(head) => {
             if python_walks_files(tail) {
