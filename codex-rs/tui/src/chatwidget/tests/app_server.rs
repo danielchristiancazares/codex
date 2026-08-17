@@ -921,7 +921,7 @@ async fn live_app_server_command_output_delta_transcript_snapshot() {
 }
 
 #[tokio::test]
-async fn live_app_server_sub_agent_activity_renders_once() {
+async fn live_app_server_interacted_sub_agent_activity_renders_once() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let activity = AppServerThreadItem::SubAgentActivity {
         id: "activity-1".to_string(),
@@ -1045,7 +1045,7 @@ async fn live_app_server_collab_wait_items_render_history() {
 }
 
 #[tokio::test]
-async fn live_app_server_sub_agent_activity_renders_once() {
+async fn live_app_server_started_sub_agent_activity_renders_once() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let agent_thread_id =
         ThreadId::from_string("019cff70-2599-75e2-af72-b958ce5dc1cc").expect("valid thread id");

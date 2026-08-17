@@ -17,7 +17,7 @@ fn provider_is_always_disabled() -> std::result::Result<(), Box<dyn std::error::
         tracestate: Default::default(),
     };
 
-    assert!(OtelProvider::from(&settings)?.is_none());
+    assert!(OtelProvider::try_new(&settings)?.is_none());
     Ok(())
 }
 

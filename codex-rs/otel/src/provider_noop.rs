@@ -23,7 +23,7 @@ impl OtelProvider {
         Ok(())
     }
 
-    pub fn from(_settings: &OtelSettings) -> Result<Option<Self>, Box<dyn Error>> {
+    pub fn try_new(_settings: &OtelSettings) -> Result<Option<Self>, Box<dyn Error>> {
         Ok(None)
     }
 
