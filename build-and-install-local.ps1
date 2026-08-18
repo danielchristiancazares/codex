@@ -23,79 +23,90 @@ function Invoke-Checked {
 }
 
 function Get-FileSha256 {
-    param(
-        [string]$Path
-    )
+    param([string]$Path)
 
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
-function Install-PackageFiles {
+function Assert-JunctionCanBeSet {
     param(
-        [System.Collections.IDictionary]$Files,
-        [string]$PackageDir,
-        [string]$InstallDir,
-        [scriptblock]$Verify
+        [string]$LinkPath,
+        [string]$InstallerOwnedTargetPrefix
     )
 
-    $stagingSuffix = "$PID.$([System.Guid]::NewGuid().ToString("N"))"
-    $operations = [System.Collections.Generic.List[object]]::new()
-    foreach ($relativeSource in $Files.Keys) {
-        $source = Join-Path $PackageDir $relativeSource
-        $destination = Join-Path $InstallDir $Files[$relativeSource]
-        $stagedPath = "$destination.installing.$stagingSuffix"
+    if (-not (Test-Path -LiteralPath $LinkPath)) {
+        return
+    }
 
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "Built package is missing $source."
-        }
-        if (Test-Path -LiteralPath $destination -PathType Container) {
-            throw "Install destination is a directory: $destination."
-        }
-        if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
-            throw "Installed package is missing $destination."
-        }
-        if (Test-Path -LiteralPath $stagedPath) {
-            throw "Staging path already exists: $stagedPath."
+    $item = Get-Item -LiteralPath $LinkPath -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        if ($item.LinkType -ne "Junction") {
+            throw "Refusing to replace non-junction reparse point at $LinkPath."
         }
 
-        $operations.Add([pscustomobject]@{
-            Source = $source
-            Destination = $destination
-            StagedPath = $stagedPath
-        })
+        $existingTarget = [IO.Path]::GetFullPath([string]$item.Target).TrimEnd("\")
+        $ownedPrefix = [IO.Path]::GetFullPath($InstallerOwnedTargetPrefix).TrimEnd("\")
+        $isOwned = $existingTarget.Equals(
+            $ownedPrefix,
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -or $existingTarget.StartsWith(
+            "$ownedPrefix\",
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+        if (-not $isOwned) {
+            throw "Refusing to retarget junction at $LinkPath because it is not managed by this installer."
+        }
+        return
+    }
+
+    if (-not $item.PSIsContainer) {
+        throw "Refusing to replace file at $LinkPath with a junction."
+    }
+}
+
+function Set-LocalJunction {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$LinkPath,
+        [string]$TargetPath,
+        [string]$InstallerOwnedTargetPrefix
+    )
+
+    Assert-JunctionCanBeSet `
+        -LinkPath $LinkPath `
+        -InstallerOwnedTargetPrefix $InstallerOwnedTargetPrefix
+    if (-not $PSCmdlet.ShouldProcess($LinkPath, "Point junction at $TargetPath")) {
+        return
+    }
+
+    $existingTarget = $null
+    $backupPath = $null
+    if (Test-Path -LiteralPath $LinkPath) {
+        $item = Get-Item -LiteralPath $LinkPath -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            $existingTarget = [string]$item.Target
+            if ($existingTarget.Equals($TargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return
+            }
+            Remove-Item -LiteralPath $LinkPath -Force
+        } elseif ($null -eq (Get-ChildItem -LiteralPath $LinkPath -Force | Select-Object -First 1)) {
+            Remove-Item -LiteralPath $LinkPath -Force
+        } else {
+            $backupPath = "$LinkPath.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss').$PID"
+            Write-Step "Preserving existing directory at $backupPath"
+            Move-Item -LiteralPath $LinkPath -Destination $backupPath
+        }
     }
 
     try {
-        foreach ($operation in $operations) {
-            Copy-Item `
-                -LiteralPath $operation.Source `
-                -Destination $operation.StagedPath
-
-            if ((Get-FileSha256 $operation.Source) -ne (Get-FileSha256 $operation.StagedPath)) {
-                throw "Staged file does not match the build output: $($operation.Source)."
-            }
+        New-Item -ItemType Junction -Path $LinkPath -Target $TargetPath | Out-Null
+    } catch {
+        if ($null -ne $existingTarget) {
+            New-Item -ItemType Junction -Path $LinkPath -Target $existingTarget | Out-Null
+        } elseif ($null -ne $backupPath) {
+            Move-Item -LiteralPath $backupPath -Destination $LinkPath
         }
-
-        foreach ($operation in $operations) {
-            Move-Item `
-                -LiteralPath $operation.StagedPath `
-                -Destination $operation.Destination `
-                -Force
-        }
-
-        & $Verify
-
-        foreach ($operation in $operations) {
-            if ((Get-FileSha256 $operation.Source) -ne (Get-FileSha256 $operation.Destination)) {
-                throw "Installed file does not match the build output: $($operation.Destination)."
-            }
-        }
-    } finally {
-        foreach ($operation in $operations) {
-            if (Test-Path -LiteralPath $operation.StagedPath) {
-                Remove-Item -LiteralPath $operation.StagedPath -Force -ErrorAction SilentlyContinue
-            }
-        }
+        throw
     }
 }
 
@@ -111,13 +122,11 @@ $targetInfo = switch ($architecture) {
     "X64" {
         [pscustomobject]@{
             Target = "x86_64-pc-windows-msvc"
-            PlatformPackage = "codex-win32-x64"
         }
     }
     "Arm64" {
         [pscustomobject]@{
             Target = "aarch64-pc-windows-msvc"
-            PlatformPackage = "codex-win32-arm64"
         }
     }
     default { throw "Unsupported Windows architecture: $architecture" }
@@ -140,28 +149,17 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
 }
 
 $packageDir = Join-Path $repoRoot "dist\codex-package-$target"
-$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
-if ($null -eq $npmCommand) {
-    throw "npm is required to locate the installed Codex executables."
-}
-
-$npmRootLines = @(& $npmCommand.Source root --global)
-$npmRoot = ($npmRootLines -join [Environment]::NewLine).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmRoot)) {
-    throw "Could not locate the global npm package directory."
-}
-
-$codexPackageDir = Join-Path $npmRoot "@openai\codex"
-$nestedPlatformPackageDir = Join-Path $codexPackageDir "node_modules\@openai\$($targetInfo.PlatformPackage)"
-$hoistedPlatformPackageDir = Join-Path $npmRoot "@openai\$($targetInfo.PlatformPackage)"
-if (Test-Path -LiteralPath $nestedPlatformPackageDir -PathType Container) {
-    $platformPackageDir = $nestedPlatformPackageDir
-} elseif (Test-Path -LiteralPath $hoistedPlatformPackageDir -PathType Container) {
-    $platformPackageDir = $hoistedPlatformPackageDir
+$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+    Join-Path $env:USERPROFILE ".codex"
 } else {
-    throw "Could not find the installed @openai/$($targetInfo.PlatformPackage) package."
+    $env:CODEX_HOME
 }
-$installDir = Join-Path $platformPackageDir "vendor\$target"
+$installRoot = Join-Path $codexHome "packages\standalone"
+$releasesDir = Join-Path $installRoot "releases"
+$releaseDir = Join-Path $releasesDir "$version-$target"
+$currentDir = Join-Path $installRoot "current"
+$currentBinDir = Join-Path $currentDir "bin"
+$visibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin"
 
 Write-Step "Building Codex $version for $target"
 Invoke-Checked -FilePath $python -Arguments @(
@@ -172,34 +170,121 @@ Invoke-Checked -FilePath $python -Arguments @(
     "--force"
 )
 
-Write-Step "Replacing installed Codex executables in $installDir"
-$packageFiles = [ordered]@{
-    "bin\codex.exe" = "bin\codex.exe"
-    "bin\codex-code-mode-host.exe" = "bin\codex-code-mode-host.exe"
-    "codex-resources\codex-command-runner.exe" = "codex-resources\codex-command-runner.exe"
-    "codex-resources\codex-windows-sandbox-setup.exe" = "codex-resources\codex-windows-sandbox-setup.exe"
-    "codex-path\rg.exe" = "codex-path\rg.exe"
-    "codex-package.json" = "codex-package.json"
+$installSuffix = "$PID.$([Guid]::NewGuid().ToString('N'))"
+$stagingDir = Join-Path $releasesDir ".staging.$version-$target.$installSuffix"
+New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
+
+try {
+    Write-Step "Staging Codex in $stagingDir"
+    Copy-Item -LiteralPath $packageDir -Destination $stagingDir -Recurse
+
+    $expectedFiles = @(
+        "codex-package.json",
+        "bin\codex.exe",
+        "bin\codex-code-mode-host.exe",
+        "codex-path\rg.exe",
+        "codex-resources\codex-command-runner.exe",
+        "codex-resources\codex-windows-sandbox-setup.exe"
+    )
+    foreach ($relativePath in $expectedFiles) {
+        $stagedPath = Join-Path $stagingDir $relativePath
+        if (-not (Test-Path -LiteralPath $stagedPath -PathType Leaf)) {
+            throw "Staged Codex package is missing $stagedPath."
+        }
+    }
+
+    $sourceRoot = (Resolve-Path -LiteralPath $packageDir).Path.TrimEnd("\")
+    $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
+    $stagedFiles = @(Get-ChildItem -LiteralPath $stagingDir -Recurse -File)
+    if ($sourceFiles.Count -ne $stagedFiles.Count) {
+        throw "Staged Codex package contains $($stagedFiles.Count) files; expected $($sourceFiles.Count)."
+    }
+    foreach ($sourceFile in $sourceFiles) {
+        $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\")
+        $stagedPath = Join-Path $stagingDir $relativePath
+        if (-not (Test-Path -LiteralPath $stagedPath -PathType Leaf)) {
+            throw "Staged Codex package is missing $stagedPath."
+        }
+        if ((Get-FileSha256 $sourceFile.FullName) -ne (Get-FileSha256 $stagedPath)) {
+            throw "Staged file does not match the build output: $stagedPath."
+        }
+    }
+
+    $stagedCodexPath = Join-Path $stagingDir "bin\codex.exe"
+    $stagedVersionLines = @(& $stagedCodexPath --version)
+    $stagedExitCode = $LASTEXITCODE
+    $stagedVersion = ($stagedVersionLines -join [Environment]::NewLine).Trim()
+    if ($stagedExitCode -ne 0) {
+        throw "$stagedCodexPath exited with code $stagedExitCode."
+    }
+    if ($stagedVersion -notlike "*$version*") {
+        throw "Staged Codex reported '$stagedVersion'; expected version $version."
+    }
+
+    Assert-JunctionCanBeSet `
+        -LinkPath $currentDir `
+        -InstallerOwnedTargetPrefix $releasesDir
+    Assert-JunctionCanBeSet `
+        -LinkPath $visibleBinDir `
+        -InstallerOwnedTargetPrefix $installRoot
+
+    $releaseBackup = $null
+    if (Test-Path -LiteralPath $releaseDir) {
+        $releaseBackup = "$releaseDir.backup.$installSuffix"
+        Write-Step "Preserving existing release at $releaseBackup"
+        Move-Item -LiteralPath $releaseDir -Destination $releaseBackup
+    }
+
+    try {
+        Write-Step "Installing Codex in $releaseDir"
+        Move-Item -LiteralPath $stagingDir -Destination $releaseDir
+    } catch {
+        if ($null -ne $releaseBackup -and -not (Test-Path -LiteralPath $releaseDir)) {
+            Move-Item -LiteralPath $releaseBackup -Destination $releaseDir
+        }
+        throw
+    }
+
+    New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+    Set-LocalJunction `
+        -LinkPath $currentDir `
+        -TargetPath $releaseDir `
+        -InstallerOwnedTargetPrefix $releasesDir
+
+    $visibleBinParent = Split-Path -Parent $visibleBinDir
+    New-Item -ItemType Directory -Path $visibleBinParent -Force | Out-Null
+    Set-LocalJunction `
+        -LinkPath $visibleBinDir `
+        -TargetPath $currentBinDir `
+        -InstallerOwnedTargetPrefix $installRoot
+} finally {
+    if (Test-Path -LiteralPath $stagingDir) {
+        Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
-$codexPath = Join-Path $installDir "bin\codex.exe"
-Install-PackageFiles `
-    -Files $packageFiles `
-    -PackageDir $packageDir `
-    -InstallDir $installDir `
-    -Verify {
-        Write-Step "Verifying installation"
-        $reportedVersionLines = @(& $codexPath --version)
-        $exitCode = $LASTEXITCODE
-        $reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()
-        if ($exitCode -ne 0) {
-            throw "$codexPath exited with code $exitCode."
-        }
-        if ($reportedVersion -notlike "*$version*") {
-            throw "Installed Codex reported '$reportedVersion'; expected version $version."
-        }
-        Write-Host $reportedVersion
-    }
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$userPathEntries = @($userPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if (-not ($userPathEntries | Where-Object { $_.TrimEnd("\") -ieq $visibleBinDir.TrimEnd("\") })) {
+    $updatedUserPath = (@($visibleBinDir) + $userPathEntries) -join ";"
+    [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
+}
+if (-not (($env:Path -split ";") | Where-Object { $_.TrimEnd("\") -ieq $visibleBinDir.TrimEnd("\") })) {
+    $env:Path = "$visibleBinDir;$env:Path"
+}
+
+Write-Step "Verifying installation"
+$codexPath = Join-Path $visibleBinDir "codex.exe"
+$reportedVersionLines = @(& $codexPath --version)
+$exitCode = $LASTEXITCODE
+$reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()
+if ($exitCode -ne 0) {
+    throw "$codexPath exited with code $exitCode."
+}
+if ($reportedVersion -notlike "*$version*") {
+    throw "Installed Codex reported '$reportedVersion'; expected version $version."
+}
+Write-Host $reportedVersion
 
 Write-Host "==> Installed Codex $version"
 Write-Host "==> Installed at $codexPath"
