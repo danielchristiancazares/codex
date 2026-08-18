@@ -46,8 +46,8 @@ use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
-mod cloud_config;
 mod cloud_cmd;
+mod cloud_config;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;
@@ -1083,9 +1083,10 @@ fn main() -> anyhow::Result<()> {
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else_with_preflight(
         print_top_level_display,
-        move |arg0_paths: Arg0DispatchPaths| async move {
-            cli_main(arg0_paths, remote_control_disabled).await?;
-            Ok(())
+        move |arg0_paths: Arg0DispatchPaths| -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<()>>>,
+        > {
+            Box::pin(cli_main(arg0_paths, remote_control_disabled))
         },
     )
 }

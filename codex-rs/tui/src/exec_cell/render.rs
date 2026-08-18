@@ -185,36 +185,18 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
 
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.calls.len() > 1 && !self.is_active() {
+        if self.calls.len() > 1 {
             return self.compact_group_display_lines(width);
         }
 
-        let mut out = Vec::new();
-        let mut calls = self.calls.as_slice();
-        let mut first_group = true;
-        while let [first, remaining @ ..] = calls {
-            let group_len = if Self::is_exploring_call(first) {
-                1 + remaining
-                    .iter()
-                    .take_while(|call| Self::is_exploring_call(call))
-                    .count()
-            } else {
-                1
-            };
-            let (group, remaining) = calls.split_at(group_len);
-            calls = remaining;
-            if first_group {
-                first_group = false;
-            } else {
-                out.push("".into());
-            }
-            if group.iter().all(Self::is_exploring_call) {
-                out.extend(self.exploring_display_lines(group, width));
-            } else {
-                out.extend(self.command_display_lines(&group[0], width));
-            }
+        let Some(call) = self.calls.first() else {
+            return Vec::new();
+        };
+        if Self::is_exploring_call(call) {
+            self.exploring_display_lines(&self.calls, width)
+        } else {
+            self.command_display_lines(call, width)
         }
-        out
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -284,6 +266,15 @@ impl ExecCell {
                         .is_some_and(|output| output.exit_code == 0)
             })
             .count();
+        let completed_commands = if self.is_active()
+            && self.calls[..completed_commands]
+                .iter()
+                .all(Self::is_exploring_call)
+        {
+            0
+        } else {
+            completed_commands
+        };
         let mut lines = Vec::new();
         if completed_commands > 0 {
             let noun = if completed_commands == 1 {
@@ -299,8 +290,37 @@ impl ExecCell {
                 TRANSCRIPT_HINT.dim(),
             ]));
         }
-        for call in &self.calls[completed_commands..] {
-            lines.extend(self.command_display_lines(call, width));
+        let remaining_calls = &self.calls[completed_commands..];
+        if !self.is_active() {
+            for call in remaining_calls {
+                lines.extend(self.command_display_lines(call, width));
+            }
+            return lines;
+        }
+
+        let mut calls = remaining_calls;
+        let mut first_group = true;
+        while let [first, remaining @ ..] = calls {
+            let group_len = if Self::is_exploring_call(first) {
+                1 + remaining
+                    .iter()
+                    .take_while(|call| Self::is_exploring_call(call))
+                    .count()
+            } else {
+                1
+            };
+            let (group, remaining) = calls.split_at(group_len);
+            calls = remaining;
+            if first_group {
+                first_group = false;
+            } else {
+                lines.push("".into());
+            }
+            if group.iter().all(Self::is_exploring_call) {
+                lines.extend(self.exploring_display_lines(group, width));
+            } else {
+                lines.extend(self.command_display_lines(&group[0], width));
+            }
         }
         lines
     }

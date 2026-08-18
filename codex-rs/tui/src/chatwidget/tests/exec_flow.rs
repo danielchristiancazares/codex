@@ -954,10 +954,7 @@ async fn overlapping_mixed_exec_calls_update_the_original_active_cell() {
         drain_insert_history(&mut rx).is_empty(),
         "successful commands should remain grouped until the next boundary"
     );
-    assert_chatwidget_snapshot!(
-        "overlapping_mixed_exec_calls_completed",
-        active_blob(&chat)
-    );
+    assert_chatwidget_snapshot!("overlapping_mixed_exec_calls_completed", active_blob(&chat));
 }
 
 #[tokio::test]

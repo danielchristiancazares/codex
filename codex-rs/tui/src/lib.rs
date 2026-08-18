@@ -1648,6 +1648,7 @@ async fn run_ratatui_app(
             ))
         }
         resume_picker::SessionSelection::StartFresh
+        | resume_picker::SessionSelection::AgentsOverview
         | resume_picker::SessionSelection::Resume(_)
         | resume_picker::SessionSelection::Fork(_)
         | resume_picker::SessionSelection::Exit => None,
