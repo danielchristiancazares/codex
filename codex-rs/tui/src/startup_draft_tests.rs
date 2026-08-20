@@ -135,17 +135,19 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
         );
         let mut buffer = Buffer::empty(area);
         renderable.render(area, &mut buffer);
-        (0..area.height)
-            .map(|row| {
-                (0..area.width)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
+        sanitize_codex_version(
+            &(0..area.height)
+                .map(|row| {
+                    (0..area.width)
+                        .map(|column| buffer[(column, row)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .replace("0.0.0", "<VERSION>")
     };
 
     for (label, initial_screen, session_action) in [
