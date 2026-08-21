@@ -54,7 +54,7 @@ query_params = { api-version = "2025-04-01-preview" }
         aws: None,
         wire_api: WireApi::Responses,
         query_params: Some(maplit::hashmap! {
-            "api-version".to_string() => "2025-04-01-preview".to_string(),
+            "api-version".to_string() => "2025-04-01-preview".into(),
         }),
         http_headers: None,
         env_http_headers: None,
@@ -92,7 +92,7 @@ supports_standalone_web_search = true
         wire_api: WireApi::Responses,
         query_params: None,
         http_headers: Some(maplit::hashmap! {
-            "X-Example-Header".to_string() => "example-value".to_string(),
+            "X-Example-Header".to_string() => "example-value".into(),
         }),
         env_http_headers: Some(maplit::hashmap! {
             "X-Example-Env-Header".to_string() => "EXAMPLE_ENV_VAR".to_string(),
@@ -158,7 +158,7 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {
 fn test_uses_openai_actor_authorization() {
     let mut provider = ModelProviderInfo {
         http_headers: Some(maplit::hashmap! {
-            "X-OpenAI-Actor-Authorization".to_string() => "actor-token".to_string(),
+            "X-OpenAI-Actor-Authorization".to_string() => "actor-token".into(),
         }),
         ..ModelProviderInfo::default()
     };
@@ -168,12 +168,12 @@ fn test_uses_openai_actor_authorization() {
     assert!(!provider.uses_openai_actor_authorization());
 
     provider.http_headers = Some(maplit::hashmap! {
-        OPENAI_ACTOR_AUTHORIZATION_HEADER.to_string() => "  ".to_string(),
+        OPENAI_ACTOR_AUTHORIZATION_HEADER.to_string() => "  ".into(),
     });
     assert!(!provider.uses_openai_actor_authorization());
 
     provider.http_headers = Some(maplit::hashmap! {
-        OPENAI_ACTOR_AUTHORIZATION_HEADER.to_string() => "actor-token".to_string(),
+        OPENAI_ACTOR_AUTHORIZATION_HEADER.to_string() => "actor-token".into(),
     });
     provider.requires_openai_auth = true;
     assert!(!provider.uses_openai_actor_authorization());
@@ -199,7 +199,7 @@ args = ["--format=text"]
         provider.auth,
         Some(ModelProviderAuthInfo {
             command: "./scripts/print-token".to_string(),
-            args: vec!["--format=text".to_string()],
+            args: vec!["--format=text".into()],
             timeout_ms: NonZeroU64::new(5_000).unwrap(),
             refresh_interval_ms: 300_000,
             cwd: AbsolutePathBuf::resolve_path_against_base(".", base_dir.path()),
@@ -231,11 +231,7 @@ args = ["login", "--profile", "codex-bedrock"]
             region: Some("us-west-2".to_string()),
             auth_refresh: Some(AwsAuthRefreshConfig {
                 command: "aws".to_string(),
-                args: vec![
-                    "login".to_string(),
-                    "--profile".to_string(),
-                    "codex-bedrock".to_string(),
-                ],
+                args: vec!["login".into(), "--profile".into(), "codex-bedrock".into()],
                 timeout_ms: NonZeroU64::new(300_000).expect("timeout should be non-zero"),
             }),
         })

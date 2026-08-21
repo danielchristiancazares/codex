@@ -155,7 +155,7 @@ async fn custom_provider_uses_explicit_bearer_without_ambient_account() -> anyho
     );
     let mut provider =
         create_oss_provider_with_base_url(&format!("{}/v1", server.uri()), WireApi::Responses);
-    provider.experimental_bearer_token = Some("provider-token".to_string());
+    provider.experimental_bearer_token = Some("provider-token".into());
     let mut builder = test_codex()
         .with_auth(CodexAuth::Headers(AuthHeaders::new(headers)))
         .with_config(move |config| {

@@ -1593,6 +1593,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-utils-path-uri",
+ "codex-utils-redacted-string",
  "inventory",
  "pretty_assertions",
  "rmcp",
@@ -2086,6 +2087,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-path",
  "codex-utils-path-uri",
+ "codex-utils-redacted-string",
  "core-foundation 0.9.4",
  "dns-lookup",
  "dunce",
@@ -3178,6 +3180,7 @@ dependencies = [
  "codex-api",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "codex-utils-redacted-string",
  "http",
  "maplit",
  "pretty_assertions",
@@ -3320,6 +3323,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-image",
  "codex-utils-path-uri",
+ "codex-utils-redacted-string",
  "codex-utils-string",
  "encoding_rs",
  "globset",
@@ -4057,6 +4061,14 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
+]
+
+[[package]]
+name = "codex-utils-redacted-string"
+version = "0.149.4131"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]
