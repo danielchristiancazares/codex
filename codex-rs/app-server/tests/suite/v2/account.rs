@@ -1096,6 +1096,7 @@ async fn login_account_api_key_succeeds_and_notifies() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_amazon_bedrock_replaces_primary_auth_and_persists_provider() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -1172,6 +1173,7 @@ async fn login_amazon_bedrock_replaces_primary_auth_and_persists_provider() -> R
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_amazon_bedrock_rejects_non_bedrock_provider_override_without_changes() -> Result<()>
 {
     let codex_home = TempDir::new()?;
@@ -1231,6 +1233,7 @@ async fn login_amazon_bedrock_rejects_non_bedrock_provider_override_without_chan
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_amazon_bedrock_allows_bedrock_provider_override() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -1290,6 +1293,7 @@ async fn login_amazon_bedrock_allows_bedrock_provider_override() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn logout_managed_bedrock_restores_default_account() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -1357,6 +1361,7 @@ async fn logout_managed_bedrock_restores_default_account() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn logout_aws_managed_bedrock_errors_without_changing_auth_or_config() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), aws_managed_bedrock_config())?;
@@ -1491,6 +1496,7 @@ async fn managed_bedrock_login_requires_experimental_api() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_managed_bedrock_updates_active_bedrock_account() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -1534,6 +1540,7 @@ async fn login_managed_bedrock_updates_active_bedrock_account() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_account_amazon_bedrock_rejects_invalid_credentials_without_changes() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -1578,6 +1585,7 @@ async fn login_account_amazon_bedrock_rejects_invalid_credentials_without_change
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_account_amazon_bedrock_rejected_when_forced_chatgpt() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(
@@ -1611,6 +1619,7 @@ async fn login_account_amazon_bedrock_rejected_when_forced_chatgpt() -> Result<(
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn login_account_amazon_bedrock_rejected_with_external_chatgpt_auth() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
@@ -2452,6 +2461,7 @@ async fn get_account_when_auth_not_required() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn get_account_with_aws_provider() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(
@@ -2494,6 +2504,7 @@ region = "us-west-2"
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn get_account_with_user_managed_bedrock_provider() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(
@@ -2534,20 +2545,7 @@ command = "print-token"
 #[tokio::test]
 async fn account_reads_use_startup_config_when_config_reload_fails() -> Result<()> {
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        CreateConfigTomlParams {
-            model_provider_id: Some("amazon-bedrock".to_string()),
-            extra_provider_config: Some(
-                r#"[model_providers.amazon-bedrock.aws]
-profile = "codex-bedrock"
-region = "us-west-2"
-"#
-                .to_string(),
-            ),
-            ..Default::default()
-        },
-    )?;
+    create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -2560,9 +2558,7 @@ region = "us-west-2"
     assert_eq!(
         read_account(&mut mcp).await?,
         GetAccountResponse {
-            account: Some(Account::AmazonBedrock {
-                uses_codex_managed_credentials: false,
-            }),
+            account: None,
             requires_openai_auth: false,
         }
     );
@@ -2591,6 +2587,7 @@ region = "us-west-2"
 }
 
 #[tokio::test]
+#[ignore = "Amazon Bedrock support is unavailable in this build"]
 async fn get_account_with_managed_bedrock_provider() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(

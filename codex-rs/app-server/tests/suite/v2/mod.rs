@@ -31,7 +31,6 @@ mod experimental_api;
 mod experimental_feature_list;
 mod external_agent_config;
 mod external_agent_import_sync;
-mod feedback;
 mod fs;
 mod git_attribution;
 mod guardian_v2;

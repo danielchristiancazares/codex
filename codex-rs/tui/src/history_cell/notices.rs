@@ -73,7 +73,10 @@ impl HistoryCell for UpdateAvailableHistoryCell {
     }
 
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        crate::terminal_hyperlinks::annotate_web_urls(self.display_lines(width))
+        self.display_lines(width)
+            .into_iter()
+            .map(crate::terminal_hyperlinks::annotate_web_urls_in_line)
+            .collect()
     }
 
     fn transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {

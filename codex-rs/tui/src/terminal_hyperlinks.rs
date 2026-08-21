@@ -194,10 +194,6 @@ pub(crate) fn adaptive_wrap_hyperlink_lines(
     out
 }
 
-pub(crate) fn annotate_web_urls(lines: Vec<Line<'static>>) -> Vec<HyperlinkLine> {
-    lines.into_iter().map(annotate_web_urls_in_line).collect()
-}
-
 pub(crate) fn annotate_web_urls_in_line(line: Line<'static>) -> HyperlinkLine {
     let text = line
         .spans

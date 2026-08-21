@@ -18,6 +18,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
 
 const DISABLED_MESSAGE: &str = "managed network proxy is disabled in this personal build";
 
@@ -298,6 +299,16 @@ impl NetworkDecision {
     }
 }
 
+/// Inert transport metadata for builds without the managed network proxy.
+#[derive(Clone, Debug, Default)]
+pub struct NetworkRequestDisconnect;
+
+impl NetworkRequestDisconnect {
+    pub fn elapsed(&self) -> Option<Duration> {
+        None
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NetworkPolicyRequest {
     pub protocol: NetworkProtocol,
@@ -309,6 +320,8 @@ pub struct NetworkPolicyRequest {
     pub command: Option<String>,
     pub exec_policy_hint: Option<String>,
     pub execution_id: Option<String>,
+    /// Present only when the local HTTP transport can identify an abandoned request.
+    pub disconnect: Option<NetworkRequestDisconnect>,
 }
 
 pub struct NetworkPolicyRequestArgs {
@@ -334,6 +347,7 @@ impl NetworkPolicyRequest {
             command: args.command,
             exec_policy_hint: args.exec_policy_hint,
             execution_id: None,
+            disconnect: None,
         }
     }
 }
