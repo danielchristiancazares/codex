@@ -104,9 +104,11 @@ async fn selected_executor_plugin_exposes_its_mcps_only_to_that_thread() -> Resu
     let (registration_request_tx, mut registration_request_rx) = mpsc::unbounded_channel();
     let (token_request_tx, mut token_request_rx) = mpsc::unbounded_channel();
     let oauth_metadata = json!({
+        "issuer": EXECUTOR_OAUTH_MCP_URL,
         "authorization_endpoint": "https://oauth-only.invalid/authorize",
         "token_endpoint": "http://oauth-only.invalid/token",
         "registration_endpoint": "http://oauth-only.invalid/register",
+        "authorization_response_iss_parameter_supported": true,
         "scopes_supported": ["read", "write"],
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
@@ -314,7 +316,8 @@ startup_timeout_sec = 10
     callback_url
         .query_pairs_mut()
         .append_pair("code", "configured-test-code")
-        .append_pair("state", &parameters["state"]);
+        .append_pair("state", &parameters["state"])
+        .append_pair("iss", EXECUTOR_OAUTH_MCP_URL);
     HttpClientBuilder::new()
         .build_direct()?
         .get(callback_url)
@@ -377,7 +380,8 @@ startup_timeout_sec = 10
     callback_url
         .query_pairs_mut()
         .append_pair("code", "executor-test-code")
-        .append_pair("state", &state);
+        .append_pair("state", &state)
+        .append_pair("iss", EXECUTOR_OAUTH_MCP_URL);
     HttpClientBuilder::new()
         .build_direct()?
         .get(callback_url)
