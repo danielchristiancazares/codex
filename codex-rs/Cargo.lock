@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "codex-history-notes-extension"
-version = "0.0.0"
+version = "0.149.4131"
 dependencies = [
  "codex-api",
  "codex-client",
@@ -2757,7 +2757,7 @@ dependencies = [
  "codex-protocol",
  "codex-tools",
  "codex-utils-output-truncation",
- "http 1.4.0",
+ "http",
  "pretty_assertions",
  "serde_json",
  "tempfile",

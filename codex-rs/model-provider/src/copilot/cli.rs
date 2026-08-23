@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use http::HeaderMap;
 use http::HeaderName;
@@ -56,16 +57,7 @@ struct EndpointState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum EndpointPurpose {
     ModelsBroker,
-    Inference(String),
-}
-
-impl EndpointPurpose {
-    fn requested_model(&self) -> Option<&str> {
-        match self {
-            Self::ModelsBroker => None,
-            Self::Inference(model) => Some(model),
-        }
-    }
+    Inference { thread_id: ThreadId, model: String },
 }
 
 /// Resolves and refreshes inference endpoint snapshots through the native CLI.
@@ -83,10 +75,14 @@ impl CopilotEndpointManager {
 
     pub(super) async fn endpoint_for_model(
         &self,
+        thread_id: ThreadId,
         model: &str,
     ) -> codex_protocol::error::Result<Arc<EndpointSnapshot>> {
-        self.endpoint_for_purpose(EndpointPurpose::Inference(model.to_string()))
-            .await
+        self.endpoint_for_purpose(EndpointPurpose::Inference {
+            thread_id,
+            model: model.to_string(),
+        })
+        .await
     }
 
     async fn endpoint_for_purpose(
@@ -109,10 +105,16 @@ impl CopilotEndpointManager {
 
             let resolved = refresh
                 .get_or_init(|| async {
-                    tokio::time::timeout(
-                        COPILOT_RPC_TIMEOUT,
-                        super::native_session::resolve_endpoint(purpose.requested_model()),
-                    )
+                    tokio::time::timeout(COPILOT_RPC_TIMEOUT, async {
+                        match &purpose {
+                            EndpointPurpose::ModelsBroker => {
+                                super::native_session::resolve_models_endpoint().await
+                            }
+                            EndpointPurpose::Inference { thread_id, model } => {
+                                super::native_session::resolve_endpoint(*thread_id, model).await
+                            }
+                        }
+                    })
                     .await
                     .map_err(|_| "Copilot CLI endpoint request timed out".to_string())?
                 })

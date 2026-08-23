@@ -950,6 +950,7 @@ impl ModelClient {
             .provider
             .resolve_api_for_model(
                 model,
+                self.state.thread_id,
                 ProviderAuthScope {
                     agent_identity_policy: self.agent_identity_policy,
                     session_source: self.state.session_source.clone(),

@@ -19,6 +19,7 @@ use codex_models_manager::cache::ModelsCache;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
+use codex_protocol::ThreadId;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::CodexErr;
 use codex_protocol::openai_models::ModelsResponse;
@@ -266,10 +267,12 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     ///
     /// The default implementation preserves the configured provider behavior. Providers whose
     /// endpoint credentials are model-bound should override this method and resolve both values
-    /// atomically from the same credential snapshot.
+    /// atomically from the same credential snapshot. `thread_id` identifies the Codex rollout
+    /// that owns the provider request.
     fn resolve_api_for_model<'a>(
         &'a self,
         _model: &'a str,
+        _thread_id: ThreadId,
         scope: ProviderAuthScope,
     ) -> ModelProviderFuture<'a, codex_protocol::error::Result<ResolvedProviderApi>> {
         Box::pin(async move {

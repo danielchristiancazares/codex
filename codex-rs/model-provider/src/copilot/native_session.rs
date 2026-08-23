@@ -3,12 +3,15 @@ use std::fmt;
 use std::process::Stdio;
 use std::time::Duration;
 
+use codex_protocol::ThreadId;
 use http::HeaderMap;
 use http::HeaderName;
 use http::HeaderValue;
 use http::header::AUTHORIZATION;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
 use tokio::process::Child;
 use tokio::process::Command;
 
@@ -56,6 +59,12 @@ struct RpcModel {
 #[serde(rename_all = "camelCase")]
 struct SessionCreated {
     session_id: String,
+}
+
+#[derive(Clone, Copy)]
+enum ProviderSessionIdentity {
+    CliAssigned,
+    CodexThread(ThreadId),
 }
 
 #[derive(Deserialize)]
@@ -108,6 +117,22 @@ impl fmt::Debug for ProviderSessionToken {
 }
 
 pub(super) async fn resolve_endpoint(
+    thread_id: ThreadId,
+    requested_model: &str,
+) -> Result<ResolvedEndpoint, String> {
+    resolve_endpoint_for_session(
+        ProviderSessionIdentity::CodexThread(thread_id),
+        Some(requested_model),
+    )
+    .await
+}
+
+pub(super) async fn resolve_models_endpoint() -> Result<ResolvedEndpoint, String> {
+    resolve_endpoint_for_session(ProviderSessionIdentity::CliAssigned, None).await
+}
+
+async fn resolve_endpoint_for_session(
+    session_identity: ProviderSessionIdentity,
     requested_model: Option<&str>,
 ) -> Result<ResolvedEndpoint, String> {
     let executable = super::executable::resolve()?;
@@ -165,7 +190,9 @@ pub(super) async fn resolve_endpoint(
         let mut last_error = None;
         for model in candidates {
             let expected_bound_model = requested_model.map(|_| model);
-            match resolve_model_endpoint(&mut rpc, model, expected_bound_model).await {
+            match resolve_model_endpoint(&mut rpc, session_identity, model, expected_bound_model)
+                .await
+            {
                 Ok(endpoint) => return Ok(endpoint),
                 Err(error) if requested_model.is_none() => last_error = Some(error),
                 Err(error) => return Err(error),
@@ -183,31 +210,52 @@ pub(super) async fn resolve_endpoint(
     result
 }
 
-async fn resolve_model_endpoint(
-    rpc: &mut JsonRpcClient<tokio::process::ChildStdout, tokio::process::ChildStdin>,
+async fn resolve_model_endpoint<R, W>(
+    rpc: &mut JsonRpcClient<R, W>,
+    session_identity: ProviderSessionIdentity,
     model: &str,
     expected_bound_model: Option<&str>,
-) -> Result<ResolvedEndpoint, String> {
-    let created = rpc
-        .request(
-            "session.create",
-            json!({
-                "model": model,
-                "clientName": super::identity::CLIENT_APPLICATION,
-                "capi": {"enableWebSocketResponses": true},
-                "requestPermission": false,
-                "requestUserInput": false,
-                "requestElicitation": false,
-                "requestExitPlanMode": false,
-                "requestAutoModeSwitch": false,
-                "hooks": false,
-                "includeSubAgentStreamingEvents": true,
-                "envValueMode": "direct"
-            }),
-        )
-        .await?;
+) -> Result<ResolvedEndpoint, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut params = json!({
+        "model": model,
+        "clientName": super::identity::CLIENT_APPLICATION,
+        "capi": {"enableWebSocketResponses": true},
+        "requestPermission": false,
+        "requestUserInput": false,
+        "requestElicitation": false,
+        "requestExitPlanMode": false,
+        "requestAutoModeSwitch": false,
+        "hooks": false,
+        "includeSubAgentStreamingEvents": true,
+        "envValueMode": "direct"
+    });
+    if let ProviderSessionIdentity::CodexThread(thread_id) = session_identity {
+        params["sessionId"] = json!(thread_id);
+    }
+    let created = match rpc.request("session.create", params).await {
+        Ok(created) => created,
+        Err(error) => {
+            if let ProviderSessionIdentity::CodexThread(thread_id) = session_identity {
+                delete_session(rpc, &thread_id.to_string()).await;
+            }
+            return Err(error);
+        }
+    };
     let created: SessionCreated = serde_json::from_value(created)
         .map_err(|error| format!("decode Copilot CLI session: {error}"))?;
+    if let ProviderSessionIdentity::CodexThread(thread_id) = session_identity
+        && created.session_id != thread_id.to_string()
+    {
+        delete_session(rpc, &created.session_id).await;
+        return Err(format!(
+            "Copilot CLI created session `{}` for Codex thread `{thread_id}`",
+            created.session_id
+        ));
+    }
     let result = async {
         let endpoint = rpc
             .request(
@@ -223,10 +271,18 @@ async fn resolve_model_endpoint(
         build_endpoint(endpoint, expected_bound_model)
     }
     .await;
-    let _ = rpc
-        .request("session.destroy", json!({"sessionId": created.session_id}))
-        .await;
+    delete_session(rpc, &created.session_id).await;
     result
+}
+
+async fn delete_session<R, W>(rpc: &mut JsonRpcClient<R, W>, session_id: &str)
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let _ = rpc
+        .request("session.delete", json!({"sessionId": session_id}))
+        .await;
 }
 
 fn endpoint_model_candidates<'a>(

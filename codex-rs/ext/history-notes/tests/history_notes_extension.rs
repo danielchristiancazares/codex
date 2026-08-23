@@ -18,7 +18,8 @@ use codex_history_notes_extension::install;
 use codex_login::AuthHeaders;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
-use codex_model_provider_info::ModelProviderInfo;
+use codex_model_provider_info::COPILOT_PROVIDER_ID;
+use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -176,6 +177,9 @@ async fn history_notes_require_an_openai_provider_and_codex_backend_auth() -> Te
         use_history_notes_extension: true,
         ..TokenBudgetConfig::default()
     });
+    let copilot_provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove(COPILOT_PROVIDER_ID)
+        .expect("built-in Copilot provider");
 
     for (provider, auth) in [
         (
@@ -183,7 +187,7 @@ async fn history_notes_require_an_openai_provider_and_codex_backend_auth() -> Te
             CodexAuth::from_api_key("test-api-key"),
         ),
         (
-            ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
+            copilot_provider,
             CodexAuth::create_dummy_chatgpt_auth_for_testing(),
         ),
     ] {

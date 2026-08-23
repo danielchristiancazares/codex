@@ -5682,10 +5682,10 @@ plugins = true
 
     let mut config = load_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
-    let manager = PluginsManager::new_with_options(
+    let manager = test_plugins_manager_with_options(
         tmp.path().to_path_buf(),
         /*restriction_product*/ None,
-        Some(AuthMode::ApiKey),
+        /*auth_mode*/ Some(AuthMode::ApiKey),
     );
     let auth = CodexAuth::from_api_key("test-api-key");
 
