@@ -746,6 +746,13 @@ async fn contributor_fails_closed_when_thread_lookup_fails() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let fixture = GuardianFailureFixture::new().await?;
+    let thread_store = fixture.test.codex.thread_extension_data();
+    let score_progress = thread_store
+        .get::<GuardianV2ScoreProgress>()
+        .expect("Guardian v2 should track score progress per thread");
+    let latest_scored_tool_call = score_progress
+        .latest_scored_tool_call
+        .load(Ordering::Acquire);
     fixture
         .test
         .thread_manager
@@ -754,7 +761,25 @@ async fn contributor_fails_closed_when_thread_lookup_fails() -> Result<()> {
         .expect("the test thread should exist before simulating a failed lookup");
 
     fixture.score_tool(ToolName::plain("read_file")).await;
-    fixture.assert_fails_closed().await
+    assert_eq!(
+        score_progress
+            .latest_failed_tool_call
+            .load(Ordering::Acquire),
+        latest_scored_tool_call + 1
+    );
+    assert_eq!(
+        fixture
+            .registry
+            .approval_review(
+                &fixture.session_store,
+                thread_store,
+                "review action",
+                /*extension_metrics*/ None,
+            )
+            .await,
+        None
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

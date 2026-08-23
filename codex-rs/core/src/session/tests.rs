@@ -1283,6 +1283,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     let tool_ctx = crate::tools::sandboxing::ToolCtx {
         session: Arc::clone(&session),
         step_context: StepContext::for_test(Arc::clone(&turn)),
+        cancellation_token: CancellationToken::new(),
         call_id: "probe-call".to_string(),
         tool_name: codex_tools::ToolName::plain("probe"),
     };

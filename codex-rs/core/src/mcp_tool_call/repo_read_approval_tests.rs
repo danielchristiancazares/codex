@@ -29,6 +29,7 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
 
 #[cfg(unix)]
 fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
@@ -167,10 +168,12 @@ command = "tools-mcp-server"
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context);
     let step_context = StepContext::for_test(Arc::clone(&turn_context));
+    let cancellation_token = CancellationToken::new();
 
     let direct_decision = maybe_request_mcp_tool_approval(
         &session,
         &step_context,
+        &cancellation_token,
         "call-direct-read",
         &direct_invocation,
         &ToolName::namespaced(&direct_invocation.server, &direct_invocation.tool),
@@ -186,6 +189,7 @@ command = "tools-mcp-server"
     let escape_decision = maybe_request_mcp_tool_approval(
         &session,
         &step_context,
+        &cancellation_token,
         "call-symlink-read",
         &escape_invocation,
         &ToolName::namespaced(&escape_invocation.server, &escape_invocation.tool),

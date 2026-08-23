@@ -313,14 +313,26 @@ async fn run_guardian_review(
     options: GuardianReviewOptions,
 ) -> ReviewDecision {
     let turn = Arc::clone(context.turn());
-    // Required models must use Guardian, but an enabled V2 monitor can satisfy the review.
+    let requires_synchronous_review = reasons.retry.is_some()
+        || matches!(
+            &request,
+            GuardianApprovalRequest::Shell {
+                sandbox_permissions,
+                ..
+            } | GuardianApprovalRequest::ExecCommand {
+                sandbox_permissions,
+                ..
+            } if sandbox_permissions.requires_escalated_permissions()
+        );
+    // Guardian V2 may satisfy ordinary reviews, including required-model reviews, but broader
+    // permission requests and retries must run Guardian synchronously.
     if (!turn
         .config
         .config_layer_stack
         .requirements()
         .auto_review_required_for_model(&turn.model_info.slug)
         || turn.config.features.enabled(Feature::GuardianV2))
-        && reasons.retry.is_none()
+        && !requires_synchronous_review
         && options
             .external_cancel
             .as_ref()
@@ -729,7 +741,7 @@ pub(crate) fn spawn_approval_request_review(
     context: impl Into<GuardianReviewContext>,
     review_id: String,
     request: GuardianApprovalRequest,
-    retry_reason: Option<String>,
+    reasons: ApprovalRequestReasons,
     options: GuardianReviewOptions,
 ) -> oneshot::Receiver<ReviewDecision> {
     let context = context.into();
@@ -738,13 +750,8 @@ pub(crate) fn spawn_approval_request_review(
     let spawn_result = std::thread::Builder::new()
         .name("codex-approval-review".to_string())
         .spawn(move || {
-            let decision = runtime.block_on(review_approval_request_with_cancel(
-                &session,
-                context,
-                review_id,
-                request,
-                retry_reason,
-                options,
+            let decision = runtime.block_on(run_guardian_review(
+                session, context, review_id, request, reasons, options,
             ));
             let _ = tx.send(decision);
         });

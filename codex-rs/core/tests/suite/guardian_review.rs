@@ -37,6 +37,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EnvironmentConfig;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::ThreadSettingsOverrides;
@@ -924,10 +925,24 @@ async fn interrupted_guardian_tool_review_aborts_without_executing_the_command()
     .context("timed out waiting for Guardian review request")?;
 
     test.codex.submit(Op::Interrupt).await?;
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnAborted(_))
-    })
-    .await;
+    let mut saw_turn_aborted = false;
+    let mut saw_guardian_aborted = false;
+    while !saw_turn_aborted || !saw_guardian_aborted {
+        let event = tokio::time::timeout(Duration::from_secs(5), test.codex.next_event())
+            .await
+            .context("timed out waiting for parent and Guardian cancellation")?
+            .context("event stream ended while waiting for cancellation")?;
+        saw_turn_aborted |= matches!(&event.msg, EventMsg::TurnAborted(_));
+        saw_guardian_aborted |= matches!(
+            &event.msg,
+            EventMsg::GuardianAssessment(assessment)
+                if assessment.status == GuardianAssessmentStatus::Aborted
+        );
+        assert!(
+            !matches!(&event.msg, EventMsg::ExecApprovalRequest(_)),
+            "interrupted Guardian review should not fall back to a user prompt"
+        );
+    }
     tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(
         !output_file.exists(),

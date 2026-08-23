@@ -783,8 +783,14 @@ async fn review_guardian_mcp_elicitation(
         )
         .await;
 
-        return Ok(matches!(decision, ReviewDecision::Approved)
-            .then(|| mcp_elicitation_response_from_guardian_decision(decision)));
+        return Ok(matches!(
+            decision,
+            ReviewDecision::Approved
+                | ReviewDecision::Denied { .. }
+                | ReviewDecision::TimedOut
+                | ReviewDecision::Abort
+        )
+        .then(|| mcp_elicitation_response_from_guardian_decision(decision)));
     }
 
     let approval_policy = mcp_config.approval_policy.value();
@@ -844,12 +850,17 @@ async fn review_guardian_mcp_elicitation(
     };
 
     let review_id = crate::guardian::new_guardian_review_id();
-    let decision = crate::guardian::review_approval_request(
+    let decision = crate::guardian::review_approval_request_with_cancel(
         &session,
         &turn_context,
-        review_id.clone(),
+        review_id,
         guardian_request,
-        Default::default(),
+        /*retry_reason*/ None,
+        crate::guardian::GuardianReviewOptions {
+            plugin_attribution_override: None,
+            approval_request_source: codex_analytics::GuardianApprovalRequestSource::MainTurn,
+            external_cancel: Some(cancellation_token),
+        },
     )
     .await;
     Ok(Some(mcp_elicitation_response_from_guardian_decision(

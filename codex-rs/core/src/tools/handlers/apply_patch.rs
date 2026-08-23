@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 use crate::apply_patch;
 use crate::apply_patch::convert_apply_patch_to_protocol;
@@ -388,6 +389,7 @@ impl ApplyPatchHandler {
             session,
             turn,
             step_context,
+            cancellation_token,
             tracker,
             call_id,
             tool_name,
@@ -433,6 +435,7 @@ impl ApplyPatchHandler {
                 let tool_ctx = ToolCtx {
                     session,
                     step_context: Arc::clone(&step_context),
+                    cancellation_token,
                     call_id,
                     tool_name,
                 };
@@ -531,6 +534,7 @@ pub(crate) async fn intercept_apply_patch(
     turn_environment: TurnEnvironment,
     session: Arc<Session>,
     step_context: Arc<StepContext>,
+    cancellation_token: CancellationToken,
     tracker: Option<&SharedTurnDiffTracker>,
     call_id: &str,
     tool_name: &str,
@@ -551,6 +555,7 @@ pub(crate) async fn intercept_apply_patch(
             let tool_ctx = ToolCtx {
                 session,
                 step_context,
+                cancellation_token,
                 call_id: call_id.to_string(),
                 tool_name: ToolName::plain(tool_name),
             };
