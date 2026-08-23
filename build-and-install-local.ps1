@@ -51,78 +51,49 @@ function Assert-PathWithin {
     }
 }
 
-function Assert-JunctionCanBeSet {
+function Assert-PackageMatches {
     param(
-        [string]$LinkPath,
-        [string]$InstallerOwnedTargetPrefix
+        [string]$SourceDir,
+        [string]$DestinationDir
     )
 
-    if (-not (Test-Path -LiteralPath $LinkPath)) {
-        return
+    $sourceRoot = (Resolve-Path -LiteralPath $SourceDir).Path.TrimEnd("\")
+    $destinationRoot = (Resolve-Path -LiteralPath $DestinationDir).Path.TrimEnd("\")
+    $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
+    $destinationFiles = @(Get-ChildItem -LiteralPath $destinationRoot -Recurse -File)
+    if ($sourceFiles.Count -ne $destinationFiles.Count) {
+        throw "$DestinationDir contains $($destinationFiles.Count) files; expected $($sourceFiles.Count)."
     }
-    $item = Get-Item -LiteralPath $LinkPath -Force
 
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        if ($item.LinkType -ne "Junction") {
-            throw "Refusing to replace non-junction reparse point at $LinkPath."
+    foreach ($sourceFile in $sourceFiles) {
+        $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\")
+        $destinationPath = Join-Path $destinationRoot $relativePath
+        if (-not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
+            throw "$DestinationDir is missing $relativePath."
         }
-
-        $existingTarget = [IO.Path]::GetFullPath([string]$item.Target).TrimEnd("\")
-        $ownedPrefix = [IO.Path]::GetFullPath($InstallerOwnedTargetPrefix).TrimEnd("\")
-        $isOwned = $existingTarget.Equals(
-            $ownedPrefix,
-            [System.StringComparison]::OrdinalIgnoreCase
-        ) -or $existingTarget.StartsWith(
-            "$ownedPrefix\",
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
-        if (-not $isOwned) {
-            throw "Refusing to retarget junction at $LinkPath because it is not managed by this installer."
+        if ((Get-FileSha256 $sourceFile.FullName) -ne (Get-FileSha256 $destinationPath)) {
+            throw "$destinationPath does not match the canonical package."
         }
-        return
-    }
-
-    if (-not $item.PSIsContainer) {
-        throw "Refusing to replace file at $LinkPath with a junction."
-    }
-    if ($null -ne (Get-ChildItem -LiteralPath $LinkPath -Force | Select-Object -First 1)) {
-        throw "Refusing to replace nonempty directory at $LinkPath with a junction."
     }
 }
 
-function Set-LocalJunction {
+function Get-VerifiedCodexVersion {
     param(
-        [string]$LinkPath,
-        [string]$TargetPath,
-        [string]$InstallerOwnedTargetPrefix
+        [string]$CodexPath,
+        [string]$ExpectedVersion
     )
 
-    Assert-JunctionCanBeSet `
-        -LinkPath $LinkPath `
-        -InstallerOwnedTargetPrefix $InstallerOwnedTargetPrefix
-
-    $existingTarget = $null
-    if (Test-Path -LiteralPath $LinkPath) {
-        $item = Get-Item -LiteralPath $LinkPath -Force
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            $existingTarget = [string]$item.Target
-            if ($existingTarget.Equals($TargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return
-            }
-            Remove-Item -LiteralPath $LinkPath -Force
-        } else {
-            Remove-Item -LiteralPath $LinkPath -Force
-        }
+    $reportedVersionLines = @(& $CodexPath --version)
+    $exitCode = $LASTEXITCODE
+    $reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()
+    if ($exitCode -ne 0) {
+        throw "$CodexPath exited with code $exitCode."
+    }
+    if ($reportedVersion -notlike "*$ExpectedVersion*") {
+        throw "$CodexPath reported '$reportedVersion'; expected version $ExpectedVersion."
     }
 
-    try {
-        New-Item -ItemType Junction -Path $LinkPath -Target $TargetPath | Out-Null
-    } catch {
-        if ($null -ne $existingTarget) {
-            New-Item -ItemType Junction -Path $LinkPath -Target $existingTarget | Out-Null
-        }
-        throw
-    }
+    return $reportedVersion
 }
 
 function Prepend-PathEntry {
@@ -149,11 +120,22 @@ if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
 
 $repoRoot = $PSScriptRoot
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-$target = switch ($architecture) {
-    "X64" { "x86_64-pc-windows-msvc" }
-    "Arm64" { "aarch64-pc-windows-msvc" }
+$targetInfo = switch ($architecture) {
+    "X64" {
+        [pscustomobject]@{
+            Target = "x86_64-pc-windows-msvc"
+            PlatformPackage = "codex-win32-x64"
+        }
+    }
+    "Arm64" {
+        [pscustomobject]@{
+            Target = "aarch64-pc-windows-msvc"
+            PlatformPackage = "codex-win32-arm64"
+        }
+    }
     default { throw "Unsupported Windows architecture: $architecture" }
 }
+$target = $targetInfo.Target
 
 $justCommand = Get-Command just.exe -ErrorAction SilentlyContinue
 if ($null -eq $justCommand) {
@@ -162,6 +144,55 @@ if ($null -eq $justCommand) {
 if ($null -eq $justCommand) {
     throw "just is required to build the canonical Codex package."
 }
+
+$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if ($null -eq $npmCommand) {
+    throw "npm is required to locate the global Codex installation."
+}
+
+$npmRootLines = @(& $npmCommand.Source root --global)
+$npmRoot = ($npmRootLines -join [Environment]::NewLine).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmRoot)) {
+    throw "Could not locate the global npm package directory."
+}
+$npmPrefixLines = @(& $npmCommand.Source prefix --global)
+$npmPrefix = ($npmPrefixLines -join [Environment]::NewLine).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmPrefix)) {
+    throw "Could not locate the global npm command directory."
+}
+
+$codexPackageDir = Join-Path $npmRoot "@openai\codex"
+$codexPackageMetadataPath = Join-Path $codexPackageDir "package.json"
+if (-not (Test-Path -LiteralPath $codexPackageMetadataPath -PathType Leaf)) {
+    throw "Could not find the global @openai/codex npm package. Run npm install -g @openai/codex first."
+}
+$codexPackageMetadata = Get-Content -LiteralPath $codexPackageMetadataPath -Raw | ConvertFrom-Json
+if ($codexPackageMetadata.name -cne "@openai/codex") {
+    throw "$codexPackageMetadataPath does not describe the @openai/codex package."
+}
+
+$nestedPlatformPackageDir = Join-Path $codexPackageDir "node_modules\@openai\$($targetInfo.PlatformPackage)"
+$hoistedPlatformPackageDir = Join-Path $npmRoot "@openai\$($targetInfo.PlatformPackage)"
+if (Test-Path -LiteralPath $nestedPlatformPackageDir -PathType Container) {
+    $platformPackageDir = $nestedPlatformPackageDir
+} elseif (Test-Path -LiteralPath $hoistedPlatformPackageDir -PathType Container) {
+    $platformPackageDir = $hoistedPlatformPackageDir
+} else {
+    throw "Could not find the installed @openai/$($targetInfo.PlatformPackage) npm package."
+}
+
+$installDir = Join-Path $platformPackageDir "vendor\$target"
+if (-not (Test-Path -LiteralPath $installDir -PathType Container)) {
+    throw "Could not find the npm Codex package location at $installDir."
+}
+$codexShim = Join-Path $npmPrefix "codex.cmd"
+if (-not (Test-Path -LiteralPath $codexShim -PathType Leaf)) {
+    throw "Could not find the npm Codex command shim at $codexShim."
+}
+
+Assert-PathWithin -Path $codexPackageDir -Root $npmRoot
+Assert-PathWithin -Path $platformPackageDir -Root $npmRoot
+Assert-PathWithin -Path $installDir -Root $platformPackageDir
 
 $packageDir = Join-Path $repoRoot "dist\codex-package-$target"
 Assert-PathWithin -Path $packageDir -Root (Join-Path $repoRoot "dist")
@@ -207,141 +238,82 @@ foreach ($relativePath in $expectedFiles) {
         throw "Canonical package is missing $builtPath."
     }
 }
-$packageFingerprint = ($expectedFiles | ForEach-Object {
-    (Get-FileSha256 (Join-Path $packageDir $_)).Substring(0, 8).ToLowerInvariant()
-}) -join ""
 
-$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
-    Join-Path $env:USERPROFILE ".codex"
-} else {
-    $env:CODEX_HOME
-}
-$installRoot = Join-Path $codexHome "packages\standalone"
-$releasesDir = Join-Path $installRoot "releases"
-$releaseDir = Join-Path $releasesDir "$version-$target-$packageFingerprint"
-$currentDir = Join-Path $installRoot "current"
-$currentBinDir = Join-Path $currentDir "bin"
-$visibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin"
 $installSuffix = "$PID.$([Guid]::NewGuid().ToString('N'))"
-$stagingDir = Join-Path $releasesDir ".staging.$version-$target.$packageFingerprint.$installSuffix"
+$installParent = Split-Path -Parent $installDir
+$stagingDir = Join-Path $installParent ".$target.installing.$installSuffix"
+$backupDir = Join-Path $installParent ".$target.backup.$installSuffix"
+Assert-PathWithin -Path $stagingDir -Root $installParent
+Assert-PathWithin -Path $backupDir -Root $installParent
 
-Assert-PathWithin -Path $releaseDir -Root $releasesDir
-Assert-PathWithin -Path $stagingDir -Root $releasesDir
-Assert-PathWithin -Path $currentDir -Root $installRoot
-Assert-PathWithin -Path $visibleBinDir -Root (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex")
-New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
+if (Test-Path -LiteralPath $stagingDir) {
+    throw "Staging path already exists: $stagingDir."
+}
+if (Test-Path -LiteralPath $backupDir) {
+    throw "Backup path already exists: $backupDir."
+}
 
+$backupCreated = $false
+$replacementInstalled = $false
 try {
-    Write-Step "Staging Codex $version in $stagingDir"
+    Write-Step "Staging Codex $version beside the npm package"
     Copy-Item -LiteralPath $packageDir -Destination $stagingDir -Recurse
-
-    $sourceRoot = (Resolve-Path -LiteralPath $packageDir).Path.TrimEnd("\")
-    $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
-    $stagedFiles = @(Get-ChildItem -LiteralPath $stagingDir -Recurse -File)
-    if ($sourceFiles.Count -ne $stagedFiles.Count) {
-        throw "Staged package contains $($stagedFiles.Count) files; expected $($sourceFiles.Count)."
-    }
-    foreach ($sourceFile in $sourceFiles) {
-        $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\")
-        $stagedPath = Join-Path $stagingDir $relativePath
-        if (-not (Test-Path -LiteralPath $stagedPath -PathType Leaf)) {
-            throw "Staged package is missing $stagedPath."
-        }
-        if ((Get-FileSha256 $sourceFile.FullName) -ne (Get-FileSha256 $stagedPath)) {
-            throw "Staged file does not match the build output: $stagedPath."
-        }
-    }
-
+    Assert-PackageMatches -SourceDir $packageDir -DestinationDir $stagingDir
     $stagedCodexPath = Join-Path $stagingDir "bin\codex.exe"
-    $stagedVersionLines = @(& $stagedCodexPath --version)
-    $stagedVersion = ($stagedVersionLines -join [Environment]::NewLine).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "$stagedCodexPath exited with code $LASTEXITCODE."
-    }
-    if ($stagedVersion -notlike "*$version*") {
-        throw "Staged Codex reported '$stagedVersion'; expected version $version."
-    }
+    $null = Get-VerifiedCodexVersion -CodexPath $stagedCodexPath -ExpectedVersion $version
 
-    $releaseAlreadyInstalled = $false
-    if (Test-Path -LiteralPath $releaseDir) {
-        if (-not (Test-Path -LiteralPath $releaseDir -PathType Container)) {
-            throw "Immutable release path is not a directory: $releaseDir."
-        }
-        $releaseFiles = @(Get-ChildItem -LiteralPath $releaseDir -Recurse -File)
-        if ($sourceFiles.Count -ne $releaseFiles.Count) {
-            throw "Immutable release $releaseDir does not match its package fingerprint."
-        }
-        foreach ($sourceFile in $sourceFiles) {
-            $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\")
-            $releasePath = Join-Path $releaseDir $relativePath
-            if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
-                throw "Immutable release $releaseDir does not match its package fingerprint."
+    Write-Step "Replacing npm package at $installDir"
+    Move-Item -LiteralPath $installDir -Destination $backupDir
+    $backupCreated = $true
+    Move-Item -LiteralPath $stagingDir -Destination $installDir
+    $replacementInstalled = $true
+
+    Assert-PackageMatches -SourceDir $packageDir -DestinationDir $installDir
+    $installedCodexPath = Join-Path $installDir "bin\codex.exe"
+    $reportedVersion = Get-VerifiedCodexVersion `
+        -CodexPath $installedCodexPath `
+        -ExpectedVersion $version
+    $null = Get-VerifiedCodexVersion -CodexPath $codexShim -ExpectedVersion $version
+} catch {
+    $installFailure = $_
+    if ($backupCreated) {
+        try {
+            if ($replacementInstalled -and (Test-Path -LiteralPath $installDir)) {
+                Assert-PathWithin -Path $installDir -Root $platformPackageDir
+                Remove-Item -LiteralPath $installDir -Recurse -Force
             }
-            if ((Get-FileSha256 $sourceFile.FullName) -ne (Get-FileSha256 $releasePath)) {
-                throw "Immutable release $releaseDir does not match its package fingerprint."
+            if (Test-Path -LiteralPath $backupDir) {
+                Move-Item -LiteralPath $backupDir -Destination $installDir
+                $backupCreated = $false
             }
+        } catch {
+            throw "Installing the local build failed, and restoring the npm package also failed. The backup remains at $backupDir. Original error: $installFailure"
         }
-        $releaseAlreadyInstalled = $true
     }
-
-    Assert-JunctionCanBeSet `
-        -LinkPath $currentDir `
-        -InstallerOwnedTargetPrefix $releasesDir
-    Assert-JunctionCanBeSet `
-        -LinkPath $visibleBinDir `
-        -InstallerOwnedTargetPrefix $installRoot
-
-    if (-not $releaseAlreadyInstalled) {
-        Write-Step "Installing Codex in $releaseDir"
-        Move-Item -LiteralPath $stagingDir -Destination $releaseDir
-    }
-
-    Set-LocalJunction `
-        -LinkPath $currentDir `
-        -TargetPath $releaseDir `
-        -InstallerOwnedTargetPrefix $releasesDir
-
-    $visibleBinParent = Split-Path -Parent $visibleBinDir
-    New-Item -ItemType Directory -Path $visibleBinParent -Force | Out-Null
-    Set-LocalJunction `
-        -LinkPath $visibleBinDir `
-        -TargetPath $currentBinDir `
-        -InstallerOwnedTargetPrefix $installRoot
+    throw $installFailure
 } finally {
     if (Test-Path -LiteralPath $stagingDir) {
-        Assert-PathWithin -Path $stagingDir -Root $releasesDir
+        Assert-PathWithin -Path $stagingDir -Root $installParent
         Remove-Item -LiteralPath $stagingDir -Recurse -Force
     }
 }
 
+if ($backupCreated -and (Test-Path -LiteralPath $backupDir)) {
+    Assert-PathWithin -Path $backupDir -Root $installParent
+    try {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force
+    } catch {
+        Write-Warning "The local build is installed, and the previous npm package remains at $backupDir because it is still in use."
+    }
+}
+
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$updatedUserPath = Prepend-PathEntry -PathValue $userPath -Entry $visibleBinDir
+$updatedUserPath = Prepend-PathEntry -PathValue $userPath -Entry $npmPrefix
 if ($updatedUserPath -cne $userPath) {
     [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
 }
-$env:Path = Prepend-PathEntry -PathValue $env:Path -Entry $visibleBinDir
-
-Write-Step "Verifying the native command and package resources"
-$expectedCodexPath = Join-Path $visibleBinDir "codex.exe"
-$codexCommand = Get-Command codex -All -ErrorAction Stop |
-    Where-Object {
-        $_.CommandType -eq [System.Management.Automation.CommandTypes]::Application -and
-            $_.Path.Equals($expectedCodexPath, [System.StringComparison]::OrdinalIgnoreCase)
-    } |
-    Select-Object -First 1
-if ($null -eq $codexCommand) {
-    throw "The native Codex command is not discoverable at $expectedCodexPath."
-}
-$reportedVersionLines = @(& $codexCommand.Path --version)
-$reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()
-if ($LASTEXITCODE -ne 0) {
-    throw "$($codexCommand.Path) exited with code $LASTEXITCODE."
-}
-if ($reportedVersion -notlike "*$version*") {
-    throw "Installed Codex reported '$reportedVersion'; expected version $version."
-}
+$env:Path = Prepend-PathEntry -PathValue $env:Path -Entry $npmPrefix
 
 Write-Host $reportedVersion
-Write-Host "==> Native Codex command: $($codexCommand.Path)"
-Write-Host "==> Canonical package: $releaseDir"
-Write-Host "==> New terminals will prefer this build over npm's codex shim."
+Write-Host "==> npm command: $codexShim"
+Write-Host "==> Replaced npm package: $installDir"
