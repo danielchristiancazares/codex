@@ -1,4 +1,5 @@
 use anyhow::Result;
+use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::test_path_buf_with_windows;
 use app_test_support::test_tmp_path_buf;
@@ -23,7 +24,13 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
+use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use codex_app_server_protocol::ToolsV2;
+use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::WriteStatus;
 use codex_core::config::set_project_trust_level;
 use codex_protocol::config_types::TrustLevel;
@@ -32,6 +39,7 @@ use codex_protocol::config_types::WebSearchLocation;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -1290,6 +1298,134 @@ async fn config_batch_write_applies_multiple_edits() -> Result<()> {
         .expect("sandbox workspace write");
     assert_eq!(sandbox.writable_roots, vec![writable_root]);
     assert!(!sandbox.network_access);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config_batch_write_reloads_context_window_for_next_turn_only() -> Result<()> {
+    const INITIAL_CONTEXT_WINDOW: i64 = 100_000;
+    const UPDATED_CONTEXT_WINDOW: i64 = 200_000;
+    const EFFECTIVE_CONTEXT_WINDOW_PERCENT: i64 = 95;
+
+    let server = responses::start_mock_server().await;
+    let first_response = responses::sse_response(responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_completed_with_tokens("resp-1", /*total_tokens*/ 10),
+    ]))
+    .set_delay(std::time::Duration::from_secs(/*secs*/ 2));
+    let second_response = responses::sse_response(responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_completed_with_tokens("resp-2", /*total_tokens*/ 20),
+    ]));
+    let _response_mock =
+        responses::mount_response_sequence(&server, vec![first_response, second_response]).await;
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&server.uri())
+        .with_root_config(&format!("model_context_window = {INITIAL_CONTEXT_WINDOW}"))
+        .write(codex_home.path())?;
+
+    let mut app_server = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+    let thread_start_id = app_server
+        .send_thread_start_request_with_auto_env(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let ThreadStartResponse { thread, .. } = timeout(
+        DEFAULT_READ_TIMEOUT,
+        app_server.read_response(thread_start_id),
+    )
+    .await??;
+
+    let first_turn_id = app_server
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "first turn".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let TurnStartResponse { turn: first_turn } = timeout(
+        DEFAULT_READ_TIMEOUT,
+        app_server.read_response(first_turn_id),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        app_server.read_stream_until_notification_message("turn/started"),
+    )
+    .await??;
+
+    let batch_id = app_server
+        .send_config_batch_write_request(ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: "model_context_window".to_string(),
+                value: json!(UPDATED_CONTEXT_WINDOW),
+                merge_strategy: MergeStrategy::Replace,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        })
+        .await?;
+    let _: ConfigWriteResponse =
+        timeout(DEFAULT_READ_TIMEOUT, app_server.read_response(batch_id)).await??;
+
+    let first_usage = loop {
+        let usage: ThreadTokenUsageUpdatedNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            app_server.read_notification("thread/tokenUsage/updated"),
+        )
+        .await??;
+        if usage.turn_id == first_turn.id {
+            break usage;
+        }
+    };
+    assert_eq!(
+        first_usage.token_usage.model_context_window,
+        Some(INITIAL_CONTEXT_WINDOW * EFFECTIVE_CONTEXT_WINDOW_PERCENT / 100)
+    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        app_server.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let second_turn_id = app_server
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id,
+            input: vec![UserInput::Text {
+                text: "second turn".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let TurnStartResponse { turn: second_turn } = timeout(
+        DEFAULT_READ_TIMEOUT,
+        app_server.read_response(second_turn_id),
+    )
+    .await??;
+    let second_usage = loop {
+        let usage: ThreadTokenUsageUpdatedNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            app_server.read_notification("thread/tokenUsage/updated"),
+        )
+        .await??;
+        if usage.turn_id == second_turn.id {
+            break usage;
+        }
+    };
+    assert_eq!(
+        second_usage.token_usage.model_context_window,
+        Some(UPDATED_CONTEXT_WINDOW * EFFECTIVE_CONTEXT_WINDOW_PERCENT / 100)
+    );
 
     Ok(())
 }

@@ -9,7 +9,7 @@ use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 
-use super::super::cli::CopilotEndpointManager;
+use super::super::endpoint::CopilotEndpointManager;
 use super::*;
 
 #[test]
@@ -119,6 +119,7 @@ async fn session_create_uses_the_codex_thread_id() {
     .expect("resolve endpoint");
 
     assert_eq!(endpoint.base_url, "https://api.githubcopilot.com");
+    assert_eq!(endpoint.source, EndpointSource::Cli);
     server.await.expect("mock Copilot CLI");
 }
 
@@ -147,6 +148,7 @@ fn builds_sensitive_endpoint_headers_without_exposing_values_in_debug() {
 
     assert_eq!(resolved.base_url, "https://api.githubcopilot.com");
     assert_eq!(resolved.bound_model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(resolved.source, EndpointSource::Cli);
     assert_eq!(
         resolved
             .headers

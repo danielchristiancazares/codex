@@ -122,7 +122,7 @@ fn translation_uses_live_limits_reasoning_and_websocket_priority() {
 }
 
 #[test]
-fn model_headers_use_current_copilot_cli_identity() {
+fn model_headers_use_copilot_identity() {
     let source = HeaderMap::from_iter([
         (
             http::header::AUTHORIZATION,
@@ -134,13 +134,28 @@ fn model_headers_use_current_copilot_cli_identity() {
         ),
     ]);
 
-    let headers = models_headers(&source);
+    let headers = models_headers(&source, EndpointSource::Direct);
 
     assert!(!headers.contains_key("x-github-api-version"));
-    assert!(!headers.contains_key("editor-version"));
-    assert!(!headers.contains_key("editor-plugin-version"));
+    assert_eq!(
+        headers
+            .get("editor-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("Neovim/1.0.0")
+    );
+    assert_eq!(
+        headers
+            .get("editor-plugin-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("CopilotChat/1.0.0")
+    );
     assert!(headers.contains_key("x-interaction-id"));
     assert_eq!(headers.get("x-request-id"), headers.get("x-interaction-id"));
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("request ID");
+    Uuid::parse_str(request_id).expect("UUID request ID");
     assert_eq!(
         headers
             .get("x-initiator")
@@ -155,8 +170,59 @@ fn model_headers_use_current_copilot_cli_identity() {
     );
     assert_eq!(
         headers
+            .get("openai-intent")
+            .and_then(|value| value.to_str().ok()),
+        Some("conversation-panel")
+    );
+    assert_eq!(
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
+        Some("GitHubCopilotCLI/1.0.80")
+    );
+    assert_eq!(
+        headers
             .get("x-client-application")
             .and_then(|value| value.to_str().ok()),
         Some("copilot-cli")
+    );
+    assert_eq!(
+        headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer secret")
+    );
+}
+
+#[test]
+fn top_level_model_data_is_required() {
+    let error = serde_json::from_value::<CopilotModelsResponse>(json!({}))
+        .expect_err("missing model data must fail");
+
+    assert!(error.to_string().contains("missing field `data`"));
+}
+
+#[test]
+fn cli_model_headers_preserve_cli_user_agent() {
+    let source = HeaderMap::from_iter([(
+        http::header::USER_AGENT,
+        HeaderValue::from_static("copilot/1.0.81-6 (win32 v24.18.1) term/unknown"),
+    )]);
+
+    let headers = models_headers(&source, EndpointSource::Cli);
+
+    assert_eq!(
+        headers
+            .get(http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok()),
+        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown")
+    );
+    assert!(!headers.contains_key("editor-version"));
+    assert!(!headers.contains_key("editor-plugin-version"));
+    assert_eq!(
+        headers
+            .get("openai-intent")
+            .and_then(|value| value.to_str().ok()),
+        Some("conversation-panel")
     );
 }

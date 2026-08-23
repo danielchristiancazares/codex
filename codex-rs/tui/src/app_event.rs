@@ -73,6 +73,14 @@ pub(crate) enum ThreadGoalSetMode {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelSelectionScope {
+    /// Update the global/default model selection.
+    Global,
+    /// Update both the global/default selection and the explicit Plan-mode effort.
+    GlobalAndPlan,
+}
+
 /// One absolute history offset returned by a batch lookup.
 ///
 /// Malformed rows retain their offset with `entry` set to `None` so the composer can cache the gap
@@ -902,10 +910,19 @@ pub(crate) enum AppEvent {
     /// Run after any nested settings events emitted while handling the close event.
     SettingsSelectionSettled,
 
-    /// Persist the selected model and reasoning effort to the appropriate config.
+    /// Persist the selected model, reasoning effort, and optional numeric context window.
     PersistModelSelection {
         model: String,
         effort: Option<ReasoningEffort>,
+        context_window: Option<i64>,
+    },
+
+    /// Apply a complete model-picker selection to the active thread and in-memory settings.
+    CommitModelSelection {
+        model: String,
+        effort: Option<ReasoningEffort>,
+        context_window: Option<i64>,
+        scope: ModelSelectionScope,
     },
 
     /// Show the cyber auto-review notice after the model selection confirmation.
@@ -924,6 +941,13 @@ pub(crate) enum AppEvent {
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
         model: ModelPreset,
+    },
+
+    /// Open the context-window stage without mutating the active selection.
+    OpenContextWindowPicker {
+        model: String,
+        effort: Option<ReasoningEffort>,
+        scope: ModelSelectionScope,
     },
 
     /// Open the explicit Max/Ultra reasoning selection popup for a model.

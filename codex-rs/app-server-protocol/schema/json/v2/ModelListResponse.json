@@ -47,6 +47,14 @@
             }
           ]
         },
+        "contextWindow": {
+          "description": "Curated default input budget for this model.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "defaultReasoningEffort": {
           "$ref": "#/definitions/ReasoningEffort"
         },
@@ -82,6 +90,14 @@
         },
         "isDefault": {
           "type": "boolean"
+        },
+        "maxContextWindow": {
+          "description": "Largest usable input budget advertised for this model.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "model": {
           "type": "string"

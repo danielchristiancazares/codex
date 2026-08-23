@@ -10,8 +10,9 @@ use serde_json::Map;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::cli::CopilotEndpointManager;
-use super::cli::EndpointSnapshot;
+use super::endpoint::CopilotEndpointManager;
+use super::endpoint::EndpointSnapshot;
+use super::endpoint::EndpointSource;
 use super::identity;
 use super::payload;
 
@@ -49,7 +50,7 @@ impl CopilotAuthProvider {
             .unwrap_or_else(new_uuid_header);
         remove_codex_headers(headers);
         headers.extend(self.endpoint.headers.clone());
-        identity::prepare_inference_headers(headers);
+        identity::prepare_inference_headers(headers, self.endpoint.source);
 
         let identity = ConnectionIdentity {
             agent_task_id: new_uuid_header(),
@@ -103,6 +104,16 @@ impl CopilotAuthProvider {
             "Openai-Intent".to_string(),
             Value::String(identity::INTENT.to_string()),
         );
+        if self.endpoint.source == EndpointSource::Direct {
+            headers.insert(
+                "Editor-Version".to_string(),
+                Value::String(identity::EDITOR_VERSION.to_string()),
+            );
+            headers.insert(
+                "Editor-Plugin-Version".to_string(),
+                Value::String(identity::EDITOR_PLUGIN_VERSION.to_string()),
+            );
+        }
         headers.insert(
             "X-Client-Application".to_string(),
             Value::String(identity::CLIENT_APPLICATION.to_string()),

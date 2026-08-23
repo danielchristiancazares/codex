@@ -3156,6 +3156,7 @@ dependencies = [
  "codex-agent-identity",
  "codex-api",
  "codex-http-client",
+ "codex-keyring-store",
  "codex-login",
  "codex-model-provider-info",
  "codex-models-manager",

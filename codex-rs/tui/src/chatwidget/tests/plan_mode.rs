@@ -384,7 +384,7 @@ async fn reasoning_selection_in_plan_mode_opens_scope_prompt_event() {
 }
 
 #[tokio::test]
-async fn reasoning_selection_in_plan_mode_without_effort_change_does_not_open_scope_prompt_event() {
+async fn reasoning_selection_in_plan_mode_without_effort_change_opens_context_window_picker() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
@@ -404,15 +404,19 @@ async fn reasoning_selection_in_plan_mode_without_effort_change_does_not_open_sc
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::UpdateModel(model) if model == "gpt-5.4"
+            AppEvent::OpenContextWindowPicker {
+                model,
+                effort: Some(ReasoningEffortConfig::Medium),
+                scope: crate::app_event::ModelSelectionScope::Global,
+            } if model == "gpt-5.4"
         )),
-        "expected model update event; events: {events:?}"
+        "expected context-window picker event; events: {events:?}"
     );
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, AppEvent::UpdateReasoningEffort(Some(_)))),
-        "expected reasoning update event; events: {events:?}"
+            .all(|event| !matches!(event, AppEvent::OpenPlanReasoningScopePrompt { .. })),
+        "expected no Plan reasoning scope prompt event; events: {events:?}"
     );
 }
 
@@ -517,9 +521,10 @@ async fn advanced_reasoning_selection_in_plan_mode_uses_expected_scope() {
         if effort == ReasoningEffortConfig::Ultra {
             assert!(events.iter().any(|event| matches!(
                 event,
-                AppEvent::ApplyAdvancedReasoning {
+                AppEvent::OpenContextWindowPicker {
                     model,
-                    effort: ReasoningEffortConfig::Ultra,
+                    effort: Some(ReasoningEffortConfig::Ultra),
+                    scope: crate::app_event::ModelSelectionScope::Global,
                 } if model == "gpt-5.4"
             )));
             assert!(events.iter().all(|event| !matches!(
@@ -595,7 +600,7 @@ async fn reasoning_selection_in_plan_mode_model_switch_does_not_open_scope_promp
 }
 
 #[tokio::test]
-async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override() {
+async fn plan_reasoning_scope_popup_all_modes_opens_context_picker_with_plan_scope() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.open_plan_reasoning_scope_prompt("gpt-5.4".to_string(), Some(ReasoningEffortConfig::High));
 
@@ -606,24 +611,13 @@ async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override(
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::UpdatePlanModeReasoningEffort(Some(ReasoningEffortConfig::High))
+            AppEvent::OpenContextWindowPicker {
+                model,
+                effort: Some(ReasoningEffortConfig::High),
+                scope: crate::app_event::ModelSelectionScope::GlobalAndPlan,
+            } if model == "gpt-5.4"
         )),
-        "expected plan override to be updated; events: {events:?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            AppEvent::PersistPlanModeReasoningEffort(Some(ReasoningEffortConfig::High))
-        )),
-        "expected updated plan override to be persisted; events: {events:?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            AppEvent::PersistModelSelection { model, effort: Some(ReasoningEffortConfig::High) }
-                if model == "gpt-5.4"
-        )),
-        "expected global model reasoning selection persistence; events: {events:?}"
+        "expected context-window picker with Plan scope; events: {events:?}"
     );
 }
 

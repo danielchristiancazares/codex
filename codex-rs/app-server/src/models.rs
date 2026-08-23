@@ -5,6 +5,7 @@ use codex_app_server_protocol::ReasoningEffortOption;
 use codex_http_client::HttpClientFactory;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::manager::SharedModelsManager;
+use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 
@@ -12,14 +13,14 @@ pub async fn supported_models(
     models_manager: SharedModelsManager,
     include_hidden: bool,
     http_client_factory: HttpClientFactory,
-) -> Vec<Model> {
-    models_manager
-        .list_models(RefreshStrategy::OnlineIfUncached, http_client_factory)
-        .await
+) -> CoreResult<Vec<Model>> {
+    Ok(models_manager
+        .list_models_with_refresh_errors(RefreshStrategy::OnlineIfUncached, http_client_factory)
+        .await?
         .into_iter()
         .filter(|preset| include_hidden || preset.show_in_picker)
         .map(model_from_preset)
-        .collect()
+        .collect())
 }
 
 fn model_from_preset(preset: ModelPreset) -> Model {
@@ -47,6 +48,8 @@ fn model_from_preset(preset: ModelPreset) -> Model {
         ),
         default_reasoning_effort: preset.default_reasoning_effort,
         input_modalities: preset.input_modalities,
+        context_window: preset.context_window,
+        max_context_window: preset.max_context_window,
         supports_personality: preset.supports_personality,
         multi_agent_version: preset.multi_agent_version.map(Into::into),
         additional_speed_tiers: preset.additional_speed_tiers,

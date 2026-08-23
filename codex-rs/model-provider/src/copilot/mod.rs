@@ -1,5 +1,6 @@
 mod auth_provider;
-mod cli;
+mod credentials;
+mod endpoint;
 mod executable;
 mod identity;
 mod models_endpoint;
@@ -25,8 +26,8 @@ use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelsResponse;
 
 use self::auth_provider::CopilotAuthProvider;
-use self::cli::CopilotEndpointManager;
-use self::cli::shared_endpoint_manager;
+use self::endpoint::CopilotEndpointManager;
+use self::endpoint::shared_endpoint_manager;
 use self::models_endpoint::CopilotModelsEndpoint;
 use self::models_manager::CopilotModelsManager;
 use crate::ProviderAuthScope;
@@ -40,7 +41,7 @@ use crate::provider::ProviderUnauthorizedRecovery;
 use crate::provider::RemoteCompactionSupport;
 use crate::provider::ResolvedProviderApi;
 
-/// Native GitHub Copilot provider backed by the installed Copilot CLI login.
+/// Native GitHub Copilot provider backed by direct credentials or the installed Copilot CLI login.
 pub(crate) struct CopilotModelProvider {
     info: ModelProviderInfo,
     endpoint_manager: Arc<CopilotEndpointManager>,
@@ -56,14 +57,14 @@ impl CopilotModelProvider {
 
     fn api_provider_from_endpoint(
         &self,
-        endpoint: &cli::EndpointSnapshot,
+        endpoint: &endpoint::EndpointSnapshot,
     ) -> codex_protocol::error::Result<Provider> {
         let mut info = self.info.clone();
         info.base_url = Some(endpoint.base_url.clone());
         info.to_api_provider(/*auth_mode*/ None)
     }
 
-    fn auth_from_endpoint(&self, endpoint: Arc<cli::EndpointSnapshot>) -> SharedAuthProvider {
+    fn auth_from_endpoint(&self, endpoint: Arc<endpoint::EndpointSnapshot>) -> SharedAuthProvider {
         Arc::new(CopilotAuthProvider::new(
             endpoint,
             Arc::clone(&self.endpoint_manager),

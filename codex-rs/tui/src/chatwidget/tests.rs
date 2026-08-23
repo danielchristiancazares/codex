@@ -236,6 +236,7 @@ mod approval_requests;
 mod composer_submission;
 #[path = "tests/config_errors_tests.rs"]
 mod config_errors;
+mod context_window_picker;
 mod exec_flow;
 mod goal_menu;
 mod goal_validation;

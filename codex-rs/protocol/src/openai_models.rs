@@ -265,6 +265,12 @@ pub struct ModelPreset {
     /// Input modalities accepted when composing user turns for this preset.
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    /// Curated default input budget for this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
+    /// Largest usable input budget advertised for this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<i64>,
 }
 
 /// Visibility of a model in the picker or APIs.
@@ -820,6 +826,8 @@ impl From<ModelInfo> for ModelPreset {
             availability_nux: info.availability_nux,
             supported_in_api: info.supported_in_api,
             input_modalities: info.input_modalities,
+            context_window: info.context_window,
+            max_context_window: info.max_context_window,
         }
     }
 }
@@ -1742,6 +1750,55 @@ mod tests {
 
         assert_eq!(model.resolved_context_window(), Some(400_000));
         assert_eq!(model.auto_compact_token_limit(), Some(360_000));
+    }
+
+    #[test]
+    fn model_preset_preserves_context_windows_in_full_conversion() {
+        let preset = ModelPreset::from(ModelInfo {
+            context_window: Some(273_000),
+            max_context_window: Some(400_000),
+            ..test_model(/*spec*/ None)
+        });
+
+        assert_eq!(
+            preset,
+            ModelPreset {
+                id: "test-model".to_string(),
+                model: "test-model".to_string(),
+                display_name: "Test Model".to_string(),
+                description: String::new(),
+                model_specialty: None,
+                default_reasoning_effort: ReasoningEffort::None,
+                supported_reasoning_efforts: Vec::new(),
+                supports_personality: false,
+                additional_speed_tiers: Vec::new(),
+                service_tiers: Vec::new(),
+                default_service_tier: None,
+                is_default: false,
+                upgrade: None,
+                show_in_picker: true,
+                multi_agent_version: None,
+                availability_nux: None,
+                supported_in_api: true,
+                input_modalities: default_input_modalities(),
+                context_window: Some(273_000),
+                max_context_window: Some(400_000),
+            }
+        );
+    }
+
+    #[test]
+    fn model_preset_context_windows_are_backward_compatible() {
+        let expected = ModelPreset::from(test_model(/*spec*/ None));
+        let value = serde_json::to_value(&expected).expect("serialize preset");
+        let object = value.as_object().expect("preset should be an object");
+        assert!(!object.contains_key("context_window"));
+        assert!(!object.contains_key("max_context_window"));
+
+        let actual =
+            serde_json::from_value::<ModelPreset>(value).expect("deserialize old model preset");
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

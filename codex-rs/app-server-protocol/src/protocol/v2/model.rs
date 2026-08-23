@@ -107,6 +107,12 @@ pub struct Model {
     pub default_reasoning_effort: ReasoningEffort,
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    /// Curated default input budget for this model.
+    #[ts(type = "number | null")]
+    pub context_window: Option<i64>,
+    /// Largest usable input budget advertised for this model.
+    #[ts(type = "number | null")]
+    pub max_context_window: Option<i64>,
     #[serde(default)]
     pub supports_personality: bool,
     /// Multi-agent runtime declared by this model, when available.

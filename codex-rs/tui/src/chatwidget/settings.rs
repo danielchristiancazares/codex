@@ -177,6 +177,11 @@ impl ChatWidget {
         self.refresh_model_dependent_surfaces();
     }
 
+    pub(crate) fn set_model_context_window(&mut self, context_window: Option<i64>) {
+        self.config.model_context_window = context_window;
+        self.refresh_model_dependent_surfaces();
+    }
+
     /// Set the personality in the widget's config copy.
     pub(crate) fn set_personality(&mut self, personality: Personality) {
         self.config.personality = Some(personality);

@@ -1478,6 +1478,29 @@ impl App {
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
             }
+            AppEvent::OpenContextWindowPicker {
+                model,
+                effort,
+                scope,
+            } => {
+                self.chat_widget
+                    .open_context_window_picker(model, effort, scope);
+            }
+            AppEvent::CommitModelSelection {
+                model,
+                effort,
+                context_window,
+                scope,
+            } => {
+                self.commit_model_selection(
+                    app_server,
+                    model,
+                    effort,
+                    context_window,
+                    scope,
+                )
+                .await;
+            }
             AppEvent::OpenAdvancedReasoningPopup { model } => {
                 self.chat_widget.open_advanced_reasoning_popup(model);
             }
@@ -2010,11 +2033,21 @@ impl App {
                     let _ = (preset, mode, profile_selection);
                 }
             }
-            AppEvent::PersistModelSelection { model, effort } => {
+            AppEvent::PersistModelSelection {
+                model,
+                effort,
+                context_window,
+            } => {
                 let mut edits = crate::config_update::build_model_selection_edits(
                     model.as_str(),
                     effort.as_ref(),
                 );
+                if let Some(context_window) = context_window {
+                    crate::config_update::append_model_context_window_edit(
+                        &mut edits,
+                        context_window,
+                    );
+                }
                 edits.insert(
                     0,
                     crate::config_update::replace_config_value(

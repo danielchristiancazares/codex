@@ -16,6 +16,7 @@ use codex_login::ExternalAuth;
 use codex_login::ExternalAuthRefreshContext;
 use codex_login::TokenData;
 use codex_protocol::auth::AuthMode;
+use codex_protocol::error::CodexErr;
 use codex_protocol::openai_models::ModelsResponse;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -92,6 +93,11 @@ struct TestModelsEndpoint {
     responses: Mutex<VecDeque<Vec<ModelInfo>>>,
     fetch_count: AtomicUsize,
     observed_proxy_policy: Mutex<Option<OutboundProxyPolicy>>,
+}
+
+#[derive(Debug)]
+struct FailingModelsEndpoint {
+    authoritative: bool,
 }
 
 #[derive(Debug)]
@@ -298,6 +304,28 @@ impl ModelsEndpointClient for TestModelsEndpoint {
                 Some(http_client_factory.outbound_proxy_policy());
             TestModelsEndpoint::list_models(self).await
         })
+    }
+}
+
+impl ModelsEndpointClient for FailingModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        true
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(async { false })
+    }
+
+    fn remote_catalog_is_authoritative(&self) -> bool {
+        self.authoritative
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        _client_version: &'a str,
+        _http_client_factory: HttpClientFactory,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+        Box::pin(async { Err(CodexErr::Fatal("test model refresh failure".to_string())) })
     }
 }
 
@@ -769,6 +797,36 @@ async fn get_model_info_applies_long_context_override_to_bundled_gpt_5_6_models(
 }
 
 #[tokio::test]
+async fn model_catalog_preserves_windows_while_runtime_override_is_capped() {
+    let mut catalog_model = remote_model("dual-window-model", "Dual Window", /*priority*/ 0);
+    catalog_model.context_window = Some(273_000);
+    catalog_model.max_context_window = Some(400_000);
+    let manager = static_manager_for_tests(ModelsResponse {
+        models: vec![catalog_model.clone()],
+    });
+
+    let mut expected_presets = vec![ModelPreset::from(catalog_model.clone())];
+    ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
+    let catalog_presets = manager
+        .list_models(RefreshStrategy::Offline, DEFAULT_HTTP_CLIENT_FACTORY)
+        .await;
+    assert_eq!(catalog_presets, expected_presets);
+
+    let mut expected_runtime_model = catalog_model;
+    expected_runtime_model.context_window = Some(400_000);
+    let runtime_model = manager
+        .get_model_info(
+            "dual-window-model",
+            &ModelsManagerConfig {
+                model_context_window: Some(500_000),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(runtime_model, expected_runtime_model);
+}
+
+#[tokio::test]
 async fn get_model_info_uses_custom_catalog() {
     let config = ModelsManagerConfig::default();
     let mut overlay = remote_model("gpt-overlay", "Overlay", /*priority*/ 0);
@@ -929,6 +987,47 @@ async fn authoritative_endpoint_never_exposes_bundled_models() {
 
     assert_eq!(manager.get_remote_models().await, remote_models);
     assert_eq!(endpoint.fetch_count(), 1, "expected a single model fetch");
+}
+
+#[tokio::test]
+async fn fallible_listing_propagates_authoritative_refresh_failure() {
+    let manager = OpenAiModelsManager::new_without_cache(
+        Arc::new(FailingModelsEndpoint {
+            authoritative: true,
+        }),
+        /*auth_manager*/ None,
+    );
+
+    let error = manager
+        .list_models_with_refresh_errors(
+            RefreshStrategy::OnlineIfUncached,
+            DEFAULT_HTTP_CLIENT_FACTORY,
+        )
+        .await
+        .expect_err("authoritative refresh failure should propagate");
+
+    assert_eq!(error.to_string(), "Fatal error: test model refresh failure");
+}
+
+#[tokio::test]
+async fn fallible_listing_preserves_non_authoritative_fallback() {
+    let manager = OpenAiModelsManager::new_without_cache(
+        Arc::new(FailingModelsEndpoint {
+            authoritative: false,
+        }),
+        /*auth_manager*/ None,
+    );
+    let expected = manager.try_list_models().expect("bundled model catalog");
+
+    let models = manager
+        .list_models_with_refresh_errors(
+            RefreshStrategy::OnlineIfUncached,
+            DEFAULT_HTTP_CLIENT_FACTORY,
+        )
+        .await
+        .expect("non-authoritative refresh should use bundled fallback");
+
+    assert_eq!(models, expected);
 }
 
 #[tokio::test]

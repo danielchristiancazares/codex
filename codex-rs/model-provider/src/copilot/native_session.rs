@@ -15,7 +15,8 @@ use tokio::io::AsyncWrite;
 use tokio::process::Child;
 use tokio::process::Command;
 
-use super::cli::ResolvedEndpoint;
+use super::endpoint::EndpointSource;
+use super::endpoint::ResolvedEndpoint;
 use super::rpc::JsonRpcClient;
 use super::token_lifetime::CredentialLifetime;
 use super::token_lifetime::SessionTokenLifetime;
@@ -396,6 +397,7 @@ fn build_endpoint(
         headers,
         bound_model,
         refresh_after,
+        source: EndpointSource::Cli,
     })
 }
 

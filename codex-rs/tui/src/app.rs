@@ -220,6 +220,7 @@ mod history_pagination;
 mod history_ui;
 mod input;
 mod loaded_threads;
+mod model_selection;
 mod pending_interactive_replay;
 mod pets;
 mod platform_actions;

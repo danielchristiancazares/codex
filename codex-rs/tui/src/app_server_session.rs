@@ -1530,6 +1530,8 @@ fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
         display_name: model.display_name,
         description: model.description,
         model_specialty: model.model_specialty,
+        context_window: model.context_window,
+        max_context_window: model.max_context_window,
         default_reasoning_effort: model.default_reasoning_effort,
         supported_reasoning_efforts: model
             .supported_reasoning_efforts
@@ -2238,6 +2240,8 @@ mod tests {
             hidden: false,
             supported_reasoning_efforts: Vec::new(),
             default_reasoning_effort: ReasoningEffort::Medium,
+            context_window: Some(400_000),
+            max_context_window: Some(922_000),
             input_modalities: Vec::new(),
             supports_personality: false,
             multi_agent_version: None,
@@ -2246,6 +2250,18 @@ mod tests {
             default_service_tier: None,
             is_default: false,
         }
+    }
+
+    #[test]
+    fn model_preset_from_api_model_preserves_context_windows() {
+        let preset = model_preset_from_api_model(api_model_with_upgrade_retirement_at(
+            /*retirement_at*/ None,
+        ));
+
+        assert_eq!(
+            (preset.context_window, preset.max_context_window),
+            (Some(400_000), Some(922_000))
+        );
     }
 
     #[test]

@@ -24,7 +24,8 @@ use serde::Deserialize;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use super::cli::CopilotEndpointManager;
+use super::endpoint::CopilotEndpointManager;
+use super::endpoint::EndpointSource;
 use super::identity;
 
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -37,7 +38,6 @@ pub(super) fn cache_file_name() -> &'static str {
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelsResponse {
-    #[serde(default)]
     data: Vec<CopilotModelEntry>,
 }
 
@@ -125,8 +125,12 @@ impl CopilotModelsEndpoint {
         let client = http_client_factory
             .build_client(&url, ClientRouteClass::Api)
             .map_err(|error| CodexErr::Fatal(format!("Copilot models client: {error}")))?;
-        let mut response =
-            send_models_request(&client, &url, models_headers(&endpoint.headers)).await?;
+        let mut response = send_models_request(
+            &client,
+            &url,
+            models_headers(&endpoint.headers, endpoint.source),
+        )
+        .await?;
         if matches!(
             response.status(),
             http::StatusCode::UNAUTHORIZED | http::StatusCode::FORBIDDEN
@@ -137,8 +141,12 @@ impl CopilotModelsEndpoint {
             let client = http_client_factory
                 .build_client(&url, ClientRouteClass::Api)
                 .map_err(|error| CodexErr::Fatal(format!("Copilot models client: {error}")))?;
-            response =
-                send_models_request(&client, &url, models_headers(&endpoint.headers)).await?;
+            response = send_models_request(
+                &client,
+                &url,
+                models_headers(&endpoint.headers, endpoint.source),
+            )
+            .await?;
         }
 
         let status = response.status();
@@ -159,10 +167,21 @@ impl CopilotModelsEndpoint {
             .json::<CopilotModelsResponse>()
             .await
             .map_err(|error| CodexErr::Fatal(format!("decode Copilot models: {error}")))?;
+        let raw_model_count = response.data.len();
+        if raw_model_count == 0 {
+            return Err(CodexErr::Fatal(
+                "Copilot models response contained no model entries".to_string(),
+            ));
+        }
         let bundled = bundled_models_response()
             .map(|response| response.models)
             .unwrap_or_default();
         let models = available_models(response.data, &bundled);
+        if models.is_empty() {
+            return Err(CodexErr::Fatal(format!(
+                "Copilot models response contained {raw_model_count} model entries, but none were enabled for Responses-over-WebSocket"
+            )));
+        }
         Ok((models, etag))
     }
 }
@@ -189,9 +208,13 @@ impl ModelsEndpointClient for CopilotModelsEndpoint {
     }
 }
 
-fn models_headers(source: &HeaderMap) -> HeaderMap {
+fn models_headers(source: &HeaderMap, endpoint_source: EndpointSource) -> HeaderMap {
     let mut headers = source.clone();
-    identity::prepare_inference_headers(&mut headers);
+    identity::prepare_inference_headers(&mut headers, endpoint_source);
+    headers.insert(
+        http::header::ACCEPT,
+        HeaderValue::from_static("application/json"),
+    );
     if let Ok(interaction_id) = HeaderValue::from_str(&Uuid::new_v4().to_string()) {
         headers.insert("x-interaction-id", interaction_id.clone());
         headers.insert("x-request-id", interaction_id);

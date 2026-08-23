@@ -11,6 +11,8 @@ mod key_chords;
 #[path = "tests/mcp_startup.rs"]
 mod mcp_startup;
 mod model_catalog;
+#[path = "tests/model_selection.rs"]
+mod model_selection_tests;
 mod plugin_catalog;
 mod provider_switch;
 mod rate_limits;

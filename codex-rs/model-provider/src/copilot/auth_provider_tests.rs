@@ -3,7 +3,7 @@ use serde_json::json;
 
 use super::*;
 
-fn endpoint() -> Arc<EndpointSnapshot> {
+fn endpoint(source: EndpointSource) -> Arc<EndpointSnapshot> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "authorization",
@@ -30,6 +30,7 @@ fn endpoint() -> Arc<EndpointSnapshot> {
         base_url: "https://api.githubcopilot.com".to_string(),
         headers,
         bound_model: None,
+        source,
     })
 }
 
@@ -39,7 +40,7 @@ fn manager() -> Arc<CopilotEndpointManager> {
 
 #[test]
 fn websocket_connection_key_tracks_endpoint_generation() {
-    let auth = CopilotAuthProvider::new(endpoint(), manager());
+    let auth = CopilotAuthProvider::new(endpoint(EndpointSource::Direct), manager());
 
     assert_eq!(
         auth.responses_websocket_connection_key(),
@@ -48,8 +49,8 @@ fn websocket_connection_key_tracks_endpoint_generation() {
 }
 
 #[test]
-fn websocket_upgrade_uses_current_copilot_cli_identity_headers() {
-    let auth = CopilotAuthProvider::new(endpoint(), manager());
+fn websocket_upgrade_uses_copilot_identity_headers() {
+    let auth = CopilotAuthProvider::new(endpoint(EndpointSource::Direct), manager());
     let mut headers = HeaderMap::from_iter([
         (
             HeaderName::from_static("session-id"),
@@ -93,7 +94,7 @@ fn websocket_upgrade_uses_current_copilot_cli_identity_headers() {
         headers
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
-        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown")
+        Some("GitHubCopilotCLI/1.0.80")
     );
     assert_eq!(
         headers
@@ -102,6 +103,11 @@ fn websocket_upgrade_uses_current_copilot_cli_identity_headers() {
         Some("conversation-panel")
     );
     assert_eq!(headers.get("x-request-id"), headers.get("x-interaction-id"));
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("request ID");
+    Uuid::parse_str(request_id).expect("UUID request ID");
     assert_eq!(
         headers
             .get("x-initiator")
@@ -110,8 +116,18 @@ fn websocket_upgrade_uses_current_copilot_cli_identity_headers() {
     );
     assert!(!headers.contains_key("copilot-harness-id"));
     assert!(!headers.contains_key("x-github-api-version"));
-    assert!(!headers.contains_key("editor-version"));
-    assert!(!headers.contains_key("editor-plugin-version"));
+    assert_eq!(
+        headers
+            .get("editor-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("Neovim/1.0.0")
+    );
+    assert_eq!(
+        headers
+            .get("editor-plugin-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("CopilotChat/1.0.0")
+    );
     assert!(!headers.contains_key("session-id"));
     assert!(!headers.contains_key("thread-id"));
     assert!(!headers.contains_key("openai-beta"));
@@ -119,8 +135,8 @@ fn websocket_upgrade_uses_current_copilot_cli_identity_headers() {
 }
 
 #[test]
-fn websocket_frame_carries_current_cli_header_envelope() {
-    let auth = CopilotAuthProvider::new(endpoint(), manager());
+fn websocket_frame_carries_copilot_header_envelope() {
+    let auth = CopilotAuthProvider::new(endpoint(EndpointSource::Direct), manager());
     let mut upgrade_headers = HeaderMap::from_iter([(
         HeaderName::from_static("session-id"),
         HeaderValue::from_static("22222222-2222-2222-2222-222222222222"),
@@ -160,6 +176,8 @@ fn websocket_frame_carries_current_cli_header_envelope() {
         prepared["headers"],
         json!({
             "Copilot-Integration-Id": "vscode-chat",
+            "Editor-Plugin-Version": "CopilotChat/1.0.0",
+            "Editor-Version": "Neovim/1.0.0",
             "Openai-Intent": "conversation-panel",
             "X-Agent-Task-Id": agent_task_id,
             "X-Client-Application": "copilot-cli",
@@ -178,5 +196,28 @@ fn websocket_frame_carries_current_cli_header_envelope() {
     assert_ne!(
         prepared["headers"]["X-Interaction-Id"],
         next["headers"]["X-Interaction-Id"]
+    );
+}
+
+#[test]
+fn cli_endpoint_preserves_cli_identity_headers() {
+    let auth = CopilotAuthProvider::new(endpoint(EndpointSource::Cli), manager());
+    let mut headers = HeaderMap::new();
+
+    auth.add_auth_headers(&mut headers);
+
+    assert_eq!(
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
+        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown")
+    );
+    assert!(!headers.contains_key("editor-version"));
+    assert!(!headers.contains_key("editor-plugin-version"));
+    assert_eq!(
+        headers
+            .get("openai-intent")
+            .and_then(|value| value.to_str().ok()),
+        Some("conversation-panel")
     );
 }

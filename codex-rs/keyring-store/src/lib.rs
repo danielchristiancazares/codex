@@ -41,6 +41,19 @@ impl Error for CredentialStoreError {}
 /// Shared credential store abstraction for keyring-backed implementations.
 pub trait KeyringStore: Debug + Send + Sync {
     fn load(&self, service: &str, account: &str) -> Result<Option<String>, CredentialStoreError>;
+    /// Loads a credential using an explicit platform target.
+    ///
+    /// Windows Credential Manager identifies generic credentials by target name. Other
+    /// backends may ignore the target and use their ordinary service/account lookup.
+    fn load_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<String>, CredentialStoreError> {
+        let _ = target;
+        self.load(service, account)
+    }
     fn save(&self, service: &str, account: &str, value: &str) -> Result<(), CredentialStoreError>;
     fn delete(&self, service: &str, account: &str) -> Result<bool, CredentialStoreError>;
 }
@@ -63,6 +76,39 @@ impl KeyringStore for DefaultKeyringStore {
             }
             Err(error) => {
                 trace!("keyring.load error, service={service}, account={account}, error={error}");
+                Err(CredentialStoreError::new(error))
+            }
+        }
+    }
+
+    fn load_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<String>, CredentialStoreError> {
+        trace!(
+            "keyring.load_with_target start, target={target}, service={service}, account={account}"
+        );
+        let entry =
+            Entry::new_with_target(target, service, account).map_err(CredentialStoreError::new)?;
+        match entry.get_password() {
+            Ok(password) => {
+                trace!(
+                    "keyring.load_with_target success, target={target}, service={service}, account={account}"
+                );
+                Ok(Some(password))
+            }
+            Err(keyring::Error::NoEntry) => {
+                trace!(
+                    "keyring.load_with_target no entry, target={target}, service={service}, account={account}"
+                );
+                Ok(None)
+            }
+            Err(error) => {
+                trace!(
+                    "keyring.load_with_target error, target={target}, service={service}, account={account}, error={error}"
+                );
                 Err(CredentialStoreError::new(error))
             }
         }

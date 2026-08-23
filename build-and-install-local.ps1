@@ -322,13 +322,15 @@ if ($updatedUserPath -cne $userPath) {
 $env:Path = Prepend-PathEntry -PathValue $env:Path -Entry $visibleBinDir
 
 Write-Step "Verifying the native command and package resources"
-$codexCommand = @(Get-Command codex -All -ErrorAction Stop)[0]
 $expectedCodexPath = Join-Path $visibleBinDir "codex.exe"
-if ($codexCommand.CommandType -ne [System.Management.Automation.CommandTypes]::Application) {
-    throw "Codex is still shadowed by a $($codexCommand.CommandType): $($codexCommand.Name)."
-}
-if (-not $codexCommand.Path.Equals($expectedCodexPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Codex still resolves to $($codexCommand.Path); expected $expectedCodexPath."
+$codexCommand = Get-Command codex -All -ErrorAction Stop |
+    Where-Object {
+        $_.CommandType -eq [System.Management.Automation.CommandTypes]::Application -and
+            $_.Path.Equals($expectedCodexPath, [System.StringComparison]::OrdinalIgnoreCase)
+    } |
+    Select-Object -First 1
+if ($null -eq $codexCommand) {
+    throw "The native Codex command is not discoverable at $expectedCodexPath."
 }
 $reportedVersionLines = @(& $codexCommand.Path --version)
 $reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()

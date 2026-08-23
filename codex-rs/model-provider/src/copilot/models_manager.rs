@@ -7,6 +7,7 @@ use codex_models_manager::manager::ModelsManagerFuture;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::config_types::CollaborationModeMask;
+use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
@@ -34,13 +35,44 @@ impl CopilotModelsManager {
 }
 
 impl ModelsManager for CopilotModelsManager {
+    fn list_models_with_refresh_errors(
+        &self,
+        refresh_strategy: RefreshStrategy,
+        http_client_factory: HttpClientFactory,
+    ) -> ModelsManagerFuture<'_, CoreResult<Vec<ModelPreset>>> {
+        Box::pin(async move {
+            let models = self
+                .inner
+                .list_models_with_refresh_errors(refresh_strategy, http_client_factory.clone())
+                .await?;
+            if refresh_strategy == RefreshStrategy::OnlineIfUncached && models.is_empty() {
+                return self
+                    .inner
+                    .list_models_with_refresh_errors(RefreshStrategy::Online, http_client_factory)
+                    .await;
+            }
+            Ok(models)
+        })
+    }
+
     fn list_models(
         &self,
         refresh_strategy: RefreshStrategy,
         http_client_factory: HttpClientFactory,
     ) -> ModelsManagerFuture<'_, Vec<ModelPreset>> {
-        self.inner
-            .list_models(refresh_strategy, http_client_factory)
+        Box::pin(async move {
+            let models = self
+                .inner
+                .list_models(refresh_strategy, http_client_factory.clone())
+                .await;
+            if refresh_strategy == RefreshStrategy::OnlineIfUncached && models.is_empty() {
+                return self
+                    .inner
+                    .list_models(RefreshStrategy::Online, http_client_factory)
+                    .await;
+            }
+            models
+        })
     }
 
     fn raw_model_catalog(

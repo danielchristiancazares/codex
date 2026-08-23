@@ -25,9 +25,14 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::timeout;
+use wiremock::Mock;
 use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const INTERNAL_ERROR_CODE: i64 = -32603;
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 fn model_from_preset(preset: &ModelPreset) -> Model {
@@ -60,6 +65,8 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
             .collect(),
         default_reasoning_effort: preset.default_reasoning_effort.clone(),
         input_modalities: preset.input_modalities.clone(),
+        context_window: preset.context_window,
+        max_context_window: preset.max_context_window,
         // `write_models_cache()` round-trips through a simplified ModelInfo fixture that does not
         // preserve personality placeholders in base instructions, so app-server list results from
         // cache report `supports_personality = false`.
@@ -187,8 +194,8 @@ async fn list_models_uses_chatgpt_remote_catalog_as_source_of_truth() -> Result<
                 "truncation_policy": {"mode": "bytes", "limit": 10_000},
                 "supports_image_detail_original": false,
                 "multi_agent_version": "v2",
-                "context_window": 272_000,
-                "max_context_window": 272_000,
+                "context_window": 400_000,
+                "max_context_window": 922_000,
                 "experimental_supported_tools": [],
             }))
         })
@@ -244,6 +251,11 @@ openai_base_url = "{server_uri}/v1"
     assert_eq!(
         response.result["data"][1]["upgradeInfo"]["retirementAt"],
         serde_json::Value::Null
+    );
+    assert_eq!(response.result["data"][0]["contextWindow"], json!(400_000));
+    assert_eq!(
+        response.result["data"][0]["maxContextWindow"],
+        json!(922_000)
     );
     let ModelListResponse {
         data: items,
@@ -356,6 +368,66 @@ wire_api = "responses"
     assert_eq!(items, expected);
     assert_eq!(next_cursor, None);
     assert_eq!(models_mock.requests().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_reports_authoritative_provider_refresh_failure() -> Result<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("catalog unavailable"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let codex_home = TempDir::new()?;
+    let copilot_api_url = server.uri();
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .with_env_overrides(&[
+            ("GITHUB_COPILOT_API_TOKEN", Some("test-copilot-api-token")),
+            ("COPILOT_API_URL", Some(copilot_api_url.as_str())),
+            ("COPILOT_GITHUB_TOKEN", None),
+            ("GH_TOKEN", None),
+            ("GITHUB_TOKEN", None),
+        ])
+        .build_initialized()
+        .await?;
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            model_provider: Some("copilot".to_string()),
+            limit: None,
+            cursor: None,
+            include_hidden: Some(true),
+        })
+        .await?;
+    let error: JSONRPCError = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    assert_eq!(
+        error,
+        JSONRPCError {
+            id: RequestId::Integer(request_id),
+            error: codex_app_server_protocol::JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: "failed to list models: Fatal error: Copilot models request returned 500 Internal Server Error: catalog unavailable".to_string(),
+                data: None,
+            },
+        }
+    );
+    assert_eq!(
+        server
+            .received_requests()
+            .await
+            .expect("recorded model requests")
+            .len(),
+        1
+    );
     Ok(())
 }
 

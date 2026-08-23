@@ -88,6 +88,13 @@ pub(crate) fn build_model_selection_edits(
     ]
 }
 
+pub(crate) fn append_model_context_window_edit(edits: &mut Vec<ConfigEdit>, context_window: i64) {
+    edits.push(replace_config_value(
+        "model_context_window",
+        serde_json::json!(context_window),
+    ));
+}
+
 pub(crate) fn build_service_tier_selection_edits(service_tier: Option<&str>) -> Vec<ConfigEdit> {
     let service_tier_edit = service_tier.map_or_else(
         || clear_config_value("service_tier"),

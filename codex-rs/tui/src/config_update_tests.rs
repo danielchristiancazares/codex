@@ -29,6 +29,22 @@ fn trusted_project_edit_targets_project_trust_level() {
     );
 }
 
+#[test]
+fn model_context_window_selection_appends_numeric_config_edit() {
+    let mut edits = build_model_selection_edits("gpt-5.6-sol", /*effort*/ Some("high"));
+
+    append_model_context_window_edit(&mut edits, /*context_window*/ 922_000);
+
+    assert_eq!(
+        edits.last(),
+        Some(&ConfigEdit {
+            key_path: "model_context_window".to_string(),
+            value: serde_json::json!(922_000),
+            merge_strategy: MergeStrategy::Replace,
+        })
+    );
+}
+
 #[tokio::test]
 async fn remote_project_trust_guards_thread_start_and_preserves_repository_decisions() -> Result<()>
 {

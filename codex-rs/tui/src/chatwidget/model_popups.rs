@@ -4,6 +4,7 @@
 //! into another, especially while Plan mode is active.
 
 use super::*;
+use crate::app_event::ModelSelectionScope;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;
 
@@ -100,6 +101,7 @@ impl ChatWidget {
                 let description =
                     (!preset.description.is_empty()).then_some(preset.description.clone());
                 let model = preset.model.clone();
+                let supports_context_window = self.model_supports_context_window_selection(&model);
                 let requires_advanced_selection =
                     Self::is_advanced_reasoning_effort(&preset.default_reasoning_effort)
                         || preset
@@ -131,8 +133,9 @@ impl ChatWidget {
                     is_current: model.as_str() == current_model,
                     is_default: preset.is_default,
                     actions,
-                    dismiss_on_select: !requires_advanced_selection,
-                    dismiss_parent_on_child_accept: requires_advanced_selection,
+                    dismiss_on_select: !requires_advanced_selection && !supports_context_window,
+                    dismiss_parent_on_child_accept: requires_advanced_selection
+                        || supports_context_window,
                     ..Default::default()
                 }
             })
@@ -201,6 +204,8 @@ impl ChatWidget {
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
             let is_current = preset.model.as_str() == self.current_model();
             let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
+            let supports_context_window =
+                self.model_supports_context_window_selection(&preset.model);
             let preset_for_action = preset.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                 let preset_for_event = preset_for_action.clone();
@@ -214,8 +219,8 @@ impl ChatWidget {
                 is_current,
                 is_default: preset.is_default,
                 actions,
-                dismiss_on_select: single_supported_effort,
-                dismiss_parent_on_child_accept: !single_supported_effort,
+                dismiss_on_select: single_supported_effort && !supports_context_window,
+                dismiss_parent_on_child_accept: !single_supported_effort || supports_context_window,
                 ..Default::default()
             });
         }
@@ -238,19 +243,29 @@ impl ChatWidget {
         effort_for_action: Option<ReasoningEffortConfig>,
         should_prompt_plan_mode_scope: bool,
     ) -> Vec<SelectionAction> {
+        let supports_context_window =
+            self.model_supports_context_window_selection(&model_for_action);
         let warning = effort_for_action
             .as_ref()
             .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
         vec![Box::new(move |tx| {
-            if effort_for_action == Some(ReasoningEffortConfig::Ultra) {
-                tx.send(AppEvent::ApplyAdvancedReasoning {
-                    model: model_for_action.clone(),
-                    effort: ReasoningEffortConfig::Ultra,
-                });
-            } else if should_prompt_plan_mode_scope {
+            if should_prompt_plan_mode_scope
+                && effort_for_action != Some(ReasoningEffortConfig::Ultra)
+            {
                 tx.send(AppEvent::OpenPlanReasoningScopePrompt {
                     model: model_for_action.clone(),
                     effort: effort_for_action.clone(),
+                });
+            } else if supports_context_window {
+                tx.send(AppEvent::OpenContextWindowPicker {
+                    model: model_for_action.clone(),
+                    effort: effort_for_action.clone(),
+                    scope: ModelSelectionScope::Global,
+                });
+            } else if effort_for_action == Some(ReasoningEffortConfig::Ultra) {
+                tx.send(AppEvent::ApplyAdvancedReasoning {
+                    model: model_for_action.clone(),
+                    effort: ReasoningEffortConfig::Ultra,
                 });
             } else {
                 tx.send(AppEvent::UpdateModel(model_for_action.clone()));
@@ -258,9 +273,10 @@ impl ChatWidget {
                 tx.send(AppEvent::PersistModelSelection {
                     model: model_for_action.clone(),
                     effort: effort_for_action.clone(),
+                    context_window: None,
                 });
             }
-            if let Some(warning) = warning.clone() {
+            if !supports_context_window && let Some(warning) = warning.clone() {
                 tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_warning_event(warning),
                 )));
@@ -334,6 +350,7 @@ impl ChatWidget {
         let warning = effort
             .as_ref()
             .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
+        let supports_context_window = self.model_supports_context_window_selection(&model);
 
         let plan_only_actions: Vec<SelectionAction> = vec![Box::new({
             let model = model.clone();
@@ -351,15 +368,24 @@ impl ChatWidget {
             }
         })];
         let all_modes_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::UpdateModel(model.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(effort.clone()));
-            tx.send(AppEvent::UpdatePlanModeReasoningEffort(effort.clone()));
-            tx.send(AppEvent::PersistPlanModeReasoningEffort(effort.clone()));
-            tx.send(AppEvent::PersistModelSelection {
-                model: model.clone(),
-                effort: effort.clone(),
-            });
-            if let Some(warning) = warning.clone() {
+            if supports_context_window {
+                tx.send(AppEvent::OpenContextWindowPicker {
+                    model: model.clone(),
+                    effort: effort.clone(),
+                    scope: ModelSelectionScope::GlobalAndPlan,
+                });
+            } else {
+                tx.send(AppEvent::UpdateModel(model.clone()));
+                tx.send(AppEvent::UpdateReasoningEffort(effort.clone()));
+                tx.send(AppEvent::UpdatePlanModeReasoningEffort(effort.clone()));
+                tx.send(AppEvent::PersistPlanModeReasoningEffort(effort.clone()));
+                tx.send(AppEvent::PersistModelSelection {
+                    model: model.clone(),
+                    effort: effort.clone(),
+                    context_window: None,
+                });
+            }
+            if !supports_context_window && let Some(warning) = warning.clone() {
                 tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_warning_event(warning),
                 )));
@@ -382,7 +408,8 @@ impl ChatWidget {
                     name: PLAN_MODE_REASONING_SCOPE_ALL_MODES.to_string(),
                     description: Some(all_modes_description),
                     actions: all_modes_actions,
-                    dismiss_on_select: true,
+                    dismiss_on_select: !supports_context_window,
+                    dismiss_parent_on_child_accept: supports_context_window,
                     ..Default::default()
                 },
             ],
@@ -457,6 +484,7 @@ impl ChatWidget {
             .then(|| default_effort.clone());
 
         let model_slug = preset.model.to_string();
+        let supports_context_window = self.model_supports_context_window_selection(&model_slug);
         let is_current_model = self.current_model() == preset.model.as_str();
         let highlight_choice = if is_current_model {
             if in_plan_mode {
@@ -517,7 +545,8 @@ impl ChatWidget {
                 selected_description,
                 is_current: is_current_model && Some(choice) == highlight_choice.as_ref(),
                 actions,
-                dismiss_on_select: true,
+                dismiss_on_select: !supports_context_window,
+                dismiss_parent_on_child_accept: supports_context_window,
                 ..Default::default()
             });
         }
@@ -585,6 +614,7 @@ impl ChatWidget {
         }
 
         let model_slug = preset.model.to_string();
+        let supports_context_window = self.model_supports_context_window_selection(&model_slug);
         let is_current_model = self.current_model() == preset.model.as_str();
         let highlight_choice = is_current_model
             .then(|| self.effective_reasoning_effort())
@@ -613,7 +643,8 @@ impl ChatWidget {
                 description: Some(description.to_string()),
                 is_current: is_current_model && Some(&effort) == highlight_choice.as_ref(),
                 actions,
-                dismiss_on_select: true,
+                dismiss_on_select: !supports_context_window,
+                dismiss_parent_on_child_accept: supports_context_window,
                 ..Default::default()
             });
         }
@@ -701,8 +732,19 @@ impl ChatWidget {
     }
 
     fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
-        self.apply_model_and_effort_without_persist(model.clone(), effort.clone());
-        self.app_event_tx
-            .send(AppEvent::PersistModelSelection { model, effort });
+        if self.model_supports_context_window_selection(&model) {
+            self.app_event_tx.send(AppEvent::OpenContextWindowPicker {
+                model,
+                effort,
+                scope: ModelSelectionScope::Global,
+            });
+        } else {
+            self.apply_model_and_effort_without_persist(model.clone(), effort.clone());
+            self.app_event_tx.send(AppEvent::PersistModelSelection {
+                model,
+                effort,
+                context_window: None,
+            });
+        }
     }
 }
