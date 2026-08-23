@@ -243,6 +243,44 @@ args = ["login", "--profile", "codex-bedrock"]
 }
 
 #[test]
+fn built_in_copilot_provider_has_protected_transport_settings() {
+    let providers = built_in_model_providers(/*openai_base_url*/ None);
+    let provider = providers
+        .get(COPILOT_PROVIDER_ID)
+        .expect("built-in Copilot provider");
+
+    assert_eq!(provider, &create_copilot_provider());
+    assert!(provider.is_copilot());
+
+    let mut lookalike = provider.clone();
+    lookalike.base_url = Some("https://example.com".to_string());
+    assert!(!lookalike.is_copilot());
+}
+
+#[test]
+fn configured_copilot_provider_does_not_override_builtin_provider() {
+    let configured_model_providers = std::collections::HashMap::from([(
+        COPILOT_PROVIDER_ID.to_string(),
+        ModelProviderInfo {
+            name: "Configured Copilot".to_string(),
+            base_url: Some("https://example.com".to_string()),
+            ..ModelProviderInfo::default()
+        },
+    )]);
+
+    let providers = merge_configured_model_providers(
+        built_in_model_providers(/*openai_base_url*/ None),
+        configured_model_providers,
+    )
+    .expect("configured providers should merge");
+
+    assert_eq!(
+        providers.get(COPILOT_PROVIDER_ID),
+        Some(&create_copilot_provider())
+    );
+}
+
+#[test]
 fn test_merge_configured_model_providers_adds_custom_provider() {
     let custom_provider = ModelProviderInfo {
         name: "Custom".to_string(),

@@ -2,7 +2,7 @@
 //!
 //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
 //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
-//! and transport fallback state).
+//! and transport selection).
 //!
 //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
 //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
@@ -18,17 +18,17 @@
 //! Turn execution performs prewarm as a best-effort step before the first stream request so the
 //! subsequent request can reuse the same connection.
 //!
-//! ## Retry-Budget Tradeoff
+//! ## WebSocket recovery
 //!
 //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
-//! fails, normal stream retry/fallback logic handles recovery on the same turn.
+//! fails, normal stream retry logic handles recovery on the same turn. Once WebSockets are selected
+//! for a provider, retryable sampling failures reconnect over WebSockets until the turn is
+//! cancelled or succeeds.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
@@ -207,7 +207,6 @@ struct ModelClientState {
     concurrent_reasoning_summaries_enabled: bool,
     include_attestation: bool,
     attestation_provider: Option<Arc<dyn AttestationProvider>>,
-    disable_websockets: AtomicBool,
     agent_identity_session_fallback: AgentIdentitySessionFallback,
     cached_websocket_session: StdMutex<WebsocketSession>,
 }
@@ -221,6 +220,7 @@ struct CurrentClientSetup {
     api_provider: ApiProvider,
     api_auth: SharedAuthProvider,
     agent_identity_telemetry: Option<AgentIdentityTelemetry>,
+    websocket_connection_key: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -237,10 +237,7 @@ impl RequestRouteTelemetry {
 /// A session-scoped client for model-provider API calls.
 ///
 /// This holds configuration and state that should be shared across turns within a Codex session
-/// (auth, provider selection, thread id, and transport fallback state).
-///
-/// WebSocket fallback is session-scoped: once a turn activates the HTTP fallback, subsequent turns
-/// will also use HTTP for the remainder of the session.
+/// (auth, provider selection, thread id, and transport state).
 ///
 /// Turn-scoped settings (model selection, reasoning controls, telemetry context, and turn
 /// metadata) are passed explicitly to the relevant methods to keep turn lifetime visible at the
@@ -291,6 +288,7 @@ struct LastResponse {
 #[derive(Debug, Default)]
 struct WebsocketSession {
     connection: Option<ApiWebSocketConnection>,
+    connection_key: Option<String>,
     last_request: Option<ResponsesApiRequest>,
     last_response_rx: Option<oneshot::Receiver<LastResponse>>,
     last_response_from_untraced_warmup: bool,
@@ -371,6 +369,10 @@ fn response_items_equal_ignoring_internal_metadata(
 }
 
 impl WebsocketSession {
+    fn connection_key_changed(&self, connection_key: &Option<String>) -> bool {
+        self.connection_key.as_deref() != connection_key.as_deref()
+    }
+
     fn set_connection_reused(&self, connection_reused: bool) {
         *self
             .connection_reused
@@ -384,11 +386,6 @@ impl WebsocketSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-}
-
-enum WebsocketStreamOutcome {
-    Stream(ResponseStream),
-    FallbackToHttp,
 }
 
 /// Result of opening a WebRTC Realtime call.
@@ -451,7 +448,6 @@ impl ModelClient {
                 concurrent_reasoning_summaries_enabled,
                 include_attestation,
                 attestation_provider,
-                disable_websockets: AtomicBool::new(false),
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
             }),
@@ -508,27 +504,6 @@ impl ModelClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = websocket_session;
     }
 
-    pub(crate) fn force_http_fallback(
-        &self,
-        session_telemetry: &SessionTelemetry,
-        _model_info: &ModelInfo,
-    ) -> bool {
-        let websocket_enabled = self.responses_websocket_enabled();
-        let activated =
-            websocket_enabled && !self.state.disable_websockets.swap(true, Ordering::Relaxed);
-        if activated {
-            warn!("falling back to HTTP");
-            session_telemetry.counter(
-                "codex.transport.fallback_to_http",
-                /*inc*/ 1,
-                &[("from_wire_api", "responses_websocket")],
-            );
-        }
-
-        self.store_cached_websocket_session(WebsocketSession::default());
-        activated
-    }
-
     /// Compacts the current conversation history using the Compact endpoint.
     ///
     /// This is a unary call (no streaming) that returns a new list of
@@ -550,7 +525,9 @@ impl ModelClient {
         if prompt.input.is_empty() {
             return Ok(Vec::new());
         }
-        let client_setup = self.current_client_setup().await?;
+        let client_setup = self
+            .current_client_setup_for_model(&model_info.slug)
+            .await?;
         let transport =
             self.build_api_transport(&client_setup.api_provider, RESPONSES_COMPACT_ENDPOINT)?;
         let request_telemetry = Self::build_request_telemetry(
@@ -688,7 +665,9 @@ impl ModelClient {
             return Ok(Vec::new());
         }
 
-        let client_setup = self.current_client_setup().await?;
+        let client_setup = self
+            .current_client_setup_for_model(&model_info.slug)
+            .await?;
         let transport =
             self.build_api_transport(&client_setup.api_provider, MEMORIES_SUMMARIZE_ENDPOINT)?;
         let request_telemetry = Self::build_request_telemetry(
@@ -932,15 +911,9 @@ impl ModelClient {
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
     ///
-    /// WebSocket use is controlled by provider capability and session-scoped fallback state.
+    /// WebSocket use is controlled by provider capability.
     pub fn responses_websocket_enabled(&self) -> bool {
-        if !self.state.provider.info().supports_websockets
-            || self.state.disable_websockets.load(Ordering::Relaxed)
-        {
-            return false;
-        }
-
-        true
+        self.state.provider.info().supports_websockets
     }
 
     /// Returns auth + provider configuration resolved from the current session auth state.
@@ -959,11 +932,41 @@ impl ModelClient {
                 agent_identity_session_fallback: self.state.agent_identity_session_fallback.clone(),
             })
             .await?;
+        let websocket_connection_key = resolved_auth.auth.responses_websocket_connection_key();
         Ok(CurrentClientSetup {
             auth,
             api_provider,
             api_auth: resolved_auth.auth,
             agent_identity_telemetry: resolved_auth.agent_identity_telemetry,
+            websocket_connection_key,
+        })
+    }
+
+    /// Resolves request routing and auth atomically for a concrete model.
+    async fn current_client_setup_for_model(&self, model: &str) -> Result<CurrentClientSetup> {
+        let auth = self.state.provider.auth().await;
+        let resolved = self
+            .state
+            .provider
+            .resolve_api_for_model(
+                model,
+                ProviderAuthScope {
+                    agent_identity_policy: self.agent_identity_policy,
+                    session_source: self.state.session_source.clone(),
+                    agent_identity_session_fallback: self
+                        .state
+                        .agent_identity_session_fallback
+                        .clone(),
+                },
+            )
+            .await?;
+        let websocket_connection_key = resolved.auth.auth.responses_websocket_connection_key();
+        Ok(CurrentClientSetup {
+            auth,
+            api_provider: resolved.provider,
+            api_auth: resolved.auth.auth,
+            agent_identity_telemetry: resolved.auth.agent_identity_telemetry,
+            websocket_connection_key,
         })
     }
 
@@ -1128,6 +1131,7 @@ impl ModelClientSession {
 
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
+        self.websocket_session.connection_key = None;
         self.websocket_session.last_request = None;
         self.websocket_session.last_response_rx = None;
         self.websocket_session.last_response_from_untraced_warmup = false;
@@ -1290,6 +1294,7 @@ impl ModelClientSession {
             )
             .await?;
         self.websocket_session.connection = Some(connection);
+        self.websocket_session.connection_key = client_setup.websocket_connection_key;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
         Ok(())
@@ -1318,13 +1323,20 @@ impl ModelClientSession {
             responses_metadata,
             auth_context,
             request_route_telemetry,
+            websocket_connection_key,
         } = params;
+        let connection_key_changed = self
+            .websocket_session
+            .connection_key_changed(&websocket_connection_key);
         let needs_new = match self.websocket_session.connection.as_ref() {
-            Some(conn) => conn.is_closed().await,
+            Some(conn) if !connection_key_changed => conn.is_closed().await,
+            Some(_) => true,
             None => true,
         };
 
         if needs_new {
+            self.websocket_session.connection = None;
+            self.websocket_session.connection_key = None;
             self.websocket_session.last_request = None;
             self.websocket_session.last_response_rx = None;
             self.websocket_session.last_response_from_untraced_warmup = false;
@@ -1349,6 +1361,7 @@ impl ModelClientSession {
                 }
             };
             self.websocket_session.connection = Some(new_conn);
+            self.websocket_session.connection_key = websocket_connection_key;
             self.websocket_session
                 .set_connection_reused(/*connection_reused*/ false);
         } else {
@@ -1410,7 +1423,10 @@ impl ModelClientSession {
         let mut provider_auth_recovery_attempted = false;
         let mut pending_retry = PendingUnauthorizedRetry::default();
         loop {
-            let client_setup = self.client.current_client_setup().await?;
+            let client_setup = self
+                .client
+                .current_client_setup_for_model(&model_info.slug)
+                .await?;
             let transport = self
                 .client
                 .build_api_transport(&client_setup.api_provider, RESPONSES_ENDPOINT)?;
@@ -1543,7 +1559,7 @@ impl ModelClientSession {
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
-    ) -> Result<WebsocketStreamOutcome> {
+    ) -> Result<ResponseStream> {
         let provider = Arc::clone(&self.client.state.provider);
         let auth_manager = provider.auth_manager();
 
@@ -1553,7 +1569,10 @@ impl ModelClientSession {
         let mut provider_auth_recovery_attempted = false;
         let mut pending_retry = PendingUnauthorizedRetry::default();
         loop {
-            let client_setup = self.client.current_client_setup().await?;
+            let client_setup = self
+                .client
+                .current_client_setup_for_model(&model_info.slug)
+                .await?;
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.api_auth.as_ref(),
                 client_setup.agent_identity_telemetry.clone(),
@@ -1595,15 +1614,11 @@ impl ModelClientSession {
                     request_route_telemetry: RequestRouteTelemetry::for_endpoint(
                         RESPONSES_ENDPOINT,
                     ),
+                    websocket_connection_key: client_setup.websocket_connection_key,
                 })
                 .await
             {
                 Ok(_) => {}
-                Err(ApiError::Transport(TransportError::Http { status, .. }))
-                    if status == StatusCode::UPGRADE_REQUIRED =>
-                {
-                    return Ok(WebsocketStreamOutcome::FallbackToHttp);
-                }
                 Err(ApiError::Transport(unauthorized_transport))
                     if provider.is_recoverable_auth_error(&unauthorized_transport) =>
                 {
@@ -1709,7 +1724,7 @@ impl ModelClientSession {
                 Arc::clone(&self.client.state.provider),
             );
             self.websocket_session.last_response_rx = Some(last_request_rx);
-            return Ok(WebsocketStreamOutcome::Stream(stream));
+            return Ok(stream);
         }
     }
 
@@ -1778,7 +1793,7 @@ impl ModelClientSession {
             )
             .await
         {
-            Ok(WebsocketStreamOutcome::Stream(mut stream)) => {
+            Ok(mut stream) => {
                 // Wait for the v2 warmup request to complete before sending the first turn request.
                 while let Some(event) = stream.next().await {
                     match event {
@@ -1787,10 +1802,6 @@ impl ModelClientSession {
                         _ => {}
                     }
                 }
-                Ok(())
-            }
-            Ok(WebsocketStreamOutcome::FallbackToHttp) => {
-                self.try_switch_fallback_transport(session_telemetry, model_info);
                 Ok(())
             }
             Err(err) => Err(err),
@@ -1802,10 +1813,9 @@ impl ModelClientSession {
     ///
     /// The caller is responsible for passing per-turn settings explicitly (model selection,
     /// reasoning settings, telemetry context, and turn metadata). This method will prefer the
-    /// Responses WebSocket transport when the provider supports it and it remains healthy, and will
-    /// fall back to the HTTP Responses API transport otherwise. The trace context may be enabled or
-    /// disabled, but is always explicit so transport paths do not need separate trace/no-trace
-    /// branches.
+    /// Responses WebSocket transport when the provider supports it. Retryable WebSocket failures
+    /// keep reconnecting over the same transport. The trace context may be enabled or disabled, but
+    /// is always explicit so transport paths do not need separate trace/no-trace branches.
     pub async fn stream(
         &mut self,
         prompt: &Prompt,
@@ -1822,7 +1832,7 @@ impl ModelClientSession {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
                     let request_trace = current_span_w3c_trace_context();
-                    match self
+                    return self
                         .stream_responses_websocket(
                             prompt,
                             model_info,
@@ -1835,13 +1845,7 @@ impl ModelClientSession {
                             request_trace,
                             inference_trace,
                         )
-                        .await?
-                    {
-                        WebsocketStreamOutcome::Stream(stream) => return Ok(stream),
-                        WebsocketStreamOutcome::FallbackToHttp => {
-                            self.try_switch_fallback_transport(session_telemetry, model_info);
-                        }
-                    }
+                        .await;
                 }
 
                 self.stream_responses_api(
@@ -1857,24 +1861,6 @@ impl ModelClientSession {
                 .await
             }
         }
-    }
-
-    /// Permanently disables WebSockets for this Codex session and resets WebSocket state.
-    ///
-    /// This is used after exhausting the provider retry budget, to force subsequent requests onto
-    /// the HTTP transport.
-    ///
-    /// Returns `true` if this call activated fallback, or `false` if fallback was already active.
-    pub(crate) fn try_switch_fallback_transport(
-        &mut self,
-        session_telemetry: &SessionTelemetry,
-        model_info: &ModelInfo,
-    ) -> bool {
-        let activated = self
-            .client
-            .force_http_fallback(session_telemetry, model_info);
-        self.websocket_session = WebsocketSession::default();
-        activated
     }
 }
 
@@ -2168,6 +2154,7 @@ struct WebsocketConnectParams<'a> {
     responses_metadata: &'a CodexResponsesMetadata,
     auth_context: AuthRequestTelemetryContext,
     request_route_telemetry: RequestRouteTelemetry,
+    websocket_connection_key: Option<String>,
 }
 
 async fn handle_unauthorized(

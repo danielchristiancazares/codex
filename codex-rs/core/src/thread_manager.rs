@@ -53,6 +53,7 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::mcp::OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::MultiAgentVersion;
@@ -339,6 +340,8 @@ pub(crate) struct ThreadManagerState {
     thread_id_generator: ThreadIdGenerator,
     auth_manager: Arc<AuthManager>,
     models_manager: SharedModelsManager,
+    startup_model_provider: ModelProviderInfo,
+    startup_model_catalog: Option<ModelsResponse>,
     environment_manager: Arc<EnvironmentManager>,
     starting_mcp_runtimes: std::sync::Mutex<Vec<std::sync::Weak<AtomicBool>>>,
     skills_service: Arc<HostSkillsService>,
@@ -466,6 +469,8 @@ impl ThreadManager {
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
                 models_manager,
+                startup_model_provider: config.model_provider.clone(),
+                startup_model_catalog: config.model_catalog.clone(),
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
                 skills_service,
@@ -576,6 +581,8 @@ impl ThreadManager {
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
+        let models_manager = create_model_provider(provider.clone(), Some(auth_manager.clone()))
+            .models_manager(codex_home.clone(), /*config_model_catalog*/ None);
         let installation_id = uuid::Uuid::new_v4().to_string();
         let absolute_codex_home = match AbsolutePathBuf::from_absolute_path_checked(&codex_home) {
             Ok(codex_home) => codex_home,
@@ -599,7 +606,7 @@ impl ThreadManager {
         // process store should construct ThreadManager::new with an explicit store.
         let thread_store: Arc<dyn ThreadStore> = Arc::new(LocalThreadStore::new(
             LocalThreadStoreConfig {
-                codex_home: codex_home.clone(),
+                codex_home,
                 sqlite: codex_state::SqliteConfig::new_for_testing(absolute_codex_home),
                 default_model_provider_id: OPENAI_PROVIDER_ID.to_string(),
             },
@@ -611,8 +618,9 @@ impl ThreadManager {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
-                models_manager: create_model_provider(provider, Some(auth_manager.clone()))
-                    .models_manager(codex_home, /*config_model_catalog*/ None),
+                models_manager,
+                startup_model_provider: provider,
+                startup_model_catalog: None,
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
                 skills_service,
@@ -1346,6 +1354,24 @@ impl ThreadManager {
 }
 
 impl ThreadManagerState {
+    fn models_manager_for_config(
+        &self,
+        config: &Config,
+        auth_manager: Arc<AuthManager>,
+    ) -> SharedModelsManager {
+        if config.model_provider == self.startup_model_provider
+            && config.model_catalog == self.startup_model_catalog
+        {
+            Arc::clone(&self.models_manager)
+        } else {
+            let mut manager_config = config.clone();
+            if manager_config.model_provider != self.startup_model_provider {
+                manager_config.model_catalog = None;
+            }
+            build_models_manager(&manager_config, auth_manager)
+        }
+    }
+
     pub(crate) fn agent_graph_store(&self) -> Option<Arc<dyn AgentGraphStore>> {
         self.agent_graph_store.clone()
     }
@@ -1855,13 +1881,14 @@ impl ThreadManagerState {
             starting.retain(|runtime| runtime.strong_count() != 0);
             starting.push(Arc::downgrade(&source_changed_during_startup));
         }
+        let models_manager = self.models_manager_for_config(&config, Arc::clone(&auth_manager));
         let (session, io) = Box::pin(Session::spawn(SessionSpawnArgs {
             config,
             allow_provider_model_fallback,
             user_instructions,
             installation_id: self.installation_id.clone(),
             auth_manager,
-            models_manager: Arc::clone(&self.models_manager),
+            models_manager,
             environment_manager: Arc::clone(&self.environment_manager),
             skills_service: Arc::clone(&self.skills_service),
             plugins_manager: Arc::clone(&self.plugins_manager),

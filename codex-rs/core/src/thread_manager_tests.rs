@@ -15,6 +15,7 @@ use codex_extension_api::empty_extension_registry;
 use codex_history::InitialHistory;
 use codex_history::ResumedHistory;
 use codex_models_manager::manager::RefreshStrategy;
+use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_protocol::ResponseItemId;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
@@ -729,6 +730,90 @@ async fn code_mode_session_provider_is_shared_across_threads() {
         report,
         ThreadShutdownReport {
             completed,
+            submit_failed: Vec::new(),
+            timed_out: Vec::new(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn spawned_thread_reuses_startup_models_manager_for_matching_config() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadManager::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    let thread = manager
+        .start_thread(StartThreadOptions::new(config))
+        .await
+        .expect("start thread");
+
+    assert!(Arc::ptr_eq(
+        &thread.thread.session.services.models_manager,
+        &manager.state.models_manager
+    ));
+
+    let report = manager
+        .shutdown_all_threads_bounded(Duration::from_secs(10))
+        .await;
+    assert_eq!(
+        report,
+        ThreadShutdownReport {
+            completed: vec![thread.thread_id],
+            submit_failed: Vec::new(),
+            timed_out: Vec::new(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn spawned_thread_builds_models_manager_for_incoming_provider() {
+    let server = MockServer::start().await;
+    let models_mock = mount_models_once(&server, ModelsResponse { models: vec![] }).await;
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    config.model_catalog = Some(ModelsResponse {
+        models: vec![construct_model_info_offline_for_tests(
+            "startup-catalog-model",
+            &config.to_models_manager_config(),
+        )],
+    });
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadManager::with_models_provider_and_home_for_tests(
+        CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    config.model_provider.base_url = Some(server.uri());
+    let thread = manager
+        .start_thread(StartThreadOptions::new(config))
+        .await
+        .expect("start thread");
+
+    assert!(!Arc::ptr_eq(
+        &thread.thread.session.services.models_manager,
+        &manager.state.models_manager
+    ));
+    assert_eq!(models_mock.requests().len(), 1);
+
+    let report = manager
+        .shutdown_all_threads_bounded(Duration::from_secs(10))
+        .await;
+    assert_eq!(
+        report,
+        ThreadShutdownReport {
+            completed: vec![thread.thread_id],
             submit_failed: Vec::new(),
             timed_out: Vec::new(),
         }

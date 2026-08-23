@@ -387,6 +387,7 @@ mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod model_popups;
 mod notifications;
+mod provider_popup;
 use self::notifications::Notification;
 mod permission_popups;
 mod permissions_menu;

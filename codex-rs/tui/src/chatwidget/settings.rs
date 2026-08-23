@@ -190,6 +190,10 @@ impl ChatWidget {
         self.runtime_model_provider_base_url.as_deref()
     }
 
+    pub(crate) fn set_runtime_model_provider_base_url(&mut self, base_url: Option<String>) {
+        self.runtime_model_provider_base_url = base_url;
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn model_catalog(&self) -> Arc<ModelCatalog> {
         self.model_catalog.clone()

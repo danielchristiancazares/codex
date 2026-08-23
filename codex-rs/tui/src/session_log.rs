@@ -197,6 +197,20 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
             });
             LOGGER.write_json_line(value);
         }
+        AppEvent::ModelProviderSwitchPrepared(request_id, thread_id, provider_id, result) => {
+            let value = json!({
+                "ts": now_ts(),
+                "dir": "to_tui",
+                "kind": "app_event",
+                "variant": "ModelProviderSwitchPrepared",
+                "request_id": request_id,
+                "thread_id": thread_id.to_string(),
+                "provider_id": provider_id,
+                "ok": result.is_ok(),
+                "model_count": result.as_ref().map(Vec::len).ok(),
+            });
+            LOGGER.write_json_line(value);
+        }
         // Noise or control flow – record variant only
         other => {
             let value = json!({

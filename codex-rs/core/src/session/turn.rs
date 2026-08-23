@@ -1431,7 +1431,6 @@ async fn run_sampling_request(
             &mut retry_state,
             max_retries,
             err,
-            client_session,
             &sess,
             &turn_context,
             ResponsesStreamRequest::Sampling,

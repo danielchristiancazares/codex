@@ -1,18 +1,128 @@
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
+use sqlx::AssertSqlSafe;
 use sqlx::Connection;
 use sqlx::Row;
+use sqlx::SqlSafeStr;
 use sqlx::migrate::Migration;
+use sqlx::migrate::MigrationType;
 use sqlx::migrate::Migrator;
 use std::borrow::Cow;
 
 use super::STATE_MIGRATOR;
 use super::THREAD_HISTORY_MIGRATOR;
+use super::migration_with_crlf_line_endings;
+use super::migration_with_lf_line_endings;
+use super::migrator_for_applied_line_endings;
 use super::repair_legacy_recency_migration_version;
+use super::runtime_state_migrator;
 use crate::PINNED_THREAD_SECTION_ID;
 use crate::PINNED_THREAD_SECTION_NAME;
 
 const CUSTOM_THREAD_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf317";
+
+#[tokio::test]
+async fn runtime_opens_database_with_alternate_line_ending_history() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.state_db_path())
+        .await
+        .expect("sqlite database should open");
+    let runtime_migrator = runtime_state_migrator();
+    let alternate_migrator = Migrator::with_migrations(
+        runtime_migrator
+            .migrations
+            .iter()
+            .map(|migration| {
+                if cfg!(windows) {
+                    migration_with_lf_line_endings(migration)
+                } else {
+                    migration_with_crlf_line_endings(migration)
+                }
+            })
+            .collect(),
+    );
+    alternate_migrator
+        .run(&pool)
+        .await
+        .expect("alternate migrations should apply");
+    let checksums_before = sqlx::query_as::<_, (i64, Vec<u8>)>(
+        "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("migration history should load");
+    pool.close().await;
+
+    let pool = sqlite
+        .open_state_db(&runtime_migrator, /*telemetry_override*/ None)
+        .await
+        .expect("runtime should accept alternate migration history");
+    let checksums_after = sqlx::query_as::<_, (i64, Vec<u8>)>(
+        "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("migration history should load");
+    assert_eq!(checksums_after, checksums_before);
+
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn line_ending_compatibility_rejects_changed_migration_sql() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.state_db_path())
+        .await
+        .expect("sqlite database should open");
+    let applied_migrator = Migrator::with_migrations(vec![Migration::new(
+        /*version*/ 1,
+        Cow::Borrowed("example"),
+        MigrationType::Simple,
+        AssertSqlSafe("CREATE TABLE example (id TEXT);\r\n").into_sql_str(),
+        /*no_tx*/ false,
+    )]);
+    applied_migrator
+        .run(&pool)
+        .await
+        .expect("initial migration should apply");
+    let changed_migrator = Migrator::with_migrations(vec![Migration::new(
+        /*version*/ 1,
+        Cow::Borrowed("example"),
+        MigrationType::Simple,
+        AssertSqlSafe("CREATE TABLE example (id INTEGER);\n").into_sql_str(),
+        /*no_tx*/ false,
+    )]);
+
+    let compatible_migrator = migrator_for_applied_line_endings(&pool, &changed_migrator)
+        .await
+        .expect("migration history should load");
+    let error = compatible_migrator
+        .run(&pool)
+        .await
+        .expect_err("substantive migration changes must still be rejected");
+    assert!(matches!(
+        error,
+        sqlx::migrate::MigrateError::VersionMismatch(1)
+    ));
+
+    pool.close().await;
+}
 
 fn migrator_through(version: i64) -> Migrator {
     Migrator {

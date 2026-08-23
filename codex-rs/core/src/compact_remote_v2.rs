@@ -386,7 +386,6 @@ async fn run_remote_compaction_request_v2(
                     &mut retry_state,
                     max_retries,
                     err,
-                    client_session,
                     sess,
                     turn_context,
                     ResponsesStreamRequest::RemoteCompactionV2,

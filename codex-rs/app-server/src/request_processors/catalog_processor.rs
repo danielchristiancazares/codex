@@ -170,6 +170,7 @@ impl CatalogRequestProcessor {
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         Self::list_models(
             self.thread_manager.clone(),
+            Arc::clone(&self.config),
             self.config.http_client_factory(),
             params,
         )
@@ -240,16 +241,48 @@ impl CatalogRequestProcessor {
 
     async fn list_models(
         thread_manager: Arc<ThreadManager>,
+        config: Arc<Config>,
         http_client_factory: codex_http_client::HttpClientFactory,
         params: ModelListParams,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
         let ModelListParams {
+            model_provider,
             limit,
             cursor,
             include_hidden,
         } = params;
+        let models_manager = match model_provider {
+            Some(model_provider) => {
+                if model_provider == config.model_provider_id {
+                    thread_manager.get_models_manager()
+                } else {
+                    let provider_info = config
+                        .model_providers
+                        .get(&model_provider)
+                        .cloned()
+                        .ok_or_else(|| {
+                            invalid_request(format!(
+                                "model provider `{model_provider}` is not configured"
+                            ))
+                        })?;
+                    let use_provider_cache =
+                        provider_info.is_openai() || provider_info.is_copilot();
+                    let provider =
+                        create_model_provider(provider_info, Some(thread_manager.auth_manager()));
+                    if use_provider_cache {
+                        provider.models_manager(
+                            config.codex_home.to_path_buf(),
+                            /*config_model_catalog*/ None,
+                        )
+                    } else {
+                        provider.models_manager_without_cache(/*config_model_catalog*/ None)
+                    }
+                }
+            }
+            None => thread_manager.get_models_manager(),
+        };
         let models = supported_models(
-            thread_manager,
+            models_manager,
             include_hidden.unwrap_or(false),
             http_client_factory,
         )

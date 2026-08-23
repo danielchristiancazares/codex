@@ -2153,6 +2153,13 @@
             "integer",
             "null"
           ]
+        },
+        "modelProvider": {
+          "description": "Optional provider id whose catalog should be listed.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"

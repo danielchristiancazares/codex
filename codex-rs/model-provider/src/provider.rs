@@ -29,6 +29,7 @@ use crate::auth::ResolvedProviderAuth;
 use crate::auth::auth_manager_for_provider;
 use crate::auth::resolve_provider_auth;
 use crate::auth::resolve_provider_auth_for_scope;
+use crate::copilot::CopilotModelProvider;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
 pub(crate) fn enforce_managed_residency(provider: &mut Provider) {
@@ -119,6 +120,12 @@ impl fmt::Display for ProviderAccountError {
 impl std::error::Error for ProviderAccountError {}
 
 pub type ProviderAccountResult = std::result::Result<ProviderAccountState, ProviderAccountError>;
+
+/// Provider configuration and authentication resolved from one backend credential snapshot.
+pub struct ResolvedProviderApi {
+    pub provider: Provider,
+    pub auth: ResolvedProviderAuth,
+}
 
 /// Default model used for automatic approval review when a provider does not
 /// require a backend-specific model ID.
@@ -255,6 +262,23 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         })
     }
 
+    /// Resolves provider routing and authentication for one concrete model request.
+    ///
+    /// The default implementation preserves the configured provider behavior. Providers whose
+    /// endpoint credentials are model-bound should override this method and resolve both values
+    /// atomically from the same credential snapshot.
+    fn resolve_api_for_model<'a>(
+        &'a self,
+        _model: &'a str,
+        scope: ProviderAuthScope,
+    ) -> ModelProviderFuture<'a, codex_protocol::error::Result<ResolvedProviderApi>> {
+        Box::pin(async move {
+            let provider = self.api_provider().await?;
+            let auth = self.api_auth_for_scope(scope).await?;
+            Ok(ResolvedProviderApi { provider, auth })
+        })
+    }
+
     /// Creates the model manager implementation appropriate for this provider.
     fn models_manager(
         &self,
@@ -310,7 +334,11 @@ pub fn create_model_provider(
     provider_info: ModelProviderInfo,
     auth_manager: Option<Arc<AuthManager>>,
 ) -> SharedModelProvider {
-    Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
+    if provider_info.is_copilot() {
+        Arc::new(CopilotModelProvider::new(provider_info))
+    } else {
+        Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
+    }
 }
 
 /// Runtime model provider backed by configured `ModelProviderInfo`.
@@ -627,6 +655,27 @@ mod tests {
         );
 
         assert_eq!(provider.capabilities(), ProviderCapabilities::default());
+    }
+
+    #[test]
+    fn built_in_copilot_metadata_selects_native_provider() {
+        let info =
+            codex_model_provider_info::built_in_model_providers(/*openai_base_url*/ None)
+                .remove(codex_model_provider_info::COPILOT_PROVIDER_ID)
+                .expect("built-in Copilot provider");
+
+        let provider = create_model_provider(info, /*auth_manager*/ None);
+
+        assert_eq!(
+            provider.capabilities(),
+            ProviderCapabilities {
+                namespace_tools: false,
+                image_generation: false,
+                web_search: false,
+                external_web_access: false,
+                remote_compaction: RemoteCompactionSupport::Unsupported,
+            }
+        );
     }
 
     #[test]

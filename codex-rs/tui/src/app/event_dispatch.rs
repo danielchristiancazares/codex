@@ -329,6 +329,7 @@ impl App {
                             match self
                                 .replace_chat_widget_with_app_server_thread(
                                     tui,
+                                    app_server,
                                     forked,
                                     ThreadAttachPresentation::SessionLineage,
                                     /*initial_user_message*/ None,
@@ -489,6 +490,7 @@ impl App {
                         match self
                             .replace_chat_widget_with_app_server_thread(
                                 tui,
+                                app_server,
                                 forked,
                                 ThreadAttachPresentation::PromptEdit,
                                 /*initial_user_message*/ None,
@@ -1425,6 +1427,25 @@ impl App {
                         .await;
                 }
             }
+            AppEvent::SwitchModelProvider(provider_id) => {
+                self.start_model_provider_switch(app_server, provider_id);
+            }
+            AppEvent::ModelProviderSwitchPrepared(
+                request_id,
+                thread_id,
+                provider_id,
+                result,
+            ) => {
+                self.complete_model_provider_switch(
+                    tui,
+                    app_server,
+                    request_id,
+                    thread_id,
+                    provider_id,
+                    result,
+                )
+                .await;
+            }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
                 self.sync_active_thread_personality_setting(app_server, personality)
@@ -1434,7 +1455,9 @@ impl App {
                 self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             }
             AppEvent::SettingsSelectionSettled => {
-                if self.chat_widget.no_modal_or_popup_active() {
+                if self.pending_provider_switch.is_none()
+                    && self.chat_widget.no_modal_or_popup_active()
+                {
                     let config = self.chat_widget.config_ref();
                     let permissions_override = Self::turn_permissions_override_from_config(
                         config,
@@ -1988,12 +2011,20 @@ impl App {
                 }
             }
             AppEvent::PersistModelSelection { model, effort } => {
+                let mut edits = crate::config_update::build_model_selection_edits(
+                    model.as_str(),
+                    effort.as_ref(),
+                );
+                edits.insert(
+                    0,
+                    crate::config_update::replace_config_value(
+                        "model_provider",
+                        serde_json::json!(self.config.model_provider_id.clone()),
+                    ),
+                );
                 match crate::config_update::write_config_batch(
                     app_server.request_handle(),
-                    crate::config_update::build_model_selection_edits(
-                        model.as_str(),
-                        effort.as_ref(),
-                    ),
+                    edits,
                 )
                 .await
                 {

@@ -9,7 +9,9 @@ use crate::session_start::cancel_session_start;
 use crate::session_start::complete_session_start;
 use crate::unarchive_prompt::run_unarchive_prompt;
 
-async fn resolve_runtime_model_provider_base_url(provider: &ModelProviderInfo) -> Option<String> {
+pub(super) async fn resolve_runtime_model_provider_base_url(
+    provider: &ModelProviderInfo,
+) -> Option<String> {
     let provider = create_model_provider(provider.clone(), /*auth_manager*/ None);
     match provider.runtime_base_url().await {
         Ok(base_url) => base_url,
@@ -138,7 +140,7 @@ impl App {
             );
         }
         let mut model = config.model.clone().unwrap_or(bootstrap.default_model);
-        let available_models = bootstrap.available_models;
+        let mut available_models = bootstrap.available_models;
         let remote_connection = crate::status::remote_connection::remote_connection_status_value(
             &app_server_target,
             app_server.server_version(),
@@ -167,7 +169,7 @@ impl App {
         if let Some(updated_model) = config.model.clone() {
             model = updated_model;
         }
-        let model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
+        let mut model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
         let has_codex_backend_auth = matches!(auth_mode, Some(TelemetryAuthMode::Chatgpt));
@@ -201,7 +203,7 @@ impl App {
             AppServerWorkspaceCommandRunner::new(app_server.request_handle()),
         );
         let runtime_model_provider_started_at = Instant::now();
-        let runtime_model_provider_base_url = match startup_draft
+        let mut runtime_model_provider_base_url = match startup_draft
             .run_until(
                 tui,
                 resolve_runtime_model_provider_base_url(&config.model_provider),
@@ -338,6 +340,24 @@ impl App {
                 else {
                     return Ok(cancel_session_start(app_server).await);
                 };
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &app_server_target,
+                            &resumed.session,
+                            &mut available_models,
+                            &mut runtime_model_provider_base_url,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -398,6 +418,24 @@ impl App {
                 else {
                     return Ok(cancel_session_start(app_server).await);
                 };
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &app_server_target,
+                            &forked.session,
+                            &mut available_models,
+                            &mut runtime_model_provider_base_url,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -504,6 +542,7 @@ See the Codex keymap documentation for supported actions and examples."
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
         };
         if start_in_agents_overview {
             app.open_agents_overview(&app_server);

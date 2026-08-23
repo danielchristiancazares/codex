@@ -41,6 +41,11 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
     /// Returns whether the currently resolved auth can use Codex backend-only models.
     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
 
+    /// Returns whether a successful remote catalog replaces the bundled list.
+    fn remote_catalog_is_authoritative(&self) -> bool {
+        false
+    }
+
     /// Fetches the latest remote model catalog and optional ETag.
     fn list_models<'a>(
         &'a self,
@@ -238,6 +243,15 @@ impl OpenAiModelsManager {
         auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
+        Self::new_with_cache_path(cache_path, endpoint_client, auth_manager)
+    }
+
+    /// Construct a remote model manager with a provider-specific file cache.
+    pub fn new_with_cache_path(
+        cache_path: PathBuf,
+        endpoint_client: Arc<dyn ModelsEndpointClient>,
+        auth_manager: Option<Arc<AuthManager>>,
+    ) -> Self {
         Self::new_with_optional_cache(
             Some(Arc::new(FileModelsCache::new(
                 cache_path,
@@ -273,7 +287,11 @@ impl OpenAiModelsManager {
         endpoint_client: Arc<dyn ModelsEndpointClient>,
         auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
-        let remote_models = load_remote_models_from_file().unwrap_or_default();
+        let remote_models = if endpoint_client.remote_catalog_is_authoritative() {
+            Vec::new()
+        } else {
+            load_remote_models_from_file().unwrap_or_default()
+        };
         Self {
             remote_models: RwLock::new(remote_models),
             etag: RwLock::new(None),
@@ -444,6 +462,11 @@ impl OpenAiModelsManager {
 
     /// Replace the cached remote models and rebuild the derived presets list.
     async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
+        if self.endpoint_client.remote_catalog_is_authoritative() {
+            *self.remote_models.write().await = models;
+            return;
+        }
+
         // Use the remote models list as the source of truth if it contains at least one
         // non-hidden model and the user is using ChatGPT auth.
         let should_use_remote_models_only = !models.is_empty()

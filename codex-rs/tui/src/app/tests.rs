@@ -12,6 +12,7 @@ mod key_chords;
 mod mcp_startup;
 mod model_catalog;
 mod plugin_catalog;
+mod provider_switch;
 mod rate_limits;
 mod safety_buffering;
 #[path = "tests/session_lifecycle_requests.rs"]
@@ -2200,6 +2201,7 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
         assert!(resumed.blocks_direct_input);
         app.replace_chat_widget_with_app_server_thread(
             &mut tui,
+            &mut app_server,
             resumed,
             crate::app::session_lifecycle::ThreadAttachPresentation::SessionLineage,
             /*initial_user_message*/ None,
@@ -5300,6 +5302,7 @@ async fn make_test_app() -> App {
         rate_limit_hard_stop_generation: 0,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        pending_provider_switch: None,
     }
 }
 
@@ -5375,6 +5378,7 @@ async fn make_test_app_with_channels() -> (
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
         },
         rx,
         op_rx,

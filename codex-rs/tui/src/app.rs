@@ -36,6 +36,7 @@ use crate::chatwidget::ChatWidget;
 use crate::chatwidget::ExternalEditorState;
 use crate::chatwidget::ReplayKind;
 use crate::chatwidget::ThreadInputState;
+use crate::chatwidget::ThreadInputStateRestoreMode;
 use crate::cwd_prompt::CwdPromptAction;
 use crate::diff_render::DiffSummary;
 use crate::exec_command::split_command_string;
@@ -223,6 +224,7 @@ mod pending_interactive_replay;
 mod pets;
 mod platform_actions;
 mod plugin_mentions;
+mod provider_switch;
 mod replay_filter;
 mod resize_reflow;
 mod safety_buffering;
@@ -616,6 +618,7 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+    pending_provider_switch: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -704,6 +707,10 @@ impl App {
         cfg: crate::legacy_core::config::Config,
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
+        let model = cfg
+            .model
+            .clone()
+            .or_else(|| Some(self.chat_widget.current_model().to_string()));
         crate::chatwidget::ChatWidgetInit {
             config: cfg,
             frame_requester: tui.frame_requester(),
@@ -721,7 +728,7 @@ impl App {
                 .runtime_model_provider_base_url()
                 .map(str::to_string),
             initial_plan_type: self.chat_widget.current_plan_type(),
-            model: Some(self.chat_widget.current_model().to_string()),
+            model,
             startup_tooltip_override: None,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),

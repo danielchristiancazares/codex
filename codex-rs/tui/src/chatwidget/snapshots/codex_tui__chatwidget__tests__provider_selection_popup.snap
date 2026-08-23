@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 3245
+expression: popup
+---
+  Select Provider
+
+› 1. OpenAI (current)  Use your OpenAI account
+  2. GitHub Copilot    Use your GitHub Copilot account over WebSocket
+
+  Press enter to confirm or esc to go back

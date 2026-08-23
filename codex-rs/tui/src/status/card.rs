@@ -334,7 +334,11 @@ impl StatusHistoryCell {
         );
         let model_provider = format_model_provider(config, runtime_model_provider_base_url);
         let show_chatgpt_usage_link = config.model_provider.requires_openai_auth;
-        let account = compose_account_display(account_display);
+        let account = if config.model_provider.requires_openai_auth {
+            compose_account_display(account_display)
+        } else {
+            None
+        };
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
         let forked_from = forked_from.map(|id| id.to_string());
         let default_usage = TokenUsage::default();
@@ -940,6 +944,9 @@ fn format_model_provider(config: &Config, runtime_base_url: Option<&str>) -> Opt
     } else {
         name
     };
+    if provider.is_copilot() {
+        return Some(provider_name.to_string());
+    }
     let base_url = runtime_base_url.and_then(sanitize_base_url);
     let is_default_openai = provider.is_openai() && base_url.is_none();
     if is_default_openai {

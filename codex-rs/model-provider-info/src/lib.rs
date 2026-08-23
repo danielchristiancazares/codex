@@ -37,6 +37,9 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const COPILOT_PROVIDER_NAME: &str = "GitHub Copilot";
+pub const COPILOT_PROVIDER_ID: &str = "copilot";
+pub const COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
@@ -402,6 +405,10 @@ impl ModelProviderInfo {
         self.name == OPENAI_PROVIDER_NAME
     }
 
+    pub fn is_copilot(&self) -> bool {
+        self.name == COPILOT_PROVIDER_NAME && self.base_url.as_deref() == Some(COPILOT_BASE_URL)
+    }
+
     pub fn uses_openai_actor_authorization(&self) -> bool {
         !self.requires_openai_auth
             && self.http_headers.as_ref().is_some_and(|headers| {
@@ -427,19 +434,42 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 
+fn create_copilot_provider() -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: COPILOT_PROVIDER_NAME.into(),
+        base_url: Some(COPILOT_BASE_URL.into()),
+        env_key: None,
+        env_key_instructions: None,
+        experimental_bearer_token: None,
+        auth: None,
+        aws: None,
+        wire_api: WireApi::Responses,
+        query_params: None,
+        http_headers: None,
+        env_http_headers: None,
+        request_max_retries: None,
+        stream_max_retries: None,
+        stream_idle_timeout_ms: None,
+        websocket_connect_timeout_ms: None,
+        requires_openai_auth: false,
+        supports_websockets: true,
+        supports_standalone_web_search: false,
+    }
+}
+
 /// Built-in default provider list.
 pub fn built_in_model_providers(
     openai_base_url: Option<String>,
 ) -> HashMap<String, ModelProviderInfo> {
     use ModelProviderInfo as P;
     let openai_provider = P::create_openai_provider(openai_base_url);
+    let copilot_provider = create_copilot_provider();
 
-    // We do not want to be in the business of adjucating which third-party
-    // providers are bundled with Codex CLI, so we only include the OpenAI and
-    // open source ("oss") providers by default. Users are encouraged to add to
-    // `model_providers` in config.toml to add their own providers.
+    // This fork bundles its native Copilot integration alongside the upstream
+    // OpenAI and open source ("oss") providers.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
+        (COPILOT_PROVIDER_ID, copilot_provider),
         (
             OLLAMA_OSS_PROVIDER_ID,
             create_oss_provider(DEFAULT_OLLAMA_PORT, WireApi::Responses),

@@ -35,7 +35,9 @@ use codex_app_server_protocol::RateLimitWindow;
 use codex_app_server_protocol::SpendControlLimitSnapshot;
 use codex_config::LoaderOverrides;
 use codex_config::types::AuthCredentialsStoreMode;
+use codex_model_provider_info::COPILOT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_model_provider_info::built_in_model_providers;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_protocol::ThreadId;
@@ -791,6 +793,50 @@ async fn status_model_provider_shows_usage_link_for_openai_auth_proxy() {
         .map(|link| link.destination)
         .collect();
     assert_eq!(narrow_destinations, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn status_snapshot_shows_copilot_without_runtime_url_or_chatgpt_account() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model_provider_id = COPILOT_PROVIDER_ID.to_string();
+    config.model_provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove(COPILOT_PROVIDER_ID)
+        .expect("built-in Copilot provider");
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+    let usage = TokenUsage::default();
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+        .single()
+        .expect("timestamp");
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+    let stale_chatgpt_account = StatusAccountDisplay::ChatGpt {
+        email: Some("chatgpt@example.com".to_string()),
+        plan: Some("Pro".to_string()),
+    };
+    let (composite, _handle) = new_status_output_with_rate_limits_handle(
+        &config,
+        Some("https://api.enterprise.githubcopilot.com"),
+        /*remote_connection*/ None,
+        Some(&stale_chatgpt_account),
+        /*token_info*/ None,
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        /*rate_limits*/ &[],
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+        "<none>".to_string(),
+        /*refreshing_rate_limits*/ false,
+    );
+    let sanitized =
+        sanitize_directory(render_lines(&composite.display_lines(/*width*/ 80))).join("\n");
+
+    assert_snapshot!(sanitized);
 }
 
 #[tokio::test]

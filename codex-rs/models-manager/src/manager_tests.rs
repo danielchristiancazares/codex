@@ -88,6 +88,7 @@ fn assert_models_contain(actual: &[ModelInfo], expected: &[ModelInfo]) {
 struct TestModelsEndpoint {
     has_command_auth: bool,
     uses_codex_backend: bool,
+    authoritative: bool,
     responses: Mutex<VecDeque<Vec<ModelInfo>>>,
     fetch_count: AtomicUsize,
     observed_proxy_policy: Mutex<Option<OutboundProxyPolicy>>,
@@ -187,6 +188,7 @@ impl TestModelsEndpoint {
         Arc::new(Self {
             has_command_auth: false,
             uses_codex_backend: true,
+            authoritative: false,
             responses: Mutex::new(responses.into()),
             fetch_count: AtomicUsize::new(0),
             observed_proxy_policy: Mutex::new(None),
@@ -197,6 +199,18 @@ impl TestModelsEndpoint {
         Arc::new(Self {
             has_command_auth: false,
             uses_codex_backend: false,
+            authoritative: false,
+            responses: Mutex::new(responses.into()),
+            fetch_count: AtomicUsize::new(0),
+            observed_proxy_policy: Mutex::new(None),
+        })
+    }
+
+    fn authoritative(responses: Vec<Vec<ModelInfo>>) -> Arc<Self> {
+        Arc::new(Self {
+            has_command_auth: true,
+            uses_codex_backend: false,
+            authoritative: true,
             responses: Mutex::new(responses.into()),
             fetch_count: AtomicUsize::new(0),
             observed_proxy_policy: Mutex::new(None),
@@ -265,6 +279,10 @@ impl ModelsEndpointClient for TestModelsEndpoint {
 
     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
         Box::pin(async { self.uses_codex_backend })
+    }
+
+    fn remote_catalog_is_authoritative(&self) -> bool {
+        self.authoritative
     }
 
     fn list_models<'a>(
@@ -886,6 +904,34 @@ async fn refresh_available_models_uses_remote_only_catalog_for_chatgpt_auth() {
 }
 
 #[tokio::test]
+async fn authoritative_endpoint_never_exposes_bundled_models() {
+    let remote_models = vec![remote_model(
+        "provider-authoritative-model",
+        "Provider Model",
+        /*priority*/ 0,
+    )];
+    let codex_home = tempdir().expect("temp dir");
+    let endpoint = TestModelsEndpoint::authoritative(vec![remote_models.clone()]);
+    let manager = openai_manager_for_tests_with_auth(
+        codex_home.path().to_path_buf(),
+        endpoint.clone(),
+        /*auth_manager*/ None,
+    );
+
+    assert!(manager.get_remote_models().await.is_empty());
+    manager
+        .refresh_available_models(
+            RefreshStrategy::OnlineIfUncached,
+            &DEFAULT_HTTP_CLIENT_FACTORY,
+        )
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(manager.get_remote_models().await, remote_models);
+    assert_eq!(endpoint.fetch_count(), 1, "expected a single model fetch");
+}
+
+#[tokio::test]
 async fn refresh_available_models_uses_cached_remote_only_catalog_for_chatgpt_auth() {
     let remote_models = vec![remote_model(
         "chatgpt-cached-source-of-truth",
@@ -1012,6 +1058,7 @@ async fn refresh_available_models_keeps_merging_for_api_auth() {
     let endpoint = Arc::new(TestModelsEndpoint {
         has_command_auth: true,
         uses_codex_backend: false,
+        authoritative: false,
         responses: Mutex::new(vec![remote_models.clone()].into()),
         fetch_count: AtomicUsize::new(0),
         observed_proxy_policy: Mutex::new(None),

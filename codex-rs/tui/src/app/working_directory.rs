@@ -176,7 +176,7 @@ impl App {
         }
         let attach = App::replace_chat_widget_with_app_server_thread;
         let (lineage, message) = (ThreadAttachPresentation::SessionLineage, None);
-        if let Err(error) = attach(self, tui, transitioned, lineage, message).await {
+        if let Err(error) = attach(self, tui, app_server, transitioned, lineage, message).await {
             return self.working_directory_error(format!("Could not restore session: {error}"));
         }
         self.cancel_pending_key_chord();

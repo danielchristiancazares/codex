@@ -1,3 +1,4 @@
+use crate::auth::AuthProvider;
 use crate::auth::SharedAuthProvider;
 use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
@@ -181,6 +182,7 @@ struct ResponsesWebsocketTimingLogContext {
 
 pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
+    auth: SharedAuthProvider,
     // TODO (pakrym): is this the right place for timeout?
     idle_timeout: Duration,
     server_reasoning_included: bool,
@@ -203,6 +205,7 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
 impl ResponsesWebsocketConnection {
     fn new(
         stream: WsStream,
+        auth: SharedAuthProvider,
         idle_timeout: Duration,
         server_reasoning_included: bool,
         server_model: Option<String>,
@@ -210,6 +213,7 @@ impl ResponsesWebsocketConnection {
     ) -> Self {
         Self {
             stream: Arc::new(Mutex::new(Some(stream))),
+            auth,
             idle_timeout,
             server_reasoning_included,
             server_model,
@@ -240,6 +244,7 @@ impl ResponsesWebsocketConnection {
         let server_reasoning_included = self.server_reasoning_included;
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
+        let auth = Arc::clone(&self.auth);
         let ResponsesWsRequest::ResponseCreate(ws_request) = &request;
         let client_metadata = ws_request.client_metadata.as_ref();
         let timing_log_context = ResponsesWebsocketTimingLogContext {
@@ -265,7 +270,7 @@ impl ResponsesWebsocketConnection {
             warmup: ws_request.generate == Some(false),
             connection_reused,
         };
-        let request_text = serialize_websocket_request(&request)?;
+        let request_text = serialize_websocket_request(&request, self.auth.as_ref())?;
 
         let current_span = Span::current();
         tokio::spawn(
@@ -308,6 +313,7 @@ impl ResponsesWebsocketConnection {
                             request_text,
                             idle_timeout,
                             telemetry,
+                            auth.as_ref(),
                             turn_state.as_deref(),
                             &timing_log_context,
                         ) => result,
@@ -395,10 +401,15 @@ impl ResponsesWebsocketClient {
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
         self.auth.add_auth_headers(&mut headers);
 
-        let (stream, _status, server_reasoning_included, server_model) =
-            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await?;
+        let connected =
+            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await;
+        if connected.as_ref().err().is_some_and(is_auth_rejection) {
+            self.auth.on_responses_websocket_auth_rejected();
+        }
+        let (stream, _status, server_reasoning_included, server_model) = connected?;
         Ok(ResponsesWebsocketConnection::new(
             stream,
+            Arc::clone(&self.auth),
             self.provider.stream_idle_timeout,
             server_reasoning_included,
             server_model,
@@ -429,13 +440,17 @@ impl ResponsesWebsocketClient {
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
         self.auth.add_auth_headers(&mut headers);
 
-        let (mut stream, status, reasoning_included, server_model) = connect_websocket(
+        let connected = connect_websocket(
             ws_url.clone(),
             headers,
             http_client_factory,
             /*turn_state*/ None,
         )
-        .await?;
+        .await;
+        if connected.as_ref().err().is_some_and(is_auth_rejection) {
+            self.auth.on_responses_websocket_auth_rejected();
+        }
+        let (mut stream, status, reasoning_included, server_model) = connected?;
         let immediate_close = tokio::time::timeout(immediate_close_timeout, stream.next())
             .await
             .ok()
@@ -572,6 +587,14 @@ fn map_ws_error(err: WsError, url: &Url) -> ApiError {
     }
 }
 
+fn is_auth_rejection(error: &ApiError) -> bool {
+    matches!(
+        error,
+        ApiError::Transport(TransportError::Http { status, .. })
+            if matches!(*status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct WrappedWebsocketError {
     code: Option<String>,
@@ -671,6 +694,7 @@ async fn run_websocket_response_stream(
     request_text: String,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+    auth: &dyn AuthProvider,
     turn_state: Option<&OnceLock<String>>,
     timing_log_context: &ResponsesWebsocketTimingLogContext,
 ) -> Result<(), ApiError> {
@@ -714,6 +738,9 @@ async fn run_websocket_response_stream(
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
                 {
+                    if is_auth_rejection(&error) {
+                        auth.on_responses_websocket_auth_rejected();
+                    }
                     return Err(error);
                 }
 
@@ -900,29 +927,91 @@ async fn send_websocket_request(
     Ok(())
 }
 
-fn serialize_websocket_request(request: &ResponsesWsRequest<'_>) -> Result<String, ApiError> {
-    serde_json::to_string(request)
-        .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))
+fn serialize_websocket_request(
+    request: &ResponsesWsRequest<'_>,
+    auth: &dyn AuthProvider,
+) -> Result<String, ApiError> {
+    let request = serde_json::to_string(request)
+        .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))?;
+    auth.prepare_responses_websocket_request(request)
+        .map_err(|err| ApiError::Transport(err.into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::AuthError;
     use crate::common::ResponseCreateWsRequest;
     use crate::common::ResponsesApiRequest;
+    use crate::provider::RetryConfig;
+    use codex_http_client::OutboundProxyPolicy;
     use codex_protocol::ResponseItemId;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
+    use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use serde_json::value::RawValue;
     use serde_json::value::to_raw_value;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_hdr_async_with_config;
 
-    #[test]
-    fn direct_serialization_preserves_websocket_request_payload() {
-        let api_request = ResponsesApiRequest {
+    struct NoopAuth;
+
+    impl AuthProvider for NoopAuth {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+    }
+
+    #[derive(Default)]
+    struct StreamingPayloadAuth {
+        auth_rejections: AtomicUsize,
+    }
+
+    impl AuthProvider for StreamingPayloadAuth {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+
+        fn prepare_responses_websocket_request(
+            &self,
+            request: String,
+        ) -> Result<String, AuthError> {
+            let mut payload = serde_json::from_str::<Value>(&request)
+                .map_err(|err| AuthError::Build(format!("decode test websocket request: {err}")))?;
+            payload
+                .as_object_mut()
+                .expect("websocket request should be an object")
+                .insert("provider_streaming".to_string(), Value::Bool(true));
+            serde_json::to_string(&payload)
+                .map_err(|err| AuthError::Build(format!("encode test websocket request: {err}")))
+        }
+
+        fn on_responses_websocket_auth_rejected(&self) {
+            self.auth_rejections.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn accept_websocket_handshake(
+        _request: &http::Request<()>,
+        response: http::Response<()>,
+    ) -> Result<http::Response<()>, http::Response<Option<String>>> {
+        Ok(response)
+    }
+
+    fn reject_websocket_handshake(
+        _request: &http::Request<()>,
+        _response: http::Response<()>,
+    ) -> Result<http::Response<()>, http::Response<Option<String>>> {
+        Err(http::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Some("expired".to_string()))
+            .expect("build websocket rejection"))
+    }
+
+    fn sample_responses_api_request() -> ResponsesApiRequest {
+        ResponsesApiRequest {
             model: "gpt-test".to_string(),
             instructions: "Use the available tools.".to_string(),
             input: vec![ResponseItem::Message {
@@ -959,7 +1048,12 @@ mod tests {
                 "traceparent".to_string(),
                 "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
             )])),
-        };
+        }
+    }
+
+    #[test]
+    fn direct_serialization_preserves_websocket_request_payload() {
+        let api_request = sample_responses_api_request();
         let request = ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
             previous_response_id: Some("resp-1".to_string()),
             generate: Some(false),
@@ -972,11 +1066,174 @@ mod tests {
         expected_payload["previous_response_id"] = json!("resp-1");
         expected_payload["generate"] = json!(false);
         let request_text =
-            serialize_websocket_request(&request).expect("serialize websocket request");
+            serialize_websocket_request(&request, &NoopAuth).expect("serialize websocket request");
         let wire_payload =
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, expected_payload);
+    }
+
+    #[tokio::test]
+    async fn websocket_request_applies_auth_payload_hook_before_send() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind websocket listener");
+        let address = listener.local_addr().expect("websocket listener address");
+        let (payload_tx, payload_rx) = oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept websocket client");
+            let mut websocket = accept_hdr_async_with_config(
+                stream,
+                accept_websocket_handshake,
+                Some(websocket_config()),
+            )
+            .await
+            .expect("accept websocket");
+            let message = websocket
+                .next()
+                .await
+                .expect("websocket request")
+                .expect("read websocket request");
+            let payload = match message {
+                Message::Text(text) => {
+                    serde_json::from_str::<Value>(&text).expect("parse text request")
+                }
+                Message::Binary(bytes) => {
+                    serde_json::from_slice::<Value>(&bytes).expect("parse binary request")
+                }
+                other => panic!("unexpected websocket request: {other:?}"),
+            };
+            payload_tx
+                .send(payload)
+                .expect("send captured websocket payload");
+            websocket
+                .send(Message::Text(
+                    json!({
+                        "type": "error",
+                        "status": 401,
+                        "error": {"message": "expired"}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("send websocket auth rejection");
+        });
+
+        let provider = Provider {
+            name: "test".to_string(),
+            base_url: format!("http://{address}/v1"),
+            query_params: None,
+            headers: HeaderMap::new(),
+            retry: RetryConfig {
+                max_attempts: 1,
+                base_delay: Duration::ZERO,
+                retry_429: false,
+                retry_5xx: false,
+                retry_transport: false,
+            },
+            stream_idle_timeout: Duration::from_secs(2),
+        };
+        let auth = Arc::new(StreamingPayloadAuth::default());
+        let client = ResponsesWebsocketClient::new(provider, auth.clone());
+        let connection = client
+            .connect(
+                &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+                HeaderMap::new(),
+                HeaderMap::new(),
+                /*turn_state*/ None,
+                /*telemetry*/ None,
+            )
+            .await
+            .expect("connect websocket client");
+        let api_request = sample_responses_api_request();
+        let mut response_stream = connection
+            .stream_request(
+                ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest::from(&api_request)),
+                /*connection_reused*/ false,
+                /*turn_state*/ None,
+            )
+            .await
+            .expect("start websocket response stream");
+
+        let payload = tokio::time::timeout(Duration::from_secs(2), payload_rx)
+            .await
+            .expect("captured websocket payload timed out")
+            .expect("captured websocket payload");
+        assert_eq!(payload["provider_streaming"], Value::Bool(true));
+        assert_eq!(payload["stream"], Value::Bool(true));
+        let error = tokio::time::timeout(Duration::from_secs(2), response_stream.next())
+            .await
+            .expect("websocket auth rejection timed out")
+            .expect("websocket auth rejection event")
+            .expect_err("auth rejection must be an error");
+        assert!(matches!(
+            error,
+            ApiError::Transport(TransportError::Http {
+                status: StatusCode::UNAUTHORIZED,
+                ..
+            })
+        ));
+        assert_eq!(auth.auth_rejections.load(Ordering::Relaxed), 1);
+
+        drop(response_stream);
+        server_task.await.expect("websocket server task");
+    }
+
+    #[tokio::test]
+    async fn websocket_handshake_auth_rejection_notifies_exact_auth_provider() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind websocket listener");
+        let address = listener.local_addr().expect("websocket listener address");
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept websocket client");
+            let result = accept_hdr_async_with_config(
+                stream,
+                reject_websocket_handshake,
+                Some(websocket_config()),
+            )
+            .await;
+            assert!(result.is_err());
+        });
+
+        let provider = Provider {
+            name: "test".to_string(),
+            base_url: format!("http://{address}/v1"),
+            query_params: None,
+            headers: HeaderMap::new(),
+            retry: RetryConfig {
+                max_attempts: 1,
+                base_delay: Duration::ZERO,
+                retry_429: false,
+                retry_5xx: false,
+                retry_transport: false,
+            },
+            stream_idle_timeout: Duration::from_secs(2),
+        };
+        let auth = Arc::new(StreamingPayloadAuth::default());
+        let client = ResponsesWebsocketClient::new(provider, auth.clone());
+
+        let error = client
+            .connect(
+                &HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+                HeaderMap::new(),
+                HeaderMap::new(),
+                /*turn_state*/ None,
+                /*telemetry*/ None,
+            )
+            .await
+            .expect_err("handshake must reject expired auth");
+
+        assert!(matches!(
+            error,
+            ApiError::Transport(TransportError::Http {
+                status: StatusCode::UNAUTHORIZED,
+                ..
+            })
+        ));
+        assert_eq!(auth.auth_rejections.load(Ordering::Relaxed), 1);
+        server_task.await.expect("websocket server task");
     }
 
     #[test]

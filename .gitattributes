@@ -1,2 +1,5 @@
 codex-rs/app-server-protocol/schema/** linguist-generated
 codex-rs/hooks/schema/generated/** linguist-generated
+# SQLx checksums migration source bytes, so keep them stable across platforms.
+codex-rs/state/migrations/*.sql text eol=lf
+codex-rs/state/*_migrations/*.sql text eol=lf

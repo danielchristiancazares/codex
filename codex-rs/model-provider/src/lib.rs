@@ -1,5 +1,6 @@
 mod auth;
 mod bearer_auth_provider;
+mod copilot;
 mod models_endpoint;
 mod provider;
 
@@ -13,6 +14,7 @@ pub use bearer_auth_provider::BearerAuthProvider;
 pub use bearer_auth_provider::BearerAuthProvider as CoreAuthProvider;
 pub use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 pub use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
+pub use codex_model_provider_info::COPILOT_PROVIDER_ID;
 pub use codex_protocol::account::ProviderAccount;
 pub use provider::ModelProvider;
 pub use provider::ModelProviderFuture;
@@ -22,5 +24,6 @@ pub use provider::ProviderAccountState;
 pub use provider::ProviderCapabilities;
 pub use provider::ProviderUnauthorizedRecovery;
 pub use provider::RemoteCompactionSupport;
+pub use provider::ResolvedProviderApi;
 pub use provider::SharedModelProvider;
 pub use provider::create_model_provider;
