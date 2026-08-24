@@ -2,8 +2,6 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 
-use super::Initiator;
-use super::initiator;
 use super::normalize_websocket;
 
 #[test]
@@ -14,6 +12,9 @@ fn websocket_normalization_preserves_envelope_and_applies_all_transformations() 
         "previous_response_id": "resp-old",
         "service_tier": "default",
         "stream": true,
+        "stream_options": {"include_usage": true},
+        "tool_choice": "auto",
+        "prompt_cache_key": "codex-session",
         "client_metadata": {"traceparent": "trace-value"},
         "input": [
             {
@@ -48,9 +49,6 @@ fn websocket_normalization_preserves_envelope_and_applies_all_transformations() 
             "type": "response.create",
             "model": "gpt-5.5",
             "previous_response_id": "resp-old",
-            "service_tier": null,
-            "stream": true,
-            "client_metadata": {"traceparent": "trace-value"},
             "input": [
                 {"type": "compaction", "encrypted_content": "opaque"},
                 {
@@ -60,22 +58,7 @@ fn websocket_normalization_preserves_envelope_and_applies_all_transformations() 
                 }
             ],
             "tools": [
-                {
-                    "type": "function",
-                    "name": "apply_patch",
-                    "description": "Use the apply_patch tool to edit files",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "input": {
-                                "type": "string",
-                                "description": "The entire contents of the apply_patch command"
-                            }
-                        },
-                        "required": ["input"]
-                    },
-                    "strict": false
-                },
+                {"type": "custom", "name": "apply_patch", "format": {"type": "grammar"}},
                 {
                     "type": "function",
                     "name": "shell",
@@ -83,38 +66,6 @@ fn websocket_normalization_preserves_envelope_and_applies_all_transformations() 
                 }
             ]
         })
-    );
-}
-
-#[test]
-fn initiator_and_interaction_type_follow_the_last_input_role() {
-    let payloads = [
-        json!({"input": [{"type": "message", "role": "user"}]}),
-        json!({"input": [{"type": "message", "role": "assistant"}]}),
-        json!({"input": [{"type": "message", "role": "ASSISTANT"}]}),
-        json!({"input": [{"type": "function_call_output"}]}),
-        json!({"input": []}),
-        json!({}),
-    ];
-
-    let actual = payloads
-        .iter()
-        .map(|payload| {
-            let initiator = initiator(payload);
-            (initiator, initiator.as_str(), initiator.interaction_type())
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        actual,
-        vec![
-            (Initiator::User, "user", "conversation-user"),
-            (Initiator::Agent, "agent", "conversation-agent"),
-            (Initiator::Agent, "agent", "conversation-agent"),
-            (Initiator::Agent, "agent", "conversation-agent"),
-            (Initiator::User, "user", "conversation-user"),
-            (Initiator::User, "user", "conversation-user"),
-        ]
     );
 }
 
@@ -137,7 +88,6 @@ fn normalization_retains_input_from_the_latest_compaction() {
         payload,
         json!({
             "type": "response.create",
-            "service_tier": null,
             "input": [
                 {"type": "compaction", "encrypted_content": "latest"},
                 {"type": "message", "role": "user", "content": "new"}

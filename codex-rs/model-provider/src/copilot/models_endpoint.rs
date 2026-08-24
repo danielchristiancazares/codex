@@ -216,10 +216,11 @@ fn models_headers(source: &HeaderMap, endpoint_source: EndpointSource) -> Header
         HeaderValue::from_static("application/json"),
     );
     if let Ok(interaction_id) = HeaderValue::from_str(&Uuid::new_v4().to_string()) {
-        headers.insert("x-interaction-id", interaction_id.clone());
-        headers.insert("x-request-id", interaction_id);
+        headers.entry("x-interaction-id").or_insert(interaction_id);
     }
-    headers.insert("x-initiator", HeaderValue::from_static("agent"));
+    headers
+        .entry("x-initiator")
+        .or_insert(HeaderValue::from_static("user"));
     headers
 }
 

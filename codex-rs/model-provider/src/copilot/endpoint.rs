@@ -407,11 +407,11 @@ fn token_exchange_headers(github_token: &str) -> Result<HeaderMap, String> {
     );
     headers.insert(
         HeaderName::from_static("editor-version"),
-        HeaderValue::from_static(super::identity::EDITOR_VERSION),
+        HeaderValue::from_static(super::identity::TOKEN_EXCHANGE_EDITOR_VERSION),
     );
     headers.insert(
         HeaderName::from_static("editor-plugin-version"),
-        HeaderValue::from_static(super::identity::EDITOR_PLUGIN_VERSION),
+        HeaderValue::from_static(super::identity::TOKEN_EXCHANGE_EDITOR_PLUGIN_VERSION),
     );
     let mut authorization = HeaderValue::from_str(&format!("token {github_token}"))
         .map_err(|error| format!("decode GitHub credential for Copilot: {error}"))?;

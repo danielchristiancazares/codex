@@ -27,6 +27,7 @@ use codex_login::default_client::add_originator_header;
 use codex_login::default_client::default_headers;
 use codex_model_provider::AgentIdentitySessionFallback;
 use codex_model_provider::ProviderAuthScope;
+use codex_model_provider::ProviderRequestContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
@@ -227,6 +228,7 @@ impl LunaSampler {
                 agent_identity_policy: self.config.agent_identity_policy,
                 session_source: self.config.session_source.clone(),
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: ProviderRequestContext::Unscoped,
             })
             .await
             .map_err(LunaSamplerError::Provider)?

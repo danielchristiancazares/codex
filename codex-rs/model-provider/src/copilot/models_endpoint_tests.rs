@@ -136,56 +136,57 @@ fn model_headers_use_copilot_identity() {
 
     let headers = models_headers(&source, EndpointSource::Direct);
 
-    assert!(!headers.contains_key("x-github-api-version"));
+    assert_eq!(
+        headers
+            .get("x-github-api-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("2026-08-01")
+    );
     assert_eq!(
         headers
             .get("editor-version")
             .and_then(|value| value.to_str().ok()),
-        Some("Neovim/1.0.0")
+        Some("copilot/1.0.81-6")
     );
-    assert_eq!(
-        headers
-            .get("editor-plugin-version")
-            .and_then(|value| value.to_str().ok()),
-        Some("CopilotChat/1.0.0")
-    );
+    assert!(!headers.contains_key("editor-plugin-version"));
     assert!(headers.contains_key("x-interaction-id"));
-    assert_eq!(headers.get("x-request-id"), headers.get("x-interaction-id"));
-    let request_id = headers
-        .get("x-request-id")
+    let interaction_id = headers
+        .get("x-interaction-id")
         .and_then(|value| value.to_str().ok())
-        .expect("request ID");
-    Uuid::parse_str(request_id).expect("UUID request ID");
+        .expect("interaction ID");
+    Uuid::parse_str(interaction_id).expect("UUID interaction ID");
+    assert!(!headers.contains_key("x-request-id"));
     assert_eq!(
         headers
             .get("x-initiator")
             .and_then(|value| value.to_str().ok()),
-        Some("agent")
+        Some("user")
     );
     assert_eq!(
         headers
             .get("copilot-integration-id")
             .and_then(|value| value.to_str().ok()),
-        Some("vscode-chat")
+        Some("copilot-developer-cli")
+    );
+    assert_eq!(
+        headers
+            .get("copilot-harness-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("copilot-sdk")
     );
     assert_eq!(
         headers
             .get("openai-intent")
             .and_then(|value| value.to_str().ok()),
-        Some("conversation-panel")
+        Some("conversation-agent")
     );
-    assert_eq!(
-        headers
-            .get("user-agent")
-            .and_then(|value| value.to_str().ok()),
-        Some("GitHubCopilotCLI/1.0.80")
-    );
-    assert_eq!(
-        headers
-            .get("x-client-application")
-            .and_then(|value| value.to_str().ok()),
-        Some("copilot-cli")
-    );
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok())
+        .expect("user agent");
+    assert!(user_agent.starts_with("copilot/1.0.81-6 ("));
+    assert!(user_agent.ends_with("term/unknown client/github/cli"));
+    assert!(!headers.contains_key("x-client-application"));
     assert_eq!(
         headers
             .get(http::header::AUTHORIZATION)
@@ -215,7 +216,7 @@ fn cli_model_headers_preserve_cli_user_agent() {
         headers
             .get(http::header::USER_AGENT)
             .and_then(|value| value.to_str().ok()),
-        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown")
+        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown client/github/cli")
     );
     assert!(!headers.contains_key("editor-version"));
     assert!(!headers.contains_key("editor-plugin-version"));
@@ -223,6 +224,12 @@ fn cli_model_headers_preserve_cli_user_agent() {
         headers
             .get("openai-intent")
             .and_then(|value| value.to_str().ok()),
-        Some("conversation-panel")
+        None
+    );
+    assert_eq!(
+        headers
+            .get("x-initiator")
+            .and_then(|value| value.to_str().ok()),
+        Some("user")
     );
 }

@@ -643,6 +643,7 @@ mod tests {
                 agent_identity_policy: AgentIdentityAuthPolicy::JwtOnly,
                 session_source: SessionSource::Cli,
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: crate::ProviderRequestContext::Unscoped,
             })
             .await
             .expect("auth should resolve");

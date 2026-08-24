@@ -9,6 +9,7 @@ use codex_protocol::user_input::UserInput;
 use core_test_support::responses::WebSocketConnectionConfig;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
+use core_test_support::responses::ev_function_call_with_namespace;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::ev_shell_command_call;
 use core_test_support::responses::start_websocket_server;
@@ -18,6 +19,7 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use serde_json::json;
 use std::time::Duration;
 
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
@@ -217,6 +219,77 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
             .expect("turn metadata"),
     )?;
     assert_eq!(turn_metadata["request_kind"].as_str(), Some("turn"));
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawned_agent_opens_websocket_lazily_without_startup_warmup() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_websocket_server(vec![
+        vec![
+            vec![ev_response_created("warm-root"), ev_completed("warm-root")],
+            vec![
+                ev_response_created("resp-root"),
+                ev_function_call_with_namespace(
+                    "spawn-call",
+                    "collaboration",
+                    "spawn_agent",
+                    &json!({
+                        "message": "reply with child complete",
+                        "task_name": "child",
+                        "fork_turns": "none"
+                    })
+                    .to_string(),
+                ),
+                ev_completed("resp-root"),
+            ],
+            vec![
+                ev_response_created("resp-root-final"),
+                ev_assistant_message("msg-root-final", "spawned"),
+                ev_completed("resp-root-final"),
+            ],
+        ],
+        vec![vec![
+            ev_response_created("resp-child"),
+            ev_assistant_message("msg-child", "child complete"),
+            ev_completed("resp-child"),
+        ]],
+    ])
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Collab)
+            .expect("test config should allow feature update");
+        config
+            .features
+            .enable(Feature::MultiAgentV2)
+            .expect("test config should allow feature update");
+    });
+    let test = builder.build_with_websocket_server(&server).await?;
+    test.submit_turn("spawn one child").await?;
+    let child_request = tokio::time::timeout(Duration::from_secs(5), server.wait_for_request(1, 0))
+        .await?
+        .body_json();
+
+    let connections = server.connections();
+    assert_eq!(
+        connections.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![3, 1]
+    );
+    assert_eq!(child_request["type"], "response.create");
+    assert_eq!(child_request.get("generate"), None);
+    let child_metadata: Value = serde_json::from_str(
+        child_request["client_metadata"]["x-codex-turn-metadata"]
+            .as_str()
+            .expect("child turn metadata"),
+    )?;
+    assert_eq!(child_metadata["request_kind"], "turn");
+    assert_eq!(child_metadata["subagent_kind"], "thread_spawn");
 
     server.shutdown().await;
     Ok(())

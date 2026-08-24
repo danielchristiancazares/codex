@@ -121,6 +121,7 @@ use crate::util::emit_feedback_auth_recovery_tags;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_model_provider::AgentIdentitySessionFallback;
 use codex_model_provider::ProviderAuthScope;
+use codex_model_provider::ProviderRequestContext;
 use codex_model_provider::ProviderUnauthorizedRecovery;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
@@ -526,7 +527,10 @@ impl ModelClient {
             return Ok(Vec::new());
         }
         let client_setup = self
-            .current_client_setup_for_model(&model_info.slug)
+            .current_client_setup_for_model(
+                &model_info.slug,
+                self.responses_request_context(responses_metadata),
+            )
             .await?;
         let transport =
             self.build_api_transport(&client_setup.api_provider, RESPONSES_COMPACT_ENDPOINT)?;
@@ -627,7 +631,9 @@ impl ModelClient {
     ) -> Result<RealtimeWebrtcCallStart> {
         // Create the media call over HTTP first, then retain matching auth so realtime can attach
         // the server-side control WebSocket to the call id from that HTTP response.
-        let client_setup = self.current_client_setup().await?;
+        let client_setup = self
+            .current_client_setup(ProviderRequestContext::Unscoped)
+            .await?;
         if let Some(header_value) = self.generate_attestation_header_for().await {
             extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
         }
@@ -666,7 +672,7 @@ impl ModelClient {
         }
 
         let client_setup = self
-            .current_client_setup_for_model(&model_info.slug)
+            .current_client_setup_for_model(&model_info.slug, ProviderRequestContext::Unscoped)
             .await?;
         let transport =
             self.build_api_transport(&client_setup.api_provider, MEMORIES_SUMMARIZE_ENDPOINT)?;
@@ -920,7 +926,10 @@ impl ModelClient {
     ///
     /// This centralizes setup used by both prewarm and normal request paths so they stay in
     /// lockstep when auth/provider resolution changes.
-    async fn current_client_setup(&self) -> Result<CurrentClientSetup> {
+    async fn current_client_setup(
+        &self,
+        request_context: ProviderRequestContext,
+    ) -> Result<CurrentClientSetup> {
         let auth = self.state.provider.auth().await;
         let api_provider = self.state.provider.api_provider().await?;
         let resolved_auth = self
@@ -930,6 +939,7 @@ impl ModelClient {
                 agent_identity_policy: self.agent_identity_policy,
                 session_source: self.state.session_source.clone(),
                 agent_identity_session_fallback: self.state.agent_identity_session_fallback.clone(),
+                request_context,
             })
             .await?;
         let websocket_connection_key = resolved_auth.auth.responses_websocket_connection_key();
@@ -943,7 +953,11 @@ impl ModelClient {
     }
 
     /// Resolves request routing and auth atomically for a concrete model.
-    async fn current_client_setup_for_model(&self, model: &str) -> Result<CurrentClientSetup> {
+    async fn current_client_setup_for_model(
+        &self,
+        model: &str,
+        request_context: ProviderRequestContext,
+    ) -> Result<CurrentClientSetup> {
         let auth = self.state.provider.auth().await;
         let resolved = self
             .state
@@ -958,6 +972,7 @@ impl ModelClient {
                         .state
                         .agent_identity_session_fallback
                         .clone(),
+                    request_context,
                 },
             )
             .await?;
@@ -969,6 +984,21 @@ impl ModelClient {
             agent_identity_telemetry: resolved.auth.agent_identity_telemetry,
             websocket_connection_key,
         })
+    }
+
+    fn responses_request_context(
+        &self,
+        responses_metadata: &CodexResponsesMetadata,
+    ) -> ProviderRequestContext {
+        let Some(turn_id) = responses_metadata.turn_id.clone() else {
+            return ProviderRequestContext::Unscoped;
+        };
+        ProviderRequestContext::Responses {
+            installation_id: responses_metadata.installation_id.clone(),
+            thread_id: self.state.thread_id,
+            turn_id,
+            root_turn_id: responses_metadata.root_turn_id.clone(),
+        }
     }
 
     fn build_routing_hint_header(
@@ -1012,7 +1042,9 @@ impl ModelClient {
     }
 
     pub(crate) async fn prewarm_auth(&self) -> Result<()> {
-        self.current_client_setup().await.map(|_| ())
+        self.current_client_setup(ProviderRequestContext::Unscoped)
+            .await
+            .map(|_| ())
     }
 
     /// Opens a websocket connection using the same header and telemetry wiring as normal turns.
@@ -1273,11 +1305,15 @@ impl ModelClientSession {
             return Ok(());
         }
 
-        let client_setup = self.client.current_client_setup().await.map_err(|err| {
-            ApiError::Stream(format!(
-                "failed to build websocket prewarm client setup: {err}"
-            ))
-        })?;
+        let client_setup = self
+            .client
+            .current_client_setup(self.client.responses_request_context(responses_metadata))
+            .await
+            .map_err(|err| {
+                ApiError::Stream(format!(
+                    "failed to build websocket prewarm client setup: {err}"
+                ))
+            })?;
         let auth_context = AuthRequestTelemetryContext::new(
             client_setup.api_auth.as_ref(),
             client_setup.agent_identity_telemetry.clone(),
@@ -1426,7 +1462,10 @@ impl ModelClientSession {
         loop {
             let client_setup = self
                 .client
-                .current_client_setup_for_model(&model_info.slug)
+                .current_client_setup_for_model(
+                    &model_info.slug,
+                    self.client.responses_request_context(responses_metadata),
+                )
                 .await?;
             let transport = self
                 .client
@@ -1572,7 +1611,10 @@ impl ModelClientSession {
         loop {
             let client_setup = self
                 .client
-                .current_client_setup_for_model(&model_info.slug)
+                .current_client_setup_for_model(
+                    &model_info.slug,
+                    self.client.responses_request_context(responses_metadata),
+                )
                 .await?;
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.api_auth.as_ref(),

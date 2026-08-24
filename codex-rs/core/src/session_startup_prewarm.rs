@@ -194,7 +194,6 @@ impl Session {
             });
             return;
         }
-
         let session_telemetry = self.services.session_telemetry.clone();
         let websocket_connect_timeout = self.provider().await.websocket_connect_timeout();
         let started_at = Instant::now();

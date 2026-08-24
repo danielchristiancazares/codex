@@ -16,6 +16,7 @@ use codex_login::auth::AgentIdentityAuth;
 use codex_login::auth::AgentIdentityAuthError;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::protocol::SessionSource;
 use http::HeaderMap;
@@ -31,6 +32,20 @@ pub struct ProviderAuthScope {
     pub agent_identity_policy: AgentIdentityAuthPolicy,
     pub session_source: SessionSource,
     pub agent_identity_session_fallback: AgentIdentitySessionFallback,
+    pub request_context: ProviderRequestContext,
+}
+
+/// Identity inputs associated with one provider request lifecycle.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum ProviderRequestContext {
+    #[default]
+    Unscoped,
+    Responses {
+        installation_id: String,
+        thread_id: ThreadId,
+        turn_id: String,
+        root_turn_id: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -228,6 +243,7 @@ pub(crate) async fn resolve_provider_auth_for_scope(
         agent_identity_policy,
         session_source,
         agent_identity_session_fallback,
+        request_context: _,
     } = scope;
     if let Some(CodexAuth::AgentIdentity(agent_identity_auth)) = auth {
         return Ok(ResolvedProviderAuth::for_agent_identity(
@@ -394,6 +410,7 @@ mod tests {
             agent_identity_policy: policy,
             session_source: SessionSource::Cli,
             agent_identity_session_fallback: fallback,
+            request_context: ProviderRequestContext::Unscoped,
         }
     }
 

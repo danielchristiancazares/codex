@@ -58,10 +58,6 @@ async fn request_models(
             "editor-version",
             super::super::identity::EDITOR_VERSION,
         ))
-        .and(header(
-            "editor-plugin-version",
-            super::super::identity::EDITOR_PLUGIN_VERSION,
-        ))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("etag", "catalog-v1")
@@ -97,11 +93,11 @@ async fn endpoint_resolution_exchanges_github_token_without_cli_session() {
         ))
         .and(header(
             "editor-version",
-            super::super::identity::EDITOR_VERSION,
+            super::super::identity::TOKEN_EXCHANGE_EDITOR_VERSION,
         ))
         .and(header(
             "editor-plugin-version",
-            super::super::identity::EDITOR_PLUGIN_VERSION,
+            super::super::identity::TOKEN_EXCHANGE_EDITOR_PLUGIN_VERSION,
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "token": "copilot-secret",

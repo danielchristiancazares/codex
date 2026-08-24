@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use codex_api::AuthError;
 use codex_api::AuthProvider;
@@ -8,64 +7,69 @@ use http::HeaderName;
 use http::HeaderValue;
 use serde_json::Map;
 use serde_json::Value;
-use uuid::Uuid;
 
 use super::endpoint::CopilotEndpointManager;
 use super::endpoint::EndpointSnapshot;
-use super::endpoint::EndpointSource;
 use super::identity;
 use super::payload;
 
 const NO_REPOSITORY: &str = "__no_repository__";
 
-#[derive(Clone, Debug)]
-struct ConnectionIdentity {
-    agent_task_id: HeaderValue,
-    client_session_id: HeaderValue,
-}
-
 /// Applies endpoint-owned Copilot identity to the WebSocket upgrade and request frames.
 pub(super) struct CopilotAuthProvider {
     endpoint: Arc<EndpointSnapshot>,
     endpoint_manager: Arc<CopilotEndpointManager>,
-    connection: Mutex<Option<ConnectionIdentity>>,
+    request_identity: identity::RequestIdentity,
 }
 
 impl CopilotAuthProvider {
     pub(super) fn new(
         endpoint: Arc<EndpointSnapshot>,
         endpoint_manager: Arc<CopilotEndpointManager>,
+        request_identity: identity::RequestIdentity,
     ) -> Self {
         Self {
             endpoint,
             endpoint_manager,
-            connection: Mutex::new(None),
+            request_identity,
         }
     }
 
     fn inject_headers(&self, headers: &mut HeaderMap) {
-        let client_session_id = headers
-            .get("session-id")
-            .cloned()
-            .unwrap_or_else(new_uuid_header);
         remove_codex_headers(headers);
         headers.extend(self.endpoint.headers.clone());
         identity::prepare_inference_headers(headers, self.endpoint.source);
 
-        let identity = ConnectionIdentity {
-            agent_task_id: new_uuid_header(),
-            client_session_id,
-        };
-        let interaction_id = new_uuid_header();
-        headers.insert("x-initiator", HeaderValue::from_static("agent"));
+        headers.insert(
+            "x-initiator",
+            HeaderValue::from_static(self.request_identity.initiator.as_str()),
+        );
         headers.insert(
             "x-interaction-type",
-            HeaderValue::from_static("conversation-agent"),
+            HeaderValue::from_static(self.request_identity.initiator.interaction_type()),
         );
-        headers.insert("x-agent-task-id", identity.agent_task_id.clone());
-        headers.insert("x-client-session-id", identity.client_session_id.clone());
-        headers.insert("x-interaction-id", interaction_id.clone());
-        headers.insert("x-request-id", interaction_id);
+        headers.insert(
+            "x-agent-task-id",
+            string_header(&self.request_identity.agent_task_id),
+        );
+        headers.insert(
+            "x-client-session-id",
+            string_header(&self.request_identity.client_session_id),
+        );
+        headers.insert(
+            "x-interaction-id",
+            string_header(&self.request_identity.interaction_id),
+        );
+        if let Some(parent_agent_id) = &self.request_identity.parent_agent_id {
+            headers.insert("x-parent-agent-id", string_header(parent_agent_id));
+        } else {
+            headers.remove("x-parent-agent-id");
+        }
+        if let Some(client_machine_id) = &self.request_identity.client_machine_id {
+            headers.insert("x-client-machine-id", string_header(client_machine_id));
+        } else {
+            headers.remove("x-client-machine-id");
+        }
         headers.insert(
             "x-github-repository-host",
             HeaderValue::from_static(NO_REPOSITORY),
@@ -78,62 +82,37 @@ impl CopilotAuthProvider {
             "x-stainless-helper-method",
             HeaderValue::from_static("stream"),
         );
-        *self
-            .connection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(identity);
     }
 
-    fn frame_headers(&self, initiator: payload::Initiator) -> Map<String, Value> {
-        let identity = self
-            .connection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-            .unwrap_or_else(|| ConnectionIdentity {
-                agent_task_id: new_uuid_header(),
-                client_session_id: new_uuid_header(),
-            });
-        let interaction_id = new_uuid_header();
+    fn frame_headers(&self) -> Map<String, Value> {
         let mut headers = Map::new();
-        headers.insert(
-            "Copilot-Integration-Id".to_string(),
-            Value::String(identity::INTEGRATION_ID.to_string()),
-        );
-        headers.insert(
-            "Openai-Intent".to_string(),
-            Value::String(identity::INTENT.to_string()),
-        );
-        if self.endpoint.source == EndpointSource::Direct {
+        for (name, value) in [
+            (
+                "X-Interaction-Id",
+                self.request_identity.interaction_id.as_str(),
+            ),
+            (
+                "X-Interaction-Type",
+                self.request_identity.initiator.interaction_type(),
+            ),
+            (
+                "X-Agent-Task-Id",
+                self.request_identity.agent_task_id.as_str(),
+            ),
+            (
+                "X-Client-Session-Id",
+                self.request_identity.client_session_id.as_str(),
+            ),
+            ("Copilot-Harness-Id", identity::HARNESS_ID),
+        ] {
+            headers.insert(name.to_string(), Value::String(value.to_string()));
+        }
+        if let Some(parent_agent_id) = &self.request_identity.parent_agent_id {
             headers.insert(
-                "Editor-Version".to_string(),
-                Value::String(identity::EDITOR_VERSION.to_string()),
-            );
-            headers.insert(
-                "Editor-Plugin-Version".to_string(),
-                Value::String(identity::EDITOR_PLUGIN_VERSION.to_string()),
+                "X-Parent-Agent-Id".to_string(),
+                Value::String(parent_agent_id.clone()),
             );
         }
-        headers.insert(
-            "X-Client-Application".to_string(),
-            Value::String(identity::CLIENT_APPLICATION.to_string()),
-        );
-        insert_json_header(&mut headers, "X-Agent-Task-Id", &identity.agent_task_id);
-        insert_json_header(
-            &mut headers,
-            "X-Client-Session-Id",
-            &identity.client_session_id,
-        );
-        insert_json_header(&mut headers, "X-Interaction-Id", &interaction_id);
-        insert_json_header(&mut headers, "X-Request-Id", &interaction_id);
-        headers.insert(
-            "X-Initiator".to_string(),
-            Value::String(initiator.as_str().to_string()),
-        );
-        headers.insert(
-            "X-Interaction-Type".to_string(),
-            Value::String(initiator.interaction_type().to_string()),
-        );
         headers
     }
 }
@@ -156,14 +135,18 @@ impl AuthProvider for CopilotAuthProvider {
         let mut value = serde_json::from_str::<Value>(&request).map_err(|error| {
             AuthError::Build(format!("decode Copilot WebSocket request: {error}"))
         })?;
-        let initiator = payload::initiator(&value);
         payload::normalize_websocket(&mut value);
         let object = value.as_object_mut().ok_or_else(|| {
             AuthError::Build("Copilot WebSocket request must be an object".to_string())
         })?;
+        object.insert("headers".to_string(), Value::Object(self.frame_headers()));
         object.insert(
-            "headers".to_string(),
-            Value::Object(self.frame_headers(initiator)),
+            "agent_task_id".to_string(),
+            Value::String(self.request_identity.agent_task_id.clone()),
+        );
+        object.insert(
+            "initiator".to_string(),
+            Value::String(self.request_identity.initiator.as_str().to_string()),
         );
         serde_json::to_string(&value)
             .map_err(|error| AuthError::Build(format!("encode Copilot WebSocket request: {error}")))
@@ -175,12 +158,15 @@ impl AuthProvider for CopilotAuthProvider {
     }
 
     fn responses_websocket_connection_key(&self) -> Option<String> {
-        Some(format!("copilot-endpoint-{}", self.endpoint.generation))
+        Some(format!(
+            "copilot-endpoint-{}-task-{}",
+            self.endpoint.generation, self.request_identity.agent_task_id
+        ))
     }
 }
 
-fn new_uuid_header() -> HeaderValue {
-    HeaderValue::from_str(&Uuid::new_v4().to_string())
+fn string_header(value: &str) -> HeaderValue {
+    HeaderValue::from_str(value)
         .unwrap_or_else(|_| HeaderValue::from_static("00000000-0000-0000-0000-000000000000"))
 }
 
@@ -199,12 +185,6 @@ fn remove_codex_headers(headers: &mut HeaderMap) {
         .collect::<Vec<HeaderName>>();
     for name in names {
         headers.remove(name);
-    }
-}
-
-fn insert_json_header(output: &mut Map<String, Value>, name: &str, value: &HeaderValue) {
-    if let Ok(value) = value.to_str() {
-        output.insert(name.to_string(), Value::String(value.to_string()));
     }
 }
 

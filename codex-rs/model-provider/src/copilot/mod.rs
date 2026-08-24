@@ -24,6 +24,7 @@ use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::protocol::SessionSource;
 
 use self::auth_provider::CopilotAuthProvider;
 use self::endpoint::CopilotEndpointManager;
@@ -31,6 +32,7 @@ use self::endpoint::shared_endpoint_manager;
 use self::models_endpoint::CopilotModelsEndpoint;
 use self::models_manager::CopilotModelsManager;
 use crate::ProviderAuthScope;
+use crate::ProviderRequestContext;
 use crate::ResolvedProviderAuth;
 use crate::provider::ModelProvider;
 use crate::provider::ModelProviderFuture;
@@ -64,10 +66,15 @@ impl CopilotModelProvider {
         info.to_api_provider(/*auth_mode*/ None)
     }
 
-    fn auth_from_endpoint(&self, endpoint: Arc<endpoint::EndpointSnapshot>) -> SharedAuthProvider {
+    fn auth_from_endpoint(
+        &self,
+        endpoint: Arc<endpoint::EndpointSnapshot>,
+        request_identity: identity::RequestIdentity,
+    ) -> SharedAuthProvider {
         Arc::new(CopilotAuthProvider::new(
             endpoint,
             Arc::clone(&self.endpoint_manager),
+            request_identity,
         ))
     }
 
@@ -159,7 +166,25 @@ impl ModelProvider for CopilotModelProvider {
     ) -> ModelProviderFuture<'_, codex_protocol::error::Result<SharedAuthProvider>> {
         Box::pin(async move {
             let endpoint = self.endpoint_manager.endpoint().await?;
-            Ok(self.auth_from_endpoint(endpoint))
+            let request_identity = identity::RequestIdentity::new(
+                &ProviderRequestContext::Unscoped,
+                &SessionSource::Unknown,
+            );
+            Ok(self.auth_from_endpoint(endpoint, request_identity))
+        })
+    }
+
+    fn api_auth_for_scope(
+        &self,
+        scope: ProviderAuthScope,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<ResolvedProviderAuth>> {
+        Box::pin(async move {
+            let endpoint = self.endpoint_manager.endpoint().await?;
+            let request_identity =
+                identity::RequestIdentity::new(&scope.request_context, &scope.session_source);
+            Ok(ResolvedProviderAuth::new(
+                self.auth_from_endpoint(endpoint, request_identity),
+            ))
         })
     }
 
@@ -167,7 +192,7 @@ impl ModelProvider for CopilotModelProvider {
         &'a self,
         model: &'a str,
         thread_id: ThreadId,
-        _scope: ProviderAuthScope,
+        scope: ProviderAuthScope,
     ) -> ModelProviderFuture<'a, codex_protocol::error::Result<ResolvedProviderApi>> {
         Box::pin(async move {
             let endpoint = self
@@ -175,7 +200,10 @@ impl ModelProvider for CopilotModelProvider {
                 .endpoint_for_model(thread_id, model)
                 .await?;
             let provider = self.api_provider_from_endpoint(&endpoint)?;
-            let auth = ResolvedProviderAuth::new(self.auth_from_endpoint(endpoint));
+            let request_identity =
+                identity::RequestIdentity::new(&scope.request_context, &scope.session_source);
+            let auth =
+                ResolvedProviderAuth::new(self.auth_from_endpoint(endpoint, request_identity));
             Ok(ResolvedProviderApi { provider, auth })
         })
     }
