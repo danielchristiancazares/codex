@@ -1,7 +1,6 @@
 use std::fmt;
 
-use codex_keyring_store::DefaultKeyringStore;
-use codex_keyring_store::KeyringStore;
+use codex_login::GitHubCopilotAuth;
 
 const COPILOT_API_TOKEN_ENV: &str = "GITHUB_COPILOT_API_TOKEN";
 const COPILOT_API_URL_ENV: &str = "COPILOT_API_URL";
@@ -9,17 +8,22 @@ const COPILOT_GITHUB_TOKEN_ENV: &str = "COPILOT_GITHUB_TOKEN";
 const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
 const GH_TOKEN_ENV: &str = "GH_TOKEN";
 const COPILOT_API_URL: &str = "https://api.githubcopilot.com";
-const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
-const KEYRING_SERVICE: &str = "Codex";
-const KEYRING_ACCOUNT: &str = "github-copilot";
-// This target stores the long-lived GitHub credential. Short-lived CAPI tokens stay in memory.
-#[cfg(windows)]
-const WINDOWS_CREDENTIAL_TARGET: &str = "codex/github-copilot";
 
 #[derive(Clone, Eq, PartialEq)]
-pub(super) enum CopilotCredential {
-    ApiToken { token: String, api_url: String },
-    GitHubToken { token: String, token_url: String },
+pub(super) struct CopilotCredential {
+    pub(super) token: String,
+    pub(super) base_url: String,
+    pub(super) machine_id: Option<String>,
+    pub(super) source: CopilotCredentialSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CopilotCredentialSource {
+    ApiTokenEnvironment,
+    DedicatedGitHubEnvironment,
+    StoredOAuth,
+    GhTokenEnvironment,
+    GitHubTokenEnvironment,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,6 +34,15 @@ pub(super) struct CredentialLoadError {
 impl CredentialLoadError {
     pub(super) fn credential_store(message: String) -> Self {
         Self { message }
+    }
+
+    pub(super) fn missing() -> Self {
+        Self {
+            message: "GitHub Copilot native authentication requires \
+                      `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, \
+                      `GITHUB_TOKEN`, or `codex login --provider copilot`"
+                .to_string(),
+        }
     }
 }
 
@@ -43,91 +56,90 @@ impl std::error::Error for CredentialLoadError {}
 
 impl fmt::Debug for CopilotCredential {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ApiToken { api_url, .. } => formatter
-                .debug_struct("ApiToken")
-                .field("token", &"[REDACTED]")
-                .field("api_url", api_url)
-                .finish(),
-            Self::GitHubToken { token_url, .. } => formatter
-                .debug_struct("GitHubToken")
-                .field("token", &"[REDACTED]")
-                .field("token_url", token_url)
-                .finish(),
-        }
+        formatter
+            .debug_struct("CopilotCredential")
+            .field("token", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .field("machine_id", &self.machine_id)
+            .field("source", &self.source)
+            .finish()
     }
 }
 
-/// Returns `Ok(None)` only when no direct credential exists, allowing the caller to use the
-/// installed Copilot CLI session. Credential-store failures remain distinct from absence.
-pub(super) fn load() -> Result<Option<CopilotCredential>, CredentialLoadError> {
-    load_with(environment_token, token_from_keyring)
+/// Loads the native credential used for direct Copilot API authentication.
+pub(super) fn load() -> Result<CopilotCredential, CredentialLoadError> {
+    load_with(environment_token, || {
+        GitHubCopilotAuth::new()
+            .map_err(|error| CredentialLoadError::credential_store(error.to_string()))?
+            .credential()
+            .map(|credential| {
+                credential.map(|credential| {
+                    (
+                        credential.token().to_string(),
+                        credential.machine_id().to_string(),
+                    )
+                })
+            })
+            .map_err(|error| CredentialLoadError::credential_store(error.to_string()))
+    })
 }
 
-fn load_with<E, K>(
-    environment: E,
-    keyring: K,
-) -> Result<Option<CopilotCredential>, CredentialLoadError>
+fn load_with<E, K>(environment: E, stored: K) -> Result<CopilotCredential, CredentialLoadError>
 where
     E: Fn(&str) -> Option<String>,
-    K: FnOnce() -> Result<Option<String>, CredentialLoadError>,
+    K: FnOnce() -> Result<Option<(String, String)>, CredentialLoadError>,
 {
-    if let Some(token) = environment(COPILOT_API_TOKEN_ENV) {
-        return Ok(Some(CopilotCredential::ApiToken {
+    let environment_value = |name| {
+        environment(name)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(token) = environment_value(COPILOT_API_TOKEN_ENV) {
+        return Ok(CopilotCredential {
             token,
-            api_url: environment(COPILOT_API_URL_ENV)
+            base_url: environment_value(COPILOT_API_URL_ENV)
                 .unwrap_or_else(|| COPILOT_API_URL.to_string()),
-        }));
+            machine_id: None,
+            source: CopilotCredentialSource::ApiTokenEnvironment,
+        });
     }
-    if let Some(token) = environment(COPILOT_GITHUB_TOKEN_ENV) {
-        return Ok(Some(CopilotCredential::GitHubToken {
+    if let Some(token) = environment_value(COPILOT_GITHUB_TOKEN_ENV) {
+        return Ok(CopilotCredential {
             token,
-            token_url: COPILOT_TOKEN_URL.to_string(),
-        }));
+            base_url: COPILOT_API_URL.to_string(),
+            machine_id: None,
+            source: CopilotCredentialSource::DedicatedGitHubEnvironment,
+        });
     }
-    if let Some(token) = keyring()? {
-        return Ok(Some(CopilotCredential::GitHubToken {
+    if let Some((token, machine_id)) = stored()? {
+        return Ok(CopilotCredential {
             token,
-            token_url: COPILOT_TOKEN_URL.to_string(),
-        }));
+            base_url: COPILOT_API_URL.to_string(),
+            machine_id: Some(machine_id),
+            source: CopilotCredentialSource::StoredOAuth,
+        });
     }
-    Ok([GH_TOKEN_ENV, GITHUB_TOKEN_ENV]
-        .iter()
-        .find_map(|name| environment(name))
-        .map(|token| CopilotCredential::GitHubToken {
-            token,
-            token_url: COPILOT_TOKEN_URL.to_string(),
-        }))
+    for (name, source) in [
+        (GH_TOKEN_ENV, CopilotCredentialSource::GhTokenEnvironment),
+        (
+            GITHUB_TOKEN_ENV,
+            CopilotCredentialSource::GitHubTokenEnvironment,
+        ),
+    ] {
+        if let Some(token) = environment_value(name) {
+            return Ok(CopilotCredential {
+                token,
+                base_url: COPILOT_API_URL.to_string(),
+                machine_id: None,
+                source,
+            });
+        }
+    }
+    Err(CredentialLoadError::missing())
 }
 
 fn environment_token(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|token| token.trim().to_string())
-        .filter(|token| !token.is_empty())
-}
-
-fn token_from_keyring() -> Result<Option<String>, CredentialLoadError> {
-    #[cfg(windows)]
-    let token = DefaultKeyringStore
-        .load_with_target(WINDOWS_CREDENTIAL_TARGET, KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|error| {
-            CredentialLoadError::credential_store(format!(
-                "load GitHub token from Windows Credential Manager target \
-                 `{WINDOWS_CREDENTIAL_TARGET}`: {error}"
-            ))
-        })?;
-    #[cfg(not(windows))]
-    let token = DefaultKeyringStore
-        .load(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|error| {
-            CredentialLoadError::credential_store(format!(
-                "load GitHub token from the OS credential store: {error}"
-            ))
-        })?;
-    Ok(token
-        .map(|token| token.trim().to_string())
-        .filter(|token| !token.is_empty()))
+    std::env::var(name).ok()
 }
 
 #[cfg(test)]

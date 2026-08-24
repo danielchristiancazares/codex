@@ -28,10 +28,9 @@ codex-response-debug-context = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["v4"] }
-which = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -12,10 +12,13 @@ use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
 use codex_cli::read_access_token_from_stdin;
 use codex_cli::read_api_key_from_stdin;
+use codex_cli::run_copilot_login_status;
+use codex_cli::run_copilot_logout;
 use codex_cli::run_login_status;
 use codex_cli::run_login_with_access_token;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
+use codex_cli::run_login_with_copilot;
 use codex_cli::run_login_with_device_code;
 use codex_cli::run_logout;
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
@@ -494,6 +497,18 @@ struct LoginCommand {
     #[clap(skip)]
     config_overrides: CliConfigOverrides,
 
+    /// Authenticate a model provider directly.
+    #[arg(
+        long,
+        global = true,
+        value_parser = clap::builder::PossibleValuesParser::new(["copilot"])
+    )]
+    provider: Option<String>,
+
+    /// Replace an existing provider credential.
+    #[arg(long, requires = "provider")]
+    force: bool,
+
     #[arg(
         long = "with-api-key",
         help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
@@ -542,6 +557,13 @@ enum LoginSubcommand {
 struct LogoutCommand {
     #[clap(skip)]
     config_overrides: CliConfigOverrides,
+
+    /// Log out of a directly authenticated model provider.
+    #[arg(
+        long,
+        value_parser = clap::builder::PossibleValuesParser::new(["copilot"])
+    )]
+    provider: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -1568,12 +1590,31 @@ async fn cli_main(
                 &mut login_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            if login_cli.provider.is_some()
+                && (login_cli.with_api_key
+                    || login_cli.with_access_token
+                    || login_cli.api_key.is_some()
+                    || login_cli.use_device_code
+                    || login_cli.issuer_base_url.is_some()
+                    || login_cli.client_id.is_some())
+            {
+                eprintln!(
+                    "Provider login cannot be combined with OpenAI credential or OAuth options."
+                );
+                std::process::exit(1);
+            }
             match login_cli.action {
                 Some(LoginSubcommand::Status) => {
-                    run_login_status(login_cli.config_overrides).await;
+                    if login_cli.provider.as_deref() == Some("copilot") {
+                        run_copilot_login_status(login_cli.config_overrides).await;
+                    } else {
+                        run_login_status(login_cli.config_overrides).await;
+                    }
                 }
                 None => {
-                    if login_cli.with_api_key && login_cli.with_access_token {
+                    if login_cli.provider.as_deref() == Some("copilot") {
+                        run_login_with_copilot(login_cli.config_overrides, login_cli.force).await;
+                    } else if login_cli.with_api_key && login_cli.with_access_token {
                         eprintln!(
                             "Choose one login credential source: --with-api-key or --with-access-token."
                         );
@@ -1612,7 +1653,11 @@ async fn cli_main(
                 &mut logout_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            run_logout(logout_cli.config_overrides).await;
+            if logout_cli.provider.as_deref() == Some("copilot") {
+                run_copilot_logout(logout_cli.config_overrides).await;
+            } else {
+                run_logout(logout_cli.config_overrides).await;
+            }
         }
         Some(Subcommand::Completion(completion_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -2933,6 +2978,33 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn parses_copilot_provider_login_commands() {
+        let login =
+            MultitoolCli::try_parse_from(["codex", "login", "--provider", "copilot", "--force"])
+                .expect("Copilot login arguments");
+        let status =
+            MultitoolCli::try_parse_from(["codex", "login", "status", "--provider", "copilot"])
+                .expect("Copilot status arguments");
+        let logout = MultitoolCli::try_parse_from(["codex", "logout", "--provider", "copilot"])
+            .expect("Copilot logout arguments");
+
+        let Some(Subcommand::Login(login)) = login.subcommand else {
+            panic!("expected login subcommand");
+        };
+        let Some(Subcommand::Login(status)) = status.subcommand else {
+            panic!("expected login status subcommand");
+        };
+        let Some(Subcommand::Logout(logout)) = logout.subcommand else {
+            panic!("expected logout subcommand");
+        };
+        assert_eq!(login.provider.as_deref(), Some("copilot"));
+        assert!(login.force);
+        assert_eq!(status.provider.as_deref(), Some("copilot"));
+        assert!(matches!(status.action, Some(LoginSubcommand::Status)));
+        assert_eq!(logout.provider.as_deref(), Some("copilot"));
     }
 
     #[tokio::test]

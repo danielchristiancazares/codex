@@ -1,20 +1,24 @@
+use std::collections::BTreeMap;
+
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::super::endpoint::EndpointSource;
 use super::*;
 use crate::ProviderRequestContext;
 
-fn endpoint(source: EndpointSource) -> Arc<EndpointSnapshot> {
+const TEST_MACHINE_ID: &str = "4f8c2f5df054b1e465c8f9d9af3b391a4718b02ad7c3d0f8e83d4f6978de1451";
+
+fn endpoint() -> Arc<EndpointSnapshot> {
     let mut headers = HeaderMap::new();
     for (name, value) in [
         ("accept", "application/json"),
         ("content-type", "application/json"),
         ("copilot-harness-id", "copilot-sdk"),
         ("copilot-integration-id", "copilot-developer-cli"),
+        ("editor-plugin-version", "stale-plugin"),
         ("editor-version", "copilot/1.0.81-6"),
         ("openai-intent", "conversation-agent"),
         (
@@ -38,8 +42,7 @@ fn endpoint(source: EndpointSource) -> Arc<EndpointSnapshot> {
         generation: 7,
         base_url: "https://api.githubcopilot.com".to_string(),
         headers,
-        bound_model: None,
-        source,
+        machine_id: Some(TEST_MACHINE_ID.to_string()),
     })
 }
 
@@ -71,27 +74,19 @@ fn root_identity(thread_id: ThreadId, turn_id: &str) -> identity::RequestIdentit
 fn websocket_connection_key_tracks_endpoint_and_agent_turn() {
     let request_identity = root_identity(ThreadId::new(), "22222222-2222-4222-8222-222222222222");
     let expected = format!("copilot-endpoint-7-task-{}", request_identity.agent_task_id);
-    let auth = CopilotAuthProvider::new(
-        endpoint(EndpointSource::Direct),
-        manager(),
-        request_identity,
-    );
+    let auth = CopilotAuthProvider::new(endpoint(), manager(), request_identity);
 
     assert_eq!(auth.responses_websocket_connection_key(), Some(expected));
 }
 
 #[test]
-fn websocket_upgrade_uses_copilot_cli_identity() {
+fn websocket_upgrade_matches_copilot_substrate_identity() {
     let thread_id = ThreadId::new();
     let thread_id_string = thread_id.to_string();
     let turn_id = "22222222-2222-4222-8222-222222222222";
     let request_identity = root_identity(thread_id, turn_id);
     let agent_task_id = request_identity.agent_task_id.clone();
-    let auth = CopilotAuthProvider::new(
-        endpoint(EndpointSource::Direct),
-        manager(),
-        request_identity,
-    );
+    let auth = CopilotAuthProvider::new(endpoint(), manager(), request_identity);
     let mut headers = HeaderMap::from_iter([
         (
             HeaderName::from_static("session-id"),
@@ -113,78 +108,76 @@ fn websocket_upgrade_uses_copilot_cli_identity() {
 
     auth.add_auth_headers(&mut headers);
 
-    let actual = [
-        "copilot-integration-id",
-        "copilot-harness-id",
-        "openai-intent",
-        "x-agent-task-id",
-        "x-client-session-id",
-        "x-client-machine-id",
-        "x-interaction-id",
-        "x-initiator",
-        "x-interaction-type",
-        "x-github-api-version",
-        "editor-version",
-        "x-github-repository-host",
-        "x-github-repository-nwo",
-        "x-stainless-helper-method",
-    ]
-    .map(|name| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .map(ToString::to_string)
-    });
+    let actual = headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                value.to_str().expect("ASCII header").to_string(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     assert_eq!(
         actual,
-        [
-            Some("copilot-developer-cli".to_string()),
-            Some("copilot-sdk".to_string()),
-            Some("conversation-agent".to_string()),
-            Some(agent_task_id),
-            Some(thread_id_string),
-            Some("99999999-9999-4999-8999-999999999999".to_string()),
-            Some(turn_id.to_string()),
-            Some("user".to_string()),
-            Some("conversation-user".to_string()),
-            Some("2026-08-01".to_string()),
-            Some("copilot/1.0.81-6".to_string()),
-            Some("__no_repository__".to_string()),
-            Some("__no_repository__".to_string()),
-            Some("stream".to_string()),
-        ]
+        BTreeMap::from([
+            ("accept".to_string(), "application/json".to_string()),
+            (
+                "authorization".to_string(),
+                "Bearer endpoint-secret".to_string(),
+            ),
+            ("content-type".to_string(), "application/json".to_string()),
+            ("copilot-harness-id".to_string(), "copilot-sdk".to_string(),),
+            (
+                "copilot-integration-id".to_string(),
+                "copilot-developer-cli".to_string(),
+            ),
+            (
+                "openai-intent".to_string(),
+                "conversation-agent".to_string(),
+            ),
+            (
+                "user-agent".to_string(),
+                "GitHubCopilotCLI/1.0.80".to_string(),
+            ),
+            ("x-agent-task-id".to_string(), agent_task_id),
+            (
+                "x-client-machine-id".to_string(),
+                TEST_MACHINE_ID.to_string(),
+            ),
+            ("x-client-session-id".to_string(), thread_id_string),
+            (
+                "x-client-application".to_string(),
+                "copilot-cli".to_string(),
+            ),
+            (
+                "x-github-repository-host".to_string(),
+                "__no_repository__".to_string(),
+            ),
+            (
+                "x-github-repository-nwo".to_string(),
+                "__no_repository__".to_string(),
+            ),
+            ("x-initiator".to_string(), "user".to_string()),
+            ("x-interaction-id".to_string(), turn_id.to_string()),
+            (
+                "x-interaction-type".to_string(),
+                "conversation-user".to_string(),
+            ),
+            (
+                "x-stainless-helper-method".to_string(),
+                "stream".to_string(),
+            ),
+        ])
     );
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|value| value.to_str().ok())
-        .expect("user agent");
-    assert!(user_agent.starts_with("copilot/1.0.81-6 ("));
-    assert!(user_agent.ends_with("term/unknown client/github/cli"));
-    for removed in [
-        "editor-plugin-version",
-        "x-request-id",
-        "x-client-application",
-        "x-parent-agent-id",
-        "session-id",
-        "thread-id",
-        "openai-beta",
-        "x-codex-turn-metadata",
-    ] {
-        assert!(!headers.contains_key(removed));
-    }
 }
 
 #[test]
-fn websocket_frame_matches_copilot_cli_envelope() {
+fn websocket_frame_matches_copilot_substrate_envelope() {
     let thread_id = ThreadId::new();
     let turn_id = "44444444-4444-4444-8444-444444444444";
     let request_identity = root_identity(thread_id, turn_id);
     let agent_task_id = request_identity.agent_task_id.clone();
-    let auth = CopilotAuthProvider::new(
-        endpoint(EndpointSource::Direct),
-        manager(),
-        request_identity,
-    );
+    let auth = CopilotAuthProvider::new(endpoint(), manager(), request_identity);
     let request = json!({
         "type": "response.create",
         "model": "gpt-5.6-sol",
@@ -220,39 +213,6 @@ fn websocket_frame_matches_copilot_cli_envelope() {
 }
 
 #[test]
-fn cli_endpoint_identity_is_preserved_and_completed_for_inference() {
-    let auth = CopilotAuthProvider::new(
-        endpoint(EndpointSource::Cli),
-        manager(),
-        root_identity(ThreadId::new(), "55555555-5555-4555-8555-555555555555"),
-    );
-    let mut headers = HeaderMap::new();
-
-    auth.add_auth_headers(&mut headers);
-
-    let actual = [
-        "user-agent",
-        "editor-version",
-        "openai-intent",
-        "copilot-integration-id",
-        "copilot-harness-id",
-        "x-github-api-version",
-    ]
-    .map(|name| headers.get(name).and_then(|value| value.to_str().ok()));
-    assert_eq!(
-        actual,
-        [
-            Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown client/github/cli"),
-            Some("copilot/1.0.81-6"),
-            Some("conversation-agent"),
-            Some("copilot-developer-cli"),
-            Some("copilot-sdk"),
-            Some("2026-08-01"),
-        ]
-    );
-}
-
-#[test]
 fn child_turn_uses_parent_agent_task_lineage_across_retries() {
     let parent_thread_id = ThreadId::new();
     let child_thread_id = ThreadId::new();
@@ -278,13 +238,8 @@ fn child_turn_uses_parent_agent_task_lineage_across_retries() {
         Some(parent_identity.agent_task_id.as_str())
     );
 
-    let auth = CopilotAuthProvider::new(
-        endpoint(EndpointSource::Cli),
-        manager(),
-        request_identity.clone(),
-    );
-    let retry_auth =
-        CopilotAuthProvider::new(endpoint(EndpointSource::Cli), manager(), retry_identity);
+    let auth = CopilotAuthProvider::new(endpoint(), manager(), request_identity.clone());
+    let retry_auth = CopilotAuthProvider::new(endpoint(), manager(), retry_identity);
     let request = json!({
         "type": "response.create",
         "model": "gpt-5.6-sol",

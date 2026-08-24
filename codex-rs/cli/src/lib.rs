@@ -1,3 +1,4 @@
+mod copilot_login;
 pub(crate) mod debug_sandbox;
 mod exit_status;
 pub(crate) mod login;
@@ -9,6 +10,9 @@ use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::ProfileV2Name;
 use std::path::PathBuf;
 
+pub use copilot_login::run_copilot_login_status;
+pub use copilot_login::run_copilot_logout;
+pub use copilot_login::run_login_with_copilot;
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;
 pub use debug_sandbox::run_command_under_windows_sandbox;

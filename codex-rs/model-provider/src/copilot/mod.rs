@@ -1,14 +1,10 @@
 mod auth_provider;
 mod credentials;
 mod endpoint;
-mod executable;
 mod identity;
 mod models_endpoint;
 mod models_manager;
-mod native_session;
 mod payload;
-mod rpc;
-mod token_lifetime;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,7 +39,7 @@ use crate::provider::ProviderUnauthorizedRecovery;
 use crate::provider::RemoteCompactionSupport;
 use crate::provider::ResolvedProviderApi;
 
-/// Native GitHub Copilot provider backed by direct credentials or the installed Copilot CLI login.
+/// Native GitHub Copilot provider backed by direct credentials.
 pub(crate) struct CopilotModelProvider {
     info: ModelProviderInfo,
     endpoint_manager: Arc<CopilotEndpointManager>,
@@ -128,8 +124,12 @@ impl ModelProvider for CopilotModelProvider {
         &self,
     ) -> ModelProviderFuture<'_, codex_protocol::error::Result<ProviderUnauthorizedRecovery>> {
         // The WebSocket transport rejects the exact auth snapshot before recovery reaches this
-        // provider. The retry then resolves a fresh endpoint for its concrete request model.
-        Box::pin(async { Ok(ProviderUnauthorizedRecovery::Recovered) })
+        // provider. Endpoint resolution reloads the credential and succeeds only when its
+        // material changed.
+        Box::pin(async {
+            self.endpoint_manager.endpoint().await?;
+            Ok(ProviderUnauthorizedRecovery::Recovered)
+        })
     }
 
     fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
@@ -190,15 +190,12 @@ impl ModelProvider for CopilotModelProvider {
 
     fn resolve_api_for_model<'a>(
         &'a self,
-        model: &'a str,
-        thread_id: ThreadId,
+        _model: &'a str,
+        _thread_id: ThreadId,
         scope: ProviderAuthScope,
     ) -> ModelProviderFuture<'a, codex_protocol::error::Result<ResolvedProviderApi>> {
         Box::pin(async move {
-            let endpoint = self
-                .endpoint_manager
-                .endpoint_for_model(thread_id, model)
-                .await?;
+            let endpoint = self.endpoint_manager.endpoint().await?;
             let provider = self.api_provider_from_endpoint(&endpoint)?;
             let request_identity =
                 identity::RequestIdentity::new(&scope.request_context, &scope.session_source);

@@ -5,6 +5,8 @@ use serde_json::json;
 
 use super::*;
 
+const TEST_MACHINE_ID: &str = "4f8c2f5df054b1e465c8f9d9af3b391a4718b02ad7c3d0f8e83d4f6978de1451";
+
 fn entry(value: Value) -> CopilotModelEntry {
     serde_json::from_value(value).expect("valid Copilot model")
 }
@@ -134,20 +136,10 @@ fn model_headers_use_copilot_identity() {
         ),
     ]);
 
-    let headers = models_headers(&source, EndpointSource::Direct);
+    let headers = models_headers(&source, Some(TEST_MACHINE_ID));
 
-    assert_eq!(
-        headers
-            .get("x-github-api-version")
-            .and_then(|value| value.to_str().ok()),
-        Some("2026-08-01")
-    );
-    assert_eq!(
-        headers
-            .get("editor-version")
-            .and_then(|value| value.to_str().ok()),
-        Some("copilot/1.0.81-6")
-    );
+    assert!(!headers.contains_key("x-github-api-version"));
+    assert!(!headers.contains_key("editor-version"));
     assert!(!headers.contains_key("editor-plugin-version"));
     assert!(headers.contains_key("x-interaction-id"));
     let interaction_id = headers
@@ -180,13 +172,24 @@ fn model_headers_use_copilot_identity() {
             .and_then(|value| value.to_str().ok()),
         Some("conversation-agent")
     );
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|value| value.to_str().ok())
-        .expect("user agent");
-    assert!(user_agent.starts_with("copilot/1.0.81-6 ("));
-    assert!(user_agent.ends_with("term/unknown client/github/cli"));
-    assert!(!headers.contains_key("x-client-application"));
+    assert_eq!(
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
+        Some("GitHubCopilotCLI/1.0.80")
+    );
+    assert_eq!(
+        headers
+            .get("x-client-application")
+            .and_then(|value| value.to_str().ok()),
+        Some("copilot-cli")
+    );
+    assert_eq!(
+        headers
+            .get("x-client-machine-id")
+            .and_then(|value| value.to_str().ok()),
+        Some(TEST_MACHINE_ID)
+    );
     assert_eq!(
         headers
             .get(http::header::AUTHORIZATION)
@@ -201,35 +204,4 @@ fn top_level_model_data_is_required() {
         .expect_err("missing model data must fail");
 
     assert!(error.to_string().contains("missing field `data`"));
-}
-
-#[test]
-fn cli_model_headers_preserve_cli_user_agent() {
-    let source = HeaderMap::from_iter([(
-        http::header::USER_AGENT,
-        HeaderValue::from_static("copilot/1.0.81-6 (win32 v24.18.1) term/unknown"),
-    )]);
-
-    let headers = models_headers(&source, EndpointSource::Cli);
-
-    assert_eq!(
-        headers
-            .get(http::header::USER_AGENT)
-            .and_then(|value| value.to_str().ok()),
-        Some("copilot/1.0.81-6 (win32 v24.18.1) term/unknown client/github/cli")
-    );
-    assert!(!headers.contains_key("editor-version"));
-    assert!(!headers.contains_key("editor-plugin-version"));
-    assert_eq!(
-        headers
-            .get("openai-intent")
-            .and_then(|value| value.to_str().ok()),
-        None
-    );
-    assert_eq!(
-        headers
-            .get("x-initiator")
-            .and_then(|value| value.to_str().ok()),
-        Some("user")
-    );
 }

@@ -12,30 +12,19 @@ use http::header::CONTENT_TYPE;
 use http::header::USER_AGENT;
 use uuid::Uuid;
 
-use super::endpoint::EndpointSource;
 use crate::ProviderRequestContext;
 
-pub(super) const CLIENT_APPLICATION: &str = "github/cli";
+/// Exact endpoint-facing wire identity expected by Copilot Substrate.
+///
+/// Native credential loading and transport preserve these values across model discovery and
+/// inference.
+pub(super) const CLIENT_APPLICATION: &str = "copilot-cli";
 pub(super) const INTEGRATION_ID: &str = "copilot-developer-cli";
 pub(super) const HARNESS_ID: &str = "copilot-sdk";
 pub(super) const INTENT: &str = "conversation-agent";
-pub(super) const EDITOR_VERSION: &str = "copilot/1.0.81-6";
-pub(super) const API_VERSION: &str = "2026-08-01";
-pub(super) const TOKEN_EXCHANGE_USER_AGENT: &str = "GitHubCopilotChat/1.0.0";
-pub(super) const TOKEN_EXCHANGE_EDITOR_VERSION: &str = "Neovim/1.0.0";
-pub(super) const TOKEN_EXCHANGE_EDITOR_PLUGIN_VERSION: &str = "CopilotChat/1.0.0";
+pub(super) const USER_AGENT_VALUE: &str = "GitHubCopilotCLI/1.0.80";
 
-const NODE_VERSION: &str = "v24.18.1";
 const MAX_ACTIVE_THREAD_IDENTITIES: usize = 1_024;
-
-#[cfg(target_os = "windows")]
-const PLATFORM: &str = "win32";
-#[cfg(target_os = "linux")]
-const PLATFORM: &str = "linux";
-#[cfg(target_os = "macos")]
-const PLATFORM: &str = "darwin";
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-const PLATFORM: &str = std::env::consts::OS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Initiator {
@@ -172,57 +161,29 @@ fn active_identity(
 
 static ACTIVE_IDENTITIES: OnceLock<Mutex<IdentityRegistry>> = OnceLock::new();
 
-/// Applies the static identity appropriate to the source of a Copilot endpoint.
-pub(super) fn prepare_inference_headers(headers: &mut HeaderMap, source: EndpointSource) {
+/// Applies the static identity used for native Copilot API requests.
+pub(super) fn prepare_inference_headers(headers: &mut HeaderMap) {
+    headers.remove("editor-version");
     headers.remove("editor-plugin-version");
-    headers.remove("x-client-application");
+    headers.remove("x-github-api-version");
     headers.remove("x-request-id");
-    match source {
-        EndpointSource::Direct => {
-            headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            headers.insert(
-                HeaderName::from_static("copilot-integration-id"),
-                HeaderValue::from_static(INTEGRATION_ID),
-            );
-            headers.insert(
-                HeaderName::from_static("copilot-harness-id"),
-                HeaderValue::from_static(HARNESS_ID),
-            );
-            headers.insert(
-                HeaderName::from_static("openai-intent"),
-                HeaderValue::from_static(INTENT),
-            );
-            headers.insert(
-                HeaderName::from_static("editor-version"),
-                HeaderValue::from_static(EDITOR_VERSION),
-            );
-            headers.insert(
-                HeaderName::from_static("x-github-api-version"),
-                HeaderValue::from_static(API_VERSION),
-            );
-            if let Ok(value) = HeaderValue::from_str(&format!(
-                "copilot/1.0.81-6 ({PLATFORM} {NODE_VERSION}) term/unknown client/{CLIENT_APPLICATION}"
-            )) {
-                headers.insert(USER_AGENT, value);
-            }
-        }
-        // The CLI endpoint response owns its version, platform, and runtime identity.
-        EndpointSource::Cli => append_cli_client_to_user_agent(headers),
-    }
-}
-
-fn append_cli_client_to_user_agent(headers: &mut HeaderMap) {
-    let Some(user_agent) = headers
-        .get(USER_AGENT)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return;
-    };
-    if user_agent.contains("client/github/cli") {
-        return;
-    }
-    if let Ok(value) = HeaderValue::from_str(&format!("{user_agent} client/{CLIENT_APPLICATION}")) {
-        headers.insert(USER_AGENT, value);
-    }
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        HeaderName::from_static("copilot-integration-id"),
+        HeaderValue::from_static(INTEGRATION_ID),
+    );
+    headers.insert(
+        HeaderName::from_static("copilot-harness-id"),
+        HeaderValue::from_static(HARNESS_ID),
+    );
+    headers.insert(
+        HeaderName::from_static("openai-intent"),
+        HeaderValue::from_static(INTENT),
+    );
+    headers.insert(
+        HeaderName::from_static("x-client-application"),
+        HeaderValue::from_static(CLIENT_APPLICATION),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
 }

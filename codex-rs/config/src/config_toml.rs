@@ -30,6 +30,7 @@ use crate::types::UriBasedFileOpener;
 use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
+use codex_model_provider_info::COPILOT_PROVIDER_ID;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
@@ -59,8 +60,9 @@ use serde::Serialize;
 use serde::de::Error as SerdeError;
 use serde_json::Value as JsonValue;
 
-const RESERVED_MODEL_PROVIDER_IDS: [&str; 4] = [
+const RESERVED_MODEL_PROVIDER_IDS: [&str; 5] = [
     AMAZON_BEDROCK_PROVIDER_ID,
+    COPILOT_PROVIDER_ID,
     OPENAI_PROVIDER_ID,
     OLLAMA_OSS_PROVIDER_ID,
     LMSTUDIO_OSS_PROVIDER_ID,
@@ -1015,6 +1017,23 @@ command = "   "
             err.to_string().contains(
                 "model_providers.amazon-bedrock: provider auth.command must not be empty"
             )
+        );
+    }
+
+    #[test]
+    fn copilot_provider_id_is_reserved() {
+        let err = toml::from_str::<ConfigToml>(
+            r#"
+[model_providers.copilot]
+name = "lookalike"
+base_url = "https://example.com"
+"#,
+        )
+        .expect_err("Copilot provider ID should be reserved");
+
+        assert!(
+            err.to_string()
+                .contains("reserved built-in provider IDs: `copilot`")
         );
     }
 }

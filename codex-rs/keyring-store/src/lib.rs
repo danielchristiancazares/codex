@@ -55,7 +55,34 @@ pub trait KeyringStore: Debug + Send + Sync {
         self.load(service, account)
     }
     fn save(&self, service: &str, account: &str, value: &str) -> Result<(), CredentialStoreError>;
+    /// Saves a credential using an explicit platform target.
+    ///
+    /// Windows Credential Manager identifies generic credentials by target name. Other
+    /// backends may ignore the target and use their ordinary service/account lookup.
+    fn save_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+        value: &str,
+    ) -> Result<(), CredentialStoreError> {
+        let _ = target;
+        self.save(service, account, value)
+    }
     fn delete(&self, service: &str, account: &str) -> Result<bool, CredentialStoreError>;
+    /// Deletes a credential using an explicit platform target.
+    ///
+    /// Windows Credential Manager identifies generic credentials by target name. Other
+    /// backends may ignore the target and use their ordinary service/account lookup.
+    fn delete_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+    ) -> Result<bool, CredentialStoreError> {
+        let _ = target;
+        self.delete(service, account)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,19 +90,19 @@ pub struct DefaultKeyringStore;
 
 impl KeyringStore for DefaultKeyringStore {
     fn load(&self, service: &str, account: &str) -> Result<Option<String>, CredentialStoreError> {
-        trace!("keyring.load start, service={service}, account={account}");
+        trace!("keyring.load start");
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.get_password() {
             Ok(password) => {
-                trace!("keyring.load success, service={service}, account={account}");
+                trace!("keyring.load success");
                 Ok(Some(password))
             }
             Err(keyring::Error::NoEntry) => {
-                trace!("keyring.load no entry, service={service}, account={account}");
+                trace!("keyring.load no entry");
                 Ok(None)
             }
             Err(error) => {
-                trace!("keyring.load error, service={service}, account={account}, error={error}");
+                trace!("keyring.load error, error={error}");
                 Err(CredentialStoreError::new(error))
             }
         }
@@ -87,65 +114,101 @@ impl KeyringStore for DefaultKeyringStore {
         service: &str,
         account: &str,
     ) -> Result<Option<String>, CredentialStoreError> {
-        trace!(
-            "keyring.load_with_target start, target={target}, service={service}, account={account}"
-        );
+        trace!("keyring.load_with_target start");
         let entry =
             Entry::new_with_target(target, service, account).map_err(CredentialStoreError::new)?;
         match entry.get_password() {
             Ok(password) => {
-                trace!(
-                    "keyring.load_with_target success, target={target}, service={service}, account={account}"
-                );
+                trace!("keyring.load_with_target success");
                 Ok(Some(password))
             }
             Err(keyring::Error::NoEntry) => {
-                trace!(
-                    "keyring.load_with_target no entry, target={target}, service={service}, account={account}"
-                );
+                trace!("keyring.load_with_target no entry");
                 Ok(None)
             }
             Err(error) => {
-                trace!(
-                    "keyring.load_with_target error, target={target}, service={service}, account={account}, error={error}"
-                );
+                trace!("keyring.load_with_target error, error={error}");
                 Err(CredentialStoreError::new(error))
             }
         }
     }
 
     fn save(&self, service: &str, account: &str, value: &str) -> Result<(), CredentialStoreError> {
-        trace!(
-            "keyring.save start, service={service}, account={account}, value_len={}",
-            value.len()
-        );
+        trace!("keyring.save start, value_len={}", value.len());
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.set_password(value) {
             Ok(()) => {
-                trace!("keyring.save success, service={service}, account={account}");
+                trace!("keyring.save success");
                 Ok(())
             }
             Err(error) => {
-                trace!("keyring.save error, service={service}, account={account}, error={error}");
+                trace!("keyring.save error, error={error}");
+                Err(CredentialStoreError::new(error))
+            }
+        }
+    }
+
+    fn save_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+        value: &str,
+    ) -> Result<(), CredentialStoreError> {
+        trace!("keyring.save_with_target start, value_len={}", value.len());
+        let entry =
+            Entry::new_with_target(target, service, account).map_err(CredentialStoreError::new)?;
+        match entry.set_password(value) {
+            Ok(()) => {
+                trace!("keyring.save_with_target success");
+                Ok(())
+            }
+            Err(error) => {
+                trace!("keyring.save_with_target error, error={error}");
                 Err(CredentialStoreError::new(error))
             }
         }
     }
 
     fn delete(&self, service: &str, account: &str) -> Result<bool, CredentialStoreError> {
-        trace!("keyring.delete start, service={service}, account={account}");
+        trace!("keyring.delete start");
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.delete_credential() {
             Ok(()) => {
-                trace!("keyring.delete success, service={service}, account={account}");
+                trace!("keyring.delete success");
                 Ok(true)
             }
             Err(keyring::Error::NoEntry) => {
-                trace!("keyring.delete no entry, service={service}, account={account}");
+                trace!("keyring.delete no entry");
                 Ok(false)
             }
             Err(error) => {
-                trace!("keyring.delete error, service={service}, account={account}, error={error}");
+                trace!("keyring.delete error, error={error}");
+                Err(CredentialStoreError::new(error))
+            }
+        }
+    }
+
+    fn delete_with_target(
+        &self,
+        target: &str,
+        service: &str,
+        account: &str,
+    ) -> Result<bool, CredentialStoreError> {
+        trace!("keyring.delete_with_target start");
+        let entry =
+            Entry::new_with_target(target, service, account).map_err(CredentialStoreError::new)?;
+        match entry.delete_credential() {
+            Ok(()) => {
+                trace!("keyring.delete_with_target success");
+                Ok(true)
+            }
+            Err(keyring::Error::NoEntry) => {
+                trace!("keyring.delete_with_target no entry");
+                Ok(false)
+            }
+            Err(error) => {
+                trace!("keyring.delete_with_target error, error={error}");
                 Err(CredentialStoreError::new(error))
             }
         }

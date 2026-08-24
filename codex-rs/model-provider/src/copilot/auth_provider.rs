@@ -15,7 +15,7 @@ use super::payload;
 
 const NO_REPOSITORY: &str = "__no_repository__";
 
-/// Applies endpoint-owned Copilot identity to the WebSocket upgrade and request frames.
+/// Applies endpoint-owned Copilot Substrate identity to WebSocket upgrades and request frames.
 pub(super) struct CopilotAuthProvider {
     endpoint: Arc<EndpointSnapshot>,
     endpoint_manager: Arc<CopilotEndpointManager>,
@@ -38,7 +38,7 @@ impl CopilotAuthProvider {
     fn inject_headers(&self, headers: &mut HeaderMap) {
         remove_codex_headers(headers);
         headers.extend(self.endpoint.headers.clone());
-        identity::prepare_inference_headers(headers, self.endpoint.source);
+        identity::prepare_inference_headers(headers);
 
         headers.insert(
             "x-initiator",
@@ -65,7 +65,12 @@ impl CopilotAuthProvider {
         } else {
             headers.remove("x-parent-agent-id");
         }
-        if let Some(client_machine_id) = &self.request_identity.client_machine_id {
+        if let Some(client_machine_id) = self
+            .endpoint
+            .machine_id
+            .as_ref()
+            .or(self.request_identity.client_machine_id.as_ref())
+        {
             headers.insert("x-client-machine-id", string_header(client_machine_id));
         } else {
             headers.remove("x-client-machine-id");

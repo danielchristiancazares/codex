@@ -25,7 +25,6 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use super::endpoint::CopilotEndpointManager;
-use super::endpoint::EndpointSource;
 use super::identity;
 
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -128,7 +127,7 @@ impl CopilotModelsEndpoint {
         let mut response = send_models_request(
             &client,
             &url,
-            models_headers(&endpoint.headers, endpoint.source),
+            models_headers(&endpoint.headers, endpoint.machine_id.as_deref()),
         )
         .await?;
         if matches!(
@@ -144,22 +143,32 @@ impl CopilotModelsEndpoint {
             response = send_models_request(
                 &client,
                 &url,
-                models_headers(&endpoint.headers, endpoint.source),
+                models_headers(&endpoint.headers, endpoint.machine_id.as_deref()),
             )
             .await?;
         }
 
         let status = response.status();
+        if matches!(
+            status,
+            http::StatusCode::UNAUTHORIZED | http::StatusCode::FORBIDDEN
+        ) {
+            self.endpoint_manager.reject_generation(endpoint.generation);
+            return match self.endpoint_manager.endpoint().await {
+                Err(error) => Err(error),
+                Ok(_) => Err(CodexErr::Fatal(format!(
+                    "Copilot models request returned {status} after credential refresh"
+                ))),
+            };
+        }
         let etag = response
             .headers()
             .get(http::header::ETAG)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
             return Err(CodexErr::Fatal(format!(
-                "Copilot models request returned {status}: {}",
-                truncate(&body, 256)
+                "Copilot models request returned {status}"
             )));
         }
 
@@ -208,9 +217,9 @@ impl ModelsEndpointClient for CopilotModelsEndpoint {
     }
 }
 
-fn models_headers(source: &HeaderMap, endpoint_source: EndpointSource) -> HeaderMap {
+fn models_headers(source: &HeaderMap, machine_id: Option<&str>) -> HeaderMap {
     let mut headers = source.clone();
-    identity::prepare_inference_headers(&mut headers, endpoint_source);
+    identity::prepare_inference_headers(&mut headers);
     headers.insert(
         http::header::ACCEPT,
         HeaderValue::from_static("application/json"),
@@ -221,6 +230,11 @@ fn models_headers(source: &HeaderMap, endpoint_source: EndpointSource) -> Header
     headers
         .entry("x-initiator")
         .or_insert(HeaderValue::from_static("user"));
+    if let Some(machine_id) = machine_id
+        && let Ok(machine_id) = HeaderValue::from_str(machine_id)
+    {
+        headers.insert("x-client-machine-id", machine_id);
+    }
     headers
 }
 
@@ -386,16 +400,6 @@ fn curated_default_window(vendor: Option<&str>, slug: &str) -> Option<i64> {
 
 fn positive_window(window: Option<i64>) -> Option<i64> {
     window.filter(|window| *window > 0)
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{truncated}...")
-    } else {
-        truncated
-    }
 }
 
 #[cfg(test)]

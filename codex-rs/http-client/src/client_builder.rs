@@ -74,6 +74,18 @@ impl HttpClientFactory {
             .without_request_logging()
             .build_respecting_outbound_proxy_policy(self, request_url, route_class)
     }
+
+    /// Builds a policy-aware client that neither follows redirects nor logs request diagnostics.
+    pub fn build_client_without_redirects_or_request_logging(
+        &self,
+        request_url: &str,
+        route_class: ClientRouteClass,
+    ) -> Result<HttpClient, BuildRouteAwareHttpClientError> {
+        HttpClientBuilder::new()
+            .without_redirects()
+            .without_request_logging()
+            .build_respecting_outbound_proxy_policy(self, request_url, route_class)
+    }
 }
 
 impl HttpClientBuilder {

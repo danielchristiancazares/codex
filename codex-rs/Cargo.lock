@@ -2935,6 +2935,7 @@ dependencies = [
  "codex-protocol",
  "codex-secrets",
  "codex-terminal-detection",
+ "codex-utils-home-dir",
  "codex-utils-template",
  "codex-workload-identity",
  "core_test_support",
@@ -3170,7 +3171,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "which 8.0.5",
  "wiremock",
 ]
 
