@@ -22,6 +22,7 @@ use codex_extension_api::PreviousWorldStateSection;
 use codex_extension_api::RenderedWorldStateFragment;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolCall;
+use codex_extension_api::ToolCallSource;
 use codex_extension_api::ToolPayload;
 use codex_extension_api::TurnInputContext;
 use codex_extension_api::WorldStateContributionInput;
@@ -1425,6 +1426,7 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
             model: "gpt-test".to_string(),
             codex_turn_metadata: None,
             truncation_policy: TruncationPolicy::Bytes(1_024),
+            source: ToolCallSource::Direct,
             conversation_history: ConversationHistory::default(),
             turn_item_emitter: Arc::new(NoopTurnItemEmitter),
             environments: Vec::new(),
