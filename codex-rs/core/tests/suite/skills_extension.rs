@@ -826,13 +826,11 @@ async fn explicit_only_orchestrator_skill_is_hidden_but_can_be_invoked() -> Resu
     const REFERENCED_RESOURCE: &str = "skill://demo/explicit-only/references/guide.md";
     const READ_CALL_ID: &str = "read-explicit-only-resource";
     const LIST_CALL_ID: &str = "list-model-visible-skills";
-    const CODE_MODE_LIST_CALL_ID: &str = "list-skills-through-code-mode";
     const CONTINUATION_CALL_ID: &str = "read-explicit-only-resource-continuation";
     const MAIN_READ_CALL_ID: &str = "read-explicit-only-main";
     const REPEATED_MAIN_READ_CALL_ID: &str = "read-explicit-only-main-again";
     const INVALID_CURSOR_CALL_ID: &str = "read-explicit-only-invalid-cursor";
     const MISSING_PACKAGE_CALL_ID: &str = "read-missing-package";
-    const CODE_MODE_CALL_ID: &str = "code-mode-skill-read";
 
     // Fill the shared 300-byte page through the emoji; ignoring escaping would fit everything.
     let read_prefix = "a".repeat(184);
@@ -863,12 +861,6 @@ async fn explicit_only_orchestrator_skill_is_hidden_but_can_be_invoked() -> Resu
                     "skills",
                     "list",
                     &json!({ "authority": { "kind": "orchestrator" } }).to_string(),
-                ),
-                responses::ev_custom_tool_call(
-                    CODE_MODE_LIST_CALL_ID,
-                    "exec",
-                    r#"const result = await tools.skills__list({ authority: { kind: "orchestrator" } });
-text({ names: result.skills.map(skill => skill.name), warnings: result.warnings, next_cursor: result.next_cursor });"#,
                 ),
                 ev_completed("resp-1"),
             ]),
@@ -969,10 +961,6 @@ text({ names: result.skills.map(skill => skill.name), warnings: result.warnings,
         .with_config(|config| {
             config.include_skill_instructions = true;
             config.orchestrator_skills_enabled = true;
-            config
-                .features
-                .enable(Feature::CodeMode)
-                .expect("code mode should be configurable in tests");
         });
     let test = builder.build_with_auto_env(&server).await?;
     wait_for_mcp_server(&test.codex, CODEX_APPS_MCP_SERVER_NAME).await?;
@@ -1040,22 +1028,6 @@ text({ names: result.skills.map(skill => skill.name), warnings: result.warnings,
     let mut list_output = requests[1]
         .function_call_output_text(LIST_CALL_ID)
         .expect("skills.list should return the model-visible catalog");
-    let code_mode_output = requests[1].custom_tool_call_output(CODE_MODE_LIST_CALL_ID);
-    let code_mode_text = code_mode_output["output"]
-        .as_array()
-        .and_then(|items| items.last())
-        .and_then(|item| item["text"].as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!("Code Mode should return its skills.list result: {code_mode_output}")
-        })?;
-    assert_eq!(
-        serde_json::from_str::<Value>(code_mode_text)?,
-        json!({
-            "names": ["demo:visible", "demo:missing-policy", "demo:non-boolean-policy"],
-            "warnings": [],
-            "next_cursor": null,
-        })
-    );
     let events = wait_for_analytics_events(&server, "skill_invocation", /*expected_count*/ 1).await;
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["skill_name"], "demo:explicit-only");
@@ -1210,39 +1182,6 @@ text({ names: result.skills.map(skill => skill.name), warnings: result.warnings,
                 .expect("skills.list should return the next page");
         }
     }
-
-    let response = responses::mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp-5"),
-                responses::ev_custom_tool_call(
-                    CODE_MODE_CALL_ID,
-                    "exec",
-                    &format!(
-                        "const result = await tools.skills__read({{package: {SKILL_PACKAGE:?}, resource: {REFERENCED_RESOURCE:?}}}); text(JSON.stringify({{contents: result.contents, next_cursor: result.next_cursor}}));"
-                    ),
-                ),
-                ev_completed("resp-5"),
-            ]),
-            sse(vec![ev_response_created("resp-6"), ev_completed("resp-6")]),
-        ],
-    )
-    .await;
-    test.submit_turn("Read the complete skill resource using code mode.")
-        .await?;
-    let requests = response.requests();
-    assert_eq!(requests.len(), 2);
-    let output = requests[1].custom_tool_call_output(CODE_MODE_CALL_ID);
-    let nested_result = output["output"]
-        .as_array()
-        .and_then(|items| items.last())
-        .and_then(|item| item["text"].as_str())
-        .ok_or_else(|| anyhow::anyhow!("code mode should return the nested skill result"))?;
-    assert_eq!(
-        serde_json::from_str::<Value>(nested_result)?,
-        json!({"contents": referenced_contents, "next_cursor": null})
-    );
 
     Ok(())
 }

@@ -1580,13 +1580,29 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
             .handle(ToolCall {
                 call_id: "omitted-call".to_string(),
                 truncation_policy: TruncationPolicy::Bytes(64),
-                ..call
+                ..call.clone()
             })
             .await
             .err(),
         Some(FunctionCallError::RespondToModel(
             "skills.list response budget leaves no room for discovery warnings".to_string()
         ))
+    );
+    let code_mode_list_call_id = "code-mode-list";
+    let code_mode_list_output = list_tool
+        .handle(ToolCall {
+            call_id: code_mode_list_call_id.to_string(),
+            truncation_policy: TruncationPolicy::Bytes(64),
+            source: ToolCallSource::CodeMode {
+                cell_id: "cell-1".to_string(),
+                runtime_tool_call_id: "runtime-list-1".to_string(),
+            },
+            ..call
+        })
+        .await?;
+    assert_eq!(
+        code_mode_list_output.post_tool_use_response(code_mode_list_call_id, &payload),
+        Some(complete_response)
     );
 
     let read_tool = tools
@@ -1612,7 +1628,7 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
             conversation_history: ConversationHistory::default(),
             turn_item_emitter: Arc::new(NoopTurnItemEmitter),
             environments: Vec::new(),
-            payload: insufficient_budget_payload,
+            payload: insufficient_budget_payload.clone(),
         })
         .await
         .err()
@@ -1621,6 +1637,34 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
     assert_eq!(
         error,
         "skills.read response budget leaves no room for contents"
+    );
+    let code_mode_read_call_id = "code-mode-read";
+    let code_mode_read_output = read_tool
+        .handle(ToolCall {
+            turn_id: "turn-1".to_string(),
+            call_id: code_mode_read_call_id.to_string(),
+            tool_name: read_tool.tool_name(),
+            model: "gpt-test".to_string(),
+            codex_turn_metadata: None,
+            truncation_policy: TruncationPolicy::Bytes(2_000),
+            source: ToolCallSource::CodeMode {
+                cell_id: "cell-1".to_string(),
+                runtime_tool_call_id: "runtime-read-1".to_string(),
+            },
+            conversation_history: ConversationHistory::default(),
+            turn_item_emitter: Arc::new(NoopTurnItemEmitter),
+            environments: Vec::new(),
+            payload: insufficient_budget_payload.clone(),
+        })
+        .await?;
+    assert_eq!(
+        code_mode_read_output
+            .post_tool_use_response(code_mode_read_call_id, &insufficient_budget_payload,),
+        Some(serde_json::json!({
+            "resource": format!("skill://orchestrator/{opaque_suffix}/SKILL.md"),
+            "contents": "# Lint Fix\n\nRun the formatter.",
+            "next_cursor": null,
+        }))
     );
 
     Ok(())

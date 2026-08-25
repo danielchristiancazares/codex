@@ -1165,14 +1165,6 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
 #[tokio::test]
 async fn refresh_clears_disabled_managed_network_proxy() -> anyhow::Result<()> {
     let permission_profile = PermissionProfile::workspace_write();
-    let enabled_spec = crate::config::NetworkProxySpec::from_config_and_constraints(
-        NetworkProxyConfig::default(),
-        Some(NetworkConstraints {
-            enabled: Some(true),
-            ..Default::default()
-        }),
-        &permission_profile,
-    )?;
     let disabled_spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         Some(NetworkConstraints {
@@ -1181,22 +1173,31 @@ async fn refresh_clears_disabled_managed_network_proxy() -> anyhow::Result<()> {
         }),
         &permission_profile,
     )?;
+    let session_permission_profile = permission_profile.clone();
+    let session_spec = disabled_spec.clone();
     let session = make_session_with_config(move |config| {
         config
             .permissions
-            .set_permission_profile(permission_profile)
+            .set_permission_profile(session_permission_profile)
             .expect("test setup should allow permission profile");
-        config.permissions.network = Some(enabled_spec);
+        config.permissions.network = Some(session_spec);
     })
     .await?;
-    assert!(session.services.network_proxy.load_full().is_some());
-
-    {
-        let mut state = session.state.lock().await;
-        let mut config = (*state.session_configuration.original_config_do_not_use).clone();
-        config.permissions.network = Some(disabled_spec);
-        state.session_configuration.original_config_do_not_use = Arc::new(config);
-    }
+    assert!(session.services.network_proxy.load_full().is_none());
+    let (started_proxy, _) = Session::start_managed_network_proxy(
+        &disabled_spec,
+        &Policy::empty(),
+        &permission_profile,
+        /*network_policy_decider*/ None,
+        /*blocked_request_observer*/ None,
+        /*managed_network_requirements_enabled*/ false,
+        crate::config::NetworkProxyAuditMetadata::default(),
+    )
+    .await?;
+    session
+        .services
+        .network_proxy
+        .store(Some(Arc::new(started_proxy)));
 
     session
         .refresh_managed_network_proxy_for_current_permission_profile()
