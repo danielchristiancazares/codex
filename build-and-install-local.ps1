@@ -70,6 +70,36 @@ function Assert-ExecutablesMatch {
     }
 }
 
+function Assert-ExecutablesReplaceable {
+    param(
+        [string]$InstallDir,
+        [System.Collections.IDictionary]$Executables
+    )
+
+    $replaceabilityChecks = [System.Collections.Generic.List[System.IO.FileStream]]::new()
+    try {
+        foreach ($destinationRelativePath in $Executables.Values) {
+            $installedPath = Join-Path $InstallDir $destinationRelativePath
+            try {
+                $replaceabilityChecks.Add(
+                    [System.IO.File]::Open(
+                        $installedPath,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::ReadWrite,
+                        [System.IO.FileShare]::None
+                    )
+                )
+            } catch {
+                throw "Cannot replace $installedPath. Close any process using it and try again. $($_.Exception.Message)"
+            }
+        }
+    } finally {
+        foreach ($replaceabilityCheck in $replaceabilityChecks) {
+            $replaceabilityCheck.Dispose()
+        }
+    }
+}
+
 function Get-CodexVersion {
     param([string]$CodexPath)
 
@@ -112,17 +142,41 @@ $targetInfo = switch ($architecture) {
         [pscustomobject]@{
             Target = "x86_64-pc-windows-msvc"
             PlatformPackage = "codex-win32-x64"
+            RustyV8ArchiveSha256 = "732ec5da4243aa166799780c8519a5eea6f32f6e47657a323342794dc3c239d6"
         }
     }
     "Arm64" {
         [pscustomobject]@{
             Target = "aarch64-pc-windows-msvc"
             PlatformPackage = "codex-win32-arm64"
+            RustyV8ArchiveSha256 = "54722842af36b74248c403ff531254efac6ff65d281198bab0c6350fc1188ad4"
         }
     }
     default { throw "Unsupported Windows architecture: $architecture" }
 }
 $target = $targetInfo.Target
+$rustyV8ReleaseUrl = "https://github.com/openai/codex/releases/download/rusty-v8-v150.4.0"
+$rustyV8ArchivePath = Join-Path `
+    $repoRoot `
+    "rusty_v8_ptrcomp_sandbox_release_$target.lib.gz"
+$rustyV8BindingPath = Join-Path `
+    $repoRoot `
+    "src_binding_ptrcomp_sandbox_release_$target.rs"
+$rustyV8Artifacts = [ordered]@{
+    $rustyV8ArchivePath = $targetInfo.RustyV8ArchiveSha256
+    $rustyV8BindingPath = "dabf78ba1faac127660db9862b1d0354175c71b8db2d4fcb5bacbd9c93576b16"
+}
+foreach ($artifactPath in $rustyV8Artifacts.Keys) {
+    $artifactName = Split-Path -Leaf $artifactPath
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+        throw "Missing $artifactPath. Download it from $rustyV8ReleaseUrl/$artifactName."
+    }
+    $actualSha256 = Get-FileSha256 -Path $artifactPath
+    $expectedSha256 = $rustyV8Artifacts[$artifactPath]
+    if ($actualSha256 -ine $expectedSha256) {
+        throw "$artifactPath has SHA-256 $actualSha256; expected $expectedSha256."
+    }
+}
 
 $cargoCommand = Get-Command cargo.exe -ErrorAction SilentlyContinue
 if ($null -eq $cargoCommand) {
@@ -192,31 +246,64 @@ $executables = [ordered]@{
 }
 Assert-PathWithin -Path $releaseDir -Root $targetDir
 
+foreach ($destinationRelativePath in $executables.Values) {
+    $installedPath = Join-Path $installDir $destinationRelativePath
+    if (-not (Test-Path -LiteralPath $installedPath -PathType Leaf)) {
+        throw "The npm Codex package is missing $installedPath."
+    }
+}
+
 Write-Step "Building Codex release executables"
-Push-Location $codexRsRoot
+$previousRustyV8Archive = [Environment]::GetEnvironmentVariable(
+    "RUSTY_V8_ARCHIVE",
+    "Process"
+)
+$previousRustyV8Binding = [Environment]::GetEnvironmentVariable(
+    "RUSTY_V8_SRC_BINDING_PATH",
+    "Process"
+)
 try {
-    Invoke-Checked -FilePath $cargoCommand.Source -Arguments @(
-        "build",
-        "--release",
-        "--target-dir", $targetDir,
-        "--bin", "codex",
-        "--bin", "codex-code-mode-host",
-        "--bin", "codex-command-runner",
-        "--bin", "codex-windows-sandbox-setup"
+    [Environment]::SetEnvironmentVariable(
+        "RUSTY_V8_ARCHIVE",
+        $rustyV8ArchivePath,
+        "Process"
     )
+    [Environment]::SetEnvironmentVariable(
+        "RUSTY_V8_SRC_BINDING_PATH",
+        $rustyV8BindingPath,
+        "Process"
+    )
+    Push-Location $codexRsRoot
+    try {
+        Invoke-Checked -FilePath $cargoCommand.Source -Arguments @(
+            "build",
+            "--release",
+            "--target-dir", $targetDir,
+            "--bin", "codex",
+            "--bin", "codex-code-mode-host",
+            "--bin", "codex-command-runner",
+            "--bin", "codex-windows-sandbox-setup"
+        )
+    } finally {
+        Pop-Location
+    }
 } finally {
-    Pop-Location
+    [Environment]::SetEnvironmentVariable(
+        "RUSTY_V8_ARCHIVE",
+        $previousRustyV8Archive,
+        "Process"
+    )
+    [Environment]::SetEnvironmentVariable(
+        "RUSTY_V8_SRC_BINDING_PATH",
+        $previousRustyV8Binding,
+        "Process"
+    )
 }
 
 foreach ($sourceRelativePath in $executables.Keys) {
     $builtPath = Join-Path $releaseDir $sourceRelativePath
     if (-not (Test-Path -LiteralPath $builtPath -PathType Leaf)) {
         throw "Cargo did not build $builtPath."
-    }
-
-    $installedPath = Join-Path $installDir $executables[$sourceRelativePath]
-    if (-not (Test-Path -LiteralPath $installedPath -PathType Leaf)) {
-        throw "The npm Codex package is missing $installedPath."
     }
 }
 $builtCodexPath = Join-Path $releaseDir "codex.exe"
@@ -225,19 +312,12 @@ $version = Get-CodexVersion -CodexPath $builtCodexPath
 $installSuffix = "$PID.$([Guid]::NewGuid().ToString('N'))"
 $installParent = Split-Path -Parent $installDir
 $stagingDir = Join-Path $installParent ".$target.installing.$installSuffix"
-$backupDir = Join-Path $installParent ".$target.backup.$installSuffix"
 Assert-PathWithin -Path $stagingDir -Root $installParent
-Assert-PathWithin -Path $backupDir -Root $installParent
 
 if (Test-Path -LiteralPath $stagingDir) {
     throw "Staging path already exists: $stagingDir."
 }
-if (Test-Path -LiteralPath $backupDir) {
-    throw "Backup path already exists: $backupDir."
-}
 
-$backupCreated = $false
-$replacementInstalled = $false
 try {
     Write-Step "Staging Codex $version beside the npm package"
     Copy-Item -LiteralPath $installDir -Destination $stagingDir -Recurse
@@ -257,11 +337,15 @@ try {
         throw "$stagedCodexPath reported '$stagedVersion'; expected '$version'."
     }
 
+    Assert-ExecutablesReplaceable -InstallDir $installDir -Executables $executables
+
     Write-Step "Replacing npm package at $installDir"
-    Move-Item -LiteralPath $installDir -Destination $backupDir
-    $backupCreated = $true
-    Move-Item -LiteralPath $stagingDir -Destination $installDir
-    $replacementInstalled = $true
+    foreach ($sourceRelativePath in $executables.Keys) {
+        Move-Item `
+            -LiteralPath (Join-Path $stagingDir $executables[$sourceRelativePath]) `
+            -Destination (Join-Path $installDir $executables[$sourceRelativePath]) `
+            -Force
+    }
 
     Assert-ExecutablesMatch `
         -SourceDir $releaseDir `
@@ -276,36 +360,10 @@ try {
     if ($shimVersion -cne $version) {
         throw "$codexShim reported '$shimVersion'; expected '$version'."
     }
-} catch {
-    $installFailure = $_
-    if ($backupCreated) {
-        try {
-            if ($replacementInstalled -and (Test-Path -LiteralPath $installDir)) {
-                Assert-PathWithin -Path $installDir -Root $platformPackageDir
-                Remove-Item -LiteralPath $installDir -Recurse -Force
-            }
-            if (Test-Path -LiteralPath $backupDir) {
-                Move-Item -LiteralPath $backupDir -Destination $installDir
-                $backupCreated = $false
-            }
-        } catch {
-            throw "Installing the local build failed, and restoring the npm package also failed. The backup remains at $backupDir. Original error: $installFailure"
-        }
-    }
-    throw $installFailure
 } finally {
     if (Test-Path -LiteralPath $stagingDir) {
         Assert-PathWithin -Path $stagingDir -Root $installParent
         Remove-Item -LiteralPath $stagingDir -Recurse -Force
-    }
-}
-
-if ($backupCreated -and (Test-Path -LiteralPath $backupDir)) {
-    Assert-PathWithin -Path $backupDir -Root $installParent
-    try {
-        Remove-Item -LiteralPath $backupDir -Recurse -Force
-    } catch {
-        Write-Warning "The local build is installed, and the previous npm package remains at $backupDir because it is still in use."
     }
 }
 
