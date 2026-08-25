@@ -3,3 +3,6 @@ codex-rs/hooks/schema/generated/** linguist-generated
 # SQLx checksums migration source bytes, so keep them stable across platforms.
 codex-rs/state/migrations/*.sql text eol=lf
 codex-rs/state/*_migrations/*.sql text eol=lf
+# These checksummed rusty_v8 release artifacts must retain their exact bytes.
+rusty_v8_ptrcomp_sandbox_release_*.lib.gz binary
+src_binding_ptrcomp_sandbox_release_*.rs binary
