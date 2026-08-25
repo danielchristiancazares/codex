@@ -51,46 +51,33 @@ function Assert-PathWithin {
     }
 }
 
-function Assert-PackageMatches {
+function Assert-ExecutablesMatch {
     param(
         [string]$SourceDir,
-        [string]$DestinationDir
+        [string]$DestinationDir,
+        [System.Collections.IDictionary]$Executables
     )
 
-    $sourceRoot = (Resolve-Path -LiteralPath $SourceDir).Path.TrimEnd("\")
-    $destinationRoot = (Resolve-Path -LiteralPath $DestinationDir).Path.TrimEnd("\")
-    $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
-    $destinationFiles = @(Get-ChildItem -LiteralPath $destinationRoot -Recurse -File)
-    if ($sourceFiles.Count -ne $destinationFiles.Count) {
-        throw "$DestinationDir contains $($destinationFiles.Count) files; expected $($sourceFiles.Count)."
-    }
-
-    foreach ($sourceFile in $sourceFiles) {
-        $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\")
-        $destinationPath = Join-Path $destinationRoot $relativePath
+    foreach ($sourceRelativePath in $Executables.Keys) {
+        $sourcePath = Join-Path $SourceDir $sourceRelativePath
+        $destinationPath = Join-Path $DestinationDir $Executables[$sourceRelativePath]
         if (-not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
-            throw "$DestinationDir is missing $relativePath."
+            throw "$DestinationDir is missing $($Executables[$sourceRelativePath])."
         }
-        if ((Get-FileSha256 $sourceFile.FullName) -ne (Get-FileSha256 $destinationPath)) {
-            throw "$destinationPath does not match the canonical package."
+        if ((Get-FileSha256 $sourcePath) -ne (Get-FileSha256 $destinationPath)) {
+            throw "$destinationPath does not match $sourcePath."
         }
     }
 }
 
-function Get-VerifiedCodexVersion {
-    param(
-        [string]$CodexPath,
-        [string]$ExpectedVersion
-    )
+function Get-CodexVersion {
+    param([string]$CodexPath)
 
     $reportedVersionLines = @(& $CodexPath --version)
     $exitCode = $LASTEXITCODE
     $reportedVersion = ($reportedVersionLines -join [Environment]::NewLine).Trim()
     if ($exitCode -ne 0) {
         throw "$CodexPath exited with code $exitCode."
-    }
-    if ($reportedVersion -notlike "*$ExpectedVersion*") {
-        throw "$CodexPath reported '$reportedVersion'; expected version $ExpectedVersion."
     }
 
     return $reportedVersion
@@ -137,12 +124,12 @@ $targetInfo = switch ($architecture) {
 }
 $target = $targetInfo.Target
 
-$justCommand = Get-Command just.exe -ErrorAction SilentlyContinue
-if ($null -eq $justCommand) {
-    $justCommand = Get-Command just -ErrorAction SilentlyContinue
+$cargoCommand = Get-Command cargo.exe -ErrorAction SilentlyContinue
+if ($null -eq $cargoCommand) {
+    $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
 }
-if ($null -eq $justCommand) {
-    throw "just is required to build the canonical Codex package."
+if ($null -eq $cargoCommand) {
+    throw "cargo is required to build the Codex release executables."
 }
 
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
@@ -194,50 +181,46 @@ Assert-PathWithin -Path $codexPackageDir -Root $npmRoot
 Assert-PathWithin -Path $platformPackageDir -Root $npmRoot
 Assert-PathWithin -Path $installDir -Root $platformPackageDir
 
-$packageDir = Join-Path $repoRoot "dist\codex-package-$target"
-Assert-PathWithin -Path $packageDir -Root (Join-Path $repoRoot "dist")
+$codexRsRoot = Join-Path $repoRoot "codex-rs"
+$targetDir = Join-Path $codexRsRoot "target"
+$releaseDir = Join-Path $targetDir "release"
+$executables = [ordered]@{
+    "codex.exe" = "bin\codex.exe"
+    "codex-code-mode-host.exe" = "bin\codex-code-mode-host.exe"
+    "codex-command-runner.exe" = "codex-resources\codex-command-runner.exe"
+    "codex-windows-sandbox-setup.exe" = "codex-resources\codex-windows-sandbox-setup.exe"
+}
+Assert-PathWithin -Path $releaseDir -Root $targetDir
 
-Write-Step "Building the canonical Codex package for $target"
-Push-Location $repoRoot
+Write-Step "Building Codex release executables"
+Push-Location $codexRsRoot
 try {
-    Invoke-Checked -FilePath $justCommand.Source -Arguments @(
-        "assemble-codex-package",
-        "--target", $target,
-        "--cargo-profile", "release",
-        "--package-dir", $packageDir,
-        "--force"
+    Invoke-Checked -FilePath $cargoCommand.Source -Arguments @(
+        "build",
+        "--release",
+        "--target-dir", $targetDir,
+        "--bin", "codex",
+        "--bin", "codex-code-mode-host",
+        "--bin", "codex-command-runner",
+        "--bin", "codex-windows-sandbox-setup"
     )
 } finally {
     Pop-Location
 }
 
-$metadataPath = Join-Path $packageDir "codex-package.json"
-if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
-    throw "Canonical package metadata is missing at $metadataPath."
-}
-$metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-if ($metadata.layoutVersion -ne 1 -or $metadata.variant -ne "codex" -or $metadata.target -ne $target) {
-    throw "Canonical package metadata does not describe a Codex package for $target."
-}
-$version = [string]$metadata.version
-if ([string]::IsNullOrWhiteSpace($version)) {
-    throw "Canonical package metadata does not contain a version."
-}
-
-$expectedFiles = @(
-    "codex-package.json",
-    "bin\codex.exe",
-    "bin\codex-code-mode-host.exe",
-    "codex-path\rg.exe",
-    "codex-resources\codex-command-runner.exe",
-    "codex-resources\codex-windows-sandbox-setup.exe"
-)
-foreach ($relativePath in $expectedFiles) {
-    $builtPath = Join-Path $packageDir $relativePath
+foreach ($sourceRelativePath in $executables.Keys) {
+    $builtPath = Join-Path $releaseDir $sourceRelativePath
     if (-not (Test-Path -LiteralPath $builtPath -PathType Leaf)) {
-        throw "Canonical package is missing $builtPath."
+        throw "Cargo did not build $builtPath."
+    }
+
+    $installedPath = Join-Path $installDir $executables[$sourceRelativePath]
+    if (-not (Test-Path -LiteralPath $installedPath -PathType Leaf)) {
+        throw "The npm Codex package is missing $installedPath."
     }
 }
+$builtCodexPath = Join-Path $releaseDir "codex.exe"
+$version = Get-CodexVersion -CodexPath $builtCodexPath
 
 $installSuffix = "$PID.$([Guid]::NewGuid().ToString('N'))"
 $installParent = Split-Path -Parent $installDir
@@ -257,10 +240,22 @@ $backupCreated = $false
 $replacementInstalled = $false
 try {
     Write-Step "Staging Codex $version beside the npm package"
-    Copy-Item -LiteralPath $packageDir -Destination $stagingDir -Recurse
-    Assert-PackageMatches -SourceDir $packageDir -DestinationDir $stagingDir
+    Copy-Item -LiteralPath $installDir -Destination $stagingDir -Recurse
+    foreach ($sourceRelativePath in $executables.Keys) {
+        Copy-Item `
+            -LiteralPath (Join-Path $releaseDir $sourceRelativePath) `
+            -Destination (Join-Path $stagingDir $executables[$sourceRelativePath]) `
+            -Force
+    }
+    Assert-ExecutablesMatch `
+        -SourceDir $releaseDir `
+        -DestinationDir $stagingDir `
+        -Executables $executables
     $stagedCodexPath = Join-Path $stagingDir "bin\codex.exe"
-    $null = Get-VerifiedCodexVersion -CodexPath $stagedCodexPath -ExpectedVersion $version
+    $stagedVersion = Get-CodexVersion -CodexPath $stagedCodexPath
+    if ($stagedVersion -cne $version) {
+        throw "$stagedCodexPath reported '$stagedVersion'; expected '$version'."
+    }
 
     Write-Step "Replacing npm package at $installDir"
     Move-Item -LiteralPath $installDir -Destination $backupDir
@@ -268,12 +263,19 @@ try {
     Move-Item -LiteralPath $stagingDir -Destination $installDir
     $replacementInstalled = $true
 
-    Assert-PackageMatches -SourceDir $packageDir -DestinationDir $installDir
+    Assert-ExecutablesMatch `
+        -SourceDir $releaseDir `
+        -DestinationDir $installDir `
+        -Executables $executables
     $installedCodexPath = Join-Path $installDir "bin\codex.exe"
-    $reportedVersion = Get-VerifiedCodexVersion `
-        -CodexPath $installedCodexPath `
-        -ExpectedVersion $version
-    $null = Get-VerifiedCodexVersion -CodexPath $codexShim -ExpectedVersion $version
+    $reportedVersion = Get-CodexVersion -CodexPath $installedCodexPath
+    if ($reportedVersion -cne $version) {
+        throw "$installedCodexPath reported '$reportedVersion'; expected '$version'."
+    }
+    $shimVersion = Get-CodexVersion -CodexPath $codexShim
+    if ($shimVersion -cne $version) {
+        throw "$codexShim reported '$shimVersion'; expected '$version'."
+    }
 } catch {
     $installFailure = $_
     if ($backupCreated) {
