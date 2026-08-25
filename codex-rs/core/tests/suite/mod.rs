@@ -76,6 +76,8 @@ mod hooks;
 mod hooks_mcp;
 mod image_rollout;
 mod injected_models_cache;
+#[cfg(not(target_os = "windows"))]
+mod interrupt_hooks;
 mod items;
 mod json_result;
 mod live_cli;
