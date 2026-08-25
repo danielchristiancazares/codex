@@ -10,7 +10,7 @@ use codex_protocol::protocol::HistoryPosition;
 use codex_protocol::protocol::ThreadHistoryMode;
 
 use crate::RolloutItem;
-use crate::RolloutLine;
+use crate::decode_rollout_line_slice;
 use crate::reverse_jsonl_scanner::ReverseJsonlScanner;
 use crate::reverse_jsonl_scanner::ScanOutcome;
 
@@ -65,11 +65,24 @@ pub(crate) fn ordinal_state_for_rollout(
         return Ok(RolloutOrdinalState::Legacy);
     }
 
+    let final_record_may_be_partial = !file_ends_with_newline(file)?;
     let mut scanner = ReverseJsonlScanner::new(file)?;
+    let mut is_final_record = true;
     let record = loop {
-        match scanner.scan_next::<RolloutLine>()? {
+        match scanner.scan_next_with(decode_rollout_line_slice)? {
             Some(ScanOutcome::Parsed(record)) => break record,
-            Some(ScanOutcome::Rejected(_)) => continue,
+            Some(ScanOutcome::Rejected(_)) if is_final_record && final_record_may_be_partial => {
+                is_final_record = false;
+            }
+            Some(ScanOutcome::Rejected(error)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "failed to decode complete rollout record at {}: {error}",
+                        path.display()
+                    ),
+                ));
+            }
             None => {
                 return Err(io::Error::other(format!(
                     "rollout at {} contains no valid records",
@@ -111,11 +124,14 @@ fn read_history_metadata(
         if line.trim().is_empty() {
             continue;
         }
-        let record: RolloutLine = serde_json::from_str(line.as_str()).map_err(|error| {
-            io::Error::other(format!(
-                "failed to parse first rollout record at {}: {error}",
-                path.display()
-            ))
+        let record = decode_rollout_line_slice(line.as_bytes()).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "failed to parse first rollout record at {}: {error}",
+                    path.display()
+                ),
+            )
         })?;
         let RolloutItem::SessionMeta(session_meta) = record.item else {
             return Err(io::Error::other(format!(
@@ -129,4 +145,14 @@ fn read_history_metadata(
         )));
     }
     Ok(None)
+}
+
+fn file_ends_with_newline(file: &mut File) -> io::Result<bool> {
+    if file.metadata()?.len() == 0 {
+        return Ok(true);
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut final_byte = [0];
+    std::io::Read::read_exact(file, &mut final_byte)?;
+    Ok(final_byte[0] == b'\n')
 }

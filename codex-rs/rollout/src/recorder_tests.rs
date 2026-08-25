@@ -101,7 +101,9 @@ fn read_rollout_lines(path: &Path) -> std::io::Result<Vec<RolloutLine>> {
     fs::read_to_string(path)?
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).map_err(std::io::Error::other))
+        .map(|line| {
+            crate::decode_rollout_line_slice(line.as_bytes()).map_err(std::io::Error::other)
+        })
         .collect()
 }
 
@@ -981,6 +983,34 @@ async fn resumed_paginated_rollout_continues_after_ordinal_gap() -> std::io::Res
 }
 
 #[tokio::test]
+async fn resumed_paginated_rollout_continues_after_float_bearing_item() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let rollout_path = home.path().join("rollout.jsonl");
+    write_paginated_rollout(&rollout_path, ThreadId::new(), &[1])?;
+    let token_count_line = r#"{"timestamp":"2026-07-09T00:00:02Z","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":null,"limit_name":null,"primary":{"used_percent":0.0,"window_minutes":60,"resets_at":1800000000},"secondary":{"used_percent":12.5,"window_minutes":10080,"resets_at":1800100000},"credits":null,"individual_limit":null,"spend_control_reached":null,"plan_type":null,"rate_limit_reached_type":null}}}"#;
+    let mut file = fs::OpenOptions::new().append(true).open(&rollout_path)?;
+    writeln!(file, "{token_count_line}")?;
+    drop(file);
+
+    let recorder =
+        RolloutRecorder::new(&config, RolloutRecorderParams::resume(rollout_path.clone())).await?;
+    recorder
+        .record_canonical_items(&[agent_message_item("after-resume")])
+        .await?;
+    recorder.flush().await?;
+
+    assert_eq!(
+        read_rollout_lines(&rollout_path)?
+            .iter()
+            .map(|line| line.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(0), Some(1), Some(2), Some(3)]
+    );
+    recorder.shutdown().await
+}
+
+#[tokio::test]
 async fn resumed_paginated_rollout_repairs_unsafe_tail() -> std::io::Result<()> {
     let valid_unterminated = serde_json::to_string(&RolloutLine {
         timestamp: "2026-07-09T00:00:05Z".to_string(),
@@ -1028,6 +1058,24 @@ async fn resumed_paginated_rollout_repairs_unsafe_tail() -> std::io::Result<()> 
         );
         recorder.shutdown().await?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn resumed_paginated_rollout_rejects_malformed_complete_tail() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let rollout_path = home.path().join("rollout.jsonl");
+    write_paginated_rollout(&rollout_path, ThreadId::new(), &[1])?;
+    let mut file = fs::OpenOptions::new().append(true).open(&rollout_path)?;
+    writeln!(file, "not-json")?;
+    drop(file);
+
+    let error = RolloutRecorder::new(&config, RolloutRecorderParams::resume(rollout_path))
+        .await
+        .err()
+        .expect("malformed complete record should fail resume");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     Ok(())
 }
 

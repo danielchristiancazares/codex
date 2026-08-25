@@ -64,6 +64,11 @@ pub fn decode_rollout_line(value: Value) -> serde_json::Result<RolloutLine> {
     })
 }
 
+/// Decodes one JSONL rollout record through [`decode_rollout_line`].
+pub fn decode_rollout_line_slice(bytes: &[u8]) -> serde_json::Result<RolloutLine> {
+    serde_json::from_slice(bytes).and_then(decode_rollout_line)
+}
+
 pub const SESSIONS_SUBDIR: &str = "sessions";
 pub const ARCHIVED_SESSIONS_SUBDIR: &str = "archived_sessions";
 pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock::new(|| {

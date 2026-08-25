@@ -5,6 +5,7 @@ use super::Config;
 use super::DoctorCheck;
 use super::DoctorIssue;
 use codex_history::RolloutItem;
+#[cfg(test)]
 use codex_history::RolloutLine;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
@@ -543,7 +544,7 @@ async fn thread_id_from_rollout(path: &Path) -> RolloutThreadId {
             Err(_) => continue,
         };
         if item_type == "session_meta" {
-            return match serde_json::from_str::<RolloutLine>(line.trim()) {
+            return match codex_rollout::decode_rollout_line_slice(line.trim().as_bytes()) {
                 Ok(line) => match line.item {
                     RolloutItem::SessionMeta(session_meta) => {
                         RolloutThreadId::Id(session_meta.meta.id.to_string())
@@ -560,7 +561,8 @@ async fn thread_id_from_rollout(path: &Path) -> RolloutThreadId {
             };
         }
         if !has_legacy_item {
-            has_legacy_item = serde_json::from_str::<RolloutLine>(line.trim()).is_ok();
+            has_legacy_item =
+                codex_rollout::decode_rollout_line_slice(line.trim().as_bytes()).is_ok();
         }
     }
 
@@ -1100,6 +1102,22 @@ mod tests {
         assert!(matches!(
             thread_id_from_rollout(&malformed_path).await,
             RolloutThreadId::MalformedName
+        ));
+    }
+
+    #[tokio::test]
+    async fn thread_id_from_rollout_accepts_float_bearing_legacy_record() {
+        let home = TempDir::new().expect("temp dir");
+        let thread_id = "00000000-0000-0000-0000-000000000001";
+        let path = home
+            .path()
+            .join(format!("rollout-2025-01-02T10-00-00-{thread_id}.jsonl"));
+        let token_count_line = r#"{"timestamp":"2025-01-02T10:00:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":null,"limit_name":null,"primary":{"used_percent":0.0,"window_minutes":60,"resets_at":1800000000},"secondary":{"used_percent":12.5,"window_minutes":10080,"resets_at":1800100000},"credits":null,"individual_limit":null,"spend_control_reached":null,"plan_type":null,"rate_limit_reached_type":null}}}"#;
+        std::fs::write(&path, format!("{token_count_line}\n")).expect("legacy rollout");
+
+        assert!(matches!(
+            thread_id_from_rollout(&path).await,
+            RolloutThreadId::Id(id) if id == thread_id
         ));
     }
 

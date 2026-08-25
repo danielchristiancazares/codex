@@ -52,6 +52,19 @@ fn scans_jsonl_records_from_end() -> std::io::Result<()> {
 }
 
 #[test]
+fn scans_with_the_supplied_decoder() -> std::io::Result<()> {
+    let mut scanner = ReverseJsonlScanner::new(Cursor::new(br#"{"value":"first"}"#))?;
+    let outcome = scanner.scan_next_with(|bytes| {
+        let mut record = serde_json::from_slice::<TestRecord>(bytes)?;
+        record.value.make_ascii_uppercase();
+        Ok(record)
+    })?;
+
+    assert_eq!(parsed(outcome), record("FIRST"));
+    Ok(())
+}
+
+#[test]
 fn rejects_invalid_json_and_continues_scanning() -> std::io::Result<()> {
     let input = br#"{"value":"first"}
 not-json
