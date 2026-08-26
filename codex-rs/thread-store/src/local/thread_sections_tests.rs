@@ -7,6 +7,7 @@ use crate::StoredThreadSection;
 use crate::ThreadStore;
 use crate::ThreadStoreError;
 use crate::local::test_support::test_config;
+use codex_protocol::NullableField;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -60,7 +61,7 @@ async fn local_thread_sections_require_sqlite_and_preserve_section_identity() {
         .rename_thread_section(RenameThreadSectionParams {
             section_id: section.id.clone(),
             name: "Planning".to_string(),
-            appearance: None,
+            appearance: NullableField::Omitted,
         })
         .await
         .expect("rename section");

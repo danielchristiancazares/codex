@@ -96,7 +96,6 @@ use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
@@ -604,9 +603,8 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: Option<String>,
 
-    /// Effective service tier request id preference for new turns.
-    /// `default` means the user explicitly selected standard routing.
-    pub service_tier: Option<String>,
+    /// Effective service tier preference for new turns.
+    pub service_tier: ServiceTier,
 
     /// Model used specifically for review sessions.
     pub review_model: Option<String>,
@@ -1723,6 +1721,7 @@ impl Config {
             config_layer_stack: self.config_layer_stack.clone(),
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
+            server_permission_profiles: HashMap::new(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
@@ -2551,7 +2550,6 @@ pub struct ConfigOverrides {
     /// to the configured default.
     pub persisted_permission_profile_id: Option<String>,
     pub model_provider: Option<String>,
-    pub service_tier: Option<Option<String>>,
     pub codex_self_exe: Option<PathBuf>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     pub main_execve_wrapper_exe: Option<PathBuf>,
@@ -3203,7 +3201,6 @@ impl Config {
             default_permissions: default_permissions_override,
             persisted_permission_profile_id,
             model_provider,
-            service_tier: service_tier_override,
             codex_self_exe,
             codex_linux_sandbox_exe,
             main_execve_wrapper_exe,
@@ -3817,20 +3814,7 @@ impl Config {
 
         let model = model.or(cfg.model);
         let notices = cfg.notice.unwrap_or_default();
-        let service_tier = match service_tier_override {
-            Some(Some(service_tier)) => Some(service_tier),
-            Some(None) => Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
-            None => cfg.service_tier,
-        };
-        let service_tier = service_tier.and_then(|service_tier| {
-            match ServiceTier::from_request_value(&service_tier) {
-                Some(ServiceTier::Fast) => features
-                    .enabled(Feature::FastMode)
-                    .then(|| ServiceTier::Fast.request_value().to_string()),
-                Some(ServiceTier::Flex) => Some(ServiceTier::Flex.request_value().to_string()),
-                None => Some(service_tier),
-            }
-        });
+        let service_tier = cfg.service_tier;
 
         let compact_prompt = compact_prompt.or(cfg.compact_prompt).and_then(|value| {
             let trimmed = value.trim();

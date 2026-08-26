@@ -34,6 +34,7 @@ use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::PatchApplyStatus;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_app_server_protocol::RawResponseCompletedNotification;
@@ -75,6 +76,7 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::ImageDetail;
@@ -689,7 +691,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
 }
 
 #[tokio::test]
-async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
+async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
     let server = responses::start_mock_server().await;
     let body = responses::sse(vec![
         responses::ev_response_created("resp-1"),
@@ -705,7 +707,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
         .iter()
         .find(|preset| preset.show_in_picker && !preset.service_tiers.is_empty())
         .expect("bundled model catalog should include a picker model with service tiers");
-    let service_tier_id = service_tier_model.service_tiers[0].id.clone();
+    let service_tier = service_tier_model.service_tiers[0].id;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -724,7 +726,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
             request_id,
             params: TurnStartParams {
                 thread_id: thread.id,
-                service_tier: Some(Some(service_tier_id.clone())),
+                service_tier,
                 input: vec![V2UserInput::Text {
                     text: "Hello".to_string(),
                     text_elements: Vec::new(),
@@ -741,7 +743,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
 
     assert_eq!(
         response_mock.single_request().body_json()["service_tier"],
-        json!(service_tier_id)
+        json!(service_tier)
     );
 
     Ok(())
@@ -2690,7 +2692,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 model: Some("mock-model".to_string()),
                 effort: Some(ReasoningEffort::Medium),
                 summary: Some(ReasoningSummary::Auto),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 personality: None,
                 output_schema: None,
                 collaboration_mode: None,
@@ -2733,7 +2735,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 model: Some("mock-model".to_string()),
                 effort: Some(ReasoningEffort::Medium),
                 summary: Some(ReasoningSummary::Auto),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 personality: None,
                 output_schema: None,
                 collaboration_mode: None,
@@ -3792,8 +3794,8 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected(
                     codex_app_server_protocol::ThreadSourceKind::SubAgentThreadSpawn,
                 ]),
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,

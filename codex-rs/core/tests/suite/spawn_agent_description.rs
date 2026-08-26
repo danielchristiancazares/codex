@@ -11,6 +11,7 @@ use codex_login::CodexAuth;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelServiceTier;
@@ -101,7 +102,7 @@ fn test_model_info(
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers,
-        default_service_tier: None,
+        default_service_tier: Default::default(),
         upgrade: None,
         model_messages: None,
         include_skills_usage_instructions: false,
@@ -172,7 +173,7 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
                         },
                     ],
                     vec![ModelServiceTier {
-                        id: "priority".to_string(),
+                        id: ServiceTier::Fast,
                         name: "Fast".to_string(),
                         description: "1.5x speed, increased usage".to_string(),
                     }],
@@ -244,7 +245,7 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
         "expected default reasoning effort in spawn_agent description: {description:?}"
     );
     assert!(
-        description.contains("Service tiers: priority."),
+        description.contains("Service tiers: fast."),
         "expected service tier guidance in spawn_agent description: {description:?}"
     );
     assert!(

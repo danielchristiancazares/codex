@@ -4,6 +4,7 @@
 use super::session::Session;
 use super::session::SessionSettingsUpdate;
 use crate::config::ConstraintResult;
+use codex_protocol::NullableField;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
@@ -60,10 +61,11 @@ pub(super) async fn prepare_update(
             let state = session.state.lock().await;
             // Model and reasoning effort live in CollaborationMode settings today, so
             // partial thread-settings updates refresh those fields on the active mode.
-            state
-                .session_configuration
-                .collaboration_mode
-                .with_updates(model, effort, /*developer_instructions*/ None)
+            state.session_configuration.collaboration_mode.with_updates(
+                model,
+                effort,
+                /*developer_instructions*/ NullableField::Omitted,
+            )
         }
     };
     SessionSettingsUpdate {

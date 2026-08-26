@@ -501,7 +501,7 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         priority,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: Default::default(),
         upgrade: None,
         model_messages: Some(ModelMessages {
             instructions_template: Some("base instructions".to_string()),

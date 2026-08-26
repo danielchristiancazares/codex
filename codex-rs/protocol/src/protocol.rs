@@ -15,7 +15,9 @@ use std::time::Duration;
 use strum_macros::EnumIter;
 
 use crate::AgentPath;
+use crate::NullableField;
 use crate::ResponseItemId;
+use crate::SanitizedGitUrl;
 use crate::SessionId;
 use crate::ThreadId;
 use crate::approvals::ElicitationRequestEvent;
@@ -26,6 +28,7 @@ use crate::config_types::ModeKind;
 use crate::config_types::MultiAgentMode;
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use crate::config_types::ServiceTier;
 use crate::config_types::WindowsSandboxLevel;
 use crate::dynamic_tools::DynamicToolCallOutputContentItem;
 use crate::dynamic_tools::DynamicToolCallRequest;
@@ -239,7 +242,7 @@ pub struct ConversationStartParams {
     pub realtime_start_instructions: Option<String>,
     /// Developer instructions given to Codex when this realtime session ends.
     pub realtime_end_instructions: Option<String>,
-    pub prompt: Option<Option<String>>,
+    pub prompt: NullableField<String>,
     pub realtime_session_id: Option<String>,
     pub transport: Option<ConversationStartTransport>,
     /// Overrides the configured realtime protocol version for this session only.
@@ -500,19 +503,13 @@ pub struct ThreadSettingsOverrides {
     pub model: Option<String>,
 
     /// Updated reasoning effort (honored only for reasoning-capable models).
-    ///
-    /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear the
-    /// effort, or `None` to leave the existing value unchanged.
-    pub effort: Option<Option<ReasoningEffortConfig>>,
+    pub effort: NullableField<ReasoningEffortConfig>,
 
     /// Updated reasoning summary preference (honored only for reasoning-capable models).
     pub summary: Option<ReasoningSummaryConfig>,
 
     /// Updated service tier preference for future turns.
-    ///
-    /// Use `Some(Some(_))` to set a specific tier, `Some(None)` to clear the
-    /// preference, or `None` to leave the existing value unchanged.
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: ServiceTier,
 
     /// EXPERIMENTAL - set a pre-set collaboration mode.
     /// Takes precedence over model, effort, and developer instructions if set.
@@ -2050,8 +2047,9 @@ pub struct ThreadSettingsAppliedEvent {
 pub struct ThreadSettingsSnapshot {
     pub model: String,
     pub model_provider_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
@@ -3159,8 +3157,13 @@ pub struct GitInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Repository URL (if available from remote)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub repository_url: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::sanitized_git_url::deserialize_optional_sanitized_git_url",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub repository_url: Option<SanitizedGitUrl>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -3690,8 +3693,9 @@ pub struct SessionConfiguredEvent {
 
     pub model_provider_id: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
 
     /// When to escalate for approval for execution
     pub approval_policy: AskForApproval,
@@ -3752,7 +3756,8 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             thread_name: Option<String>,
             model: String,
             model_provider_id: String,
-            service_tier: Option<String>,
+            #[serde(default)]
+            service_tier: ServiceTier,
             approval_policy: AskForApproval,
             #[serde(default)]
             approvals_reviewer: ApprovalsReviewer,
@@ -5862,7 +5867,7 @@ mod tests {
                 thread_name: None,
                 model: "codex-mini-latest".to_string(),
                 model_provider_id: "openai".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy: AskForApproval::Never,
                 approvals_reviewer: ApprovalsReviewer::User,
                 permission_profile: permission_profile.clone(),

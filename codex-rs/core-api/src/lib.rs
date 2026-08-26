@@ -111,6 +111,7 @@ pub use codex_protocol::config_types::AltScreenMode;
 pub use codex_protocol::config_types::ApprovalsReviewer;
 pub use codex_protocol::config_types::AutoCompactTokenLimitScope;
 pub use codex_protocol::config_types::CollaborationModeMask;
+pub use codex_protocol::config_types::ServiceTier;
 pub use codex_protocol::config_types::ShellEnvironmentPolicy;
 pub use codex_protocol::config_types::WebSearchMode;
 pub use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;

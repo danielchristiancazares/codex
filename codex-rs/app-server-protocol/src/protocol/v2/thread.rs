@@ -1,6 +1,7 @@
 use super::ActivePermissionProfile;
 use super::ApprovalsReviewer;
 use super::AskForApproval;
+use super::NullableField;
 use super::SandboxMode;
 use super::SandboxPolicy;
 use super::Thread;
@@ -23,6 +24,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 pub use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 pub use codex_protocol::dynamic_tools::DynamicToolNamespaceSpec;
 pub use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
@@ -66,14 +68,9 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.allowProviderModelFallback")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_provider_model_fallback: bool,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -179,7 +176,9 @@ pub struct ThreadStartResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
@@ -243,16 +242,10 @@ pub struct ThreadSettingsUpdateParams {
     /// Override the model for subsequent turns.
     #[ts(optional = nullable)]
     pub model: Option<String>,
-    /// Override the service tier for subsequent turns. `null` clears the
-    /// current service tier; omission leaves it unchanged.
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    /// Service tier for subsequent turns.
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     /// Override the reasoning effort for subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,
@@ -291,7 +284,9 @@ pub struct ThreadSettings {
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub effort: Option<ReasoningEffort>,
     pub summary: Option<ReasoningSummary>,
     pub collaboration_mode: CollaborationMode,
@@ -356,14 +351,9 @@ pub struct ThreadResumeParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -412,7 +402,9 @@ pub struct ThreadResumeResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
@@ -544,14 +536,9 @@ pub struct ThreadForkParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -604,7 +591,9 @@ pub struct ThreadForkResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
@@ -818,14 +807,9 @@ pub struct ThreadGoalSetParams {
     pub objective: Option<String>,
     #[ts(optional = nullable)]
     pub status: Option<ThreadGoalStatus>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "number | null")]
-    pub token_budget: Option<Option<i64>>,
+    pub token_budget: NullableField<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -993,34 +977,19 @@ pub struct ThreadMetadataUpdateParams {
 pub struct ThreadMetadataGitInfoUpdateParams {
     /// Omit to leave the stored commit unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "string | null")]
-    pub sha: Option<Option<String>>,
+    pub sha: NullableField<String>,
     /// Omit to leave the stored branch unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "string | null")]
-    pub branch: Option<Option<String>>,
+    pub branch: NullableField<String>,
     /// Omit to leave the stored origin URL unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "string | null")]
-    pub origin_url: Option<Option<String>>,
+    pub origin_url: NullableField<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -1319,15 +1288,10 @@ pub struct ThreadSectionUpdateParams {
     /// The updated user-visible name of the section.
     pub name: String,
     /// Omit to preserve appearance, use `null` to clear it, or provide a replacement.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[schemars(with = "Option<ThreadSectionAppearance>")]
     #[ts(optional = nullable, as = "Option<ThreadSectionAppearance>")]
-    pub appearance: Option<Option<ThreadSectionAppearance>>,
+    pub appearance: NullableField<ThreadSectionAppearance>,
 }
 
 /// The independently persisted section after its name is updated.
@@ -1383,25 +1347,15 @@ pub struct ThreadListParams {
     pub archived: Option<bool>,
     /// Omit to include every section, set to `null` for unsectioned threads,
     /// or provide a section ID to return only threads in that section.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "string | null")]
-    pub section_id: Option<Option<String>>,
+    pub section_id: NullableField<String>,
     /// Omit to include every project, set to null for unassigned threads,
     /// or provide a project ID to return only threads in that project.
     #[experimental("thread/list.projectId")]
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable, type = "string | null")]
-    pub project_id: Option<Option<String>>,
+    pub project_id: NullableField<String>,
     /// Optional cwd filter or filters; when set, only threads whose session cwd
     /// exactly matches one of these paths are returned.
     #[ts(optional = nullable, type = "string | Array<string> | null")]

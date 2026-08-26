@@ -10,6 +10,7 @@ use std::sync::atomic::Ordering;
 
 use chrono::DateTime;
 use chrono::Utc;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -173,8 +174,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: Some(ThreadRelationFilter::DirectChildrenOf(parent_thread_id)),
@@ -202,8 +203,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: Some(ThreadRelationFilter::DescendantsOf(parent_thread_id)),
@@ -231,8 +232,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: Some(Some(codex_state::PINNED_THREAD_SECTION_ID.to_string())),
-                project_id: None,
+                section: NullableField::Value(codex_state::PINNED_THREAD_SECTION_ID.to_string()),
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: Some(ThreadRelationFilter::DescendantsOf(parent_thread_id)),
@@ -260,8 +261,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: Some(None),
-                project_id: None,
+                section: NullableField::Null,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: Some(ThreadRelationFilter::DescendantsOf(parent_thread_id)),
@@ -403,7 +404,7 @@ mod tests {
             UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: Some(Some("renamed".to_string())),
+                    name: NullableField::Value("renamed".to_string()),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -708,7 +709,7 @@ impl InMemoryThreadStore {
         &self,
         params: UpdateThreadMetadataParams,
     ) -> ThreadStoreResult<StoredThread> {
-        if params.patch.project_id.is_some() {
+        if params.patch.project_id.is_present() {
             return Err(ThreadStoreError::Unsupported {
                 operation: "projects",
             });
@@ -720,8 +721,14 @@ impl InMemoryThreadStore {
                 thread_id: params.thread_id,
             });
         }
-        if let Some(name) = params.patch.name.clone() {
-            state.names.insert(params.thread_id, name);
+        match params.patch.name.clone() {
+            NullableField::Omitted => {}
+            NullableField::Null => {
+                state.names.insert(params.thread_id, None);
+            }
+            NullableField::Value(name) => {
+                state.names.insert(params.thread_id, Some(name));
+            }
         }
         state
             .metadata_updates
@@ -952,10 +959,13 @@ impl ThreadStore for InMemoryThreadStore {
                 }
                 None => {}
             }
-            if let Some(section) = params.section.as_ref() {
-                page.items.retain(|thread| {
-                    thread.section.as_ref().map(|section| section.id.as_str()) == section.as_deref()
-                });
+            match params.section.as_ref() {
+                NullableField::Omitted => {}
+                NullableField::Null => page.items.retain(|thread| thread.section.is_none()),
+                NullableField::Value(section_id) => page.items.retain(|thread| {
+                    thread.section.as_ref().map(|section| section.id.as_str())
+                        == Some(section_id.as_str())
+                }),
             }
             if params.sort_key == ThreadSortKey::SectionPosition {
                 page.items.sort_by_key(|thread| {
@@ -1048,9 +1058,10 @@ fn stored_thread_from_state(
             .and_then(|metadata| metadata.model_provider.clone())
             .unwrap_or_else(|| "test".to_string()),
         model: metadata.and_then(|metadata| metadata.model.clone()),
-        reasoning_effort: metadata
-            .and_then(|metadata| metadata.reasoning_effort.clone())
-            .flatten(),
+        reasoning_effort: metadata.and_then(|metadata| match &metadata.reasoning_effort {
+            NullableField::Value(reasoning_effort) => Some(reasoning_effort.clone()),
+            NullableField::Omitted | NullableField::Null => None,
+        }),
         created_at: metadata
             .and_then(|metadata| metadata.created_at)
             .unwrap_or_else(Utc::now),
@@ -1087,12 +1098,26 @@ fn stored_thread_from_state(
             .and_then(|metadata| metadata.source.clone())
             .unwrap_or_else(|| created.source.clone()),
         history_mode: created.history_mode,
-        thread_source: metadata
-            .and_then(|metadata| metadata.thread_source.clone())
-            .unwrap_or_else(|| created.thread_source.clone()),
-        agent_nickname: metadata.and_then(|metadata| metadata.agent_nickname.clone().flatten()),
-        agent_role: metadata.and_then(|metadata| metadata.agent_role.clone().flatten()),
-        agent_path: metadata.and_then(|metadata| metadata.agent_path.clone().flatten()),
+        thread_source: metadata.map_or_else(
+            || created.thread_source.clone(),
+            |metadata| match &metadata.thread_source {
+                NullableField::Omitted => created.thread_source.clone(),
+                NullableField::Null => None,
+                NullableField::Value(thread_source) => Some(thread_source.clone()),
+            },
+        ),
+        agent_nickname: metadata.and_then(|metadata| match &metadata.agent_nickname {
+            NullableField::Value(agent_nickname) => Some(agent_nickname.clone()),
+            NullableField::Omitted | NullableField::Null => None,
+        }),
+        agent_role: metadata.and_then(|metadata| match &metadata.agent_role {
+            NullableField::Value(agent_role) => Some(agent_role.clone()),
+            NullableField::Omitted | NullableField::Null => None,
+        }),
+        agent_path: metadata.and_then(|metadata| match &metadata.agent_path {
+            NullableField::Value(agent_path) => Some(agent_path.clone()),
+            NullableField::Omitted | NullableField::Null => None,
+        }),
         git_info: metadata.and_then(git_info_from_patch),
         approval_mode: metadata
             .and_then(|metadata| metadata.approval_mode)
@@ -1119,9 +1144,18 @@ fn history_mode_from_state(
 
 fn git_info_from_patch(patch: &ThreadMetadataPatch) -> Option<codex_protocol::protocol::GitInfo> {
     let git_info = patch.git_info.as_ref()?;
-    let sha = git_info.sha.clone().flatten();
-    let branch = git_info.branch.clone().flatten();
-    let origin_url = git_info.origin_url.clone().flatten();
+    let sha = match &git_info.sha {
+        NullableField::Value(sha) => Some(sha.clone()),
+        NullableField::Omitted | NullableField::Null => None,
+    };
+    let branch = match &git_info.branch {
+        NullableField::Value(branch) => Some(branch.clone()),
+        NullableField::Omitted | NullableField::Null => None,
+    };
+    let origin_url = match &git_info.origin_url {
+        NullableField::Value(origin_url) => Some(origin_url.clone()),
+        NullableField::Omitted | NullableField::Null => None,
+    };
     if sha.is_none() && branch.is_none() && origin_url.is_none() {
         return None;
     }

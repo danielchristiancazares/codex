@@ -14,6 +14,8 @@ use crate::export::write_json_schema;
 use crate::protocol::v1;
 use crate::protocol::v2;
 use codex_experimental_api_macros::ExperimentalApi;
+#[cfg(test)]
+use codex_protocol::NullableField;
 use serde::Deserialize;
 use serde::Serialize;
 use strum_macros::Display;
@@ -1946,6 +1948,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::account::PlanType;
     use codex_protocol::config_types::MultiAgentMode;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::CodexResponseHandoffMode;
@@ -2393,7 +2396,7 @@ mod tests {
                 thread_id: "goal-thread".to_string(),
                 objective: Some("ship it".to_string()),
                 status: None,
-                token_budget: None,
+                token_budget: NullableField::Omitted,
             },
         };
         assert_eq!(
@@ -3098,7 +3101,7 @@ mod tests {
                 },
                 model: "gpt-5".to_string(),
                 model_provider: "openai".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 cwd,
                 runtime_workspace_roots: Vec::new(),
                 instruction_sources: vec![
@@ -3155,7 +3158,6 @@ mod tests {
                     },
                     "model": "gpt-5",
                     "modelProvider": "openai",
-                    "serviceTier": null,
                     "cwd": absolute_path_string("tmp"),
                     "runtimeWorkspaceRoots": [],
                     "instructionSources": [absolute_path_string("tmp/AGENTS.md")],
@@ -3869,7 +3871,7 @@ mod tests {
                 ]),
                 realtime_start_instructions: Some("Use realtime output channels.".to_string()),
                 realtime_end_instructions: Some("Resume normal text responses.".to_string()),
-                prompt: Some(Some("You are on a call".to_string())),
+                prompt: NullableField::Value("You are on a call".to_string()),
                 realtime_session_id: Some("sess_456".to_string()),
                 transport: None,
                 version: Some(RealtimeConversationVersion::V3),
@@ -3939,7 +3941,7 @@ mod tests {
                 initial_items: None,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: None,
+                prompt: NullableField::Omitted,
                 realtime_session_id: None,
                 transport: None,
                 version: None,
@@ -3991,7 +3993,7 @@ mod tests {
                 initial_items: None,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: Some(None),
+                prompt: NullableField::Null,
                 realtime_session_id: None,
                 transport: None,
                 version: None,
@@ -4243,7 +4245,7 @@ mod tests {
                 initial_items: None,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: Some(Some("You are on a call".to_string())),
+                prompt: NullableField::Value("You are on a call".to_string()),
                 realtime_session_id: None,
                 transport: None,
                 version: None,
@@ -4262,7 +4264,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 objective: Some("ship goal mode".to_string()),
                 status: Some(v2::ThreadGoalStatus::Active),
-                token_budget: Some(Some(10_000)),
+                token_budget: NullableField::Value(10_000),
             },
         };
         let get_request = ClientRequest::ThreadGoalGet {
@@ -4336,7 +4338,7 @@ mod tests {
                     active_permission_profile: None,
                     model: "gpt-5.4".to_string(),
                     model_provider: "openai".to_string(),
-                    service_tier: None,
+                    service_tier: ServiceTier::Default,
                     effort: None,
                     summary: None,
                     collaboration_mode: codex_protocol::config_types::CollaborationMode {

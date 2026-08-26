@@ -123,6 +123,7 @@ mod thread_processor_behavior_tests {
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::CollaborationMode;
     use codex_protocol::config_types::ModeKind;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::config_types::Settings;
     use codex_protocol::models::PermissionProfile;
     use codex_protocol::openai_models::ReasoningEffort;
@@ -662,7 +663,7 @@ mod thread_processor_behavior_tests {
             path: None,
             model: None,
             model_provider: None,
-            service_tier: Some(Some("priority".to_string())),
+            service_tier: ServiceTier::Fast,
             cwd: None,
             runtime_workspace_roots: None,
             approval_policy: None,
@@ -679,7 +680,7 @@ mod thread_processor_behavior_tests {
         let config_snapshot = ThreadConfigSnapshot {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
-            service_tier: Some("flex".to_string()),
+            service_tier: ServiceTier::Flex,
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
@@ -709,7 +710,7 @@ mod thread_processor_behavior_tests {
 
         assert_eq!(
             collect_resume_override_mismatches(&request, &config_snapshot),
-            vec!["service_tier requested=Some(\"priority\") active=Some(\"flex\")".to_string()]
+            vec!["service_tier requested=fast active=flex".to_string()]
         );
     }
 

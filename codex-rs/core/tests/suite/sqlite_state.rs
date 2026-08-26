@@ -9,6 +9,7 @@ use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_login::CodexAuth;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
@@ -135,7 +136,7 @@ async fn staged_metadata_is_persisted_on_first_turn() -> Result<()> {
         .stage_pending_thread_metadata(
             thread_id,
             ThreadMetadataPatch {
-                name: Some(Some("staged-name".to_string())),
+                name: NullableField::Value("staged-name".to_string()),
                 model_provider: Some("staged-provider".to_string()),
                 ..Default::default()
             },

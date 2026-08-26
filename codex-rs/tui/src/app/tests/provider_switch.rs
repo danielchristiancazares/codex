@@ -195,8 +195,8 @@ requires_openai_auth = true
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some(SOURCE_MODEL.to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::High)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::High),
+            developer_instructions: NullableField::Omitted,
         });
     app.chat_widget
         .apply_external_edit("preserve this draft".to_string());

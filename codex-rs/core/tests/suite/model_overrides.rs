@@ -1,3 +1,4 @@
+use codex_protocol::NullableField;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
@@ -28,7 +29,7 @@ async fn thread_settings_update_does_not_persist_when_config_exists() {
         &codex,
         codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some("o3".to_string()),
-            effort: Some(Some(ReasoningEffort::High)),
+            effort: NullableField::Value(ReasoningEffort::High),
             ..Default::default()
         },
     )
@@ -60,7 +61,7 @@ async fn thread_settings_update_does_not_create_config_file() {
         &codex,
         codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some("o3".to_string()),
-            effort: Some(Some(ReasoningEffort::Medium)),
+            effort: NullableField::Value(ReasoningEffort::Medium),
             ..Default::default()
         },
     )

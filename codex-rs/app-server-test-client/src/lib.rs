@@ -49,6 +49,7 @@ use codex_app_server_protocol::LoginAccountResponse;
 use codex_app_server_protocol::LogoutAccountResponse;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
@@ -1308,8 +1309,8 @@ async fn thread_list(endpoint: &Endpoint, config_overrides: &[String], limit: u3
             model_providers: None,
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             parent_thread_id: None,
             ancestor_thread_id: None,
             cwd: None,

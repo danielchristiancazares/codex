@@ -34,6 +34,7 @@ impl MockExecProcess {
             .unwrap_or(ReadResponse {
                 chunks: Vec::new(),
                 next_seq: 1,
+                output_lost: false,
                 exited: false,
                 exit_code: None,
                 closed: false,
@@ -104,7 +105,7 @@ pub(super) async fn remote_process(
         sandbox_type: Some(sandbox_type),
     };
 
-    UnifiedExecProcess::from_exec_server_started(started)
+    UnifiedExecProcess::from_exec_server_started(started, /*artifact_bytes_cap*/ None)
         .await
         .expect("remote process should start")
 }

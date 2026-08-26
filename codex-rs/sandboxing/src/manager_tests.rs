@@ -596,51 +596,47 @@ fn transform_for_direct_spawn_windows_materializes_inner_helper() {
         )
         .expect("transform for direct spawn");
 
-    let separator_index = exec_request
-        .command
-        .iter()
-        .position(|arg| arg == "--")
-        .expect("wrapper argv separator");
-    let materialized_helper = std::path::PathBuf::from(&exec_request.command[separator_index + 1]);
+    let payload_len = u32::from_le_bytes(
+        exec_request.stdin_prelude[4..8]
+            .try_into()
+            .expect("control frame length"),
+    ) as usize;
+    assert_eq!(payload_len, exec_request.stdin_prelude.len() - 8);
+    let wrapper_request: serde_json::Value =
+        serde_json::from_slice(&exec_request.stdin_prelude[8..]).expect("wrapper request");
+    let inner_command: Vec<String> =
+        serde_json::from_value(wrapper_request["command"].clone()).expect("inner wrapper command");
+    let materialized_helper = std::path::PathBuf::from(&inner_command[0]);
     assert_eq!(exec_request.sandbox, SandboxType::None);
     assert_eq!(
-        exec_request.command.first(),
-        Some(&configured_helper.display().to_string())
+        exec_request.command,
+        vec![
+            configured_helper.display().to_string(),
+            "--run-as-windows-sandbox".to_string(),
+        ]
     );
-    assert!(
-        exec_request
-            .command
-            .iter()
-            .any(|arg| arg == "--run-as-windows-sandbox")
-    );
-    assert!(
-        exec_request
-            .command
-            .iter()
-            .any(|arg| arg == "--preserve-proxy-settings")
-    );
-    assert!(
-        exec_request
-            .command
-            .iter()
-            .any(|arg| arg == "--deny-read-paths-json")
-    );
+    assert_eq!(inner_command[1], "--codex-run-as-fs-helper");
+    let encoded_workspace_roots: Vec<std::path::PathBuf> =
+        serde_json::from_value(wrapper_request["workspace_roots"].clone())
+            .expect("wrapper workspace roots");
     assert_eq!(
-        exec_request.command[separator_index + 2],
-        "--codex-run-as-fs-helper"
-    );
-    assert_eq!(
-        exec_request
-            .command
-            .windows(2)
-            .filter_map(|args| {
-                (args[0] == "--workspace-root").then_some(std::path::PathBuf::from(&args[1]))
-            })
-            .collect::<Vec<_>>(),
+        encoded_workspace_roots,
         workspace_roots
             .iter()
             .map(|root| root.as_path().to_path_buf())
             .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        wrapper_request["managed_network"],
+        serde_json::json!({
+            "type": "disabled",
+            "proxy_settings_mode": "preserve",
+        })
+    );
+    assert!(
+        wrapper_request["deny_read_paths_override"]
+            .as_array()
+            .is_some_and(|paths| !paths.is_empty())
     );
     assert_eq!(
         materialized_helper

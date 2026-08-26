@@ -3,6 +3,8 @@ use super::*;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
 use codex_agent_extension::AgentRunner;
+use codex_protocol::NullableField;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -116,7 +118,7 @@ struct ThreadSettingsBuildParams {
     sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
     permissions: Option<String>,
     model: Option<String>,
-    service_tier: Option<Option<String>>,
+    service_tier: ServiceTier,
     effort: Option<ReasoningEffort>,
     summary: Option<ReasoningSummary>,
     collaboration_mode: Option<CollaborationMode>,
@@ -342,7 +344,10 @@ impl TurnRequestProcessor {
             && let Some(instructions) = builtin_collaboration_mode_presets()
                 .into_iter()
                 .find(|preset| preset.mode == Some(collaboration_mode.mode))
-                .and_then(|preset| preset.developer_instructions.flatten())
+                .and_then(|preset| match preset.developer_instructions {
+                    NullableField::Value(instructions) => Some(instructions),
+                    NullableField::Omitted | NullableField::Null => None,
+                })
                 .filter(|instructions| !instructions.is_empty())
         {
             collaboration_mode.settings.developer_instructions = Some(instructions);
@@ -682,7 +687,6 @@ impl TurnRequestProcessor {
 
         let collaboration_mode =
             collaboration_mode.map(|mode| self.normalize_collaboration_mode(mode));
-        let has_environment_override = environments.is_some();
         // `thread/settings/update` only acknowledges that the update was queued.
         // Clients that send dependent partial updates should wait for
         // `thread/settings/updated` or combine the fields in one request.
@@ -691,18 +695,6 @@ impl TurnRequestProcessor {
         } else {
             None
         };
-
-        let has_any_overrides = has_environment_override
-            || approval_policy.is_some()
-            || approvals_reviewer.is_some()
-            || sandbox_policy.is_some()
-            || permissions.is_some()
-            || model.is_some()
-            || service_tier.is_some()
-            || effort.is_some()
-            || summary.is_some()
-            || collaboration_mode.is_some()
-            || personality.is_some();
 
         let approval_policy =
             approval_policy.map(codex_app_server_protocol::AskForApproval::to_core);
@@ -752,31 +744,30 @@ impl TurnRequestProcessor {
             } else {
                 (None, None, None)
             };
-        let effort = effort.map(Some);
+        let effort = match effort {
+            Some(effort) => NullableField::Value(effort),
+            None => NullableField::Omitted,
+        };
 
-        if has_any_overrides {
-            thread
-                .preview_thread_settings_overrides(CodexThreadSettingsOverrides {
-                    environments: environments.clone(),
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy: sandbox_policy.clone(),
-                    permission_profile: permission_profile.clone(),
-                    active_permission_profile: active_permission_profile.clone(),
-                    profile_workspace_roots: profile_workspace_roots.clone(),
-                    windows_sandbox_level: None,
-                    model: model.clone(),
-                    effort: effort.clone(),
-                    summary,
-                    service_tier: service_tier.clone(),
-                    collaboration_mode: collaboration_mode.clone(),
-                    personality,
-                })
-                .await
-                .map_err(|err| {
-                    invalid_request(format!("invalid thread settings override: {err}"))
-                })?;
-        }
+        thread
+            .preview_thread_settings_overrides(CodexThreadSettingsOverrides {
+                environments: environments.clone(),
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy: sandbox_policy.clone(),
+                permission_profile: permission_profile.clone(),
+                active_permission_profile: active_permission_profile.clone(),
+                profile_workspace_roots: profile_workspace_roots.clone(),
+                windows_sandbox_level: None,
+                model: model.clone(),
+                effort: effort.clone(),
+                summary,
+                service_tier,
+                collaboration_mode: collaboration_mode.clone(),
+                personality,
+            })
+            .await
+            .map_err(|err| invalid_request(format!("invalid thread settings override: {err}")))?;
 
         Ok(codex_protocol::protocol::ThreadSettingsOverrides {
             environments,

@@ -83,8 +83,8 @@ impl App {
         *collaboration_mode = collaboration_mode.as_ref().map(|mode| {
             mode.with_updates(
                 Some(model),
-                Some(Some(ReasoningEffortConfig::Low)),
-                /*developer_instructions*/ None,
+                NullableField::Value(ReasoningEffortConfig::Low),
+                /*developer_instructions*/ NullableField::Omitted,
             )
         });
 

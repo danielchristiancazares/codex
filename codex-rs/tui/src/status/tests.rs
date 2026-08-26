@@ -40,6 +40,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::built_in_model_providers;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ReasoningSummary;
@@ -265,7 +266,7 @@ fn permissions_text_for(config: &Config) -> Option<String> {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     render_lines(&composite.display_lines(/*width*/ 80))
         .iter()
@@ -330,7 +331,7 @@ async fn status_snapshot_includes_reasoning_details() {
     let model_slug = get_model_offline_for_tests(config.model.as_deref());
     let token_info = token_info_for(&model_slug, &config, &usage);
 
-    let reasoning_effort_override = Some(Some(ReasoningEffort::High));
+    let reasoning_effort_override = NullableField::Value(ReasoningEffort::High);
     let composite = new_status_output(
         &config,
         account_display.as_ref(),
@@ -410,7 +411,7 @@ async fn status_snapshot_shows_chatgpt_plan_without_email() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let sanitized =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 80))).join("\n");
@@ -720,7 +721,7 @@ async fn status_snapshot_shows_active_user_defined_profile() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -764,7 +765,7 @@ async fn status_model_provider_shows_usage_link_for_openai_auth_proxy() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
     );
@@ -829,7 +830,7 @@ async fn status_snapshot_shows_copilot_without_runtime_url_or_chatgpt_account() 
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
     );
@@ -875,7 +876,7 @@ async fn status_snapshot_shows_auto_review_permissions() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -975,7 +976,7 @@ async fn status_snapshot_includes_forked_from() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1040,7 +1041,7 @@ async fn status_snapshot_includes_monthly_limit() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1105,7 +1106,7 @@ async fn status_snapshot_includes_enterprise_monthly_credit_limit() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 92));
     if cfg!(windows) {
@@ -1186,7 +1187,7 @@ async fn status_snapshot_uses_generic_limit_labels_for_unsupported_windows() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1239,7 +1240,7 @@ async fn status_snapshot_shows_unlimited_credits() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120));
     assert!(
@@ -1291,7 +1292,7 @@ async fn status_snapshot_shows_positive_credits() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120));
     assert!(
@@ -1350,7 +1351,7 @@ async fn status_snapshot_shows_available_credits_without_display_balance() {
             captured_at,
             &model_slug,
             /*collaboration_mode*/ None,
-            /*reasoning_effort_override*/ None,
+            /*reasoning_effort_override*/ NullableField::Omitted,
         );
         let rendered = render_lines(&composite.display_lines(/*width*/ 120));
         assert!(
@@ -1403,7 +1404,7 @@ async fn status_snapshot_respects_unlimited_without_has_credits_flag() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120));
     assert!(
@@ -1450,7 +1451,7 @@ async fn status_card_token_usage_excludes_cached_tokens() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120));
 
@@ -1501,7 +1502,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
 
     let model_slug = get_model_offline_for_tests(config.model.as_deref());
     let token_info = token_info_for(&model_slug, &config, &usage);
-    let reasoning_effort_override = Some(Some(ReasoningEffort::High));
+    let reasoning_effort_override = NullableField::Value(ReasoningEffort::High);
     let composite = new_status_output(
         &config,
         account_display.as_ref(),
@@ -1556,7 +1557,7 @@ async fn status_snapshot_truncates_halfwidth_kana_in_narrow_terminal() {
         now,
         "ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-model",
         Some("ｶﾞﾊﾟ collaboration mode"),
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered_lines = render_lines(&composite.display_lines(/*width*/ 42));
     let sanitized = sanitize_directory(rendered_lines).join("\n");
@@ -1600,7 +1601,7 @@ async fn status_snapshot_shows_missing_limits_message() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1654,7 +1655,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ Some(Some(ReasoningEffort::Medium)),
+        /*reasoning_effort_override*/ NullableField::Value(ReasoningEffort::Medium),
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
     );
@@ -1722,7 +1723,7 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
         /*refreshing_rate_limits*/ true,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
@@ -1763,7 +1764,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ true,
     );
@@ -1878,7 +1879,7 @@ async fn status_snapshot_includes_credits_and_limits() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1938,7 +1939,7 @@ async fn status_snapshot_shows_unavailable_limits_message() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1997,7 +1998,7 @@ async fn status_snapshot_treats_refreshing_empty_limits_as_unavailable() {
         captured_at,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
         /*refreshing_rate_limits*/ true,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
@@ -2067,7 +2068,7 @@ async fn status_snapshot_shows_stale_limits_message() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -2140,7 +2141,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -2198,7 +2199,7 @@ async fn status_context_window_uses_last_usage() {
         now,
         &model_slug,
         /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
+        /*reasoning_effort_override*/ NullableField::Omitted,
     );
     let rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     let context_line = rendered_lines

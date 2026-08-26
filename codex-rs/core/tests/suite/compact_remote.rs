@@ -19,6 +19,7 @@ use codex_login::CodexAuth;
 use codex_login::auth::AgentIdentityAuth;
 use codex_login::auth::AgentIdentityAuthRecord;
 use codex_protocol::AgentPath;
+use codex_protocol::NullableField;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem;
@@ -274,7 +275,7 @@ async fn start_realtime_conversation(codex: &codex_core::CodexThread) -> Result<
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -888,18 +889,16 @@ async fn remote_compact_uses_agent_identity_assertion() -> Result<()> {
 
 async fn assert_remote_manual_compact_request_parity(
     auth: CodexAuth,
-    configured_service_tier: Option<ServiceTier>,
+    configured_service_tier: ServiceTier,
     expected_service_tier: Option<&str>,
     snapshot_name: &str,
     scenario: &str,
 ) -> Result<()> {
     let uses_codex_backend = auth.uses_codex_backend();
     let mut builder = test_codex().with_auth(auth);
-    if let Some(service_tier) = configured_service_tier {
-        builder = builder.with_config(move |config| {
-            config.service_tier = Some(service_tier.request_value().to_string());
-        });
-    }
+    builder = builder.with_config(move |config| {
+        config.service_tier = configured_service_tier;
+    });
     let harness = TestCodexHarness::with_builder(builder).await?;
     let codex = harness.test().codex.clone();
     let image_url =
@@ -1118,7 +1117,7 @@ async fn remote_manual_compact_api_auth_omits_service_tier_and_reuses_prompt_cac
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::from_api_key("dummy"),
-        Some(ServiceTier::Fast),
+        ServiceTier::Fast,
         /*expected_service_tier*/ None,
         "remote_manual_compact_api_auth_prompt_cache_key_request_diff",
         "After five varied API-key-auth turns, remote manual compaction omits service_tier, reuses prompt_cache_key, and still omits responses-only fields.",
@@ -1135,8 +1134,8 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-        Some(ServiceTier::Fast),
-        Some("priority"),
+        ServiceTier::Fast,
+        Some("fast"),
         "remote_manual_compact_chatgpt_auth_service_tier_prompt_cache_key_request_diff",
         "After five varied ChatGPT-auth turns, remote manual compaction reuses service_tier and prompt_cache_key while omitting responses-only fields.",
     )

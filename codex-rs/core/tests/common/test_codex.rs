@@ -40,6 +40,7 @@ use codex_models_manager::bundled_models_response;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::mcp::OPENAI_FORM_EXTENSION_ID;
@@ -966,13 +967,13 @@ impl TestCodex {
     pub async fn submit_turn_with_service_tier(
         &self,
         prompt: &str,
-        service_tier: Option<&str>,
+        service_tier: ServiceTier,
     ) -> Result<()> {
         self.submit_turn_with_permission_profile_context(
             prompt,
             AskForApproval::Never,
             PermissionProfile::Disabled,
-            Some(service_tier.map(str::to_string)),
+            service_tier,
             /*environments*/ None,
         )
         .await
@@ -992,7 +993,7 @@ impl TestCodex {
             prompt,
             approval_policy,
             permission_profile,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             /*environments*/ None,
         )
         .await
@@ -1008,7 +1009,7 @@ impl TestCodex {
             prompt,
             approval_policy,
             permission_profile,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             /*environments*/ None,
         )
         .await
@@ -1023,7 +1024,7 @@ impl TestCodex {
             prompt,
             AskForApproval::Never,
             PermissionProfile::Disabled,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             environments,
         )
         .await
@@ -1034,7 +1035,7 @@ impl TestCodex {
         prompt: &str,
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> Result<()> {
         self.submit_turn_with_context(
@@ -1052,7 +1053,7 @@ impl TestCodex {
         prompt: &str,
         approval_policy: AskForApproval,
         permission_profile: PermissionProfile,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> Result<()> {
         let (sandbox_policy, permission_profile) =

@@ -40,6 +40,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_state::PINNED_THREAD_SECTION_ID;
 use codex_state::PINNED_THREAD_SECTION_NAME;
+use codex_thread_store::ClearableField;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::ThreadMetadataPatch;
@@ -272,7 +273,7 @@ async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: Some(Some("named pathless thread".to_string())),
+                name: ClearableField::Value("named pathless thread".to_string()),
                 ..Default::default()
             },
             include_archived: true,

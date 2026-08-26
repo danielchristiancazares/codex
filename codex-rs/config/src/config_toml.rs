@@ -42,6 +42,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
@@ -358,9 +359,9 @@ pub struct ConfigToml {
     /// Optionally specify a personality for the model
     pub personality: Option<Personality>,
 
-    /// Optional explicit service tier request id for new turns (for example
-    /// `default`, `priority`, or `flex`; legacy `fast` also works).
-    pub service_tier: Option<String>,
+    /// Service tier for new turns.
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    pub service_tier: ServiceTier,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,

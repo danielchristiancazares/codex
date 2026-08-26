@@ -7,8 +7,11 @@ use crate::tools::TELEMETRY_PREVIEW_MAX_BYTES;
 use crate::tools::TELEMETRY_PREVIEW_MAX_LINES;
 use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use crate::unified_exec::EXEC_OUTPUT_ARTIFACT_PREVIEW_MAX_TOKENS;
+use crate::unified_exec::exec_output_preview_digest;
 use crate::unified_exec::format_output_omission_marker;
 use crate::unified_exec::resolve_max_tokens;
+use codex_exec_output_artifacts::ExecOutputArtifacts;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -325,6 +328,7 @@ pub struct ExecCommandToolOutput {
     /// Bytes omitted by the output collection cap before model-facing truncation.
     pub output_omitted_bytes: Option<NonZeroUsize>,
     pub hook_command: Option<String>,
+    pub artifacts: Option<ExecOutputArtifacts>,
 }
 
 impl ToolOutput for ExecCommandToolOutput {
@@ -384,18 +388,32 @@ impl ToolOutput for ExecCommandToolOutput {
             #[serde(skip_serializing_if = "Option::is_none")]
             original_token_count: Option<usize>,
             output: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            artifacts: Option<ExecOutputArtifacts>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            presented_output_bytes: Option<usize>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            preview_sha256: Option<String>,
         }
 
+        let output = match (self.artifacts.is_some(), self.max_output_tokens) {
+            (true, _) => self.model_preview(),
+            (false, Some(max_tokens)) => self.truncated_output(max_tokens),
+            (false, None) => String::from_utf8_lossy(&self.raw_output).to_string(),
+        };
         let result = UnifiedExecCodeModeResult {
             chunk_id: (!self.chunk_id.is_empty()).then(|| self.chunk_id.clone()),
             wall_time_seconds: self.wall_time.as_secs_f64(),
             exit_code: self.exit_code,
             session_id: self.process_id,
             original_token_count: self.original_token_count,
-            output: match self.max_output_tokens {
-                Some(max_tokens) => self.truncated_output(max_tokens),
-                None => String::from_utf8_lossy(&self.raw_output).to_string(),
-            },
+            artifacts: self.artifacts.clone(),
+            presented_output_bytes: self.artifacts.as_ref().map(|_| output.len()),
+            preview_sha256: self
+                .artifacts
+                .as_ref()
+                .map(|_| exec_output_preview_digest(&output)),
+            output,
         };
 
         serde_json::to_value(result).unwrap_or_else(|err| {
@@ -406,7 +424,27 @@ impl ToolOutput for ExecCommandToolOutput {
 
 impl ExecCommandToolOutput {
     fn model_output_max_tokens(&self) -> usize {
-        resolve_max_tokens(self.max_output_tokens).min(self.truncation_policy.token_budget())
+        let max_tokens =
+            resolve_max_tokens(self.max_output_tokens).min(self.truncation_policy.token_budget());
+        if self.artifacts.is_some() {
+            max_tokens.min(EXEC_OUTPUT_ARTIFACT_PREVIEW_MAX_TOKENS)
+        } else {
+            max_tokens
+        }
+    }
+
+    fn model_preview(&self) -> String {
+        self.truncated_output(self.model_output_max_tokens())
+    }
+
+    pub(crate) fn artifact_preview_stats(&self) -> Option<(usize, bool)> {
+        self.artifacts.as_ref()?;
+        let preview = self.model_preview();
+        let complete_collected_output = String::from_utf8_lossy(&self.raw_output);
+        Some((
+            preview.len(),
+            self.output_omitted_bytes.is_some() || preview != complete_collected_output,
+        ))
     }
 
     pub(crate) fn truncated_output(&self, max_tokens: usize) -> String {
@@ -441,6 +479,7 @@ impl ExecCommandToolOutput {
 
     fn response_text(&self) -> String {
         let mut sections = Vec::new();
+        let output = self.model_preview();
 
         if !self.chunk_id.is_empty() {
             sections.push(format!("Chunk ID: {}", self.chunk_id));
@@ -461,8 +500,21 @@ impl ExecCommandToolOutput {
             sections.push(format!("Original token count: {original_token_count}"));
         }
 
+        if let Some(artifacts) = self.artifacts.as_ref() {
+            sections.push(format!("Presented output bytes: {}", output.len()));
+            sections.push(format!(
+                "Preview SHA-256: {}",
+                exec_output_preview_digest(&output)
+            ));
+            sections.push(format!(
+                "Artifacts: {}",
+                serde_json::to_string(artifacts)
+                    .unwrap_or_else(|err| format!("failed to serialize artifacts: {err}"))
+            ));
+        }
+
         sections.push("Output:".to_string());
-        sections.push(self.truncated_output(self.model_output_max_tokens()));
+        sections.push(output);
 
         sections.join("\n")
     }

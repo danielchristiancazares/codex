@@ -12,6 +12,7 @@ use codex_model_provider::create_model_provider;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::ResponseItemId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
@@ -126,7 +127,7 @@ fn sampler_config(base_url: String) -> LunaSamplerConfig {
         session_id: "session-1".to_owned(),
         thread_id: "thread-1".to_owned(),
         originator: Some("guardian-v2-test".to_owned()),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     }
@@ -271,7 +272,7 @@ async fn preconnected_sampler_reuses_authenticated_websocket_for_structured_requ
         session_id: "session-1".to_owned(),
         thread_id: "thread-1".to_owned(),
         originator: Some("guardian-v2-test".to_owned()),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     })
@@ -487,7 +488,7 @@ async fn sampler_returns_complete_json_before_terminal_response_events() -> Resu
         session_id: "session-1".to_owned(),
         thread_id: "thread-1".to_owned(),
         originator: None,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     })

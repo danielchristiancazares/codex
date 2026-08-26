@@ -33,6 +33,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::WriteStatus;
 use codex_core::config::set_project_trust_level;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchLocation;
@@ -334,7 +335,7 @@ service_tier = "fast"
         defaults.model_reasoning_effort,
         Some(ReasoningEffort::Medium)
     );
-    assert_eq!(defaults.service_tier.as_deref(), Some("fast"));
+    assert_eq!(defaults.service_tier, ServiceTier::Fast);
     Ok(())
 }
 

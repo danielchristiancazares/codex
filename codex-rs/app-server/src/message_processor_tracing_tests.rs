@@ -29,6 +29,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
 use codex_login::AuthManager;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use opentelemetry::global;
@@ -670,7 +671,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                     permissions: None,
                     approvals_reviewer: None,
                     model: None,
-                    service_tier: None,
+                    service_tier: ServiceTier::Default,
                     effort: None,
                     summary: None,
                     personality: None,

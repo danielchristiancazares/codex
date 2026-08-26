@@ -107,6 +107,7 @@ use codex_history::RolloutItem;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_otel::SessionTelemetry;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
@@ -1006,8 +1007,8 @@ async fn replay_thread_snapshot_restores_draft_and_queued_input() {
             name: "Default".to_string(),
             mode: None,
             model: None,
-            reasoning_effort: None,
-            developer_instructions: None,
+            reasoning_effort: NullableField::Omitted,
+            developer_instructions: NullableField::Omitted,
         },
     );
     let expected_input_state = app
@@ -1083,8 +1084,8 @@ async fn replay_thread_snapshot_restores_the_matching_safety_buffer_prompt() {
         name: "Default".to_string(),
         mode: None,
         model: None,
-        reasoning_effort: None,
-        developer_instructions: None,
+        reasoning_effort: NullableField::Omitted,
+        developer_instructions: NullableField::Omitted,
     };
     app.chat_widget
         .submit_user_message_with_mode("buffered prompt A".to_string(), default_mode.clone());
@@ -1506,8 +1507,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-restored".to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::High)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::High),
+            developer_instructions: NullableField::Omitted,
         });
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());
@@ -1527,8 +1528,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
             name: "Default".to_string(),
             mode: Some(ModeKind::Default),
             model: Some("gpt-replacement".to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::Low)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Low),
+            developer_instructions: NullableField::Omitted,
         });
     while new_op_rx.try_recv().is_ok() {}
 
@@ -1590,8 +1591,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-restored".to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::High)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::High),
+            developer_instructions: NullableField::Omitted,
         });
     let input_state = app
         .chat_widget
@@ -1608,8 +1609,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
             name: "Default".to_string(),
             mode: Some(ModeKind::Default),
             model: Some("gpt-replacement".to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::Low)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Low),
+            developer_instructions: NullableField::Omitted,
         });
 
     app.replay_thread_snapshot(
@@ -2820,9 +2821,9 @@ default_permissions = "locked-down"
             active_permission_profile: app.config.permissions.active_permission_profile(),
             windows_sandbox_level: None,
             model: None,
-            effort: None,
+            effort: NullableField::Omitted,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         }
@@ -2914,9 +2915,9 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
-            effort: None,
+            effort: NullableField::Omitted,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3009,9 +3010,9 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
-            effort: None,
+            effort: NullableField::Omitted,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3090,9 +3091,9 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
-            effort: None,
+            effort: NullableField::Omitted,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3150,9 +3151,9 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
-            effort: None,
+            effort: NullableField::Omitted,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -4333,13 +4334,12 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
     app.config.model = Some("persisted-default-model".to_string());
     app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Low);
 
-    let parent_service_tier = ServiceTier::Fast.request_value();
+    let parent_service_tier = ServiceTier::Fast;
     let parent_permission_profile = PermissionProfile::workspace_write();
     app.chat_widget.set_model("parent-thread-model");
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::High));
-    app.chat_widget
-        .set_service_tier(Some(parent_service_tier.to_string()));
+    app.chat_widget.set_service_tier(parent_service_tier);
     app.chat_widget
         .set_approval_policy(AskForApproval::OnRequest);
     app.chat_widget
@@ -4356,7 +4356,7 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
         (
             fork_config.model.as_deref(),
             fork_config.model_reasoning_effort,
-            fork_config.service_tier.as_deref(),
+            fork_config.service_tier,
             fork_config.permissions.approval_policy.value(),
             fork_config.permissions.permission_profile(),
             fork_config.approvals_reviewer,
@@ -4364,7 +4364,7 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
         (
             Some("parent-thread-model"),
             Some(ReasoningEffortConfig::High),
-            Some(parent_service_tier),
+            parent_service_tier,
             AskForApproval::OnRequest.to_core(),
             &parent_permission_profile,
             ApprovalsReviewer::AutoReview,
@@ -5262,7 +5262,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -5358,11 +5358,7 @@ async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
     set_fast_mode_test_catalog(&mut app.chat_widget);
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
-            .request_value()
-            .to_string(),
-    ));
+    app.chat_widget.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut app.chat_widget);
     set_fast_mode_test_catalog(&mut app.chat_widget);
 
@@ -5759,7 +5755,7 @@ fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState 
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -6385,22 +6381,11 @@ fn active_turn_interrupt_race_extracts_actual_turn_id_from_mismatch() {
 #[tokio::test]
 async fn fresh_session_config_uses_current_service_tier() {
     let mut app = make_test_app().await;
-    app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
-            .request_value()
-            .to_string(),
-    ));
+    app.chat_widget.set_service_tier(ServiceTier::Fast);
 
     let config = app.fresh_session_config();
 
-    assert_eq!(
-        config.service_tier,
-        Some(
-            codex_protocol::config_types::ServiceTier::Fast
-                .request_value()
-                .to_string()
-        )
-    );
+    assert_eq!(config.service_tier, ServiceTier::Fast);
 }
 
 #[tokio::test]
@@ -6434,7 +6419,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -6505,7 +6490,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -7570,7 +7555,7 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -7702,7 +7687,7 @@ async fn override_turn_context_sends_thread_settings_update() {
         app.enqueue_primary_thread_session(started.session, started.turns)
             .await
             .expect("primary thread should be registered");
-        let service_tier = ServiceTier::Fast.request_value().to_string();
+        let service_tier = ServiceTier::Fast;
         let collaboration_mode = CollaborationMode {
             mode: ModeKind::Plan,
             settings: Settings {
@@ -7721,9 +7706,9 @@ async fn override_turn_context_sends_thread_settings_update() {
             )),
             /*windows_sandbox_level*/ None,
             Some("gpt-5.4".to_string()),
-            Some(Some(ReasoningEffortConfig::High)),
+            NullableField::Value(ReasoningEffortConfig::High),
             /*summary*/ None,
-            Some(Some(service_tier.clone())),
+            service_tier,
             Some(collaboration_mode.clone()),
             Some(Personality::Pragmatic),
         );
@@ -7749,10 +7734,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             notification.thread_settings.effort,
             Some(ReasoningEffortConfig::High)
         );
-        assert_eq!(
-            notification.thread_settings.service_tier,
-            Some(service_tier.clone())
-        );
+        assert_eq!(notification.thread_settings.service_tier, service_tier);
         assert_eq!(
             notification.thread_settings.approval_policy,
             AskForApproval::OnRequest
@@ -7803,7 +7785,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             collaboration_mode.settings.reasoning_effort
         );
         assert_eq!(updated_session.personality, Some(Personality::Pragmatic));
-        assert_eq!(updated_session.service_tier, Some(service_tier));
+        assert_eq!(updated_session.service_tier, service_tier);
         assert_eq!(updated_session.approval_policy, AskForApproval::OnRequest);
         assert_eq!(
             updated_session.approvals_reviewer,
@@ -7939,8 +7921,8 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
                         name: "Plan".to_string(),
                         mode: Some(ModeKind::Plan),
                         model: Some(model_name.clone()),
-                        reasoning_effort: Some(Some(effort.clone())),
-                        developer_instructions: None,
+                        reasoning_effort: NullableField::Value(effort.clone()),
+                        developer_instructions: NullableField::Omitted,
                     });
                 app.handle_event(
                     &mut tui,
@@ -8136,8 +8118,8 @@ async fn thread_setting_update_params_sync_model_and_default_reasoning() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-plan".to_string()),
-            reasoning_effort: Some(Some(ReasoningEffortConfig::Medium)),
-            developer_instructions: None,
+            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Medium),
+            developer_instructions: NullableField::Omitted,
         });
     app.on_update_reasoning_effort(Some(ReasoningEffortConfig::High));
 
@@ -8207,7 +8189,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
             ),
             model: "gpt-plan".to_string(),
             model_provider: "openai".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             effort: collaboration_mode.settings.reasoning_effort.clone(),
             summary: None,
             collaboration_mode: collaboration_mode.clone(),
@@ -8271,7 +8253,7 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
             thread_name: Some("keep me".to_string()),
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),

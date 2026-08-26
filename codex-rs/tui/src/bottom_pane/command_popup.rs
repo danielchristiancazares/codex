@@ -281,6 +281,7 @@ impl WidgetRef for CommandPopup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::config_types::ServiceTier;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -342,7 +343,7 @@ mod tests {
                 ..CommandPopupFlags::default()
             },
             vec![ServiceTierCommand {
-                id: "priority".to_string(),
+                tier: ServiceTier::Fast,
                 name: "fast".to_string(),
                 description: "Fastest inference with increased plan usage".to_string(),
             }],
@@ -353,7 +354,7 @@ mod tests {
             Some(CommandItem::ServiceTier(command)) => assert_eq!(
                 command,
                 ServiceTierCommand {
-                    id: "priority".to_string(),
+                    tier: ServiceTier::Fast,
                     name: "fast".to_string(),
                     description: "Fastest inference with increased plan usage".to_string(),
                 }

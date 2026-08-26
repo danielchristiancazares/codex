@@ -10,6 +10,7 @@ use codex_core_plugins::TrustedPluginRoots;
 use codex_exec_server::ExecutorFileSystem;
 use codex_file_system::FileSystemSandboxContext;
 use codex_model_provider::SharedModelProvider;
+use codex_protocol::NullableField;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
@@ -107,14 +108,9 @@ impl TurnEnvironment {
     }
 
     pub(crate) fn permission_profile_with_workspace_roots(&self) -> PermissionProfile {
-        let workspace_roots = self
-            .workspace_roots()
-            .iter()
-            .filter_map(|workspace_root| workspace_root.to_abs_path().ok())
-            .collect::<Vec<_>>();
         self.permission_profile()
             .clone()
-            .materialize_project_roots_with_workspace_roots(&workspace_roots)
+            .materialize_project_roots_with_path_uris(self.workspace_roots())
     }
 
     pub(crate) fn selection(&self) -> TurnEnvironmentSelection {
@@ -655,11 +651,6 @@ impl Session {
 
         let mut per_turn_config = per_turn_config;
         super::token_budget::apply_model_defaults(&mut per_turn_config, &model_info);
-        per_turn_config.service_tier = get_service_tier(
-            per_turn_config.service_tier,
-            per_turn_config.features.enabled(Feature::FastMode),
-            &model_info,
-        );
         let permission_profile = environments.permission_profile_or_else(|| {
             per_turn_config.permissions.effective_permission_profile()
         });
@@ -825,7 +816,7 @@ impl Session {
         &self,
         sub_id: String,
         session_configuration: SessionConfiguration,
-        final_output_json_schema: Option<Option<Value>>,
+        final_output_json_schema: NullableField<Value>,
     ) -> Arc<TurnContext> {
         self.new_turn_context_from_configuration(
             sub_id,
@@ -845,7 +836,7 @@ impl Session {
         self.new_turn_context_from_configuration(
             sub_id,
             session_configuration,
-            /*final_output_json_schema*/ None,
+            /*final_output_json_schema*/ NullableField::Omitted,
             TurnMultiAgentRuntime::Preview,
             GitEnrichmentPolicy::Skip,
         )
@@ -857,7 +848,7 @@ impl Session {
         &self,
         sub_id: String,
         session_configuration: SessionConfiguration,
-        final_output_json_schema: Option<Option<Value>>,
+        final_output_json_schema: NullableField<Value>,
         multi_agent_runtime: TurnMultiAgentRuntime,
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
@@ -952,8 +943,12 @@ impl Session {
         turn_context.extension_data.insert(trusted_plugin_roots);
         turn_context.realtime_active = self.conversation.running_state().await.is_some();
 
-        if let Some(final_schema) = final_output_json_schema {
-            turn_context.final_output_json_schema = final_schema;
+        match final_output_json_schema {
+            NullableField::Omitted => {}
+            NullableField::Null => turn_context.final_output_json_schema = None,
+            NullableField::Value(final_schema) => {
+                turn_context.final_output_json_schema = Some(final_schema);
+            }
         }
         let turn_context = Arc::new(turn_context);
         if git_enrichment_policy == GitEnrichmentPolicy::Fresh
@@ -1014,7 +1009,7 @@ impl Session {
         self.new_turn_from_configuration(
             sub_id,
             session_configuration,
-            /*final_output_json_schema*/ None,
+            /*final_output_json_schema*/ NullableField::Omitted,
         )
         .await
     }

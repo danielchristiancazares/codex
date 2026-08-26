@@ -80,10 +80,10 @@ async fn project_lifecycle_preserves_order_and_clears_assignments() -> anyhow::R
     )
     .build("test-provider");
     runtime.upsert_thread(&active_metadata).await?;
-    runtime
+    let previous_project = runtime
         .set_thread_project(&active_thread_id.to_string(), Some(&project.id))
-        .await?
-        .expect("active thread exists");
+        .await?;
+    assert_eq!(previous_project, ThreadProjectAssignmentOutcome::Updated);
     let (affected_active_thread_ids, affected_archived_thread_ids) =
         runtime.delete_project(&project.id).await?.unwrap();
     assert_eq!(

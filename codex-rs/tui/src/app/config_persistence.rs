@@ -6,6 +6,7 @@
 
 use super::*;
 use codex_config::ConfigLayerSource;
+use codex_protocol::config_types::ServiceTier;
 #[cfg(target_os = "windows")]
 use codex_utils_approval_presets::ApprovalPreset;
 
@@ -222,9 +223,9 @@ impl App {
                 active_permission_profile,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ None,
+                /*effort*/ NullableField::Omitted,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
@@ -620,9 +621,9 @@ impl App {
                 active_permission_profile_override,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ None,
+                /*effort*/ NullableField::Omitted,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             );
@@ -1006,9 +1007,9 @@ impl App {
             Some(auto_review_preset.active_permission_profile),
             /*windows_sandbox_level*/ None,
             /*model*/ None,
-            /*effort*/ None,
+            /*effort*/ NullableField::Omitted,
             /*summary*/ None,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             /*collaboration_mode*/ None,
             /*personality*/ None,
         );
@@ -1085,9 +1086,9 @@ impl App {
                     /*active_permission_profile*/ None,
                     Some(windows_sandbox_level),
                     /*model*/ None,
-                    /*effort*/ None,
+                    /*effort*/ NullableField::Omitted,
                     /*summary*/ None,
-                    /*service_tier*/ None,
+                    /*service_tier*/ ServiceTier::Default,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
                 )));
@@ -1581,7 +1582,7 @@ enabled = false
                 thread_name: None,
                 model: "gpt-test".to_string(),
                 model_provider_id: "test-provider".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy: AskForApproval::Never,
                 approvals_reviewer: ApprovalsReviewer::User,
                 permission_profile: PermissionProfile::read_only(),

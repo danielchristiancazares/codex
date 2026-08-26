@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use chrono::SecondsFormat;
+use codex_protocol::NullableField;
 use codex_protocol::RolloutId;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -495,8 +496,8 @@ impl RolloutRecorder {
                 cwd_filters,
                 /*relation_filter*/ None,
                 archived,
-                /*section*/ None,
-                /*project_id*/ None,
+                /*section*/ NullableField::Omitted,
+                /*project_id*/ NullableField::Omitted,
                 search_term,
             )
             .await
@@ -606,8 +607,8 @@ impl RolloutRecorder {
             cwd_filters,
             /*relation_filter*/ None,
             archived,
-            /*section*/ None,
-            /*project_id*/ None,
+            /*section*/ NullableField::Omitted,
+            /*project_id*/ NullableField::Omitted,
             search_term,
         )
         .await;
@@ -637,8 +638,8 @@ impl RolloutRecorder {
                     cwd_filters,
                     /*relation_filter*/ None,
                     archived,
-                    /*section*/ None,
-                    /*project_id*/ None,
+                    /*section*/ NullableField::Omitted,
+                    /*project_id*/ NullableField::Omitted,
                     search_term,
                 )
                 .await
@@ -679,8 +680,8 @@ impl RolloutRecorder {
                         cwd_filters,
                         /*relation_filter*/ None,
                         archived,
-                        /*section*/ None,
-                        /*project_id*/ None,
+                        /*section*/ NullableField::Omitted,
+                        /*project_id*/ NullableField::Omitted,
                         search_term,
                     )
                     .await
@@ -760,8 +761,8 @@ impl RolloutRecorder {
                     cwd_filter.as_ref().map(std::slice::from_ref),
                     /*relation_filter*/ None,
                     /*archived*/ false,
-                    /*section*/ None,
-                    /*project_id*/ None,
+                    /*section*/ NullableField::Omitted,
+                    /*project_id*/ NullableField::Omitted,
                     /*search_term*/ None,
                 )
                 .await

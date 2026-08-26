@@ -1,3 +1,5 @@
+use super::super::WindowsSandboxManagedNetwork;
+use super::super::WindowsSandboxReadRoots;
 use super::windows_common::finish_driver_spawn;
 use super::windows_common::make_runner_resizer;
 use super::windows_common::start_runner_pipe_writer;
@@ -115,12 +117,9 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
     command: Vec<String>,
     cwd: &Path,
     mut env_map: HashMap<String, String>,
-    proxy_enforced: bool,
-    network_proxy_restricting_sid: Option<String>,
-    proxy_settings_mode: crate::WindowsSandboxProxySettingsMode,
+    managed_network: WindowsSandboxManagedNetwork,
     timeout_ms: Option<u64>,
-    read_roots_override: Option<&[PathBuf]>,
-    read_roots_include_platform_defaults: bool,
+    read_roots: WindowsSandboxReadRoots<'_>,
     write_roots_override: Option<&[PathBuf]>,
     deny_read_paths_override: &[AbsolutePathBuf],
     deny_write_paths_override: &[AbsolutePathBuf],
@@ -128,6 +127,27 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
     stdin_open: bool,
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
+    let (proxy_enforced, network_proxy_restricting_sid, proxy_settings_mode) = match managed_network
+    {
+        WindowsSandboxManagedNetwork::Disabled {
+            proxy_settings_mode,
+        } => (false, None, proxy_settings_mode),
+        WindowsSandboxManagedNetwork::Enforced {
+            network_proxy_restricting_sid,
+            proxy_settings_mode,
+        } => (
+            true,
+            Some(network_proxy_restricting_sid),
+            proxy_settings_mode,
+        ),
+    };
+    let (read_roots_override, read_roots_include_platform_defaults) = match read_roots {
+        WindowsSandboxReadRoots::ProfileDefaults => (None, false),
+        WindowsSandboxReadRoots::Explicit {
+            roots,
+            include_platform_defaults,
+        } => (Some(roots), include_platform_defaults),
+    };
     let deny_read_paths_override = deny_read_paths_override
         .iter()
         .map(AbsolutePathBuf::to_path_buf)

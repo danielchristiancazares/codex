@@ -17,6 +17,7 @@ use crate::session_resume::cwds_differ;
 use codex_app_server_protocol::ThreadGoalStatus;
 #[cfg(target_os = "windows")]
 use codex_config::types::WindowsSandboxModeToml;
+use codex_protocol::config_types::ServiceTier;
 use std::thread;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
@@ -636,7 +637,7 @@ impl App {
                                 thread_id,
                                 /*objective*/ None,
                                 Some(codex_app_server_protocol::ThreadGoalStatus::Paused),
-                                /*token_budget*/ None,
+                                /*token_budget*/ NullableField::Omitted,
                             )
                             .await
                     {
@@ -1937,9 +1938,9 @@ impl App {
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
                                         /*model*/ None,
-                                        /*effort*/ None,
+                                                /*effort*/ NullableField::Omitted,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                                /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -1964,9 +1965,9 @@ impl App {
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
                                         /*model*/ None,
-                                        /*effort*/ None,
+                                                /*effort*/ NullableField::Omitted,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                                /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -1993,9 +1994,9 @@ impl App {
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
                                         /*model*/ None,
-                                        /*effort*/ None,
+                                                /*effort*/ NullableField::Omitted,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                                /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -2148,21 +2149,18 @@ impl App {
             }
             AppEvent::PersistServiceTierSelection { service_tier } => {
                 self.refresh_status_line();
-                self.config.service_tier = service_tier.clone();
+                self.config.service_tier = service_tier;
                 self.sync_active_thread_service_tier_to_cached_session()
                     .await;
-                let edits = crate::config_update::build_service_tier_selection_edits(
-                    service_tier.as_deref(),
-                );
+                let mut edits = Vec::new();
+                edits.push(crate::config_update::service_tier_selection_edit(
+                    service_tier,
+                ));
                 match crate::config_update::write_config_batch(app_server.request_handle(), edits)
                     .await
                 {
                     Ok(_) => {
-                        let message = if let Some(service_tier) = service_tier {
-                            format!("Service tier set to {service_tier}")
-                        } else {
-                            "Service tier cleared".to_string()
-                        };
+                        let message = format!("Service tier set to {service_tier}");
                         self.chat_widget.add_info_message(message, /*hint*/ None);
                     }
                     Err(err) => {

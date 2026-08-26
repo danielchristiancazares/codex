@@ -19,6 +19,8 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 #[cfg(not(unix))]
+use std::sync::atomic::Ordering;
+#[cfg(not(unix))]
 use std::time::Duration;
 
 use anyhow::Result;
@@ -188,15 +190,18 @@ async fn spawn_process_portable(
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (_stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(1);
+    let output_lost = Arc::new(AtomicBool::new(false));
     #[cfg(unix)]
     let (reader_handle, writer_handle) = io.spawn(
         stdout_tx,
         writer_rx,
         crate::unix_io::StdinCloseBehavior::SendEof,
+        Arc::clone(&output_lost),
     );
     #[cfg(not(unix))]
     let (reader_handle, writer_handle) = {
         let mut reader = pair.master.try_clone_reader()?;
+        let reader_output_lost = Arc::clone(&output_lost);
         let reader_handle: JoinHandle<()> = tokio::task::spawn_blocking(move || {
             let mut buf = [0u8; 8_192];
             loop {
@@ -210,7 +215,10 @@ async fn spawn_process_portable(
                         std::thread::sleep(Duration::from_millis(5));
                         continue;
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        reader_output_lost.store(true, Ordering::Release);
+                        break;
+                    }
                 }
             }
         });
@@ -275,6 +283,7 @@ async fn spawn_process_portable(
         wait_handle,
         exit_status,
         exit_code,
+        output_lost,
         Some(handles),
         /*resizer*/ None,
     );
@@ -364,10 +373,12 @@ async fn spawn_process_preserving_fds(
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (_stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(1);
+    let output_lost = Arc::new(AtomicBool::new(false));
     let (reader_handle, writer_handle) = io.spawn(
         stdout_tx,
         writer_rx,
         crate::unix_io::StdinCloseBehavior::NoEof,
+        Arc::clone(&output_lost),
     );
 
     let (exit_tx, exit_rx) = oneshot::channel::<i32>();
@@ -404,6 +415,7 @@ async fn spawn_process_preserving_fds(
         wait_handle,
         exit_status,
         exit_code,
+        output_lost,
         Some(handles),
         /*resizer*/ None,
     );

@@ -14,6 +14,7 @@ use codex_exec_server::RemoveOptions;
 use codex_exec_server::WriteFileOptions;
 use codex_git_utils::GitInfo;
 use codex_git_utils::GitSha;
+use codex_git_utils::SanitizedGitUrl;
 use codex_git_utils::collect_git_info;
 use codex_git_utils::get_git_repo_root;
 use codex_git_utils::get_has_changes_in_repo;
@@ -395,7 +396,10 @@ async fn test_collect_git_info_with_remote() {
         .to_string();
 
     // Should have repository URL
-    assert_eq!(git_info.repository_url, Some(expected_remote));
+    assert_eq!(
+        git_info.repository_url,
+        Some(SanitizedGitUrl::try_from(expected_remote.as_str()).unwrap())
+    );
 }
 
 #[tokio::test]
@@ -955,7 +959,9 @@ fn test_git_info_serialization() {
     let git_info = GitInfo {
         commit_hash: Some(GitSha::new("abc123def456")),
         branch: Some("main".to_string()),
-        repository_url: Some("https://github.com/example/repo.git".to_string()),
+        repository_url: Some(
+            SanitizedGitUrl::try_from("https://github.com/example/repo.git").unwrap(),
+        ),
     };
 
     let json = serde_json::to_string(&git_info).expect("Should serialize GitInfo");

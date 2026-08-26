@@ -313,40 +313,7 @@ service_tier = "priority"
         .await
         .expect("custom role should apply");
 
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-}
-
-#[tokio::test]
-async fn apply_role_preserves_existing_service_tier_without_override() {
-    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
-    config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
-    let role_path = write_role_config(
-        &home,
-        "default-tier-role.toml",
-        r#"developer_instructions = "Stay focused"
-"#,
-    )
-    .await;
-    config.agent_roles.insert(
-        "custom".to_string(),
-        AgentRoleConfig {
-            description: None,
-            config_file: Some(role_path),
-            nickname_candidates: None,
-        },
-    );
-
-    apply_role_to_config(&mut config, Some("custom"))
-        .await
-        .expect("custom role should apply");
-
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(config.service_tier, ServiceTier::Fast);
 }
 
 #[tokio::test]

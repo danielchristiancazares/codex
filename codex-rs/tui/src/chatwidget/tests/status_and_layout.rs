@@ -2312,7 +2312,7 @@ async fn fast_status_indicator_requires_chatgpt_auth() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
 
@@ -2328,7 +2328,7 @@ async fn fast_status_indicator_is_hidden_for_models_without_fast_support() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     set_fast_mode_test_catalog(&mut chat);
     assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
@@ -3848,7 +3848,7 @@ async fn status_line_fast_mode_renders_on_and_off() {
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Fast off".to_string()));
 
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Fast on".to_string()));
 }
@@ -3870,7 +3870,7 @@ async fn status_line_fast_mode_updates_visibility_on_model_change() {
 
     chat.set_model("uncatalogued-model");
     assert_eq!(status_line_text(&chat), Some("Fast off".to_string()));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     assert_eq!(status_line_text(&chat), Some("Fast on".to_string()));
 }
 
@@ -3913,7 +3913,7 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -3953,7 +3953,7 @@ async fn status_line_and_terminal_title_reasoning_render_only_effort() {
     chat.config.tui_status_line = Some(vec!["reasoning".to_string()]);
     chat.config.tui_terminal_title = Some(vec!["reasoning".to_string()]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
 
     chat.refresh_status_line();
     chat.refresh_terminal_title();
@@ -4081,7 +4081,7 @@ async fn status_line_model_with_reasoning_fast_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -4115,7 +4115,7 @@ async fn status_line_model_with_reasoning_context_remaining_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -4245,7 +4245,7 @@ async fn session_configured_clears_goal_status_footer() {
         thread_name: None,
         model: "gpt-5.4".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),

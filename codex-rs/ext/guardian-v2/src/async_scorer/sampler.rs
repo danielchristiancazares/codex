@@ -30,6 +30,7 @@ use codex_model_provider::ProviderAuthScope;
 use codex_model_provider::ProviderRequestContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -74,8 +75,8 @@ pub struct LunaSamplerConfig {
     pub thread_id: String,
     /// Optional host-resolved request originator.
     pub originator: Option<String>,
-    /// Optional inference service tier.
-    pub service_tier: Option<String>,
+    /// Inference service tier.
+    pub service_tier: ServiceTier,
     /// Luna model's host-resolved encrypted-compaction compatibility hash.
     pub luna_compaction_hash: Option<String>,
     /// Host-provided metrics capability with the owning session's attribution.
@@ -277,9 +278,11 @@ impl LunaSampler {
             && provider_info.auth.is_none()
             && provider_info.aws.is_none()
         {
-            let routing_hint = match self.config.service_tier.as_deref() {
-                Some(tier) => format!("model={MODEL};tier={tier}"),
-                None => format!("model={MODEL}"),
+            let routing_hint = match self.config.service_tier {
+                ServiceTier::Fast | ServiceTier::Flex => {
+                    format!("model={MODEL};tier={}", self.config.service_tier)
+                }
+                ServiceTier::Default => format!("model={MODEL}"),
             };
             if let Ok(value) = HeaderValue::from_str(&routing_hint) {
                 headers.insert("x-codex-routing-hint", value);
@@ -468,7 +471,7 @@ impl LunaSampler {
             stream: true,
             stream_options: None,
             include: Vec::new(),
-            service_tier: self.config.service_tier.clone(),
+            service_tier: self.config.service_tier,
             prompt_cache_key: Some(format!("guardian-v2:{}", self.config.thread_id)),
             text: create_text_param_for_request(
                 /*verbosity*/ None,

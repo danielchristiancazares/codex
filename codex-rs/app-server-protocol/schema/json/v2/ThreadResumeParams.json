@@ -1307,6 +1307,14 @@
       ],
       "type": "string"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SortDirection": {
       "enum": [
         "asc",
@@ -1458,10 +1466,7 @@
       ]
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "$ref": "#/definitions/ServiceTier"
     },
     "threadId": {
       "type": "string"

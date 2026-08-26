@@ -211,24 +211,24 @@ fn build_command_replays_snapshot_before_hook_overrides_and_scrubbing() {
 
     assert_eq!(
         configured_environment_value(&command, "CODEX_HOOK_SNAPSHOT"),
-        Some(Some(OsString::from("captured")))
+        ConfiguredEnvironmentValue::Set(OsString::from("captured"))
     );
     assert_eq!(
         configured_environment_value(&command, "CODEX_HOOK_OVERRIDE"),
-        Some(Some(OsString::from("configured")))
+        ConfiguredEnvironmentValue::Set(OsString::from("configured"))
     );
     assert_eq!(
         configured_environment_value(&command, "CODEX_HOOK_SAFE_ENV"),
-        Some(Some(OsString::from("visible")))
+        ConfiguredEnvironmentValue::Set(OsString::from("visible"))
     );
     assert_eq!(
         configured_environment_value(&command, CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR),
-        None
+        ConfiguredEnvironmentValue::Unspecified
     );
     #[cfg(unix)]
     assert_eq!(
         configured_environment_value(&command, "CODEX_HOOK_NON_UNICODE"),
-        Some(Some(non_unicode_value))
+        ConfiguredEnvironmentValue::Set(non_unicode_value)
     );
 }
 
@@ -283,15 +283,26 @@ fn runtime_with_environment(
     (runtime, result_receiver)
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum ConfiguredEnvironmentValue {
+    Unspecified,
+    Removed,
+    Set(OsString),
+}
+
 fn configured_environment_value(
     command: &tokio::process::Command,
     name: &str,
-) -> Option<Option<OsString>> {
-    command
+) -> ConfiguredEnvironmentValue {
+    match command
         .as_std()
         .get_envs()
         .find(|(key, _)| *key == OsStr::new(name))
-        .map(|(_, value)| value.map(OsStr::to_os_string))
+    {
+        None => ConfiguredEnvironmentValue::Unspecified,
+        Some((_, None)) => ConfiguredEnvironmentValue::Removed,
+        Some((_, Some(value))) => ConfiguredEnvironmentValue::Set(value.to_os_string()),
+    }
 }
 
 fn write_handler(temp: &TempDir, source: &str) -> ConfiguredHandler {

@@ -13,6 +13,7 @@ use crate::goal_files;
 use crate::text_formatting::truncate_text;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 
 const EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE: &str = concat!(
@@ -195,12 +196,18 @@ impl App {
 
         let (status, token_budget) = match mode {
             ThreadGoalSetMode::ConfirmIfExists | ThreadGoalSetMode::ReplaceExisting => {
-                (ThreadGoalStatus::Active, None)
+                (ThreadGoalStatus::Active, NullableField::Omitted)
             }
             ThreadGoalSetMode::UpdateExisting {
                 status,
                 token_budget,
-            } => (status, Some(token_budget)),
+            } => (
+                status,
+                match token_budget {
+                    Some(token_budget) => NullableField::Value(token_budget),
+                    None => NullableField::Null,
+                },
+            ),
         };
 
         let result = app_server
@@ -241,7 +248,7 @@ impl App {
                 thread_id,
                 /*objective*/ None,
                 Some(status),
-                /*token_budget*/ None,
+                /*token_budget*/ NullableField::Omitted,
             )
             .await;
         if self.current_displayed_thread_id() != Some(thread_id) {

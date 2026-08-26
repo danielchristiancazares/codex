@@ -61,6 +61,7 @@ mod current_time_reminder;
 mod cyber_exec_policy;
 mod deprecation_notice;
 mod exec;
+mod exec_output_artifacts;
 mod exec_policy;
 #[cfg(not(target_os = "windows"))]
 mod extension_sandbox;

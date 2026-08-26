@@ -4939,6 +4939,7 @@ mod tests {
     use super::*;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use codex_protocol::config_types::ServiceTier;
     use image::ImageBuffer;
     use image::Rgba;
     use pretty_assertions::assert_eq;
@@ -9485,7 +9486,7 @@ mod tests {
         );
         composer.set_service_tier_commands_enabled(/*enabled*/ true);
         composer.set_service_tier_commands(vec![ServiceTierCommand {
-            id: "priority".to_string(),
+            tier: ServiceTier::Fast,
             name: "fast".to_string(),
             description: "Fastest inference with increased plan usage".to_string(),
         }]);
@@ -9497,7 +9498,7 @@ mod tests {
         assert_eq!(
             result,
             InputResult::ServiceTierCommand(ServiceTierCommand {
-                id: "priority".to_string(),
+                tier: ServiceTier::Fast,
                 name: "fast".to_string(),
                 description: "Fastest inference with increased plan usage".to_string(),
             })

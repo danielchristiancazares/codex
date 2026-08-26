@@ -77,6 +77,7 @@ use crate::http_client_adapter::StreamableHttpClientAdapter;
 use crate::http_client_adapter::StreamableHttpClientAdapterError;
 use crate::http_client_adapter::StreamableHttpRedirectMode;
 use crate::in_process_transport::InProcessTransportFactory;
+use crate::managed_oauth_credentials::ManagedOAuthCredentials;
 use crate::oauth::OAuthPersistor;
 use crate::oauth::ResolvedOAuthCredentialStore;
 use crate::oauth::ResolvedOAuthTokens;
@@ -932,10 +933,15 @@ impl RmcpClient {
         }
     }
 
-    /// Returns `None` when this client does not manage stored OAuth credentials.
-    pub async fn managed_oauth_credentials(&self) -> Option<Option<StoredOAuthTokens>> {
-        let persistor = self.oauth_persistor().await?;
-        Some(persistor.stored_credentials().await)
+    /// Returns whether this client manages stored OAuth credentials and what it has stored.
+    pub async fn managed_oauth_credentials(&self) -> ManagedOAuthCredentials {
+        let Some(persistor) = self.oauth_persistor().await else {
+            return ManagedOAuthCredentials::Unmanaged;
+        };
+        match persistor.stored_credentials().await {
+            Some(credentials) => ManagedOAuthCredentials::Stored(credentials),
+            None => ManagedOAuthCredentials::Missing,
+        }
     }
 
     /// Returns whether an initialized transport or its underlying service has stopped.

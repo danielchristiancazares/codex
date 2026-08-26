@@ -451,6 +451,12 @@ pin, the submodule HEAD and upstream, staged/unstaged/untracked changes in both 
 stash or autostash. Treat a stale checkout or dirty prototype as evidence. For "pre-modified"
 behavior, inspect the pinned or merge-base commit, and report this state map before mutating it.
 
+This fork intentionally enforces stricter domain types than upstream. Port upstream behavior
+semantically into the fork's exhaustive enums and boundary adapters, even when the upstream patch
+applies textually without conflicts. Preserve the fork's stronger state representation. Upstream
+nested or ambiguous `Option` values, boolean-like state encodings, and raw strings for closed state
+sets require semantic translation into named states at their integration boundary.
+
 1. Inspect `git status --short`, remotes, branch/upstream configuration, merge-base, and divergence.
 2. Preserve the complete staged, unstaged, and untracked behavior patch before moving the branch.
    Never use a destructive reset to discard local work.

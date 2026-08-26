@@ -31,6 +31,7 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::McpToolCallAppContext;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::PatchApplyStatus;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_app_server_protocol::RequestId;
@@ -3750,9 +3751,9 @@ async fn thread_resume_prefers_persisted_git_metadata_for_local_threads() -> Res
             thread_id: thread_id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: None,
-                branch: Some(Some("feature/pr-branch".to_string())),
-                origin_url: None,
+                sha: NullableField::Omitted,
+                branch: NullableField::Value("feature/pr-branch".to_string()),
+                origin_url: NullableField::Omitted,
             }),
         })
         .await?;

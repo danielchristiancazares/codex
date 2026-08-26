@@ -24,6 +24,7 @@ use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecExpirationOutcome;
 use codex_core::exec::IO_DRAIN_TIMEOUT_MS;
 use codex_exec_server::EnvironmentManager;
+use codex_protocol::NullableField;
 use codex_protocol::exec_output::bytes_to_string_smart;
 use codex_protocol::shell_environment::is_non_inheritable_env_var;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -110,7 +111,7 @@ impl ProcessExecRequestProcessor {
         }
         env.retain(|name, _| !is_non_inheritable_env_var(name));
         let expiration = match timeout_ms {
-            Some(Some(timeout_ms)) => match u64::try_from(timeout_ms) {
+            NullableField::Value(timeout_ms) => match u64::try_from(timeout_ms) {
                 Ok(timeout_ms) => timeout_ms.into(),
                 Err(_) => {
                     return Err(invalid_params(format!(
@@ -118,10 +119,14 @@ impl ProcessExecRequestProcessor {
                     )));
                 }
             },
-            Some(None) => ExecExpiration::Cancellation(CancellationToken::new()),
-            None => ExecExpiration::DefaultTimeout,
+            NullableField::Null => ExecExpiration::Cancellation(CancellationToken::new()),
+            NullableField::Omitted => ExecExpiration::DefaultTimeout,
         };
-        let output_bytes_cap = output_bytes_cap.unwrap_or(Some(DEFAULT_OUTPUT_BYTES_CAP));
+        let output_bytes_cap = match output_bytes_cap {
+            NullableField::Omitted => Some(DEFAULT_OUTPUT_BYTES_CAP),
+            NullableField::Null => None,
+            NullableField::Value(output_bytes_cap) => Some(output_bytes_cap),
+        };
         let size = size.map(terminal_size_from_protocol).transpose()?;
 
         self.process_exec_manager

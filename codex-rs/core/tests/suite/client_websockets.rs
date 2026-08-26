@@ -534,7 +534,7 @@ async fn responses_websocket_request_prewarm_reuses_connection() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
         )
         .await
@@ -606,7 +606,7 @@ async fn responses_websocket_request_prewarm_uses_caller_supplied_metadata() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
         )
         .await
@@ -650,7 +650,7 @@ async fn responses_websocket_request_prewarm_traces_logical_request() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &prewarm_responses_metadata,
         )
         .await
@@ -696,7 +696,7 @@ async fn responses_websocket_request_prewarm_traces_logical_request() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &inference_trace,
         )
@@ -868,7 +868,7 @@ async fn responses_websocket_preconnect_is_reused_even_with_header_changes() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -908,7 +908,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &prewarm_responses_metadata,
         )
         .await
@@ -921,7 +921,7 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -967,9 +967,9 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
 
     let harness = websocket_harness_for_codex_backend(&server).await;
     let mut model_info = harness.model_info.clone();
-    let service_tier = ServiceTier::Fast.request_value();
+    let service_tier = ServiceTier::Fast;
     model_info.service_tiers.push(ModelServiceTier {
-        id: service_tier.to_string(),
+        id: service_tier,
         name: "Fast".to_string(),
         description: "Priority processing".to_string(),
     });
@@ -983,7 +983,7 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            Some(service_tier.to_string()),
+            service_tier,
             &responses_metadata,
         )
         .await
@@ -1003,7 +1003,7 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
         .first()
         .expect("missing prewarm request")
         .body_json();
-    assert_eq!(prewarm["service_tier"].as_str(), Some(service_tier));
+    assert_eq!(prewarm["service_tier"].as_str(), Some("fast"));
 
     server.shutdown().await;
 }
@@ -1029,7 +1029,7 @@ async fn responses_websocket_prewarm_uses_v2_when_provider_supports_websockets()
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
         )
         .await
@@ -1446,7 +1446,7 @@ async fn responses_websocket_emits_reasoning_included_event() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -1522,7 +1522,7 @@ async fn responses_websocket_emits_rate_limit_events() {
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -1854,7 +1854,7 @@ async fn responses_websocket_forwards_turn_metadata_on_initial_and_incremental_c
         &mut client_session,
         &harness,
         &prompt_one,
-        /*service_tier*/ None,
+        /*service_tier*/ ServiceTier::Default,
         &first_responses_metadata,
     )
     .await;
@@ -1862,7 +1862,7 @@ async fn responses_websocket_forwards_turn_metadata_on_initial_and_incremental_c
         &mut client_session,
         &harness,
         &prompt_two,
-        /*service_tier*/ None,
+        /*service_tier*/ ServiceTier::Default,
         &second_responses_metadata,
     )
     .await;
@@ -1925,7 +1925,7 @@ async fn responses_websocket_sends_canonical_turn_metadata() {
         &mut client_session,
         &harness,
         &prompt,
-        /*service_tier*/ None,
+        /*service_tier*/ ServiceTier::Default,
         &responses_metadata,
     )
     .await;
@@ -2181,7 +2181,7 @@ async fn responses_websocket_v2_after_error_uses_full_create_without_previous_re
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -2270,7 +2270,7 @@ async fn responses_websocket_v2_surfaces_terminal_error_without_close_handshake(
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -2547,7 +2547,7 @@ async fn stream_until_complete(
         client_session,
         harness,
         prompt,
-        /*service_tier*/ None,
+        /*service_tier*/ ServiceTier::Default,
     )
     .await;
 }
@@ -2567,7 +2567,7 @@ async fn stream_until_complete_with_model_info(
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -2589,7 +2589,7 @@ async fn stream_until_complete_with_service_tier(
     client_session: &mut ModelClientSession,
     harness: &WebsocketTestHarness,
     prompt: &Prompt,
-    service_tier: Option<ServiceTier>,
+    service_tier: ServiceTier,
 ) {
     let responses_metadata = turn_metadata(harness, /*turn_id*/ None);
     stream_until_complete_with_metadata(
@@ -2606,7 +2606,7 @@ async fn stream_until_complete_with_metadata(
     client_session: &mut ModelClientSession,
     harness: &WebsocketTestHarness,
     prompt: &Prompt,
-    service_tier: Option<ServiceTier>,
+    service_tier: ServiceTier,
     responses_metadata: &CodexResponsesMetadata,
 ) {
     let mut stream = client_session
@@ -2616,7 +2616,7 @@ async fn stream_until_complete_with_metadata(
             &harness.session_telemetry,
             harness.effort.clone(),
             harness.summary,
-            service_tier.map(|service_tier| service_tier.request_value().to_string()),
+            service_tier,
             responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )

@@ -11,6 +11,7 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::MockExperimentalMethodParams;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadMemoryMode;
 use codex_app_server_protocol::ThreadMemoryModeSetParams;
@@ -105,7 +106,7 @@ async fn realtime_conversation_start_requires_experimental_api_capability() -> R
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("hello".to_string())),
+            prompt: NullableField::Value("hello".to_string()),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -242,7 +243,7 @@ async fn realtime_webrtc_start_requires_experimental_api_capability() -> Result<
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("hello".to_string())),
+            prompt: NullableField::Value("hello".to_string()),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),

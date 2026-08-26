@@ -16,7 +16,9 @@ use codex_app_server_protocol::ThreadSectionMoveParams;
 use codex_app_server_protocol::ThreadSectionMoveResponse;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ThreadIdleCause;
+use codex_protocol::SanitizedGitUrl;
 use codex_protocol::config_types::MultiAgentMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -42,7 +44,7 @@ async fn stage_pending_project_metadata(
         .stage_pending_thread_metadata(
             thread_id,
             StoreThreadMetadataPatch {
-                project_id: Some(Some(project_id.to_string())),
+                project_id: NullableField::Value(project_id.to_string()),
                 ..Default::default()
             },
         )
@@ -73,7 +75,7 @@ struct ThreadListFilters {
     model_providers: Option<Vec<String>>,
     source_kinds: Option<Vec<ThreadSourceKind>>,
     archived: bool,
-    section_id: Option<Option<String>>,
+    section_id: NullableField<String>,
     project_id: StoreClearableField<String>,
     cwd_filters: Option<Vec<PathBuf>>,
     search_term: Option<String>,
@@ -109,12 +111,10 @@ fn collect_resume_override_mismatches(
             config_snapshot.model_provider_id
         ));
     }
-    if let Some(requested_service_tier) = request.service_tier.as_ref()
-        && requested_service_tier != &config_snapshot.service_tier
-    {
+    if request.service_tier != config_snapshot.service_tier {
         mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={:?}",
-            config_snapshot.service_tier
+            "service_tier requested={} active={}",
+            request.service_tier, config_snapshot.service_tier
         ));
     }
     if let Some(requested_cwd) = request.cwd.as_deref() {
@@ -1130,7 +1130,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -1171,6 +1170,7 @@ impl ThreadRequestProcessor {
                 client_mcp_extensions,
                 config,
                 typesafe_overrides,
+                service_tier,
                 dynamic_tools,
                 selected_capability_roots.unwrap_or_default(),
                 history_mode.map(Into::into),
@@ -1250,6 +1250,7 @@ impl ThreadRequestProcessor {
         client_mcp_extensions: ClientMcpExtensions,
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
+        service_tier: ServiceTier,
         dynamic_tools: Option<Vec<DynamicToolSpec>>,
         selected_capability_roots: Vec<SelectedCapabilityRoot>,
         history_mode: Option<ThreadHistoryMode>,
@@ -1269,6 +1270,7 @@ impl ThreadRequestProcessor {
             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.service_tier = service_tier;
         // Project-local config can launch host processes, so only the effective
         // permissions after managed constraints can imply project trust.
         let effective_permission_profile = config.permissions.effective_permission_profile();
@@ -1552,7 +1554,6 @@ impl ThreadRequestProcessor {
         &self,
         model: Option<String>,
         model_provider: Option<String>,
-        service_tier: Option<Option<String>>,
         cwd: Option<String>,
         runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
@@ -1566,7 +1567,6 @@ impl ThreadRequestProcessor {
         ConfigOverrides {
             model,
             model_provider,
-            service_tier,
             cwd: cwd.map(PathBuf::from),
             workspace_roots: runtime_workspace_roots,
             default_permissions: permissions,
@@ -1736,7 +1736,7 @@ impl ThreadRequestProcessor {
             .update_thread_metadata(
                 thread_id,
                 StoreThreadMetadataPatch {
-                    name: Some(Some(name.clone())),
+                    name: NullableField::Value(name.clone()),
                     ..Default::default()
                 },
                 /*include_archived*/ false,
@@ -1845,9 +1845,21 @@ impl ThreadRequestProcessor {
                      branch,
                      origin_url,
                  }| {
-                    if sha.is_none() && branch.is_none() && origin_url.is_none() {
+                    if sha.is_omitted() && branch.is_omitted() && origin_url.is_omitted() {
                         return Err(invalid_request("gitInfo must include at least one field"));
                     }
+
+                    let origin_url =
+                        Self::normalize_thread_metadata_git_field(origin_url, "gitInfo.originUrl")?;
+                    let origin_url = match origin_url {
+                        NullableField::Value(origin_url) => {
+                            NullableField::Value(SanitizedGitUrl::try_from(origin_url).map_err(
+                                |_| invalid_request("gitInfo.originUrl must be a valid Git remote"),
+                            )?)
+                        }
+                        NullableField::Null => NullableField::Null,
+                        NullableField::Omitted => NullableField::Omitted,
+                    };
 
                     Ok(StoreGitInfoPatch {
                         sha: Self::normalize_thread_metadata_git_field(sha, "gitInfo.sha")?,
@@ -1855,10 +1867,7 @@ impl ThreadRequestProcessor {
                             branch,
                             "gitInfo.branch",
                         )?,
-                        origin_url: Self::normalize_thread_metadata_git_field(
-                            origin_url,
-                            "gitInfo.originUrl",
-                        )?,
+                        origin_url,
                     })
                 },
             )
@@ -1866,37 +1875,40 @@ impl ThreadRequestProcessor {
 
         let project_update: StoreClearableField<String> = if let Some(project_id) = project_id {
             if project_id.is_empty() {
-                Some(None)
+                NullableField::Null
             } else {
-                Some(Some(project_id))
+                NullableField::Value(project_id)
             }
         } else {
-            None
+            NullableField::Omitted
         };
         let updated_thread = {
             let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
-            let previous_project_id = if project_update.is_some() {
-                Some(
-                    self.thread_store
-                        .read_thread(StoreReadThreadParams {
-                            thread_id: thread_uuid,
-                            include_archived: true,
-                            include_history: false,
-                        })
-                        .await
-                        .map_err(|err| match err {
-                            ThreadStoreError::ThreadNotFound { .. } => {
-                                invalid_request(format!("thread not found: {thread_id}"))
-                            }
-                            ThreadStoreError::Unsupported { operation } => {
-                                unsupported_thread_store_operation(operation)
-                            }
-                            err => internal_error(format!("failed to read thread metadata: {err}")),
-                        })?
-                        .project_id,
-                )
+            let previous_project_id = if project_update.is_present() {
+                match self
+                    .thread_store
+                    .read_thread(StoreReadThreadParams {
+                        thread_id: thread_uuid,
+                        include_archived: true,
+                        include_history: false,
+                    })
+                    .await
+                    .map_err(|err| match err {
+                        ThreadStoreError::ThreadNotFound { .. } => {
+                            invalid_request(format!("thread not found: {thread_id}"))
+                        }
+                        ThreadStoreError::Unsupported { operation } => {
+                            unsupported_thread_store_operation(operation)
+                        }
+                        err => internal_error(format!("failed to read thread metadata: {err}")),
+                    })?
+                    .project_id
+                {
+                    Some(project_id) => NullableField::Value(project_id),
+                    None => NullableField::Null,
+                }
             } else {
-                None
+                NullableField::Omitted
             };
             let patch = StoreThreadMetadataPatch {
                 git_info,
@@ -1908,14 +1920,17 @@ impl ThreadRequestProcessor {
                 .update_thread_metadata(thread_uuid, patch, /*include_archived*/ true)
                 .await
                 .map_err(|err| core_thread_write_error("update thread metadata", err))?;
-            if let Some(project_id) = project_update.as_ref()
-                && previous_project_id.as_ref() != Some(project_id)
-            {
+            if project_update.is_present() && previous_project_id != project_update {
+                let project_id = match project_update {
+                    NullableField::Null => None,
+                    NullableField::Value(project_id) => Some(project_id),
+                    NullableField::Omitted => unreachable!("checked field presence"),
+                };
                 self.outgoing
                     .send_server_notification(ServerNotification::ThreadProjectUpdated(
                         ThreadProjectUpdatedNotification {
                             thread_id: thread_id.clone(),
-                            project_id: project_id.clone(),
+                            project_id,
                         },
                     ))
                     .await;
@@ -1942,19 +1957,19 @@ impl ThreadRequestProcessor {
     }
 
     fn normalize_thread_metadata_git_field(
-        value: Option<Option<String>>,
+        value: NullableField<String>,
         name: &str,
-    ) -> Result<Option<Option<String>>, JSONRPCErrorError> {
+    ) -> Result<NullableField<String>, JSONRPCErrorError> {
         match value {
-            Some(Some(value)) => {
+            NullableField::Value(value) => {
                 let value = value.trim().to_string();
                 if value.is_empty() {
                     return Err(invalid_request(format!("{name} must not be empty")));
                 }
-                Ok(Some(Some(value)))
+                Ok(NullableField::Value(value))
             }
-            Some(None) => Ok(Some(None)),
-            None => Ok(None),
+            NullableField::Null => Ok(NullableField::Null),
+            NullableField::Omitted => Ok(NullableField::Omitted),
         }
     }
 
@@ -2435,10 +2450,10 @@ impl ThreadRequestProcessor {
             parent_thread_id,
             ancestor_thread_id,
         } = params;
-        if project_id.is_some() && !self.thread_store.supports_projects() {
+        if project_id.is_present() && !self.thread_store.supports_projects() {
             return Err(unsupported_thread_store_operation("projects"));
         }
-        if let Some(Some(project_id)) = project_id.as_ref() {
+        if let NullableField::Value(project_id) = project_id.as_ref() {
             if project_id.is_empty() {
                 return Err(invalid_params("projectId must not be empty"));
             }
@@ -3658,7 +3673,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -3713,6 +3727,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        config.service_tier = service_tier;
         if !has_explicit_model_resume_override
             && persisted_metadata
                 .as_ref()
@@ -4718,7 +4733,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -4792,11 +4806,12 @@ impl ThreadRequestProcessor {
             }
         }
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = self
+        let mut config = self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.service_tier = service_tier;
         let goals_enabled = config.features.enabled(Feature::Goals);
 
         let fallback_model_provider = config.model_provider_id.clone();
@@ -4913,7 +4928,7 @@ impl ThreadRequestProcessor {
                 .update_thread_metadata(
                     thread_id,
                     StoreThreadMetadataPatch {
-                        name: Some(Some(name)),
+                        name: NullableField::Value(name),
                         ..Default::default()
                     },
                     /*include_archived*/ true,
@@ -5767,7 +5782,7 @@ pub(crate) fn thread_from_stored_thread(
     let git_info = thread.git_info.map(|info| ApiGitInfo {
         sha: info.commit_hash.map(|sha| sha.0),
         branch: info.branch,
-        origin_url: info.repository_url,
+        origin_url: info.repository_url.map(String::from),
     });
     let cwd = AbsolutePathBuf::relative_to_current_dir(path_utils::normalize_for_native_workdir(
         thread.cwd,
@@ -5843,7 +5858,7 @@ fn summary_from_stored_thread(
     let git_info = thread.git_info.map(|git| ConversationGitInfo {
         sha: git.commit_hash.map(|sha| sha.0),
         branch: git.branch,
-        origin_url: git.repository_url,
+        origin_url: git.repository_url.map(String::from),
     });
     ConversationSummary {
         conversation_id: thread.thread_id,
@@ -5943,7 +5958,7 @@ fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummar
         metadata.agent_role.clone(),
         metadata.git_sha.clone(),
         metadata.git_branch.clone(),
-        metadata.git_origin_url.clone(),
+        metadata.git_origin_url.clone().map(String::from),
     )
 }
 

@@ -30,6 +30,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::error::CodexErr;
@@ -1555,7 +1556,7 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
             &session_telemetry,
             effort,
             summary.unwrap_or(ReasoningSummary::Auto),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -3078,7 +3079,7 @@ async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids(
             &session_telemetry,
             effort,
             summary.unwrap_or(ReasoningSummary::Auto),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )

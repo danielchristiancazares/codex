@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Utc;
+use codex_protocol::NullableField;
 use codex_rollout::RolloutConfig;
 use codex_rollout::RolloutRecorder;
 use codex_rollout::parse_cursor;
@@ -111,8 +112,12 @@ pub(super) async fn list_threads(
         }
     }
 
-    if let Some(project_id) = params.project_id.as_ref() {
-        items.retain(|thread| &thread.project_id == project_id);
+    match &params.project_id {
+        NullableField::Omitted => {}
+        NullableField::Null => items.retain(|thread| thread.project_id.is_none()),
+        NullableField::Value(project_id) => {
+            items.retain(|thread| thread.project_id.as_ref() == Some(project_id));
+        }
     }
 
     Ok(ThreadPage { items, next_cursor })
@@ -122,13 +127,12 @@ async fn list_section_threads(
     store: &LocalThreadStore,
     params: ListThreadsParams,
 ) -> ThreadStoreResult<ThreadPage> {
-    let section = params
-        .section
-        .as_ref()
-        .and_then(Option::as_deref)
-        .ok_or_else(|| ThreadStoreError::InvalidRequest {
+    let NullableField::Value(section) = params.section.as_ref() else {
+        return Err(ThreadStoreError::InvalidRequest {
             message: "section-position sorting requires a section filter".to_owned(),
-        })?;
+        });
+    };
+    let section = section.as_str();
     let state_db = store
         .state_db()
         .await
@@ -184,11 +188,8 @@ async fn list_section_threads(
         allowed_sources: allowed_sources.as_slice(),
         model_providers: params.model_providers.as_deref(),
         cwd_filters: normalized_cwd_filters.as_deref(),
-        section: Some(Some(section)),
-        project_id: params
-            .project_id
-            .as_ref()
-            .map(|project_id| project_id.as_deref()),
+        section: NullableField::Value(section),
+        project_id: params.project_id.as_deref(),
         anchor: anchor.as_ref(),
         sort_key: codex_state::SortKey::SectionPosition,
         sort_direction: match params.sort_direction {
@@ -253,7 +254,10 @@ pub(super) async fn list_rollout_threads(
     sort_key: codex_rollout::ThreadSortKey,
     sort_direction: codex_rollout::SortDirection,
 ) -> ThreadStoreResult<codex_rollout::ThreadsPage> {
-    if params.relation_filter.is_some() || params.section.is_some() || params.project_id.is_some() {
+    if params.relation_filter.is_some()
+        || params.section.is_present()
+        || params.project_id.is_present()
+    {
         let relation_filter = params
             .relation_filter
             .map(|relation_filter| match relation_filter {
@@ -276,8 +280,8 @@ pub(super) async fn list_rollout_threads(
             params.cwd_filters.as_deref(),
             relation_filter,
             params.archived,
-            params.section.as_ref().map(Option::as_deref),
-            params.project_id.as_ref().map(Option::as_deref),
+            params.section.as_deref(),
+            params.project_id.as_deref(),
             params.search_term.as_deref(),
         )
         .await
@@ -399,8 +403,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: None,
@@ -461,8 +465,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: Some("needle".to_string()),
                 relation_filter: None,
@@ -535,8 +539,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: Some("canonical".to_string()),
                 relation_filter: None,
@@ -573,8 +577,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: None,
@@ -591,8 +595,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: true,
                 search_term: None,
                 relation_filter: None,
@@ -645,8 +649,8 @@ mod tests {
                 allowed_sources: vec![SessionSource::Cli],
                 model_providers: Some(vec!["test-provider".to_string()]),
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: None,
@@ -724,8 +728,8 @@ mod tests {
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,
-            section: Some(Some(PINNED_THREAD_SECTION_ID.to_owned())),
-            project_id: None,
+            section: NullableField::Value(PINNED_THREAD_SECTION_ID.to_owned()),
+            project_id: NullableField::Omitted,
             archived: false,
             search_term: None,
             relation_filter: None,
@@ -778,8 +782,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 archived: false,
                 search_term: None,
                 relation_filter: None,

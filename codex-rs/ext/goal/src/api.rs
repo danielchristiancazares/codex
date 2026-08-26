@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::Weak;
 
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -45,7 +46,8 @@ pub enum GoalObjectiveUpdate<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalTokenBudgetUpdate {
     Keep,
-    Set(Option<i64>),
+    ResetToMaximum,
+    Set(i64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -159,17 +161,23 @@ impl GoalService {
             GoalObjectiveUpdate::Set(objective) => Some(objective.trim()),
         };
         let token_budget = match token_budget {
-            GoalTokenBudgetUpdate::Keep => None,
-            GoalTokenBudgetUpdate::Set(token_budget) => {
-                Some(token_budget.or(max_goal_token_budget))
-            }
+            GoalTokenBudgetUpdate::Keep => NullableField::Omitted,
+            GoalTokenBudgetUpdate::ResetToMaximum => match max_goal_token_budget {
+                Some(max_goal_token_budget) => NullableField::Value(max_goal_token_budget),
+                None => NullableField::Null,
+            },
+            GoalTokenBudgetUpdate::Set(token_budget) => NullableField::Value(token_budget),
         };
 
         if let Some(objective) = objective {
             validate_thread_goal_objective(objective).map_err(GoalServiceError::InvalidRequest)?;
         }
-        if objective.is_some() || token_budget.is_some() {
-            validate_goal_budget(token_budget.flatten(), max_goal_token_budget)
+        if objective.is_some() || token_budget.is_present() {
+            let requested_token_budget = match token_budget {
+                NullableField::Value(token_budget) => Some(token_budget),
+                NullableField::Omitted | NullableField::Null => None,
+            };
+            validate_goal_budget(requested_token_budget, max_goal_token_budget)
                 .map_err(GoalServiceError::InvalidRequest)?;
         }
 
@@ -229,7 +237,11 @@ impl GoalService {
                         thread_id,
                         objective,
                         status.unwrap_or(codex_state::ThreadGoalStatus::Active),
-                        token_budget.flatten().or(max_goal_token_budget),
+                        match token_budget {
+                            NullableField::Omitted => max_goal_token_budget,
+                            NullableField::Null => None,
+                            NullableField::Value(token_budget) => Some(token_budget),
+                        },
                     )
                     .await
                     .map_err(|err| {

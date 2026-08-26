@@ -7,6 +7,7 @@ use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Timelike;
 use chrono::Utc;
+use codex_protocol::NullableField;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
@@ -83,8 +84,8 @@ async fn list_threads_db_rejects_mismatched_sqlite_config_without_cleanup() -> a
         /*cwd_filters*/ None,
         /*relation_filter*/ None,
         /*archived*/ false,
-        /*section*/ None,
-        /*project_id*/ None,
+        /*section*/ NullableField::Omitted,
+        /*project_id*/ NullableField::Omitted,
         /*search_term*/ None,
     )
     .await;

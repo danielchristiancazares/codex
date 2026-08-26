@@ -29,7 +29,7 @@ fn force_old_iterm2_pet_image_unsupported(chat: &mut ChatWidget) {
 
 fn fast_tier_command() -> ServiceTierCommand {
     ServiceTierCommand {
-        id: ServiceTier::Fast.request_value().to_string(),
+        tier: ServiceTier::Fast,
         name: "fast".to_string(),
         description: "Fastest inference with increased plan usage".to_string(),
     }
@@ -116,14 +116,14 @@ async fn service_tier_commands_lowercase_catalog_names() {
     let expected_description = preset
         .service_tiers
         .iter()
-        .find(|tier| tier.id == ServiceTier::Fast.request_value())
+        .find(|tier| tier.id == ServiceTier::Fast)
         .expect("fast tier")
         .description
         .clone();
     preset
         .service_tiers
         .iter_mut()
-        .find(|tier| tier.id == ServiceTier::Fast.request_value())
+        .find(|tier| tier.id == ServiceTier::Fast)
         .expect("fast tier")
         .name = "Fast".to_string();
     chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
@@ -131,7 +131,7 @@ async fn service_tier_commands_lowercase_catalog_names() {
     assert_eq!(
         chat.current_model_service_tier_commands(),
         vec![ServiceTierCommand {
-            id: ServiceTier::Fast.request_value().to_string(),
+            tier: ServiceTier::Fast,
             name: "fast".to_string(),
             description: expected_description,
         }]
@@ -2833,9 +2833,9 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(service_tier)),
+                service_tier: ServiceTier::Fast,
                 ..
-            }) if service_tier == ServiceTier::Fast.request_value()
+            })
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -2843,9 +2843,8 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::PersistServiceTierSelection {
-                service_tier: Some(service_tier),
+                service_tier: ServiceTier::Fast,
             }
-            if service_tier == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
@@ -2866,9 +2865,9 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(service_tier)),
+                service_tier: ServiceTier::Fast,
                 ..
-            }) if service_tier == ServiceTier::Fast.request_value()
+            })
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -2876,9 +2875,8 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::PersistServiceTierSelection {
-                service_tier: Some(service_tier),
+                service_tier: ServiceTier::Fast,
             }
-            if service_tier == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
@@ -2919,51 +2917,10 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            service_tier: Some(Some(service_tier)),
+            service_tier: ServiceTier::Fast,
             ..
-        } if service_tier == ServiceTier::Fast.request_value() => {}
+        } => {}
         other => panic!("expected Op::UserTurn with fast service tier, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn model_switch_recomputes_catalog_default_service_tier() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
-    chat.thread_id = Some(ThreadId::new());
-    set_chatgpt_auth(&mut chat);
-    set_fast_mode_test_catalog(&mut chat);
-    chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
-
-    let mut models = chat.model_catalog.try_list_models().expect("test catalog");
-    let default_model = models
-        .iter_mut()
-        .find(|model| model.model == "gpt-5.4")
-        .expect("gpt-5.4 test model");
-    default_model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
-    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(models));
-    chat.refresh_effective_service_tier();
-
-    assert_eq!(chat.current_service_tier(), None);
-
-    chat.set_model("gpt-5.4");
-    assert_eq!(
-        chat.current_service_tier(),
-        Some(ServiceTier::Fast.request_value())
-    );
-
-    chat.set_model("gpt-5.2");
-    assert_eq!(chat.current_service_tier(), None);
-
-    chat.bottom_pane
-        .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn {
-            service_tier: Some(Some(service_tier)),
-            ..
-        } if service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE => {}
-        other => panic!("expected Op::UserTurn with default service tier override, got {other:?}"),
     }
 }
 
@@ -2986,9 +2943,9 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(service_tier)),
+                service_tier: ServiceTier::Fast,
                 ..
-            }) if service_tier == ServiceTier::Fast.request_value()
+            })
         )),
         "expected queued /fast to update service tier before next turn; events: {events:?}"
     );
@@ -2996,9 +2953,9 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             items,
-            service_tier: Some(Some(service_tier)),
+            service_tier: ServiceTier::Fast,
             ..
-        } if service_tier == ServiceTier::Fast.request_value() => assert_eq!(
+        } => assert_eq!(
             items,
             vec![UserInput::Text {
                 text: "hello after fast".to_string(),
@@ -3026,9 +2983,9 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(service_tier)),
+                service_tier: ServiceTier::Default,
                 ..
-            }) if service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE
+            })
         )),
         "expected fast-mode off default service tier app event; events: {events:?}"
     );
@@ -3036,8 +2993,8 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::PersistServiceTierSelection {
-                service_tier: Some(service_tier)
-            } if service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE
+                service_tier: ServiceTier::Default
+            }
         )),
         "expected default service tier persistence app event; events: {events:?}"
     );
@@ -3048,9 +3005,9 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            service_tier: Some(Some(service_tier)),
+            service_tier: ServiceTier::Default,
             ..
-        } if service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE => {}
+        } => {}
         other => panic!("expected Op::UserTurn with default service tier override, got {other:?}"),
     }
 }

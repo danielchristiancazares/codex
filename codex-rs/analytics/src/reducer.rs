@@ -147,6 +147,7 @@ use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::WebSearchAction;
+use codex_git_utils::SanitizedGitUrl;
 use codex_git_utils::collect_git_info;
 use codex_git_utils::get_git_repo_root;
 use codex_login::default_client::originator;
@@ -1212,7 +1213,7 @@ impl AnalyticsReducer {
                         None
                     };
                     let skill_id = skill_id_for_local_skill(
-                        repo_url.as_deref(),
+                        repo_url.as_ref().map(SanitizedGitUrl::as_str),
                         repo_root.as_deref(),
                         path.as_path(),
                         invocation.skill_name.as_str(),
@@ -1254,7 +1255,7 @@ impl AnalyticsReducer {
                         invoke_type: Some(invocation.invocation_type),
                         model_slug: Some(tracking.model_slug.clone()),
                         product_client_id: Some(tracking.product_client_id.clone()),
-                        repo_url,
+                        repo_url: repo_url.map(String::from),
                         skill_scope,
                         plugin_id: invocation.plugin_id,
                         remote_plugin_id: invocation.remote_plugin_id,
@@ -3353,9 +3354,7 @@ fn codex_turn_event_params(
         )),
         reasoning_effort: reasoning_effort.map(|value| value.to_string()),
         reasoning_summary: reasoning_summary_mode(reasoning_summary),
-        service_tier: service_tier
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "default".to_string()),
+        service_tier: service_tier.to_string(),
         approval_policy: approval_policy.to_string(),
         approvals_reviewer: approvals_reviewer.to_string(),
         sandbox_network_access,

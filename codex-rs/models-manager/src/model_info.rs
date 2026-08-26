@@ -1,5 +1,6 @@
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelInstructionsVariables;
@@ -151,7 +152,7 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         priority: 99,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: ServiceTier::Default,
         availability_nux: None,
         upgrade: None,
         model_messages: Some(local_model_messages_for_slug(slug)),

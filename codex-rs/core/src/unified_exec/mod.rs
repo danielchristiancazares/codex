@@ -48,6 +48,8 @@ use codex_core_plugins::PluginMetricsSidecar;
 
 mod async_watcher;
 mod errors;
+mod exec_output_artifact_store;
+mod exec_output_artifacts;
 mod head_tail_buffer;
 mod process;
 mod process_manager;
@@ -57,7 +59,18 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
+pub(crate) use codex_exec_output_artifacts::preview_sha256 as exec_output_preview_digest;
 pub(crate) use errors::UnifiedExecError;
+pub(crate) use exec_output_artifact_store::initialize_exec_output_artifact_store;
+pub(crate) use exec_output_artifacts::EXEC_OUTPUT_ARTIFACT_PREVIEW_MAX_TOKENS;
+pub(crate) use exec_output_artifacts::ExecOutputArtifactCapture;
+pub(crate) use exec_output_artifacts::RawExecOutputCapture;
+pub(crate) use exec_output_artifacts::combine_captured_output_receivers;
+pub(crate) use exec_output_artifacts::exec_output_artifact_access;
+pub(crate) use exec_output_artifacts::exec_output_for_model;
+pub(crate) use exec_output_artifacts::finalize_exec_output_artifacts;
+pub(crate) use exec_output_artifacts::record_exec_output_artifact_preview_metrics;
+pub(crate) use exec_output_artifacts::reserve_exec_output_artifacts;
 pub(crate) use process::NoopSpawnLifecycle;
 #[cfg(unix)]
 pub(crate) use process::SpawnLifecycle;
@@ -101,6 +114,7 @@ impl UnifiedExecContext {
 #[derive(Debug)]
 pub(crate) struct ExecCommandRequest {
     pub command: Vec<String>,
+    pub command_mode: ExecCommandMode,
     pub shell_type: ShellType,
     pub hook_command: String,
     pub process_id: i32,
@@ -117,6 +131,12 @@ pub(crate) struct ExecCommandRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecCommandMode {
+    Shell,
+    Argv,
 }
 
 #[derive(Debug)]
@@ -176,6 +196,7 @@ impl Default for UnifiedExecProcessManager {
 
 struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
+    artifact_capture: Option<Arc<ExecOutputArtifactCapture>>,
     plugin_metrics_sidecar: Option<SharedPluginMetricsSidecar>,
     call_id: String,
     process_id: i32,

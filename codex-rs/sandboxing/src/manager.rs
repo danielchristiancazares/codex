@@ -113,6 +113,8 @@ pub struct SandboxCommand {
 #[derive(Debug)]
 pub struct SandboxExecRequest {
     pub command: Vec<String>,
+    /// Bytes a direct-spawn caller must write before input intended for the command.
+    pub stdin_prelude: Vec<u8>,
     pub cwd: PathUri,
     pub sandbox_policy_cwd: PathUri,
     pub env: HashMap<String, String>,
@@ -148,7 +150,8 @@ pub struct SandboxTransformRequest<'a> {
 /// directly from argv.
 ///
 /// Direct-spawn callers will not run a later platform-specific launcher, so the
-/// returned command must encode any sandbox wrapper it needs.
+/// returned request contains the sandbox wrapper command and any required stdin
+/// prelude.
 pub struct SandboxDirectSpawnTransformRequest<'a> {
     pub transform: SandboxTransformRequest<'a>,
     pub workspace_roots: &'a [AbsolutePathBuf],
@@ -468,6 +471,7 @@ impl SandboxManager {
 
         Ok(SandboxExecRequest {
             command: argv,
+            stdin_prelude: Vec::new(),
             cwd: command.cwd,
             sandbox_policy_cwd: sandbox_policy_cwd.clone(),
             env: command.env,
@@ -551,20 +555,24 @@ fn wrap_windows_sandbox_exec_request_for_direct_spawn(
     *program = helper.to_string_lossy().into_owned();
 
     let inner_command = std::mem::take(&mut request.command);
-    let proxy_enforced = request.network.is_some();
-    let network_proxy_restricting_sid = request
-        .network
-        .as_ref()
-        .map(|network| {
-            network
+    let managed_network = match request.network.as_ref() {
+        Some(network) => {
+            let network_proxy_restricting_sid = network
                 .network_proxy_restricting_sid(request.network_environment_id.as_deref())
                 .ok_or_else(|| {
                     SandboxTransformError::WindowsSandboxPreparation(
                         "managed Windows proxy route is missing its restricting SID".to_string(),
                     )
-                })
-        })
-        .transpose()?;
+                })?;
+            codex_windows_sandbox::WindowsSandboxManagedNetwork::Enforced {
+                network_proxy_restricting_sid,
+                proxy_settings_mode,
+            }
+        }
+        None => codex_windows_sandbox::WindowsSandboxManagedNetwork::Disabled {
+            proxy_settings_mode,
+        },
+    };
     let use_elevated = windows_sandbox_uses_elevated_backend(request.windows_sandbox_level);
     let overrides = if use_elevated {
         resolve_windows_elevated_filesystem_overrides(
@@ -583,12 +591,18 @@ fn wrap_windows_sandbox_exec_request_for_direct_spawn(
     }
     .map_err(SandboxTransformError::WindowsSandboxPreparation)?;
     let empty_paths: &[AbsolutePathBuf] = &[];
-    let read_roots_override = overrides
+    let read_roots = match overrides
         .as_ref()
-        .and_then(|overrides| overrides.read_roots_override.as_deref());
-    let read_roots_include_platform_defaults = overrides
-        .as_ref()
-        .is_some_and(|overrides| overrides.read_roots_include_platform_defaults);
+        .and_then(|overrides| overrides.read_roots_override.as_deref())
+    {
+        Some(roots) => codex_windows_sandbox::WindowsSandboxReadRoots::Explicit {
+            roots,
+            include_platform_defaults: overrides
+                .as_ref()
+                .is_some_and(|overrides| overrides.read_roots_include_platform_defaults),
+        },
+        None => codex_windows_sandbox::WindowsSandboxReadRoots::ProfileDefaults,
+    };
     let write_roots_override = overrides
         .as_ref()
         .and_then(|overrides| overrides.write_roots_override.as_deref());
@@ -598,8 +612,8 @@ fn wrap_windows_sandbox_exec_request_for_direct_spawn(
     let deny_write_paths_override = overrides.as_ref().map_or(empty_paths, |overrides| {
         overrides.additional_deny_write_paths.as_slice()
     });
-    let mut wrapper_args =
-        codex_windows_sandbox::create_windows_sandbox_command_args_for_permission_profile(
+    let wrapper_command =
+        codex_windows_sandbox::create_windows_sandbox_command_for_permission_profile(
             inner_command,
             &native_cwd,
             workspace_roots,
@@ -607,20 +621,19 @@ fn wrap_windows_sandbox_exec_request_for_direct_spawn(
             &request.permission_profile,
             request.windows_sandbox_level,
             request.windows_sandbox_private_desktop,
-            proxy_enforced,
-            network_proxy_restricting_sid.as_deref(),
-            proxy_settings_mode,
-            read_roots_override,
-            read_roots_include_platform_defaults,
+            managed_network,
+            read_roots,
             write_roots_override,
             deny_read_paths_override,
             deny_write_paths_override,
             codex_home,
-        );
+        )
+        .map_err(|err| SandboxTransformError::WindowsSandboxPreparation(err.to_string()))?;
 
-    request.command = Vec::with_capacity(1 + wrapper_args.len());
+    request.command = Vec::with_capacity(1 + wrapper_command.args.len());
     request.command.push(source.to_string_lossy().into_owned());
-    request.command.append(&mut wrapper_args);
+    request.command.extend(wrapper_command.args);
+    request.stdin_prelude = wrapper_command.stdin_prelude;
     request.sandbox = SandboxType::None;
     request.arg0 = None;
     add_windows_sandbox_wrapper_setup_env(&mut request.env);

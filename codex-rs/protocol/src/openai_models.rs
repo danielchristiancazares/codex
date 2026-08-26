@@ -21,6 +21,8 @@ use serde::Serialize;
 use serde::Serializer;
 use serde::de::DeserializeOwned;
 use serde::de::Error;
+use serde_with::DefaultOnNull;
+use serde_with::serde_as;
 use strum_macros::Display;
 use strum_macros::EnumIter;
 use tracing::warn;
@@ -28,7 +30,6 @@ use ts_rs::TS;
 
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary;
-use crate::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use crate::config_types::ServiceTier;
 use crate::config_types::Verbosity;
 use crate::protocol::MultiAgentVersion;
@@ -213,12 +214,13 @@ pub struct ModelAvailabilityNux {
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
 pub struct ModelServiceTier {
-    pub id: String,
+    pub id: ServiceTier,
     pub name: String,
     pub description: String,
 }
 
 /// Metadata describing a Codex-supported model.
+#[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
 pub struct ModelPreset {
     /// Stable identifier for the preset.
@@ -244,9 +246,12 @@ pub struct ModelPreset {
     /// Service tiers this model can run with.
     #[serde(default)]
     pub service_tiers: Vec<ModelServiceTier>,
-    /// Catalog default service tier id for this model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_service_tier: Option<String>,
+    /// Catalog default service tier for this model.
+    #[serde_as(as = "DefaultOnNull")]
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[schemars(with = "ServiceTier")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub default_service_tier: ServiceTier,
     /// Whether this is the default model for new users.
     pub is_default: bool,
     /// recommended upgrade model
@@ -393,6 +398,7 @@ const fn is_true(value: &bool) -> bool {
 }
 
 /// Model metadata returned by the Codex backend `/models` endpoint.
+#[serde_as]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, TS, JsonSchema)]
 pub struct ModelInfo {
     pub slug: String,
@@ -409,8 +415,11 @@ pub struct ModelInfo {
     pub additional_speed_tiers: Vec<String>,
     #[serde(default)]
     pub service_tiers: Vec<ModelServiceTier>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_service_tier: Option<String>,
+    #[serde_as(as = "DefaultOnNull")]
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[schemars(with = "ServiceTier")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub default_service_tier: ServiceTier,
     pub availability_nux: Option<ModelAvailabilityNux>,
     pub upgrade: Option<ModelInfoUpgrade>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -834,28 +843,17 @@ impl From<ModelInfo> for ModelPreset {
 
 impl ModelPreset {
     pub fn supports_fast_mode(&self) -> bool {
-        self.service_tiers
-            .iter()
-            .any(|tier| tier.id == ServiceTier::Fast.request_value())
+        self.supports_service_tier(ServiceTier::Fast)
             || self
                 .additional_speed_tiers
                 .iter()
                 .any(|tier| tier == SPEED_TIER_FAST)
     }
-}
 
-impl ModelInfo {
-    pub fn supports_service_tier(&self, service_tier: &str) -> bool {
+    pub fn supports_service_tier(&self, service_tier: ServiceTier) -> bool {
         self.service_tiers
             .iter()
             .any(|tier| tier.id == service_tier)
-    }
-
-    pub fn service_tier_for_request(&self, service_tier: Option<String>) -> Option<String> {
-        service_tier.filter(|service_tier| {
-            service_tier != SERVICE_TIER_DEFAULT_REQUEST_VALUE
-                && self.supports_service_tier(service_tier)
-        })
     }
 }
 
@@ -905,7 +903,7 @@ mod tests {
             priority: 1,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
-            default_service_tier: None,
+            default_service_tier: ServiceTier::Default,
             availability_nux: None,
             upgrade: None,
             model_messages: spec,
@@ -1773,7 +1771,7 @@ mod tests {
                 supports_personality: false,
                 additional_speed_tiers: Vec::new(),
                 service_tiers: Vec::new(),
-                default_service_tier: None,
+                default_service_tier: ServiceTier::Default,
                 is_default: false,
                 upgrade: None,
                 show_in_picker: true,
@@ -1808,7 +1806,7 @@ mod tests {
                 message: "Try Spark.".to_string(),
             }),
             additional_speed_tiers: vec![SPEED_TIER_FAST.to_string()],
-            default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
+            default_service_tier: ServiceTier::Fast,
             service_tiers: Vec::new(),
             ..test_model(/*spec*/ None)
         });
@@ -1820,17 +1818,14 @@ mod tests {
             })
         );
         assert!(preset.supports_fast_mode());
-        assert_eq!(
-            preset.default_service_tier,
-            Some(ServiceTier::Fast.request_value().to_string())
-        );
+        assert_eq!(preset.default_service_tier, ServiceTier::Fast);
     }
 
     #[test]
     fn model_preset_supports_fast_mode_from_service_tiers() {
         let preset = ModelPreset::from(ModelInfo {
             service_tiers: vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
+                id: ServiceTier::Fast,
                 name: "Fast".to_string(),
                 description: "Priority processing.".to_string(),
             }],
@@ -1841,58 +1836,25 @@ mod tests {
     }
 
     #[test]
-    fn service_tier_for_request_omits_explicit_default_tier() {
-        let model = ModelInfo {
-            default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
-            service_tiers: vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
-                name: "Fast".to_string(),
-                description: "Priority processing.".to_string(),
-            }],
-            ..test_model(/*spec*/ None)
-        };
-
-        assert_eq!(
-            model.service_tier_for_request(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
-            None
+    fn service_tier_catalog_deserializes_legacy_priority_and_null_default() {
+        let mut value =
+            serde_json::to_value(test_model(/*spec*/ None)).expect("test model should serialize");
+        let object = value
+            .as_object_mut()
+            .expect("test model should be an object");
+        object.insert(
+            "service_tiers".to_string(),
+            serde_json::json!([{
+                "id": "priority",
+                "name": "Fast",
+                "description": "Priority processing."
+            }]),
         );
-    }
+        object.insert("default_service_tier".to_string(), serde_json::Value::Null);
+        let model: ModelInfo =
+            serde_json::from_value(value).expect("legacy catalog fields should deserialize");
 
-    #[test]
-    fn service_tier_for_request_filters_unsupported_tiers() {
-        let model = ModelInfo {
-            default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
-            service_tiers: vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
-                name: "Fast".to_string(),
-                description: "Priority processing.".to_string(),
-            }],
-            ..test_model(/*spec*/ None)
-        };
-
-        assert_eq!(
-            model.service_tier_for_request(Some(ServiceTier::Fast.request_value().to_string())),
-            Some(ServiceTier::Fast.request_value().to_string())
-        );
-        assert_eq!(
-            model.service_tier_for_request(Some("unsupported".to_string())),
-            None
-        );
-        assert_eq!(model.service_tier_for_request(/*service_tier*/ None), None);
-    }
-
-    #[test]
-    fn service_tier_for_request_does_not_apply_catalog_default() {
-        let model = ModelInfo {
-            default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
-            service_tiers: vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
-                name: "Fast".to_string(),
-                description: "Priority processing.".to_string(),
-            }],
-            ..test_model(/*spec*/ None)
-        };
-
-        assert_eq!(model.service_tier_for_request(/*service_tier*/ None), None);
+        assert_eq!(model.service_tiers[0].id, ServiceTier::Fast);
+        assert_eq!(model.default_service_tier, ServiceTier::Default);
     }
 }

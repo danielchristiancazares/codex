@@ -11,6 +11,7 @@ use codex_extension_items::ExtensionItem;
 use codex_extension_items::image_generation::ImageGenerationFailure;
 use codex_extension_items::image_generation::ImageGenerationItem;
 use codex_protocol::AgentPath;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::items::ReasoningItem;
@@ -1837,7 +1838,7 @@ async fn migration_preserves_legacy_displayed_thread_names() {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id: title_thread_id,
             patch: ThreadMetadataPatch {
-                name: Some(Some("renamed title".to_string())),
+                name: NullableField::Value("renamed title".to_string()),
                 ..Default::default()
             },
             include_archived: false,
@@ -1865,8 +1866,8 @@ async fn migration_preserves_legacy_displayed_thread_names() {
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,
-            section: None,
-            project_id: None,
+            section: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             archived: false,
             search_term: None,
             relation_filter: None,
@@ -1904,7 +1905,7 @@ async fn migration_repairs_a_missing_paginated_name_when_rerun() {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: Some(Some("renamed title".to_string())),
+                name: NullableField::Value("renamed title".to_string()),
                 ..Default::default()
             },
             include_archived: false,

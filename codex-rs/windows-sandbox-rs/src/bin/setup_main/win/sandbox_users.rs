@@ -1,9 +1,12 @@
+use anyhow::Context;
 use anyhow::Result;
+use anyhow::ensure;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use rand::RngCore;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
+use serde::Deserialize;
 use serde::Serialize;
 use std::ffi::OsStr;
 use std::ffi::c_void;
@@ -46,10 +49,20 @@ use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
 use codex_windows_sandbox::SetupFailure;
 use codex_windows_sandbox::dpapi_protect;
+use codex_windows_sandbox::dpapi_unprotect;
 use codex_windows_sandbox::sandbox_dir;
 use codex_windows_sandbox::sandbox_secrets_dir;
 use codex_windows_sandbox::string_from_sid_bytes;
 use codex_windows_sandbox::to_wide;
+
+mod machine_credentials;
+
+use machine_credentials::MachineCredentialSource;
+use machine_credentials::MachineCredentialStoreLsa;
+use machine_credentials::MachineSandboxCredentials;
+use machine_credentials::SandboxAccountCredentials;
+use machine_credentials::acquire_provisioning_mutex;
+use machine_credentials::load_or_create_machine_credentials;
 
 pub const SANDBOX_USERS_GROUP: &str = "CodexSandboxUsers";
 const SANDBOX_USERS_GROUP_COMMENT: &str = "Codex sandbox internal group (managed)";
@@ -73,22 +86,76 @@ pub fn provision_sandbox_users(
     online_username: &str,
     log: &mut dyn Write,
 ) -> Result<()> {
+    let _provisioning_guard =
+        acquire_provisioning_mutex().context("acquire machine sandbox provisioning mutex")?;
+    let mut credential_store =
+        MachineCredentialStoreLsa::open().context("open machine sandbox credential store")?;
+    let resolved = load_or_create_machine_credentials(
+        &mut credential_store,
+        offline_username,
+        online_username,
+        || match load_home_credentials(codex_home, offline_username, online_username) {
+            Ok(Some(credentials)) => {
+                super::log_line(
+                    log,
+                    "initializing machine-owned credentials from this CODEX_HOME",
+                )?;
+                Ok(credentials)
+            }
+            Ok(None) => {
+                super::log_line(log, "initializing new machine-owned sandbox credentials")?;
+                Ok(MachineSandboxCredentials::new(
+                    SandboxAccountCredentials {
+                        username: offline_username.to_string(),
+                        password: random_password(),
+                    },
+                    SandboxAccountCredentials {
+                        username: online_username.to_string(),
+                        password: random_password(),
+                    },
+                ))
+            }
+            Err(err) => {
+                super::log_line(
+                    log,
+                    &format!(
+                        "existing CODEX_HOME credentials cannot seed the machine store: {err:#}; generating new credentials"
+                    ),
+                )?;
+                Ok(MachineSandboxCredentials::new(
+                    SandboxAccountCredentials {
+                        username: offline_username.to_string(),
+                        password: random_password(),
+                    },
+                    SandboxAccountCredentials {
+                        username: online_username.to_string(),
+                        password: random_password(),
+                    },
+                ))
+            }
+        },
+    )?;
+    if resolved.source == MachineCredentialSource::Stored {
+        super::log_line(log, "reusing machine-owned sandbox credentials")?;
+    }
+    let credentials = resolved.credentials;
+
     ensure_sandbox_users_group(log)?;
     super::log_line(
         log,
         &format!("ensuring sandbox users offline={offline_username} online={online_username}"),
     )?;
-    let offline_password = random_password();
-    let online_password = random_password();
-    ensure_sandbox_user(offline_username, &offline_password, log)?;
-    ensure_sandbox_user(online_username, &online_password, log)?;
-    write_secrets(
-        codex_home,
-        offline_username,
-        &offline_password,
-        online_username,
-        &online_password,
+    ensure_sandbox_user(
+        &credentials.offline.username,
+        &credentials.offline.password,
+        log,
     )?;
+    ensure_sandbox_user(
+        &credentials.online.username,
+        &credentials.online.password,
+        log,
+    )?;
+    write_secrets(codex_home, &credentials)?;
     Ok(())
 }
 
@@ -377,13 +444,13 @@ fn random_password() -> String {
         .collect()
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct SandboxUserRecord {
     username: String,
     password: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct SandboxUsersFile {
     version: u32,
     offline: SandboxUserRecord,
@@ -402,13 +469,54 @@ struct SetupMarker {
     write_roots: Vec<PathBuf>,
 }
 
-fn write_secrets(
+fn load_home_credentials(
     codex_home: &Path,
-    offline_user: &str,
-    offline_pwd: &str,
-    online_user: &str,
-    online_pwd: &str,
-) -> Result<()> {
+    offline_username: &str,
+    online_username: &str,
+) -> Result<Option<MachineSandboxCredentials>> {
+    let users_path = sandbox_secrets_dir(codex_home).join("sandbox_users.json");
+    let users_json = match std::fs::read(&users_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("read {}", users_path.display()));
+        }
+    };
+    let users: SandboxUsersFile = serde_json::from_slice(&users_json)
+        .with_context(|| format!("parse {}", users_path.display()))?;
+    ensure!(
+        (1..=SETUP_VERSION).contains(&users.version),
+        "sandbox users file has unsupported version {}",
+        users.version
+    );
+    ensure!(
+        users.offline.username == offline_username && users.online.username == online_username,
+        "sandbox users file identities do not match the requested accounts"
+    );
+
+    fn decrypt_password(record: &SandboxUserRecord) -> Result<String> {
+        let blob = BASE64
+            .decode(record.password.as_bytes())
+            .context("base64 decode sandbox password")?;
+        let decrypted = dpapi_unprotect(&blob).context("decrypt sandbox password with DPAPI")?;
+        String::from_utf8(decrypted).context("sandbox password is not UTF-8")
+    }
+
+    let offline_password = decrypt_password(&users.offline)?;
+    let online_password = decrypt_password(&users.online)?;
+    Ok(Some(MachineSandboxCredentials::new(
+        SandboxAccountCredentials {
+            username: users.offline.username,
+            password: offline_password,
+        },
+        SandboxAccountCredentials {
+            username: users.online.username,
+            password: online_password,
+        },
+    )))
+}
+
+fn write_secrets(codex_home: &Path, credentials: &MachineSandboxCredentials) -> Result<()> {
     let secrets_dir = sandbox_secrets_dir(codex_home);
     std::fs::create_dir_all(&secrets_dir).map_err(|err| {
         anyhow::Error::new(SetupFailure::new(
@@ -419,13 +527,13 @@ fn write_secrets(
             ),
         ))
     })?;
-    let offline_blob = dpapi_protect(offline_pwd.as_bytes()).map_err(|err| {
+    let offline_blob = dpapi_protect(credentials.offline.password.as_bytes()).map_err(|err| {
         anyhow::Error::new(SetupFailure::new(
             SetupErrorCode::HelperDpapiProtectFailed,
             format!("dpapi protect failed for offline user: {err}"),
         ))
     })?;
-    let online_blob = dpapi_protect(online_pwd.as_bytes()).map_err(|err| {
+    let online_blob = dpapi_protect(credentials.online.password.as_bytes()).map_err(|err| {
         anyhow::Error::new(SetupFailure::new(
             SetupErrorCode::HelperDpapiProtectFailed,
             format!("dpapi protect failed for online user: {err}"),
@@ -434,11 +542,11 @@ fn write_secrets(
     let users = SandboxUsersFile {
         version: SETUP_VERSION,
         offline: SandboxUserRecord {
-            username: offline_user.to_string(),
+            username: credentials.offline.username.clone(),
             password: BASE64.encode(offline_blob),
         },
         online: SandboxUserRecord {
-            username: online_user.to_string(),
+            username: credentials.online.username.clone(),
             password: BASE64.encode(online_blob),
         },
     };
@@ -583,3 +691,7 @@ pub(super) fn commit_setup_marker(
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "sandbox_users_tests.rs"]
+mod tests;

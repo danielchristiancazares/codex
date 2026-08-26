@@ -1,3 +1,4 @@
+use super::NullableField;
 use crate::JsonSchema;
 use crate::TS;
 use codex_protocol::protocol::CodexResponseHandoffMode;
@@ -116,14 +117,9 @@ pub struct ThreadRealtimeStartParams {
     /// Developer instructions given to the backing Codex model when this realtime session ends.
     #[ts(optional = nullable)]
     pub realtime_end_instructions: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
     #[ts(optional = nullable)]
-    pub prompt: Option<Option<String>>,
+    pub prompt: NullableField<String>,
     #[ts(optional = nullable)]
     pub realtime_session_id: Option<String>,
     #[ts(optional = nullable)]

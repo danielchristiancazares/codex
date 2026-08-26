@@ -11,6 +11,8 @@ use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
 use crate::unified_exec::process::NoopSpawnLifecycle;
 use crate::unified_exec::process::UnifiedExecProcess;
+use codex_exec_output_artifacts::ArtifactCapture;
+use codex_exec_output_artifacts::ArtifactCaptureStatus;
 use codex_protocol::items::CommandExecutionStatus;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::Event;
@@ -33,6 +35,12 @@ struct StreamingOutputHarness {
 }
 
 async fn streaming_output_harness() -> anyhow::Result<StreamingOutputHarness> {
+    streaming_output_harness_with_artifacts(/*artifact_bytes_cap*/ None).await
+}
+
+async fn streaming_output_harness_with_artifacts(
+    artifact_bytes_cap: Option<usize>,
+) -> anyhow::Result<StreamingOutputHarness> {
     let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
     let (stdout_tx, stdout_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(8);
     let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
@@ -48,8 +56,13 @@ async fn streaming_output_harness() -> anyhow::Result<StreamingOutputHarness> {
         tty: false,
     });
     let process = Arc::new(
-        UnifiedExecProcess::from_spawned(spawned, SandboxType::None, Box::new(NoopSpawnLifecycle))
-            .await?,
+        UnifiedExecProcess::from_spawned(
+            spawned,
+            SandboxType::None,
+            Box::new(NoopSpawnLifecycle),
+            artifact_bytes_cap,
+        )
+        .await?,
     );
     let (session, turn, rx_event) = make_session_and_context_with_rx().await;
     let context = UnifiedExecContext::new(
@@ -69,6 +82,102 @@ async fn streaming_output_harness() -> anyhow::Result<StreamingOutputHarness> {
         context,
         rx_event,
     })
+}
+
+#[tokio::test]
+async fn artifact_backed_streaming_preserves_output_deltas() -> anyhow::Result<()> {
+    let StreamingOutputHarness {
+        process,
+        stdout_tx,
+        exit_tx,
+        transcript,
+        rx_event,
+        ..
+    } = streaming_output_harness_with_artifacts(/*artifact_bytes_cap*/ Some(1024)).await?;
+    let output_drained = process.output_drained_notify();
+    let drained = output_drained.notified();
+    tokio::pin!(drained);
+
+    stdout_tx
+        .send(b"token=abcdefghijklmnopqrstuvwxyz".to_vec())
+        .expect("send raw output");
+    drop(stdout_tx);
+    exit_tx.send(0).expect("send exit");
+    (&mut drained).await;
+
+    let expected = b"token=abcdefghijklmnopqrstuvwxyz";
+    let event = rx_event.recv().await.expect("receive output delta");
+    let EventMsg::ExecCommandOutputDelta(delta) = event.msg else {
+        panic!("expected ExecCommandOutputDelta");
+    };
+    assert_eq!(
+        delta,
+        ExecCommandOutputDeltaEvent {
+            call_id: "streaming-output-test".to_string(),
+            stream: ExecOutputStream::Stdout,
+            chunk: expected.to_vec(),
+        }
+    );
+    assert_eq!(
+        transcript.lock().await.to_bytes_with_omission_marker(),
+        expected
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn lagged_driver_marks_artifact_capture_truncated() -> anyhow::Result<()> {
+    let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let (stdout_tx, stdout_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(1);
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
+    stdout_tx.send(b"dropped".to_vec())?;
+    stdout_tx.send(b"retained".to_vec())?;
+    let spawned = codex_utils_pty::spawn_from_driver(codex_utils_pty::ProcessDriver {
+        writer_tx,
+        stdout_rx,
+        stderr_rx: None,
+        exit_rx,
+        terminator: None,
+        writer_handle: None,
+        resizer: None,
+        #[cfg(windows)]
+        tty: false,
+    });
+    let process = UnifiedExecProcess::from_spawned(
+        spawned,
+        SandboxType::None,
+        Box::new(NoopSpawnLifecycle),
+        /*artifact_bytes_cap*/ Some(1024),
+    )
+    .await?;
+    let output_closed = Arc::clone(&process.output_handles().output_closed);
+    let output_closed_notify = Arc::clone(&process.output_handles().output_closed_notify);
+    let capture = process
+        .output_handles()
+        .artifact_capture
+        .clone()
+        .expect("artifact capture");
+    drop(stdout_tx);
+    exit_tx.send(0).expect("send exit");
+    while !output_closed.load(std::sync::atomic::Ordering::Acquire) {
+        let notified = output_closed_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !output_closed.load(std::sync::atomic::Ordering::Acquire) {
+            notified.await;
+        }
+    }
+
+    assert_eq!(
+        capture.status(codex_exec_output_artifacts::ArtifactStream::Stdout),
+        ArtifactCaptureStatus {
+            retained_byte_count: 0,
+            observed_byte_count: 0,
+            capture: ArtifactCapture::Truncated,
+        }
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -239,6 +348,7 @@ async fn exit_watcher_waits_for_late_network_denial_before_classifying_end() -> 
         Instant::now(),
         Some(network_denial_monitor),
         /*plugin_metrics_sidecar*/ None,
+        /*artifact_capture*/ None,
     );
 
     let exited_at = Instant::now();

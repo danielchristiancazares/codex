@@ -11,11 +11,13 @@ use codex_extension_api::ThreadIdleCause;
 use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_otel::SessionTelemetry;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -73,7 +75,7 @@ static LIVE_THREADS: Gauge = Gauge::new("core.threads.live");
 pub struct ThreadConfigSnapshot {
     pub model: String,
     pub model_provider_id: String,
-    pub service_tier: Option<String>,
+    pub service_tier: ServiceTier,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
@@ -135,9 +137,9 @@ pub struct CodexThreadSettingsOverrides {
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub model: Option<String>,
-    pub effort: Option<Option<ReasoningEffort>>,
+    pub effort: NullableField<ReasoningEffort>,
     pub summary: Option<ReasoningSummary>,
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: ServiceTier,
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
 }
@@ -437,10 +439,11 @@ impl CodexThread {
         let collaboration_mode = if let Some(collaboration_mode) = collaboration_mode {
             collaboration_mode
         } else {
-            self.session
-                .collaboration_mode()
-                .await
-                .with_updates(model, effort, /*developer_instructions*/ None)
+            self.session.collaboration_mode().await.with_updates(
+                model,
+                effort,
+                /*developer_instructions*/ NullableField::Omitted,
+            )
         };
 
         SessionSettingsUpdate {

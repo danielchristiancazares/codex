@@ -37,7 +37,7 @@ impl ChatWidget {
             (
                 COPILOT_PROVIDER_ID,
                 "GitHub Copilot",
-                "Use your GitHub Copilot account over WebSocket",
+                "Use your GitHub account",
             ),
         ];
         let current_provider = self.config.model_provider_id.as_str();

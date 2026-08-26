@@ -20,6 +20,7 @@ use strum_macros::EnumIter;
 use ts_rs::TS;
 use wildmatch::WildMatchPattern;
 
+use crate::NullableField;
 use crate::openai_models::ReasoningEffort;
 
 /// Selects which part of the active context is charged against
@@ -504,34 +505,23 @@ impl From<WebSearchToolConfig> for WebSearchConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Display, JsonSchema, TS)]
+#[derive(
+    Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Display, JsonSchema, TS,
+)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum ServiceTier {
+    #[serde(alias = "priority")]
     Fast,
     Flex,
+    #[default]
+    #[serde(other)]
+    Default,
 }
 
-/// Request/config sentinel for explicit standard routing.
-///
-/// This is not a catalog service tier id. It means the user intentionally
-/// selected no service tier, so model catalog defaults should not apply.
-pub const SERVICE_TIER_DEFAULT_REQUEST_VALUE: &str = "default";
-
 impl ServiceTier {
-    pub const fn request_value(self) -> &'static str {
-        match self {
-            Self::Fast => "priority",
-            Self::Flex => "flex",
-        }
-    }
-
-    pub fn from_request_value(value: &str) -> Option<Self> {
-        match value {
-            "fast" | "priority" => Some(Self::Fast),
-            "flex" => Some(Self::Flex),
-            _ => None,
-        }
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::Default)
     }
 }
 
@@ -708,23 +698,30 @@ impl CollaborationMode {
 
     /// Updates the collaboration mode with new model and/or effort values.
     ///
-    /// - `model`: `Some(s)` to update the model, `None` to keep the current model
-    /// - `effort`: `Some(Some(e))` to set effort to `e`, `Some(None)` to clear effort, `None` to keep current effort
-    /// - `developer_instructions`: `Some(Some(s))` to set instructions, `Some(None)` to clear them, `None` to keep current
+    /// - `model`: `Some(s)` updates the model and `None` keeps the current model
+    /// - `effort`: explicit omitted, null, and value states update the effort
+    /// - `developer_instructions`: explicit omitted, null, and value states update the instructions
     ///
     /// Returns a new `CollaborationMode` with updated values, preserving the mode.
     pub fn with_updates(
         &self,
         model: Option<String>,
-        effort: Option<Option<ReasoningEffort>>,
-        developer_instructions: Option<Option<String>>,
+        effort: NullableField<ReasoningEffort>,
+        developer_instructions: NullableField<String>,
     ) -> Self {
         let settings = self.settings_ref();
         let updated_settings = Settings {
             model: model.unwrap_or_else(|| settings.model.clone()),
-            reasoning_effort: effort.unwrap_or_else(|| settings.reasoning_effort.clone()),
-            developer_instructions: developer_instructions
-                .unwrap_or_else(|| settings.developer_instructions.clone()),
+            reasoning_effort: match effort {
+                NullableField::Omitted => settings.reasoning_effort.clone(),
+                NullableField::Null => None,
+                NullableField::Value(effort) => Some(effort),
+            },
+            developer_instructions: match developer_instructions {
+                NullableField::Omitted => settings.developer_instructions.clone(),
+                NullableField::Null => None,
+                NullableField::Value(instructions) => Some(instructions),
+            },
         };
 
         CollaborationMode {
@@ -734,8 +731,8 @@ impl CollaborationMode {
     }
 
     /// Applies a mask to this collaboration mode, returning a new collaboration mode
-    /// with the mask values applied. Fields in the mask that are `Some` will override
-    /// the corresponding fields, while `None` values will preserve the original values.
+    /// with the mask values applied. Omitted fields preserve the corresponding setting;
+    /// null and value fields clear or replace it.
     ///
     /// The `name` field in the mask is ignored as it's metadata for the mask itself.
     pub fn apply_mask(&self, mask: &CollaborationModeMask) -> Self {
@@ -744,14 +741,16 @@ impl CollaborationMode {
             mode: mask.mode.unwrap_or(self.mode),
             settings: Settings {
                 model: mask.model.clone().unwrap_or_else(|| settings.model.clone()),
-                reasoning_effort: mask
-                    .reasoning_effort
-                    .clone()
-                    .unwrap_or_else(|| settings.reasoning_effort.clone()),
-                developer_instructions: mask
-                    .developer_instructions
-                    .clone()
-                    .unwrap_or_else(|| settings.developer_instructions.clone()),
+                reasoning_effort: match mask.reasoning_effort.clone() {
+                    NullableField::Omitted => settings.reasoning_effort.clone(),
+                    NullableField::Null => None,
+                    NullableField::Value(effort) => Some(effort),
+                },
+                developer_instructions: match mask.developer_instructions.clone() {
+                    NullableField::Omitted => settings.developer_instructions.clone(),
+                    NullableField::Null => None,
+                    NullableField::Value(instructions) => Some(instructions),
+                },
             },
         }
     }
@@ -772,8 +771,12 @@ pub struct CollaborationModeMask {
     pub name: String,
     pub mode: Option<ModeKind>,
     pub model: Option<String>,
-    pub reasoning_effort: Option<Option<ReasoningEffort>>,
-    pub developer_instructions: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[ts(optional = nullable)]
+    pub reasoning_effort: NullableField<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[ts(optional = nullable)]
+    pub developer_instructions: NullableField<String>,
 }
 
 #[cfg(test)]
@@ -821,8 +824,8 @@ mod tests {
             name: "Clear".to_string(),
             mode: None,
             model: None,
-            reasoning_effort: Some(None),
-            developer_instructions: Some(None),
+            reasoning_effort: NullableField::Null,
+            developer_instructions: NullableField::Null,
         };
 
         let expected = CollaborationMode {

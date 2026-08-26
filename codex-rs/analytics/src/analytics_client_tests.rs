@@ -166,6 +166,7 @@ use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
 use codex_protocol::models::PermissionProfile as CorePermissionProfile;
@@ -258,7 +259,7 @@ fn sample_thread_start_response(
         ),
         model: model.to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
@@ -323,7 +324,7 @@ fn sample_thread_resume_response_with_source(
         ),
         model: model.to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
@@ -446,7 +447,7 @@ fn sample_turn_resolved_config(thread_id: &str, turn_id: &str) -> TurnResolvedCo
         permission_profile_cwd: PathBuf::from("/tmp"),
         reasoning_effort: None,
         reasoning_summary: None,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::OnRequest,
         approvals_reviewer: ApprovalsReviewer::AutoReview,
         sandbox_network_access: true,

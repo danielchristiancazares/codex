@@ -162,7 +162,7 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
             thread_id,
             Some("test goal".to_string()),
             Some(codex_app_server_protocol::ThreadGoalStatus::Paused),
-            /*token_budget*/ None,
+            /*token_budget*/ NullableField::Omitted,
         )
         .await?
         .goal;

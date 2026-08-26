@@ -40,6 +40,7 @@ use codex_config::permissions_toml::NetworkToml;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
 use codex_config::permissions_toml::WorkspaceRootsToml;
+use codex_config::profile_toml::ConfigProfile;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
@@ -81,7 +82,6 @@ use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
 use codex_network_proxy::NetworkMode;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
@@ -9511,76 +9511,9 @@ alpha = "one\ntwo"
 }
 
 #[tokio::test]
-async fn explicit_null_service_tier_override_maps_to_default_service_tier() -> std::io::Result<()> {
-    let fixture = create_test_fixture()?;
-
-    let config = Config::load_from_base_config_with_overrides(
-        fixture.cfg.clone(),
-        ConfigOverrides {
-            cwd: Some(fixture.cwd_path()),
-            service_tier: Some(None),
-            ..Default::default()
-        },
-        fixture.codex_home(),
-    )
-    .await?;
-
-    assert_eq!(
-        config.service_tier,
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
-    assert_eq!(config.notices.fast_default_opt_out, None);
-    Ok(())
-}
-
-#[tokio::test]
-async fn default_service_tier_override_uses_default_request_value() -> std::io::Result<()> {
-    let fixture = create_test_fixture()?;
-
-    let config = Config::load_from_base_config_with_overrides(
-        fixture.cfg.clone(),
-        ConfigOverrides {
-            cwd: Some(fixture.cwd_path()),
-            service_tier: Some(Some("default".to_string())),
-            ..Default::default()
-        },
-        fixture.codex_home(),
-    )
-    .await?;
-
-    assert_eq!(
-        config.service_tier,
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn legacy_fast_service_tier_override_uses_priority_request_value() -> std::io::Result<()> {
-    let fixture = create_test_fixture()?;
-
-    let config = Config::load_from_base_config_with_overrides(
-        fixture.cfg.clone(),
-        ConfigOverrides {
-            cwd: Some(fixture.cwd_path()),
-            service_tier: Some(Some("fast".to_string())),
-            ..Default::default()
-        },
-        fixture.codex_home(),
-    )
-    .await?;
-
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn config_toml_priority_service_tier_uses_priority_request_value() -> std::io::Result<()> {
+async fn config_carries_concrete_service_tier() -> std::io::Result<()> {
     let mut fixture = create_test_fixture()?;
-    fixture.cfg.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    fixture.cfg.service_tier = ServiceTier::Fast;
     let cwd = fixture.cwd_path();
     let codex_home = fixture.codex_home();
 
@@ -9594,59 +9527,32 @@ async fn config_toml_priority_service_tier_uses_priority_request_value() -> std:
     )
     .await?;
 
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(config.service_tier, ServiceTier::Fast);
     Ok(())
 }
 
-#[tokio::test]
-async fn config_toml_service_tier_accepts_arbitrary_string() -> std::io::Result<()> {
-    let mut fixture = create_test_fixture()?;
-    fixture.cfg.service_tier = Some("experimental-tier-id".to_string());
-    let cwd = fixture.cwd_path();
-    let codex_home = fixture.codex_home();
+#[test]
+fn config_toml_service_tier_deserialization_is_concrete() {
+    for (value, expected) in [
+        ("fast", ServiceTier::Fast),
+        ("priority", ServiceTier::Fast),
+        ("flex", ServiceTier::Flex),
+        ("experimental-tier-id", ServiceTier::Default),
+    ] {
+        let config: ConfigToml = toml::from_str(&format!("service_tier = \"{value}\""))
+            .expect("service tier should deserialize");
+        assert_eq!(config.service_tier, expected);
+    }
 
-    let config = Config::load_from_base_config_with_overrides(
-        fixture.cfg,
-        ConfigOverrides {
-            cwd: Some(cwd),
-            ..Default::default()
-        },
-        codex_home,
-    )
-    .await?;
+    let config: ConfigToml = toml::from_str("").expect("missing service tier should deserialize");
+    assert_eq!(config.service_tier, ServiceTier::Default);
 
-    assert_eq!(
-        config.service_tier,
-        Some("experimental-tier-id".to_string())
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn config_toml_legacy_fast_service_tier_uses_priority_request_value() -> std::io::Result<()> {
-    let mut fixture = create_test_fixture()?;
-    fixture.cfg.service_tier = Some("fast".to_string());
-    let cwd = fixture.cwd_path();
-    let codex_home = fixture.codex_home();
-
-    let config = Config::load_from_base_config_with_overrides(
-        fixture.cfg,
-        ConfigOverrides {
-            cwd: Some(cwd),
-            ..Default::default()
-        },
-        codex_home,
-    )
-    .await?;
-
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-    Ok(())
+    let profile: ConfigProfile =
+        toml::from_str("").expect("missing profile service tier should deserialize");
+    assert_eq!(profile.service_tier, ServiceTier::Default);
+    let profile: ConfigProfile = toml::from_str("service_tier = \"priority\"")
+        .expect("legacy profile service tier should deserialize");
+    assert_eq!(profile.service_tier, ServiceTier::Fast);
 }
 
 #[tokio::test]
@@ -9668,7 +9574,7 @@ async fn fast_default_opt_out_notice_config_is_respected() -> std::io::Result<()
     )
     .await?;
 
-    assert_eq!(config.service_tier, None);
+    assert_eq!(config.service_tier, ServiceTier::Default);
     assert_eq!(config.notices.fast_default_opt_out, Some(true));
     Ok(())
 }

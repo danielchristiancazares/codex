@@ -79,6 +79,13 @@ enum RenderLineKind {
     ItemDetail,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CustomizationScope<'a> {
+    NotStarted,
+    Home,
+    Project(&'a std::path::Path),
+}
+
 pub(crate) async fn run_external_agent_config_migration_prompt(
     tui: &mut Tui,
     items: &[ExternalAgentConfigMigrationItem],
@@ -647,11 +654,15 @@ impl ExternalAgentConfigMigrationScreen {
 
     fn build_customize_render_lines(&self) -> Vec<RenderLineEntry> {
         let mut lines = Vec::new();
-        let mut current_scope: Option<Option<&std::path::Path>> = None;
+        let mut current_scope = CustomizationScope::NotStarted;
         for (idx, item) in self.items.iter().enumerate() {
-            let scope = item.item.cwd.as_deref();
-            if current_scope != Some(scope) {
-                if current_scope.is_some() {
+            let scope_path = item.item.cwd.as_deref();
+            let scope = match scope_path {
+                Some(path) => CustomizationScope::Project(path),
+                None => CustomizationScope::Home,
+            };
+            if current_scope != scope {
+                if current_scope != CustomizationScope::NotStarted {
                     lines.push(RenderLineEntry {
                         item_idx: None,
                         kind: RenderLineKind::Section,
@@ -661,9 +672,9 @@ impl ExternalAgentConfigMigrationScreen {
                 lines.push(RenderLineEntry {
                     item_idx: None,
                     kind: RenderLineKind::Section,
-                    line: Self::section_title(scope),
+                    line: Self::section_title(scope_path),
                 });
-                current_scope = Some(scope);
+                current_scope = scope;
             }
             lines.push(RenderLineEntry {
                 item_idx: Some(idx),

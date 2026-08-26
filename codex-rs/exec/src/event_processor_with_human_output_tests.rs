@@ -5,6 +5,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_core::config::ConfigBuilder;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
@@ -218,7 +219,7 @@ async fn config_summary_entries_include_runtime_workspace_roots() {
         thread_name: None,
         model: "gpt-5.4".to_string(),
         model_provider_id: config.model_provider_id.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile: config.permissions.effective_permission_profile(),

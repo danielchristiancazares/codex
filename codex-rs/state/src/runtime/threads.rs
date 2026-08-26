@@ -1,5 +1,7 @@
 use super::*;
 use crate::SortDirection;
+use codex_protocol::NullableField;
+use codex_protocol::SanitizedGitUrl;
 use codex_protocol::protocol::SessionSource;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
@@ -433,8 +435,8 @@ ON CONFLICT(child_thread_id) DO NOTHING
                 allowed_sources,
                 model_providers,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 anchor: None,
                 sort_key: crate::SortKey::UpdatedAt,
                 sort_direction: SortDirection::Desc,
@@ -559,8 +561,8 @@ ON CONFLICT(child_thread_id) DO NOTHING
                 allowed_sources,
                 model_providers,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 anchor,
                 sort_key,
                 sort_direction: SortDirection::Desc,
@@ -845,9 +847,9 @@ impl StateRuntime {
     pub async fn update_thread_git_info(
         &self,
         thread_id: ThreadId,
-        git_sha: Option<Option<&str>>,
-        git_branch: Option<Option<&str>>,
-        git_origin_url: Option<Option<&str>>,
+        git_sha: NullableField<&str>,
+        git_branch: NullableField<&str>,
+        git_origin_url: NullableField<&SanitizedGitUrl>,
     ) -> anyhow::Result<bool> {
         let result = sqlx::query(
             r#"
@@ -859,12 +861,21 @@ SET
 WHERE id = ?
             "#,
         )
-        .bind(git_sha.is_some())
-        .bind(git_sha.flatten())
-        .bind(git_branch.is_some())
-        .bind(git_branch.flatten())
-        .bind(git_origin_url.is_some())
-        .bind(git_origin_url.flatten())
+        .bind(!git_sha.is_omitted())
+        .bind(match git_sha {
+            NullableField::Value(git_sha) => Some(git_sha),
+            NullableField::Omitted | NullableField::Null => None,
+        })
+        .bind(!git_branch.is_omitted())
+        .bind(match git_branch {
+            NullableField::Value(git_branch) => Some(git_branch),
+            NullableField::Omitted | NullableField::Null => None,
+        })
+        .bind(!git_origin_url.is_omitted())
+        .bind(match git_origin_url {
+            NullableField::Value(git_origin_url) => Some(git_origin_url.as_str()),
+            NullableField::Omitted | NullableField::Null => None,
+        })
         .bind(thread_id.to_string())
         .execute(self.pool.as_ref())
         .await?;
@@ -1337,8 +1348,8 @@ pub struct ThreadFilterOptions<'a> {
     pub allowed_sources: &'a [String],
     pub model_providers: Option<&'a [String]>,
     pub cwd_filters: Option<&'a [PathBuf]>,
-    pub section: Option<Option<&'a str>>,
-    pub project_id: Option<Option<&'a str>>,
+    pub section: NullableField<&'a str>,
+    pub project_id: NullableField<&'a str>,
     pub anchor: Option<&'a crate::Anchor>,
     pub sort_key: SortKey,
     pub sort_direction: SortDirection,
@@ -1382,28 +1393,28 @@ fn push_thread_filters_with_preview<'a>(
     } else {
         builder.push(" AND threads.archived = 0");
     }
-    if !include_empty_preview && !matches!(section, Some(Some(_))) {
+    if !include_empty_preview && !matches!(section, NullableField::Value(_)) {
         builder.push(" AND threads.preview <> ''");
     }
     match section {
-        Some(Some(section)) => {
+        NullableField::Value(section) => {
             builder.push(" AND threads.thread_section_id = ");
             builder.push_bind(section);
         }
-        Some(None) => {
+        NullableField::Null => {
             builder.push(" AND threads.thread_section_id IS NULL");
         }
-        None => {}
+        NullableField::Omitted => {}
     }
     match project_id {
-        Some(Some(project_id)) => {
+        NullableField::Value(project_id) => {
             builder.push(" AND threads.project_id = ");
             builder.push_bind(project_id);
         }
-        Some(None) => {
+        NullableField::Null => {
             builder.push(" AND threads.project_id IS NULL");
         }
-        None => {}
+        NullableField::Omitted => {}
     }
     if !allowed_sources.is_empty() {
         builder.push(" AND threads.source IN (");
@@ -1692,7 +1703,7 @@ mod tests {
             model_providers: None,
             cwd_filters: None,
             section,
-            project_id: None,
+            project_id: NullableField::Omitted,
             anchor,
             sort_key: SortKey::RecencyAt,
             sort_direction: SortDirection::Desc,
@@ -1701,7 +1712,7 @@ mod tests {
         let first_page = runtime
             .list_threads(
                 /*page_size*/ 1,
-                filters(None, Some(Some(crate::PINNED_THREAD_SECTION_ID))),
+                filters(None, NullableField::Value(crate::PINNED_THREAD_SECTION_ID)),
             )
             .await
             .unwrap();
@@ -1720,7 +1731,7 @@ mod tests {
                 /*page_size*/ 1,
                 filters(
                     first_page.next_anchor.as_ref(),
-                    Some(Some(crate::PINNED_THREAD_SECTION_ID)),
+                    NullableField::Value(crate::PINNED_THREAD_SECTION_ID),
                 ),
             )
             .await
@@ -1730,7 +1741,7 @@ mod tests {
         assert_eq!(second_page.next_anchor, None);
 
         let unsectioned_page = runtime
-            .list_threads(/*page_size*/ 10, filters(None, Some(None)))
+            .list_threads(/*page_size*/ 10, filters(None, NullableField::Null))
             .await
             .unwrap();
         assert_eq!(
@@ -1743,7 +1754,7 @@ mod tests {
         );
 
         let all_sections_page = runtime
-            .list_threads(/*page_size*/ 10, filters(None, None))
+            .list_threads(/*page_size*/ 10, filters(None, NullableField::Omitted))
             .await
             .unwrap();
         assert_eq!(
@@ -1758,7 +1769,7 @@ mod tests {
         let mut builder = QueryBuilder::<Sqlite>::new("EXPLAIN QUERY PLAN ");
         push_list_threads_query(
             &mut builder,
-            filters(None, Some(Some(crate::PINNED_THREAD_SECTION_ID))),
+            filters(None, NullableField::Value(crate::PINNED_THREAD_SECTION_ID)),
             /*relation_filter*/ None,
             /*limit*/ 2,
         );
@@ -1824,8 +1835,8 @@ mod tests {
             allowed_sources: &[],
             model_providers: None,
             cwd_filters: None,
-            section: Some(Some(CUSTOM_THREAD_SECTION_ID)),
-            project_id: None,
+            section: NullableField::Value(CUSTOM_THREAD_SECTION_ID),
+            project_id: NullableField::Omitted,
             anchor,
             sort_key: SortKey::SectionPosition,
             sort_direction: SortDirection::Asc,
@@ -2072,8 +2083,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: Some(&model_providers),
                     cwd_filters: None,
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: Some(&anchor),
                     sort_key: SortKey::UpdatedAt,
                     sort_direction: SortDirection::Asc,
@@ -2102,8 +2113,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: Some(&model_providers),
                     cwd_filters: None,
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: page.next_anchor.as_ref(),
                     sort_key: SortKey::UpdatedAt,
                     sort_direction: SortDirection::Asc,
@@ -2160,8 +2171,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: Some(cwd_filters.as_slice()),
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: None,
                     sort_key: SortKey::UpdatedAt,
                     sort_direction: SortDirection::Desc,
@@ -2194,8 +2205,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: Some(cwd_filters.as_slice()),
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: first_page.next_anchor.as_ref(),
                     sort_key: SortKey::UpdatedAt,
                     sort_direction: SortDirection::Desc,
@@ -2221,8 +2232,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: Some(&[]),
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: None,
                     sort_key: SortKey::UpdatedAt,
                     sort_direction: SortDirection::Desc,
@@ -2290,8 +2301,8 @@ mod tests {
                         allowed_sources: &[],
                         model_providers: Some(&model_providers),
                         cwd_filters,
-                        section: None,
-                        project_id: None,
+                        section: NullableField::Omitted,
+                        project_id: NullableField::Omitted,
                         anchor,
                         sort_key,
                         sort_direction: SortDirection::Desc,
@@ -2392,8 +2403,8 @@ mod tests {
                 allowed_sources: &[],
                 model_providers: None,
                 cwd_filters: None,
-                section: None,
-                project_id: None,
+                section: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 anchor: None,
                 sort_key: SortKey::CreatedAt,
                 sort_direction: SortDirection::Desc,
@@ -2422,8 +2433,8 @@ mod tests {
             allowed_sources: &[],
             model_providers: None,
             cwd_filters: None,
-            section: None,
-            project_id: None,
+            section: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             anchor,
             sort_key: SortKey::CreatedAt,
             sort_direction: SortDirection::Desc,
@@ -2660,7 +2671,10 @@ mod tests {
             git: Some(GitInfo {
                 commit_hash: Some(codex_git_utils::GitSha::new("rollout-sha")),
                 branch: Some("rollout-branch".to_string()),
-                repository_url: Some("git@example.com:openai/codex.git".to_string()),
+                repository_url: Some(
+                    SanitizedGitUrl::try_from("git@example.com:openai/codex.git")
+                        .expect("valid git remote URL"),
+                ),
             }),
         })];
 
@@ -2699,7 +2713,10 @@ mod tests {
         let mut metadata = test_thread_metadata(&codex_home, thread_id, codex_home.clone());
         metadata.git_sha = Some("sqlite-sha".to_string());
         metadata.git_branch = Some("sqlite-branch".to_string());
-        metadata.git_origin_url = Some("git@example.com:openai/codex.git".to_string());
+        metadata.git_origin_url = Some(
+            SanitizedGitUrl::try_from("git@example.com:openai/codex.git")
+                .expect("valid git remote URL"),
+        );
 
         runtime
             .upsert_thread(&metadata)
@@ -2709,7 +2726,10 @@ mod tests {
         let mut rollout_metadata = metadata.clone();
         rollout_metadata.git_sha = Some("rollout-sha".to_string());
         rollout_metadata.git_branch = Some("rollout-branch".to_string());
-        rollout_metadata.git_origin_url = Some("https://example.com/repo.git".to_string());
+        rollout_metadata.git_origin_url = Some(
+            SanitizedGitUrl::try_from("https://example.com/repo.git")
+                .expect("valid git remote URL"),
+        );
 
         runtime
             .upsert_thread(&rollout_metadata)
@@ -2846,9 +2866,12 @@ mod tests {
         let updated = runtime
             .update_thread_git_info(
                 thread_id,
-                Some(Some("abc123")),
-                Some(Some("feature/branch")),
-                Some(Some("git@example.com:openai/codex.git")),
+                NullableField::Value("abc123"),
+                NullableField::Value("feature/branch"),
+                NullableField::Value(
+                    &SanitizedGitUrl::try_from("git@example.com:openai/codex.git")
+                        .expect("valid git remote URL"),
+                ),
             )
             .await
             .expect("git info update should succeed");
@@ -2939,7 +2962,10 @@ mod tests {
         let mut metadata = test_thread_metadata(&codex_home, thread_id, codex_home.clone());
         metadata.git_sha = Some("abc123".to_string());
         metadata.git_branch = Some("feature/branch".to_string());
-        metadata.git_origin_url = Some("git@example.com:openai/codex.git".to_string());
+        metadata.git_origin_url = Some(
+            SanitizedGitUrl::try_from("git@example.com:openai/codex.git")
+                .expect("valid git remote URL"),
+        );
 
         runtime
             .upsert_thread(&metadata)
@@ -2947,7 +2973,12 @@ mod tests {
             .expect("initial upsert should succeed");
 
         let updated = runtime
-            .update_thread_git_info(thread_id, Some(None), Some(None), Some(None))
+            .update_thread_git_info(
+                thread_id,
+                NullableField::Null,
+                NullableField::Null,
+                NullableField::Null,
+            )
             .await
             .expect("git info clear should succeed");
         assert!(updated, "git info clear should touch the thread row");
@@ -3107,8 +3138,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: None,
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: None,
                     sort_key: SortKey::RecencyAt,
                     sort_direction: SortDirection::Desc,
@@ -3141,8 +3172,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: None,
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: first_page.next_anchor.as_ref(),
                     sort_key: SortKey::RecencyAt,
                     sort_direction: SortDirection::Desc,
@@ -3175,8 +3206,8 @@ mod tests {
                     allowed_sources: &[],
                     model_providers: None,
                     cwd_filters: None,
-                    section: None,
-                    project_id: None,
+                    section: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     anchor: second_page.next_anchor.as_ref(),
                     sort_key: SortKey::RecencyAt,
                     sort_direction: SortDirection::Desc,

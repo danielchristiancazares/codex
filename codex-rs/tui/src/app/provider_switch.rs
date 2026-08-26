@@ -9,6 +9,7 @@ use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadBackgroundTerminalsListParams;
 use codex_app_server_protocol::ThreadBackgroundTerminalsListResponse;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use std::time::Duration;
 
@@ -375,7 +376,7 @@ impl App {
         config.model = Some(selected_model_id.clone());
         config.model_reasoning_effort = Some(selected_effort);
         config.plan_mode_reasoning_effort = Some(selected_plan_effort);
-        config.service_tier = None;
+        config.service_tier = ServiceTier::Default;
 
         let transitioned = if has_rollout {
             app_server
@@ -486,8 +487,8 @@ impl App {
                 serde_json::json!(provider_id.clone()),
             ),
         );
-        persistence_edits.extend(crate::config_update::build_service_tier_selection_edits(
-            self.config.service_tier.as_deref(),
+        persistence_edits.push(crate::config_update::service_tier_selection_edit(
+            self.config.service_tier,
         ));
         let plan_effort_edit = self.config.plan_mode_reasoning_effort.as_ref().map_or_else(
             || crate::config_update::clear_config_value("plan_mode_reasoning_effort"),

@@ -2,6 +2,7 @@ use anyhow::Result;
 use codex_core::TurnInputRequest;
 use codex_core::config::Config;
 use codex_features::Feature;
+use codex_protocol::NullableField;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::MultiAgentMessages;
 use codex_protocol::openai_models::MultiAgentModeMessages;
@@ -115,7 +116,10 @@ async fn submit_turn(
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                effort: effort.map(Some),
+                effort: match effort {
+                    Some(effort) => NullableField::Value(effort),
+                    None => NullableField::Omitted,
+                },
                 ..Default::default()
             }),
         )

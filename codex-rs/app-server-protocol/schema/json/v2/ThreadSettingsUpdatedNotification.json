@@ -271,6 +271,14 @@
         }
       ]
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "Settings": {
       "description": "Settings for a collaboration mode.",
       "properties": {
@@ -353,10 +361,7 @@
           "$ref": "#/definitions/SandboxPolicy"
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         },
         "summary": {
           "anyOf": [

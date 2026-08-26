@@ -4,6 +4,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_app_server_protocol::CodexErrorInfo;
+use codex_protocol::SanitizedGitUrl;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
@@ -22,32 +23,7 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_rollout::RolloutItem;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
-
-mod optional_option {
-    use super::*;
-
-    pub fn serialize<T, S>(value: &Option<Option<T>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        T: Serialize,
-        S: Serializer,
-    {
-        match value {
-            Some(value) => value.serialize(serializer),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-    where
-        T: Deserialize<'de>,
-        D: Deserializer<'de>,
-    {
-        Option::<T>::deserialize(deserializer).map(Some)
-    }
-}
 
 /// Thread-scoped metadata used when opening live persistence.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,7 +289,7 @@ pub struct ListThreadsParams {
     pub cwd_filters: Option<Vec<PathBuf>>,
     /// Omit to include every section, set to `None` to match unsectioned
     /// threads, or provide a section ID to match that section.
-    pub section: Option<Option<String>>,
+    pub section: ClearableField<String>,
     /// Omit to include every project, set to None for unassigned threads,
     /// or provide a project ID to match that project.
     pub project_id: ClearableField<String>,
@@ -620,48 +596,36 @@ pub struct StoredThread {
     pub history: Option<StoredThreadHistory>,
 }
 
-/// Optional field patch where omission leaves a value unchanged and `Some(None)` clears it.
-pub type ClearableField<T> = Option<Option<T>>;
+/// Optional field patch with explicit omitted, null, and value states.
+pub use codex_protocol::NullableField as ClearableField;
 
 /// Patch for thread Git metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitInfoPatch {
     /// Replacement commit SHA, clear request, or no-op.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub sha: ClearableField<String>,
     /// Replacement branch name, clear request, or no-op.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub branch: ClearableField<String>,
     /// Replacement origin URL, clear request, or no-op.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
-    pub origin_url: ClearableField<String>,
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
+    pub origin_url: ClearableField<SanitizedGitUrl>,
 }
 
 impl GitInfoPatch {
     /// Merges another patch into this one using field-presence semantics.
     ///
     /// Omitted fields in `next` leave the current patch unchanged. Present fields replace the
-    /// current value, including clear requests like `Some(None)`.
+    /// current value, including explicit null requests.
     pub fn merge(&mut self, next: Self) {
-        if next.sha.is_some() {
+        if !next.sha.is_omitted() {
             self.sha = next.sha;
         }
-        if next.branch.is_some() {
+        if !next.branch.is_omitted() {
             self.branch = next.branch;
         }
-        if next.origin_url.is_some() {
+        if !next.origin_url.is_omitted() {
             self.origin_url = next.origin_url;
         }
     }
@@ -669,17 +633,12 @@ impl GitInfoPatch {
 
 /// Patch for thread metadata.
 ///
-/// Every field is literal: `None` leaves that field unchanged, while `Some`
-/// applies the supplied value. Fields whose value may itself be cleared use an
-/// inner `Option`, where `Some(None)` clears the field.
+/// Every field is literal. Optional values use explicit omitted, null, and
+/// value states.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ThreadMetadataPatch {
     /// Replacement user-facing thread name.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub name: ClearableField<String>,
     /// Known local rollout path for stores that expose one.
     pub rollout_path: Option<PathBuf>,
@@ -692,11 +651,7 @@ pub struct ThreadMetadataPatch {
     /// Latest observed model.
     pub model: Option<String>,
     /// Latest observed reasoning effort.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub reasoning_effort: ClearableField<ReasoningEffort>,
     /// Creation timestamp when known.
     pub created_at: Option<DateTime<Utc>>,
@@ -707,32 +662,16 @@ pub struct ThreadMetadataPatch {
     /// Session source.
     pub source: Option<SessionSource>,
     /// Optional analytics source classification.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub thread_source: ClearableField<ThreadSource>,
     /// Optional agent nickname.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub agent_nickname: ClearableField<String>,
     /// Optional agent role.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub agent_role: ClearableField<String>,
     /// Optional canonical agent path.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub agent_path: ClearableField<String>,
     /// Working directory.
     pub cwd: Option<PathBuf>,
@@ -751,11 +690,7 @@ pub struct ThreadMetadataPatch {
     /// Thread memory behavior.
     pub memory_mode: Option<MemoryMode>,
     /// Initial project assignment supplied with thread creation.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_option"
-    )]
+    #[serde(default, skip_serializing_if = "ClearableField::is_omitted")]
     pub project_id: ClearableField<String>,
 }
 
@@ -763,10 +698,10 @@ impl ThreadMetadataPatch {
     /// Merges another patch into this one using field-presence semantics.
     ///
     /// Omitted fields in `next` leave the current patch unchanged. Present fields replace the
-    /// current value, including clear requests like `Some(None)`. Nested patches use the same
+    /// current value, including explicit null requests. Nested patches use the same
     /// semantics.
     pub fn merge(&mut self, next: Self) {
-        if next.name.is_some() {
+        if !next.name.is_omitted() {
             self.name = next.name;
         }
         if next.rollout_path.is_some() {
@@ -784,7 +719,7 @@ impl ThreadMetadataPatch {
         if next.model.is_some() {
             self.model = next.model;
         }
-        if next.reasoning_effort.is_some() {
+        if !next.reasoning_effort.is_omitted() {
             self.reasoning_effort = next.reasoning_effort;
         }
         if next.created_at.is_some() {
@@ -799,16 +734,16 @@ impl ThreadMetadataPatch {
         if next.source.is_some() {
             self.source = next.source;
         }
-        if next.thread_source.is_some() {
+        if !next.thread_source.is_omitted() {
             self.thread_source = next.thread_source;
         }
-        if next.agent_nickname.is_some() {
+        if !next.agent_nickname.is_omitted() {
             self.agent_nickname = next.agent_nickname;
         }
-        if next.agent_role.is_some() {
+        if !next.agent_role.is_omitted() {
             self.agent_role = next.agent_role;
         }
-        if next.agent_path.is_some() {
+        if !next.agent_path.is_omitted() {
             self.agent_path = next.agent_path;
         }
         if next.cwd.is_some() {
@@ -837,27 +772,27 @@ impl ThreadMetadataPatch {
         if next.memory_mode.is_some() {
             self.memory_mode = next.memory_mode;
         }
-        if next.project_id.is_some() {
+        if !next.project_id.is_omitted() {
             self.project_id = next.project_id;
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.name.is_none()
+        self.name.is_omitted()
             && self.rollout_path.is_none()
             && self.preview.is_none()
             && self.title.is_none()
             && self.model_provider.is_none()
             && self.model.is_none()
-            && self.reasoning_effort.is_none()
+            && self.reasoning_effort.is_omitted()
             && self.created_at.is_none()
             && self.updated_at.is_none()
             && self.advance_recency_at.is_none()
             && self.source.is_none()
-            && self.thread_source.is_none()
-            && self.agent_nickname.is_none()
-            && self.agent_role.is_none()
-            && self.agent_path.is_none()
+            && self.thread_source.is_omitted()
+            && self.agent_nickname.is_omitted()
+            && self.agent_role.is_omitted()
+            && self.agent_path.is_omitted()
             && self.cwd.is_none()
             && self.cli_version.is_none()
             && self.approval_mode.is_none()
@@ -866,7 +801,7 @@ impl ThreadMetadataPatch {
             && self.first_user_message.is_none()
             && self.git_info.is_none()
             && self.memory_mode.is_none()
-            && self.project_id.is_none()
+            && self.project_id.is_omitted()
     }
 }
 
@@ -934,12 +869,12 @@ mod tests {
     #[test]
     fn thread_metadata_patch_round_trips_optional_clears() {
         let patch = ThreadMetadataPatch {
-            name: Some(None),
-            reasoning_effort: Some(None),
-            thread_source: Some(None),
-            agent_nickname: Some(None),
-            agent_role: Some(None),
-            agent_path: Some(None),
+            name: ClearableField::Null,
+            reasoning_effort: ClearableField::Null,
+            thread_source: ClearableField::Null,
+            agent_nickname: ClearableField::Null,
+            agent_role: ClearableField::Null,
+            agent_path: ClearableField::Null,
             ..Default::default()
         };
 
@@ -953,21 +888,21 @@ mod tests {
 
         let decoded: ThreadMetadataPatch =
             serde_json::from_value(value).expect("deserialize patch");
-        assert_eq!(decoded.name, Some(None));
-        assert_eq!(decoded.reasoning_effort, Some(None));
-        assert_eq!(decoded.thread_source, Some(None));
-        assert_eq!(decoded.agent_nickname, Some(None));
-        assert_eq!(decoded.agent_role, Some(None));
-        assert_eq!(decoded.agent_path, Some(None));
+        assert_eq!(decoded.name, ClearableField::Null);
+        assert_eq!(decoded.reasoning_effort, ClearableField::Null);
+        assert_eq!(decoded.thread_source, ClearableField::Null);
+        assert_eq!(decoded.agent_nickname, ClearableField::Null);
+        assert_eq!(decoded.agent_role, ClearableField::Null);
+        assert_eq!(decoded.agent_path, ClearableField::Null);
     }
 
     #[test]
     fn git_info_patch_round_trips_optional_clears() {
         let patch = ThreadMetadataPatch {
             git_info: Some(GitInfoPatch {
-                sha: None,
-                branch: Some(Some("main".to_string())),
-                origin_url: Some(None),
+                sha: ClearableField::Omitted,
+                branch: ClearableField::Value("main".to_string()),
+                origin_url: ClearableField::Null,
             }),
             ..Default::default()
         };
@@ -986,9 +921,9 @@ mod tests {
         assert_eq!(
             decoded.git_info,
             Some(GitInfoPatch {
-                sha: None,
-                branch: Some(Some("main".to_string())),
-                origin_url: Some(None),
+                sha: ClearableField::Omitted,
+                branch: ClearableField::Value("main".to_string()),
+                origin_url: ClearableField::Null,
             })
         );
     }
@@ -1015,37 +950,37 @@ mod tests {
     #[test]
     fn thread_metadata_patch_merge_uses_presence_semantics() {
         let mut current = ThreadMetadataPatch {
-            name: Some(Some("old name".to_string())),
+            name: ClearableField::Value("old name".to_string()),
             preview: Some("old preview".to_string()),
             git_info: Some(GitInfoPatch {
-                sha: Some(Some("abc123".to_string())),
-                branch: Some(Some("main".to_string())),
-                origin_url: None,
+                sha: ClearableField::Value("abc123".to_string()),
+                branch: ClearableField::Value("main".to_string()),
+                origin_url: ClearableField::Omitted,
             }),
             ..Default::default()
         };
 
         current.merge(ThreadMetadataPatch {
-            name: Some(None),
+            name: ClearableField::Null,
             preview: None,
             title: Some("new title".to_string()),
             git_info: Some(GitInfoPatch {
-                sha: None,
-                branch: Some(Some("feature".to_string())),
-                origin_url: Some(None),
+                sha: ClearableField::Omitted,
+                branch: ClearableField::Value("feature".to_string()),
+                origin_url: ClearableField::Null,
             }),
             ..Default::default()
         });
 
-        assert_eq!(current.name, Some(None));
+        assert_eq!(current.name, ClearableField::Null);
         assert_eq!(current.preview.as_deref(), Some("old preview"));
         assert_eq!(current.title.as_deref(), Some("new title"));
         assert_eq!(
             current.git_info,
             Some(GitInfoPatch {
-                sha: Some(Some("abc123".to_string())),
-                branch: Some(Some("feature".to_string())),
-                origin_url: Some(None),
+                sha: ClearableField::Value("abc123".to_string()),
+                branch: ClearableField::Value("feature".to_string()),
+                origin_url: ClearableField::Null,
             })
         );
     }

@@ -1,5 +1,6 @@
 use codex_collaboration_mode_templates::DEFAULT as COLLABORATION_MODE_DEFAULT;
 use codex_collaboration_mode_templates::PLAN as COLLABORATION_MODE_PLAN;
+use codex_protocol::NullableField;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
@@ -22,8 +23,8 @@ fn plan_preset() -> CollaborationModeMask {
         name: ModeKind::Plan.display_name().to_string(),
         mode: Some(ModeKind::Plan),
         model: None,
-        reasoning_effort: Some(Some(ReasoningEffort::Medium)),
-        developer_instructions: Some(Some(COLLABORATION_MODE_PLAN.to_string())),
+        reasoning_effort: NullableField::Value(ReasoningEffort::Medium),
+        developer_instructions: NullableField::Value(COLLABORATION_MODE_PLAN.to_string()),
     }
 }
 
@@ -32,8 +33,8 @@ fn default_preset() -> CollaborationModeMask {
         name: ModeKind::Default.display_name().to_string(),
         mode: Some(ModeKind::Default),
         model: None,
-        reasoning_effort: None,
-        developer_instructions: Some(Some(default_mode_instructions())),
+        reasoning_effort: NullableField::Omitted,
+        developer_instructions: NullableField::Value(default_mode_instructions()),
     }
 }
 

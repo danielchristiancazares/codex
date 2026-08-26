@@ -1,6 +1,7 @@
 use super::shared::v2_enum_from_core;
 use crate::JsonSchema;
 use crate::TS;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelAvailabilityNux as CoreModelAvailabilityNux;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -11,6 +12,8 @@ use codex_protocol::protocol::MultiAgentVersion as CoreMultiAgentVersion;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use serde_with::DefaultOnNull;
+use serde_with::serde_as;
 
 v2_enum_from_core!(
     pub enum ModelRerouteReason from CoreModelRerouteReason {
@@ -84,11 +87,12 @@ impl From<CoreModelAvailabilityNux> for ModelAvailabilityNux {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ModelServiceTier {
-    pub id: String,
+    pub id: ServiceTier,
     pub name: String,
     pub description: String,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -122,9 +126,12 @@ pub struct Model {
     pub additional_speed_tiers: Vec<String>,
     #[serde(default)]
     pub service_tiers: Vec<ModelServiceTier>,
-    /// Catalog default service tier id for this model, when one is configured.
-    #[serde(default)]
-    pub default_service_tier: Option<String>,
+    /// Catalog default service tier for this model.
+    #[serde_as(as = "DefaultOnNull")]
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[schemars(with = "ServiceTier")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub default_service_tier: ServiceTier,
     // Only one model should be marked as default.
     pub is_default: bool,
 }

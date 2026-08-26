@@ -264,7 +264,7 @@ impl ChatWidget {
         if collaboration_mode.mode == Some(ModeKind::Plan)
             && let Some(effort) = self.config.plan_mode_reasoning_effort.clone()
         {
-            collaboration_mode.reasoning_effort = Some(Some(effort));
+            collaboration_mode.reasoning_effort = NullableField::Value(effort);
         }
         if self.turn_lifecycle.agent_turn_running
             && self.active_collaboration_mask.as_ref() != Some(&collaboration_mode)

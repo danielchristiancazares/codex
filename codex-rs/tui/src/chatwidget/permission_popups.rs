@@ -5,6 +5,7 @@
 //! `windows_sandbox_prompts`.
 
 use super::*;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 
 impl ChatWidget {
@@ -260,9 +261,9 @@ impl ChatWidget {
                 Some(active_permission_profile.clone()),
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ None,
+                /*effort*/ NullableField::Omitted,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));

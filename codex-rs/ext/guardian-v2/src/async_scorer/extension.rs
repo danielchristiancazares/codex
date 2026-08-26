@@ -307,7 +307,7 @@ impl ThreadLifecycleContributor<Config> for GuardianV2Extension {
                     .thread_store
                     .get::<ThreadOriginator>()
                     .map(|originator| originator.0.clone()),
-                service_tier: input.config.service_tier.clone(),
+                service_tier: input.config.service_tier,
                 luna_compaction_hash,
                 metrics: input.extension_metrics.clone(),
             })

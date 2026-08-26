@@ -47,10 +47,10 @@ use codex_models_manager::model_info;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_protocol::AgentPath;
+use codex_protocol::NullableField;
 use codex_protocol::ResponseItemId;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -62,7 +62,6 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
-use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -159,6 +158,7 @@ use core_test_support::PathExt;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::context_snapshot::ContextSnapshotRenderMode;
+use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
@@ -3203,8 +3203,8 @@ async fn config_change_contributor_observes_effective_config_changes() {
     };
     let collaboration_mode = session.collaboration_mode().await.with_updates(
         Some(next_model.to_string()),
-        /*effort*/ None,
-        /*developer_instructions*/ None,
+        /*effort*/ NullableField::Omitted,
+        /*developer_instructions*/ NullableField::Omitted,
     );
     session
         .update_settings(SessionSettingsUpdate {
@@ -4235,7 +4235,7 @@ async fn set_rate_limits_retains_previous_credits() {
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -4346,7 +4346,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -4705,181 +4705,6 @@ fn session_telemetry(
     )
 }
 
-fn model_with_default_service_tier(default_service_tier: Option<&str>) -> ModelInfo {
-    let mut model_info = model_info::model_info_from_slug("gpt-5.4");
-    model_info.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Fast.request_value().to_string(),
-        name: "Fast".to_string(),
-        description: "Priority processing.".to_string(),
-    }];
-    model_info.default_service_tier = default_service_tier.map(str::to_string);
-    model_info
-}
-
-#[test]
-fn get_service_tier_does_not_use_model_default_when_absent_and_fast_mode_enabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
-
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        None
-    );
-}
-
-#[test]
-fn get_service_tier_does_not_use_model_default_when_fast_mode_disabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
-
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-}
-
-#[test]
-fn get_service_tier_keeps_supported_explicit_tier() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
-
-    assert_eq!(
-        get_service_tier(
-            Some(ServiceTier::Fast.request_value().to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-}
-
-#[test]
-fn get_service_tier_does_not_default_when_model_has_no_default() {
-    let model_info = model_with_default_service_tier(/*default_service_tier*/ None);
-
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        None
-    );
-}
-
-#[test]
-fn get_service_tier_drops_unsupported_configured_tier_when_fast_mode_enabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
-
-    assert_eq!(
-        get_service_tier(
-            Some("unsupported".to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some(ServiceTier::Flex.request_value().to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
-}
-
-#[test]
-fn get_service_tier_ignores_configured_tier_when_fast_mode_disabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
-
-    assert_eq!(
-        get_service_tier(
-            Some(ServiceTier::Fast.request_value().to_string()),
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some("unsupported".to_string()),
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-}
-
-#[tokio::test]
-async fn session_settings_null_service_tier_update_uses_default_service_tier() {
-    let session_configuration = make_session_configuration_for_tests().await;
-
-    let updated = session_configuration
-        .apply(
-            &SessionSettingsUpdate {
-                service_tier: Some(None),
-                ..Default::default()
-            },
-            &[],
-        )
-        .expect("null service tier update should apply");
-
-    assert_eq!(
-        updated.service_tier,
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
-}
-
-#[tokio::test]
-async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_value() {
-    let session_configuration = make_session_configuration_for_tests().await;
-
-    let updated = session_configuration
-        .apply(
-            &SessionSettingsUpdate {
-                service_tier: Some(Some("fast".to_string())),
-                ..Default::default()
-            },
-            &[],
-        )
-        .expect("legacy fast service tier update should apply");
-
-    assert_eq!(
-        updated.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
-}
-
 pub(crate) async fn make_session_configuration_for_tests() -> SessionConfiguration {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let config = build_test_config(codex_home.path()).await;
@@ -4902,7 +4727,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -5693,7 +5518,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -5841,7 +5666,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -6128,7 +5953,7 @@ async fn make_session_with_config_and_rx(
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -6249,7 +6074,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -7832,7 +7657,7 @@ where
         collaboration_mode,
         model_reasoning_summary: config.model_reasoning_summary,
         developer_instructions: config.developer_instructions.clone(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: config.personality,
         base_instructions: config
             .base_instructions
@@ -8251,7 +8076,33 @@ async fn refreshed_mcp_binding_captures_current_approval_authority() {
 
 #[tokio::test]
 async fn mcp_elicitation_reviewer_uses_latest_runtime_authority() {
-    let (session, old_turn, rx) = make_session_and_context_with_rx().await;
+    let guardian_server = start_mock_server().await;
+    mount_sse_once(
+        &guardian_server,
+        sse(vec![
+            ev_response_created("guardian-review"),
+            ev_assistant_message("guardian-review", r#"{"outcome":"allow"}"#),
+            ev_completed("guardian-review"),
+        ]),
+    )
+    .await;
+    let (session, old_turn, rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.model_provider.base_url = Some(format!("{}/v1", guardian_server.uri()));
+            config
+                .mcp_servers
+                .set(
+                    serde_json::from_value(json!({
+                        "browser-use": { "command": "missing-test-mcp-server" }
+                    }))
+                    .expect("test MCP server configuration should deserialize"),
+                )
+                .expect("test MCP server should be configurable");
+        },
+    )
+    .await;
     assert_eq!(old_turn.config.approvals_reviewer, ApprovalsReviewer::User);
     session
         .spawn_task(
@@ -8338,13 +8189,46 @@ async fn mcp_elicitation_reviewer_uses_latest_runtime_authority() {
     assert_eq!(
         session
             .mcp_elicitation_reviewer()
-            .review(request)
+            .review(request.clone())
             .await
             .expect("elicitation review should succeed"),
         Some(ElicitationResponse {
             action: ElicitationAction::Accept,
             content: Some(json!({})),
             meta: None,
+        })
+    );
+
+    let selection = session
+        .services
+        .turn_environments
+        .selections()
+        .into_iter()
+        .next()
+        .expect("session should select its executor environment");
+    let mut owner_config = old_turn
+        .environments
+        .primary()
+        .expect("ready environment")
+        .config()
+        .clone();
+    owner_config.permission_profile =
+        PermissionProfileSnapshot::legacy(PermissionProfile::read_only());
+    session
+        .environment_ready(&selection, owner_config)
+        .await
+        .expect("attachment owner should install its restricted permissions");
+    session.refresh_mcp_if_dirty().await;
+    assert_eq!(
+        session
+            .mcp_elicitation_reviewer()
+            .review(request)
+            .await
+            .expect("elicitation review should succeed"),
+        Some(ElicitationResponse {
+            action: ElicitationAction::Decline,
+            content: None,
+            meta: Some(json!({ "approvals_reviewer": "auto_review" })),
         })
     );
 

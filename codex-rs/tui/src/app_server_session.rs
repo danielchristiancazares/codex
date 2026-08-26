@@ -13,7 +13,6 @@ pub(crate) use history::HistoryHydrationScope;
 pub(crate) use history::thread_items_page_params;
 
 use crate::legacy_core::config::Config;
-use crate::service_tier_resolution;
 use crate::session_state::MessageHistoryMetadata;
 use crate::session_state::ThreadSessionState;
 use crate::status::StatusAccountDisplay;
@@ -115,9 +114,10 @@ use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
 use codex_otel::TelemetryAuthMode;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
@@ -803,28 +803,8 @@ impl AppServerSession {
     }
 
     fn session_config_with_effective_service_tier(&self, config: &Config) -> Config {
-        let Some(model) = config.model.as_deref().or(self.default_model.as_deref()) else {
-            return config.clone();
-        };
         let mut session_config = config.clone();
-        match service_tier_resolution::service_tier_update_for_core(
-            config,
-            model,
-            &self.available_models,
-        ) {
-            Some(Some(service_tier)) => {
-                session_config.service_tier = Some(service_tier);
-                session_config.notices.fast_default_opt_out = None;
-            }
-            Some(None) => {
-                session_config.service_tier = Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string());
-                session_config.notices.fast_default_opt_out = None;
-            }
-            None => {
-                session_config.service_tier = None;
-                session_config.notices.fast_default_opt_out = None;
-            }
-        }
+        session_config.notices.fast_default_opt_out = None;
         session_config
     }
 
@@ -986,9 +966,9 @@ impl AppServerSession {
                     thread_id: thread_id.to_string(),
                     project_id: None,
                     git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                        sha: None,
-                        branch: Some(Some(branch)),
-                        origin_url: None,
+                        sha: NullableField::Omitted,
+                        branch: NullableField::Value(branch),
+                        origin_url: NullableField::Omitted,
                     }),
                 },
             })
@@ -1065,7 +1045,7 @@ impl AppServerSession {
         model: String,
         effort: Option<codex_protocol::openai_models::ReasoningEffort>,
         summary: Option<codex_protocol::config_types::ReasoningSummary>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
         personality: Option<codex_protocol::config_types::Personality>,
         output_schema: Option<serde_json::Value>,
@@ -1225,7 +1205,7 @@ impl AppServerSession {
         thread_id: ThreadId,
         objective: Option<String>,
         status: Option<ThreadGoalStatus>,
-        token_budget: Option<Option<i64>>,
+        token_budget: NullableField<i64>,
     ) -> Result<ThreadGoalSetResponse> {
         let request_id = self.next_request_id();
         self.client
@@ -1616,13 +1596,6 @@ fn config_request_overrides_from_config(
     Some(overrides)
 }
 
-fn service_tier_override_from_config(config: &Config) -> Option<Option<String>> {
-    config.service_tier.clone().map(Some).or_else(|| {
-        (config.notices.fast_default_opt_out == Some(true))
-            .then(|| Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()))
-    })
-}
-
 fn sandbox_mode_from_permission_profile(
     permission_profile: &PermissionProfile,
     cwd: &std::path::Path,
@@ -1717,7 +1690,7 @@ fn thread_start_params_from_config(
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(config),
-        service_tier: service_tier_override_from_config(config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1781,7 +1754,7 @@ fn thread_resume_params_from_config(
         thread_id: thread_id.to_string(),
         model,
         model_provider,
-        service_tier: service_tier_override_from_config(&config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1816,7 +1789,7 @@ fn thread_fork_params_from_config(
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
-        service_tier: service_tier_override_from_config(&config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -2045,7 +2018,7 @@ async fn thread_session_state_from_thread_response(
     rollout_path: Option<PathBuf>,
     model: String,
     model_provider_id: String,
-    service_tier: Option<String>,
+    service_tier: ServiceTier,
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
@@ -2132,7 +2105,6 @@ mod tests {
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
     use codex_protocol::models::ManagedFileSystemPermissions;
-    use codex_protocol::openai_models::ModelServiceTier;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -2247,7 +2219,7 @@ mod tests {
             multi_agent_version: None,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
-            default_service_tier: None,
+            default_service_tier: ServiceTier::Default,
             is_default: false,
         }
     }
@@ -2880,7 +2852,7 @@ mod tests {
             .set(WebSearchMode::Disabled)
             .expect("test web search mode should be allowed");
         config.bypass_hook_trust = true;
-        config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+        config.service_tier = ServiceTier::Fast;
         let thread_id = ThreadId::new();
 
         let start = thread_start_params_from_config(
@@ -2903,7 +2875,7 @@ mod tests {
             /*remote_cwd_override*/ None,
         );
 
-        let expected_service_tier = Some(Some(ServiceTier::Fast.request_value().to_string()));
+        let expected_service_tier = ServiceTier::Fast;
         assert_eq!(start.service_tier, expected_service_tier);
         assert_eq!(resume.service_tier, expected_service_tier);
         assert_eq!(fork.service_tier, expected_service_tier);
@@ -2980,50 +2952,6 @@ mod tests {
                 ..ThreadResumeParams::default()
             }
         );
-    }
-
-    #[tokio::test]
-    async fn persisted_resume_does_not_forward_implicit_service_tier() -> Result<()> {
-        let codex_home = tempfile::tempdir().expect("tempdir");
-        let mut config = build_config(&codex_home).await;
-        config.model = Some("gpt-5.4".to_string());
-        config.service_tier = None;
-        config
-            .features
-            .enable(Feature::FastMode)
-            .expect("enable fast mode");
-        let thread_id = ThreadId::from_string(
-            &create_fake_rollout(
-                codex_home.path(),
-                "2025-01-05T12-00-00",
-                "2025-01-05T12:00:00Z",
-                "Saved user message",
-                Some(config.model_provider_id.as_str()),
-                /*git_info*/ None,
-            )
-            .expect("create source rollout"),
-        )?;
-        let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
-        let mut preset = crate::test_support::TEST_MODEL_PRESETS
-            .iter()
-            .find(|preset| preset.model == "gpt-5.4")
-            .expect("gpt-5.4 test preset")
-            .clone();
-        preset.service_tiers = vec![ModelServiceTier {
-            id: ServiceTier::Fast.request_value().to_string(),
-            name: "fast".to_string(),
-            description: "Fast tier".to_string(),
-        }];
-        preset.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
-        app_server.available_models = vec![preset];
-
-        let resumed = app_server
-            .resume_thread(config, thread_id, ResumeModelSettings::RestoreFromThread)
-            .await?;
-
-        assert_eq!(resumed.session.service_tier, None);
-        app_server.shutdown().await?;
-        Ok(())
     }
 
     #[tokio::test]
@@ -3471,7 +3399,7 @@ mod tests {
             },
             model: "gpt-5.4".to_string(),
             model_provider: "openai".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             cwd: test_path_buf("/tmp/project").abs(),
             runtime_workspace_roots: vec![
                 test_path_buf("/tmp/project").abs(),
@@ -3614,7 +3542,7 @@ mod tests {
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
             "openai".to_string(),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
@@ -3649,7 +3577,7 @@ mod tests {
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
             "openai".to_string(),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),

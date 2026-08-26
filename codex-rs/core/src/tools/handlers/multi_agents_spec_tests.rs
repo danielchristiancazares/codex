@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -23,11 +24,11 @@ fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: vec![ModelServiceTier {
-            id: "priority".to_string(),
+            id: ServiceTier::Fast,
             name: "Fast".to_string(),
             description: "1.5x speed, increased usage".to_string(),
         }],
-        default_service_tier: None,
+        default_service_tier: Default::default(),
         is_default: false,
         upgrade: None,
         show_in_picker,
@@ -87,10 +88,10 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
             .contains("Available model overrides (optional; inherited parent model is preferred):")
     );
     assert!(description.contains(
-        "- `visible-model`: visible description Reasoning efforts: medium (default). Service tiers: priority."
+        "- `visible-model`: visible description Reasoning efforts: medium (default). Service tiers: fast."
     ));
     assert!(description.contains(
-        "- `legacy-model`: legacy description Reasoning efforts: medium (default). Service tiers: priority."
+        "- `legacy-model`: legacy description Reasoning efforts: medium (default). Service tiers: fast."
     ));
     assert!(!description.contains("hidden-model"));
     assert!(!description.contains("disabled-model"));
@@ -238,7 +239,7 @@ fn spawn_agent_tool_caps_reasoning_effort_value_length() {
     assert_eq!(
         spawn_agent_models_description(&[model], MultiAgentVersion::V2),
         format!(
-            "Available model overrides (optional; inherited parent model is preferred):\n- `visible-model`: visible description Reasoning efforts: {} (default). Service tiers: priority.",
+            "Available model overrides (optional; inherited parent model is preferred):\n- `visible-model`: visible description Reasoning efforts: {} (default). Service tiers: fast.",
             "é".repeat(MAX_REASONING_EFFORT_CHARS_IN_SPAWN_AGENT_DESCRIPTION)
         )
     );

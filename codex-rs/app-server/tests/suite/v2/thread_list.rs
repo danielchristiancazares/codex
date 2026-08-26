@@ -14,6 +14,7 @@ use chrono::Utc;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
@@ -37,6 +38,7 @@ use codex_app_server_protocol::UserInput;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_features::Feature;
 use codex_git_utils::GitSha;
+use codex_protocol::SanitizedGitUrl;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::GitInfo as CoreGitInfo;
 use codex_protocol::protocol::MultiAgentVersion;
@@ -107,8 +109,8 @@ async fn list_threads_with_sort(
             model_providers: providers,
             source_kinds,
             archived,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -146,8 +148,8 @@ async fn list_threads_for_relation(
             model_providers,
             source_kinds,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: true,
             search_term: None,
@@ -551,8 +553,8 @@ async fn thread_list_respects_cwd_filters() -> Result<()> {
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: Some(ThreadListCwdFilter::Many(vec![
                 first_target_cwd.to_string_lossy().into_owned(),
                 second_target_cwd.to_string_lossy().into_owned(),
@@ -664,8 +666,8 @@ sqlite = true
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: Some("needle".to_string()),
@@ -951,8 +953,8 @@ sqlite = true
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -987,8 +989,8 @@ sqlite = true
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: Some(ThreadListCwdFilter::One(
                 stale_cwd.to_string_lossy().into_owned(),
             )),
@@ -1016,8 +1018,8 @@ sqlite = true
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: Some(ThreadListCwdFilter::One(
                 stale_cwd.to_string_lossy().into_owned(),
             )),
@@ -1201,8 +1203,8 @@ async fn thread_list_relation_filters_reject_invalid_requests() -> Result<()> {
             model_providers: None,
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -1227,8 +1229,8 @@ async fn thread_list_relation_filters_reject_invalid_requests() -> Result<()> {
             model_providers: None,
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -1494,8 +1496,8 @@ async fn thread_list_reports_loaded_subagent_direct_input_capability() -> Result
                 model_providers: Some(vec!["mock_provider".to_string()]),
                 source_kinds: Some(vec![ThreadSourceKind::SubAgentThreadSpawn]),
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -1886,7 +1888,10 @@ async fn thread_list_includes_git_info() -> Result<()> {
     let git_info = CoreGitInfo {
         commit_hash: Some(GitSha::new("abc123")),
         branch: Some("main".to_string()),
-        repository_url: Some("https://example.com/repo.git".to_string()),
+        repository_url: Some(
+            SanitizedGitUrl::try_from("https://example.com/repo.git")
+                .expect("repository URL should be valid"),
+        ),
     };
     let conversation_id = create_fake_rollout(
         codex_home.path(),
@@ -1922,6 +1927,65 @@ async fn thread_list_includes_git_info() -> Result<()> {
     assert_eq!(thread.source, SessionSource::Cli);
     assert_eq!(thread.cwd, test_absolute_path("/"));
     assert_eq!(thread.cli_version, "0.0.0");
+
+    Ok(())
+}
+
+/// Legacy rollout credentials must be sanitized before thread/list returns Git metadata.
+#[tokio::test]
+async fn thread_list_sanitizes_git_info_from_existing_rollouts() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    create_minimal_config(codex_home.path())?;
+
+    let git_info = CoreGitInfo {
+        commit_hash: Some(GitSha::new("abc123")),
+        branch: Some("main".to_string()),
+        repository_url: Some(
+            SanitizedGitUrl::try_from("https://example.com/repo.git")
+                .expect("repository URL should be valid"),
+        ),
+    };
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-02-01T09-00-00",
+        "2025-02-01T09:00:00Z",
+        "Git info preview",
+        Some("mock_provider"),
+        Some(git_info),
+    )?;
+    let path = rollout_path(codex_home.path(), "2025-02-01T09-00-00", &conversation_id);
+    let rollout = fs::read_to_string(&path)?;
+    fs::write(
+        path,
+        rollout.replace(
+            "https://example.com/repo.git",
+            "https://alice:synthetic-rollout-secret@example.com/repo.git",
+        ),
+    )?;
+
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ThreadListResponse { data, .. } = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(vec!["mock_provider".to_string()]),
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    let thread = data
+        .iter()
+        .find(|thread| thread.id == conversation_id)
+        .expect("expected thread for created rollout");
+
+    assert_eq!(
+        thread.git_info,
+        Some(ApiGitInfo {
+            sha: Some("abc123".to_string()),
+            branch: Some("main".to_string()),
+            origin_url: Some("https://example.com/repo.git".to_string()),
+        })
+    );
 
     Ok(())
 }
@@ -2253,8 +2317,8 @@ async fn thread_list_backwards_cursor_can_seed_forward_delta_sync() -> Result<()
                 model_providers: Some(vec!["mock_provider".to_string()]),
                 source_kinds: None,
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
@@ -2294,8 +2358,8 @@ async fn thread_list_backwards_cursor_can_seed_forward_delta_sync() -> Result<()
                 model_providers: Some(vec!["mock_provider".to_string()]),
                 source_kinds: None,
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
@@ -2531,8 +2595,8 @@ async fn thread_list_invalid_cursor_returns_error() -> Result<()> {
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,

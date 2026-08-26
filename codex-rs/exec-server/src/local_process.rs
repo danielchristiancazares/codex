@@ -101,6 +101,7 @@ struct RunningProcess {
     accepted_stdin_write_ids: Arc<Mutex<AcceptedStdinWriteIds>>,
     output: VecDeque<RetainedOutputChunk>,
     retained_bytes: usize,
+    evicted_output_through: u64,
     next_seq: u64,
     exit_code: Option<i32>,
     wake_tx: watch::Sender<u64>,
@@ -419,6 +420,7 @@ impl LocalProcess {
                     ),
                     output: VecDeque::new(),
                     retained_bytes: 0,
+                    evicted_output_through: 0,
                     next_seq: 1,
                     exit_code: None,
                     wake_tx: wake_tx.clone(),
@@ -524,10 +526,13 @@ impl LocalProcess {
                 if params.max_bytes.is_none() {
                     next_seq = process.next_seq;
                 }
+                let output_lost = after_seq < process.evicted_output_through
+                    || process.session.output_lost_flag().load(Ordering::Acquire);
                 (
                     ReadResponse {
                         chunks,
                         next_seq,
+                        output_lost,
                         exited: process.exit_code.is_some(),
                         exit_code: process.exit_code,
                         closed: process.closed,
@@ -899,6 +904,7 @@ async fn stream_output(
                 let Some(evicted) = process.output.pop_front() else {
                     break;
                 };
+                process.evicted_output_through = evicted.seq;
                 process.retained_bytes = process.retained_bytes.saturating_sub(evicted.chunk.len());
             }
             let _ = process.wake_tx.send(seq);
@@ -1049,12 +1055,16 @@ async fn maybe_emit_closed(process_id: ProcessId, inner: Arc<Inner>) {
         }
         let seq = process.next_seq;
         process.next_seq += 1;
+        let output_lost = process.session.output_lost_flag().load(Ordering::Acquire);
         let _ = process.wake_tx.send(seq);
-        process.events.publish(ExecProcessEvent::Closed { seq });
+        process
+            .events
+            .publish(ExecProcessEvent::Closed { seq, output_lost });
         (
             ExecClosedNotification {
                 process_id: process_id.clone(),
                 seq,
+                output_lost,
             },
             Arc::clone(&process.output_notify),
             process.network_proxy_handle.take(),
@@ -1429,6 +1439,7 @@ mod tests {
             ReadResponse {
                 chunks: Vec::new(),
                 next_seq: 2,
+                output_lost: false,
                 exited: true,
                 exit_code: Some(0),
                 closed: false,
@@ -1475,6 +1486,47 @@ mod tests {
             .await
             .expect("closed process should remain readable");
         assert_eq!(replay_after_exit.next_seq, 4);
+        backend.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_read_reports_driver_output_loss() {
+        let backend = LocalProcess::default();
+        let process = spawn_test_process(&backend, "proc-output-loss").await;
+        {
+            let processes = backend.inner.processes.lock().await;
+            let Some(ProcessEntry::Running(running)) = processes.get(&process.process_id) else {
+                panic!("process should be running");
+            };
+            running
+                .session
+                .output_lost_flag()
+                .store(true, Ordering::Release);
+        }
+
+        let response = backend
+            .exec_read(ReadParams {
+                process_id: process.process_id.clone(),
+                after_seq: None,
+                max_bytes: None,
+                wait_ms: Some(0),
+            })
+            .await
+            .expect("read process with lost output");
+        assert_eq!(
+            response,
+            ReadResponse {
+                chunks: Vec::new(),
+                next_seq: 1,
+                output_lost: true,
+                exited: false,
+                exit_code: None,
+                closed: false,
+                failure: None,
+                sandbox_denied: false,
+            }
+        );
+
         backend.shutdown().await;
     }
 
@@ -1551,6 +1603,7 @@ mod tests {
             ReadResponse {
                 chunks: expected_chunks,
                 next_seq: retained_chunk_count + 2,
+                output_lost: true,
                 exited: false,
                 exit_code: None,
                 closed: false,
@@ -1772,6 +1825,7 @@ mod tests {
                 accepted_stdin_write_ids: Arc::new(Mutex::new(AcceptedStdinWriteIds::default())),
                 output: VecDeque::new(),
                 retained_bytes: 0,
+                evicted_output_through: 0,
                 next_seq: 1,
                 exit_code: None,
                 wake_tx: wake_tx.clone(),

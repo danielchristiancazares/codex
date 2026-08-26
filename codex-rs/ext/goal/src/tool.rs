@@ -7,6 +7,7 @@ use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolOutput;
 use codex_extension_api::ToolSpec;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
@@ -264,7 +265,7 @@ impl GoalToolExecutor {
                 codex_state::GoalUpdate {
                     objective: None,
                     status: Some(state_status_from_protocol(args.status)),
-                    token_budget: None,
+                    token_budget: NullableField::Omitted,
                     expected_goal_id: None,
                 },
             )

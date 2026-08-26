@@ -568,6 +568,9 @@
             "enable_request_compression": {
               "type": "boolean"
             },
+            "exec_output_artifacts": {
+              "type": "boolean"
+            },
             "exec_permission_approvals": {
               "type": "boolean"
             },
@@ -913,8 +916,12 @@
           "$ref": "#/definitions/SandboxMode"
         },
         "service_tier": {
-          "description": "Optional explicit service tier request id for new turns (for example `default`, `priority`, or `flex`; legacy `fast` also works).",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Service tier selected by this profile."
         },
         "tools": {
           "$ref": "#/definitions/ToolsToml"
@@ -3167,6 +3174,14 @@
         }
       },
       "type": "object"
+    },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
     },
     "SessionPickerViewMode": {
       "description": "Preferred layout for the resume/fork session picker.",
@@ -5476,6 +5491,9 @@
         "enable_request_compression": {
           "type": "boolean"
         },
+        "exec_output_artifacts": {
+          "type": "boolean"
+        },
         "exec_permission_approvals": {
           "type": "boolean"
         },
@@ -6121,8 +6139,12 @@
       "description": "Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`."
     },
     "service_tier": {
-      "description": "Optional explicit service tier request id for new turns (for example `default`, `priority`, or `flex`; legacy `fast` also works).",
-      "type": "string"
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Service tier for new turns."
     },
     "shell_environment_policy": {
       "allOf": [

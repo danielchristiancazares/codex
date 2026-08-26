@@ -223,6 +223,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::CollaborationMode;
     use codex_protocol::config_types::ModeKind;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::config_types::Settings;
     use codex_protocol::openai_models::ReasoningEffort;
     use pretty_assertions::assert_eq;
@@ -238,7 +239,7 @@ mod tests {
             active_permission_profile: None,
             model: "gpt-5.4".to_string(),
             model_provider: "openai".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             effort: Some(ReasoningEffort::High),
             summary: None,
             collaboration_mode: CollaborationMode {

@@ -10,6 +10,7 @@ use codex_mcp::McpBinding;
 use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
@@ -24,7 +25,7 @@ pub(crate) struct StepContext {
     /// Reasoning summary resolved for this sampling request.
     pub(crate) reasoning_summary: ReasoningSummary,
     /// Effective service tier supported by this sampling request's model.
-    pub(crate) service_tier: Option<String>,
+    pub(crate) service_tier: ServiceTier,
     /// Effective approval policy used by this sampling request's tool actions.
     /// Model-specific Guardian requirements can change this during a model switch.
     pub(crate) approval_policy: AskForApproval,

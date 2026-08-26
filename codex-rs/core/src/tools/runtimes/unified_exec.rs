@@ -35,6 +35,7 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::sandbox_permissions_preserving_denied_reads;
+use crate::unified_exec::ExecCommandMode;
 use crate::unified_exec::NoopSpawnLifecycle;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
@@ -64,6 +65,7 @@ const REMOTE_NETWORK_POLICY_DECISION_MARGIN: Duration = Duration::from_secs(10);
 #[derive(Clone, Debug)]
 pub struct UnifiedExecRequest {
     pub command: Vec<String>,
+    pub command_mode: ExecCommandMode,
     pub shell_type: ShellType,
     pub hook_command: String,
     pub process_id: i32,
@@ -250,6 +252,12 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
         ctx: &ToolCtx,
     ) -> Result<UnifiedExecAttempt, ToolError> {
         let base_command = &req.command;
+        let artifact_bytes_cap = ctx
+            .session
+            .services
+            .thread_extension_data
+            .get::<codex_exec_output_artifacts::ArtifactStore>()
+            .map(|store| store.artifact_bytes_cap());
         let windows_sandbox_proxy_settings_mode = ctx.session.windows_sandbox_proxy_settings_mode;
         let session_shell = ctx.session.user_shell();
         let shell = req
@@ -369,28 +377,33 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
         };
         #[cfg(not(unix))]
         let runtime_path_prepends = RuntimePathPrepends::default();
-        let command = if environment_is_remote {
-            base_command.to_vec()
-        } else {
-            maybe_wrap_shell_lc_with_snapshot(
+        let command = match req.command_mode {
+            ExecCommandMode::Argv => base_command.to_vec(),
+            ExecCommandMode::Shell if environment_is_remote => base_command.to_vec(),
+            ExecCommandMode::Shell => maybe_wrap_shell_lc_with_snapshot(
                 base_command,
                 shell,
                 shell_snapshot_location.as_ref(),
                 &explicit_env_overrides,
                 &env,
                 &runtime_path_prepends,
-            )
+            ),
         };
-        let command = disable_powershell_profile_for_elevated_windows_sandbox(
-            &command,
-            Some(&req.shell_type),
-            attempt.sandbox_requested,
-            attempt.windows_sandbox_level,
-        );
-        let command = if matches!(req.shell_type, ShellType::PowerShell) {
-            prefix_powershell_script_with_utf8(&command)
-        } else {
-            command
+        let command = match req.command_mode {
+            ExecCommandMode::Argv => command,
+            ExecCommandMode::Shell => {
+                let command = disable_powershell_profile_for_elevated_windows_sandbox(
+                    &command,
+                    Some(&req.shell_type),
+                    attempt.sandbox_requested,
+                    attempt.windows_sandbox_level,
+                );
+                if matches!(req.shell_type, ShellType::PowerShell) {
+                    prefix_powershell_script_with_utf8(&command)
+                } else {
+                    command
+                }
+            }
         };
         let sidecar_permissions = metrics_sidecar
             .as_ref()
@@ -400,7 +413,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
             sidecar_permissions.as_ref(),
         );
 
-        if let UnifiedExecShellMode::ZshFork(zsh_fork_config) = &self.shell_mode {
+        if req.command_mode == ExecCommandMode::Shell
+            && let UnifiedExecShellMode::ZshFork(zsh_fork_config) = &self.shell_mode
+        {
             let command = build_unified_exec_sandbox_command(
                 &command,
                 &req.cwd,
@@ -448,6 +463,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
                             windows_sandbox_proxy_settings_mode,
                             /*network_policy_decider*/ None,
                             req.tty,
+                            artifact_bytes_cap,
                             prepared.spawn_lifecycle,
                             req.turn_environment.environment.as_ref(),
                         )
@@ -500,6 +516,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
                 req.exec_server_env_config.clone(),
                 windows_sandbox_proxy_settings_mode,
                 req.tty,
+                artifact_bytes_cap,
                 Box::new(NoopSpawnLifecycle),
                 req.turn_environment.environment.as_ref(),
             )
@@ -615,6 +632,7 @@ mod tests {
         let runtime = UnifiedExecRuntime::new(&manager, UnifiedExecShellMode::Direct);
         let request = UnifiedExecRequest {
             command: vec!["pwd".to_string()],
+            command_mode: ExecCommandMode::Shell,
             shell_type: ShellType::Sh,
             hook_command: "pwd".to_string(),
             process_id: 1000,
@@ -717,6 +735,7 @@ mod tests {
             .expect("current dir is absolute");
         UnifiedExecRequest {
             command: vec!["zsh".to_string(), "-c".to_string(), "echo hi".to_string()],
+            command_mode: ExecCommandMode::Shell,
             shell_type: ShellType::Zsh,
             hook_command: "echo hi".to_string(),
             process_id: 1000,

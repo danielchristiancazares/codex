@@ -13,9 +13,9 @@ use codex_http_client::ClientRouteClass;
 use codex_http_client::RouteAwareClientPool;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_model_provider::SharedModelProvider;
+use codex_protocol::NullableField;
 use codex_protocol::SessionId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::mcp::ClientMcpExtensions;
@@ -75,7 +75,7 @@ pub(crate) struct SessionConfiguration {
 
     pub(super) collaboration_mode: CollaborationMode,
     pub(super) model_reasoning_summary: Option<ReasoningSummaryConfig>,
-    pub(super) service_tier: Option<String>,
+    pub(super) service_tier: ServiceTier,
 
     /// Developer instructions that supplement the base instructions.
     pub(super) developer_instructions: Option<String>,
@@ -219,7 +219,7 @@ impl SessionConfiguration {
         ThreadConfigSnapshot {
             model: self.collaboration_mode.model().to_string(),
             model_provider_id: self.original_config_do_not_use.model_provider_id.clone(),
-            service_tier: self.service_tier.clone(),
+            service_tier: self.service_tier,
             approval_policy: self.approval_policy.value(),
             approvals_reviewer: self.approvals_reviewer,
             permission_profile: permission_profile
@@ -255,7 +255,7 @@ impl SessionConfiguration {
         ThreadSettingsSnapshot {
             model: self.collaboration_mode.model().to_string(),
             model_provider_id: self.original_config_do_not_use.model_provider_id.clone(),
-            service_tier: self.service_tier.clone(),
+            service_tier: self.service_tier,
             approval_policy: self.approval_policy.value(),
             approvals_reviewer: self.approvals_reviewer,
             permission_profile: self.materialized_permission_profile(environment_selections),
@@ -288,7 +288,7 @@ impl SessionConfiguration {
             permission_profile: Some(self.permission_profile()),
             active_permission_profile: self.active_permission_profile(),
             summary: self.model_reasoning_summary,
-            service_tier: Some(self.service_tier.clone()),
+            service_tier: self.service_tier,
             collaboration_mode: Some(self.collaboration_mode.clone()),
             personality: self.personality,
             ..Default::default()
@@ -388,19 +388,7 @@ impl SessionConfiguration {
         if let Some(summary) = updates.reasoning_summary {
             next_configuration.model_reasoning_summary = Some(summary);
         }
-        if let Some(service_tier) = updates.service_tier.clone() {
-            // TODO(aibrahim): Remove once v2 clients no longer send the legacy
-            // "fast" service tier value.
-            next_configuration.service_tier = match service_tier {
-                Some(service_tier) => Some(
-                    ServiceTier::from_request_value(&service_tier)
-                        .map_or(service_tier, |service_tier| {
-                            service_tier.request_value().to_string()
-                        }),
-                ),
-                None => Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
-            };
-        }
+        next_configuration.service_tier = updates.service_tier;
         if let Some(personality) = updates.personality {
             next_configuration.personality = Some(personality);
         }
@@ -590,8 +578,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
-    pub(crate) service_tier: Option<Option<String>>,
-    pub(crate) final_output_json_schema: Option<Option<Value>>,
+    pub(crate) service_tier: ServiceTier,
+    pub(crate) final_output_json_schema: NullableField<Value>,
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
@@ -1357,6 +1345,13 @@ impl Session {
                 .features
                 .enabled(Feature::ExecutedToolCallMetadata)
                 .then(|| Arc::new(crate::state::ExecutedToolCallRecorder::default()));
+            if config.features.enabled(Feature::ExecOutputArtifacts) {
+                crate::unified_exec::initialize_exec_output_artifact_store(
+                    &thread_extension_data,
+                    config.codex_home.as_path(),
+                    thread_id.to_string(),
+                );
+            }
             let services = SessionServices {
                 // Start with an empty connection set. The initialized set is
                 // published after SessionConfigured so MCP events follow it.

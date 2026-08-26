@@ -707,7 +707,7 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         },
         model: "gpt-5.4".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),

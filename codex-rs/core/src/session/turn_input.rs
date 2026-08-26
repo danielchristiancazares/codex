@@ -17,6 +17,7 @@ use crate::state::ActiveTurn;
 use crate::state::TurnState;
 use crate::tasks::MailboxParentProvenance;
 use crate::tasks::RegularTask;
+use codex_protocol::NullableField;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -53,6 +54,22 @@ mod tests;
 struct PreparedTurnInputSettings {
     thread_settings_update: Option<SessionSettingsUpdate>,
     start_options: TurnStartOptions,
+}
+
+enum IncomingRootTurnId {
+    Untracked,
+    Missing,
+    Value(String),
+}
+
+impl IncomingRootTurnId {
+    fn from_start_options(start: &TurnStartOptions) -> Self {
+        match (&start.parent_turn_id, &start.root_turn_id) {
+            (None, _) => Self::Untracked,
+            (Some(_), None) => Self::Missing,
+            (Some(_), Some(root_turn_id)) => Self::Value(root_turn_id.clone()),
+        }
+    }
 }
 
 impl PreparedTurnInputSettings {
@@ -104,7 +121,10 @@ impl PreparedTurnInputSettings {
         } = self.start_options;
         let emit_thread_settings_applied = self.thread_settings_update.is_some();
         let mut updates = self.thread_settings_update.unwrap_or_default();
-        updates.final_output_json_schema = Some(final_output_json_schema);
+        updates.final_output_json_schema = match final_output_json_schema {
+            Some(final_output_json_schema) => NullableField::Value(final_output_json_schema),
+            None => NullableField::Null,
+        };
 
         // new_turn_with_sub_id already emits an error event when settings are invalid.
         let turn_context = session
@@ -187,10 +207,7 @@ async fn start_or_steer(
         ));
     };
     let can_start_root_turn = start.parent_turn_id.is_none() && start.root_turn_id.is_none();
-    let incoming_root_turn_id = start
-        .parent_turn_id
-        .as_ref()
-        .map(|_| start.root_turn_id.clone());
+    let incoming_root_turn_id = IncomingRootTurnId::from_start_options(&start);
     let settings = PreparedTurnInputSettings::prepare(session, thread_settings, start).await?;
     match session
         .steer_input(
@@ -394,10 +411,7 @@ async fn steer(
             "only user input can steer a turn".to_string(),
         ));
     };
-    let incoming_root_turn_id = start
-        .parent_turn_id
-        .as_ref()
-        .map(|_| start.root_turn_id.clone());
+    let incoming_root_turn_id = IncomingRootTurnId::from_start_options(&start);
     let settings = PreparedTurnInputSettings::prepare(session, thread_settings, start).await?;
     match session
         .steer_input(
@@ -483,7 +497,7 @@ impl Session {
         required_final_output_json_schema: Option<&Value>,
         client_user_message_id: Option<String>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
-        incoming_root_turn_id: Option<Option<String>>,
+        incoming_root_turn_id: IncomingRootTurnId,
     ) -> Result<String, NotSubmittedReason> {
         let mut active = self.active_turn.lock().await;
         let Some(active_turn) = active.as_mut() else {
@@ -547,9 +561,15 @@ impl Session {
             content: std::mem::take(input),
             client_id: client_user_message_id,
         });
-        if let Some(incoming_root_turn_id) = incoming_root_turn_id
-            && active_task.turn_context.turn_metadata_state.root_turn_id() != incoming_root_turn_id
-        {
+        let active_root_turn_id = active_task.turn_context.turn_metadata_state.root_turn_id();
+        let root_turn_id_mismatch = match incoming_root_turn_id {
+            IncomingRootTurnId::Untracked => false,
+            IncomingRootTurnId::Missing => active_root_turn_id.is_some(),
+            IncomingRootTurnId::Value(incoming_root_turn_id) => {
+                active_root_turn_id.as_deref() != Some(incoming_root_turn_id.as_str())
+            }
+        };
+        if root_turn_id_mismatch {
             active_task
                 .turn_context
                 .turn_metadata_state

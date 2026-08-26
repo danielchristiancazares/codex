@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use codex_app_server_protocol::ThreadItem;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
@@ -168,8 +169,8 @@ async fn split_homes_support_backfill_listing_and_paginated_history() {
             archived: false,
             search_term: None,
             relation_filter: None,
-            section: None,
-            project_id: None,
+            section: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             use_state_db_only: true,
         })
         .await

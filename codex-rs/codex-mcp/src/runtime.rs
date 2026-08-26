@@ -102,6 +102,7 @@ struct PublishedMcpRuntime {
     auth_token: Option<String>,
     plugins_available: bool,
     ready_selected_capability_roots: Vec<SelectedCapabilityRoot>,
+    selected_environments: HashMap<String, Arc<Environment>>,
     cached_binding: Mutex<Option<CachedMcpBinding>>,
 }
 
@@ -172,6 +173,7 @@ impl McpRuntime {
                 auth_token: None,
                 plugins_available: false,
                 ready_selected_capability_roots: Vec::new(),
+                selected_environments: HashMap::new(),
                 cached_binding: Mutex::new(None),
             }),
             reconnect_pending: AtomicBool::new(false),
@@ -267,6 +269,7 @@ impl McpRuntime {
         let auth_token = auth.as_ref().and_then(|auth| auth.get_token().ok());
         let plugins_available = input.plugins_available;
         let ready_selected_capability_roots = input.ready_selected_capability_roots.clone();
+        let selected_environments = input.runtime_context.selected_environments.clone();
         let connections = Arc::new(
             McpConnectionSet::new(
                 previous,
@@ -283,6 +286,7 @@ impl McpRuntime {
             auth_token,
             plugins_available,
             ready_selected_capability_roots,
+            selected_environments,
             cached_binding: Mutex::new(None),
         }));
         let _ = publish.send(true);
@@ -417,6 +421,22 @@ impl McpRuntime {
         self.current.load().ready_selected_capability_roots.clone()
     }
 
+    /// Whether this publication uses the currently ready environment handles.
+    pub fn current_environments_match(
+        &self,
+        environments: &HashMap<String, Arc<Environment>>,
+    ) -> bool {
+        let current = self.current.load();
+        current.config.is_some()
+            && current.selected_environments.len() == environments.len()
+            && environments.iter().all(|(id, environment)| {
+                current
+                    .selected_environments
+                    .get(id)
+                    .is_some_and(|published| Arc::ptr_eq(published, environment))
+            })
+    }
+
     pub fn elicitations_auto_deny(&self) -> bool {
         self.elicitation_router.auto_deny()
     }
@@ -527,6 +547,7 @@ pub struct SandboxState {
 #[derive(Clone)]
 pub struct McpRuntimeContext {
     environment_manager: Arc<EnvironmentManager>,
+    selected_environments: HashMap<String, Arc<Environment>>,
     local_process_cwd: PathBuf,
     local_http_client: Arc<dyn HttpClient>,
 }
@@ -570,9 +591,19 @@ impl McpRuntimeContext {
         );
         Self {
             environment_manager,
+            selected_environments: HashMap::new(),
             local_process_cwd,
             local_http_client,
         }
+    }
+
+    /// Pins the concrete environment handles captured for this thread or model step.
+    pub fn with_selected_environments(
+        mut self,
+        selected_environments: HashMap<String, Arc<Environment>>,
+    ) -> Self {
+        self.selected_environments = selected_environments;
+        self
     }
 
     pub(crate) fn local_process_cwd(&self) -> PathBuf {
@@ -592,8 +623,13 @@ impl McpRuntimeContext {
         // HTTP is the one current exception: it can use the ambient HTTP client
         // even when no local Environment is configured.
         if let Some(environment) = self
-            .environment_manager
-            .get_environment(&config.environment_id)
+            .selected_environments
+            .get(&config.environment_id)
+            .cloned()
+            .or_else(|| {
+                self.environment_manager
+                    .get_environment(&config.environment_id)
+            })
         {
             return Ok(Some(environment));
         }
@@ -711,6 +747,7 @@ mod tests {
             auth_token: None,
             plugins_available: false,
             ready_selected_capability_roots: Vec::new(),
+            selected_environments: HashMap::new(),
             cached_binding: Mutex::new(None),
         });
         let first = McpRuntime::binding_from_published_runtime(

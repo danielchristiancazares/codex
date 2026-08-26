@@ -117,6 +117,7 @@ pub struct ProcessHandle {
     wait_handle: StdMutex<Option<JoinHandle<()>>>,
     exit_status: Arc<AtomicBool>,
     exit_code: Arc<StdMutex<Option<i32>>>,
+    output_lost: Arc<AtomicBool>,
     // PtyHandles must be preserved because the process will receive Control+C if the
     // slave is closed
     _pty_handles: StdMutex<Option<PtyHandles>>,
@@ -142,6 +143,7 @@ impl ProcessHandle {
         wait_handle: JoinHandle<()>,
         exit_status: Arc<AtomicBool>,
         exit_code: Arc<StdMutex<Option<i32>>>,
+        output_lost: Arc<AtomicBool>,
         pty_handles: Option<PtyHandles>,
         resizer: Option<ResizeFn>,
     ) -> Self {
@@ -154,6 +156,7 @@ impl ProcessHandle {
             wait_handle: StdMutex::new(Some(wait_handle)),
             exit_status,
             exit_code,
+            output_lost,
             _pty_handles: StdMutex::new(pty_handles),
             resizer: StdMutex::new(resizer),
         }
@@ -180,6 +183,11 @@ impl ProcessHandle {
     /// Returns the exit code if known.
     pub fn exit_code(&self) -> Option<i32> {
         self.exit_code.lock().ok().and_then(|guard| *guard)
+    }
+
+    /// Shared loss flag for consumers that require a complete output stream.
+    pub fn output_lost_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.output_lost)
     }
 
     /// Resize the PTY in character cells.
@@ -394,10 +402,12 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(256);
     let (stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(256);
     let (exit_seen_tx, exit_seen_rx) = watch::channel(false);
+    let output_lost = Arc::new(AtomicBool::new(false));
     let spawn_stream_reader =
         |mut output_rx: broadcast::Receiver<Vec<u8>>,
          output_tx: mpsc::Sender<Vec<u8>>,
          mut exit_seen_rx: watch::Receiver<bool>| {
+            let output_lost = Arc::clone(&output_lost);
             tokio::spawn(async move {
                 loop {
                     let recv_result = if *exit_seen_rx.borrow() {
@@ -424,7 +434,10 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
                                 break;
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            output_lost.store(true, std::sync::atomic::Ordering::Release);
+                            break;
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -468,6 +481,7 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
         wait_handle,
         exit_status,
         exit_code,
+        Arc::clone(&output_lost),
         /*pty_handles*/ None,
         resizer,
     );

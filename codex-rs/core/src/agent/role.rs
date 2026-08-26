@@ -41,7 +41,8 @@ struct AgentRoleOverrides {
     model_reasoning_summary: Option<ReasoningSummary>,
     model_verbosity: Option<Verbosity>,
     personality: Option<Personality>,
-    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    service_tier: ServiceTier,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     features: BTreeMap<String, bool>,
     skills: Option<SkillsConfig>,
@@ -200,16 +201,7 @@ mod role_overrides {
         if let Some(personality) = overrides.personality {
             next_config.personality = Some(personality);
         }
-        if let Some(service_tier) = &overrides.service_tier {
-            next_config.service_tier = match ServiceTier::from_request_value(service_tier) {
-                Some(ServiceTier::Fast) => next_config
-                    .features
-                    .enabled(Feature::FastMode)
-                    .then(|| ServiceTier::Fast.request_value().to_string()),
-                Some(ServiceTier::Flex) => Some(ServiceTier::Flex.request_value().to_string()),
-                None => Some(service_tier.clone()),
-            };
-        }
+        next_config.service_tier = overrides.service_tier;
         for key in overrides.features.keys() {
             if let Some(feature) = feature_for_key(key) {
                 next_config.features.disable(feature)?;

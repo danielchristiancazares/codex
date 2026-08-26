@@ -1714,6 +1714,7 @@ dependencies = [
  "codex-utils-home-dir",
  "codex-windows-sandbox",
  "dotenvy",
+ "pathdiff",
  "pretty_assertions",
  "tempfile",
  "tokio",
@@ -2190,6 +2191,7 @@ dependencies = [
  "codex-context-fragments",
  "codex-core-plugins",
  "codex-diagnostics",
+ "codex-exec-output-artifacts",
  "codex-exec-server",
  "codex-exec-server-test-support",
  "codex-execpolicy",
@@ -2220,6 +2222,7 @@ dependencies = [
  "codex-rollout",
  "codex-rollout-trace",
  "codex-sandboxing",
+ "codex-secrets",
  "codex-shell-command",
  "codex-shell-escalation",
  "codex-skills",
@@ -2427,6 +2430,22 @@ dependencies = [
  "uuid",
  "walkdir",
  "wiremock",
+]
+
+[[package]]
+name = "codex-exec-output-artifacts"
+version = "0.149.4131"
+dependencies = [
+ "base64 0.22.1",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3328,6 +3347,7 @@ dependencies = [
  "codex-utils-redacted-string",
  "codex-utils-string",
  "encoding_rs",
+ "gix-url",
  "globset",
  "http",
  "icu_decimal",

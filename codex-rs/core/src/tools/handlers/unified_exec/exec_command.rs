@@ -41,6 +41,7 @@ use codex_utils_output_truncation::approx_token_count;
 use codex_utils_path_uri::PathConvention;
 
 use super::super::shell_spec::CommandToolOptions;
+use super::super::shell_spec::create_exec_command_tool_with_artifacts;
 use super::super::shell_spec::create_exec_command_tool_with_environment_id;
 use super::ExecCommandArgs;
 use super::ExecCommandEnvironmentArgs;
@@ -54,6 +55,7 @@ pub(crate) struct ExecCommandHandlerOptions {
     pub(crate) exec_permission_approvals_enabled: bool,
     pub(crate) include_environment_id: bool,
     pub(crate) include_shell_parameter: bool,
+    pub(crate) include_exec_output_artifacts: bool,
 }
 
 pub struct ExecCommandHandler {
@@ -68,6 +70,7 @@ impl Default for ExecCommandHandler {
                 exec_permission_approvals_enabled: false,
                 include_environment_id: false,
                 include_shell_parameter: true,
+                include_exec_output_artifacts: false,
             },
         }
     }
@@ -85,7 +88,12 @@ impl ToolExecutor<ToolInvocation> for ExecCommandHandler {
     }
 
     fn spec(&self) -> ToolSpec {
-        create_exec_command_tool_with_environment_id(
+        let create_tool = if self.options.include_exec_output_artifacts {
+            create_exec_command_tool_with_artifacts
+        } else {
+            create_exec_command_tool_with_environment_id
+        };
+        create_tool(
             CommandToolOptions {
                 allow_login_shell: self.options.allow_login_shell,
                 exec_permission_approvals_enabled: self.options.exec_permission_approvals_enabled,
@@ -196,7 +204,9 @@ impl ExecCommandHandler {
         };
         let sandbox_permissions =
             resolve_sandbox_permissions(args.sandbox_permissions, args.justification.as_deref())?;
-        let hook_command = args.cmd.clone();
+        let hook_command = args
+            .hook_command()
+            .map_err(FunctionCallError::RespondToModel)?;
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             context.step_context.turn.as_ref(),
@@ -234,7 +244,6 @@ impl ExecCommandHandler {
                 )));
             }
         }
-        let process_id = manager.allocate_process_id().await;
         let resolved_command = get_command(
             &args,
             shell,
@@ -244,6 +253,7 @@ impl ExecCommandHandler {
         .map_err(FunctionCallError::RespondToModel)?;
         let command = resolved_command.command;
         let shell_type = resolved_command.shell_type;
+        let command_mode = resolved_command.command_mode;
         let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
 
         let ExecCommandArgs {
@@ -287,7 +297,6 @@ impl ExecCommandHandler {
             .is_some()
         {
             let approval_policy = context.step_context.turn.approval_policy();
-            manager.release_process_id(process_id).await;
             return Err(FunctionCallError::RespondToModel(format!(
                 "approval policy is {approval_policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {approval_policy:?}"
             )));
@@ -312,12 +321,10 @@ impl ExecCommandHandler {
             |permissions| Ok(Some(permissions)),
         ) {
             Ok(normalized) => normalized,
-            Err(err) => {
-                manager.release_process_id(process_id).await;
-                return Err(FunctionCallError::RespondToModel(err));
-            }
+            Err(err) => return Err(FunctionCallError::RespondToModel(err)),
         };
 
+        let process_id = manager.allocate_process_id().await;
         let intercepted_patch = intercept_apply_patch(
             &command,
             &cwd,
@@ -350,6 +357,7 @@ impl ExecCommandHandler {
                 original_token_count: None,
                 output_omitted_bytes: None,
                 hook_command: None,
+                artifacts: None,
             }));
         }
 
@@ -358,6 +366,7 @@ impl ExecCommandHandler {
             .exec_command(
                 ExecCommandRequest {
                     command,
+                    command_mode,
                     shell_type,
                     hook_command: hook_command.clone(),
                     process_id,
@@ -404,6 +413,7 @@ impl ExecCommandHandler {
                     original_token_count: Some(original_token_count),
                     output_omitted_bytes,
                     hook_command: Some(hook_command),
+                    artifacts: None,
                 }))
             }
             Err(err) => Err(FunctionCallError::RespondToModel(format!(
@@ -425,9 +435,10 @@ impl CoreToolRuntime for ExecCommandHandler {
 
         parse_arguments::<ExecCommandArgs>(arguments)
             .ok()
-            .map(|args| PreToolUsePayload {
+            .and_then(|args| args.hook_command().ok())
+            .map(|command| PreToolUsePayload {
                 tool_name: HookToolName::bash(),
-                tool_input: serde_json::json!({ "command": args.cmd }),
+                tool_input: serde_json::json!({ "command": command }),
             })
     }
 
@@ -436,19 +447,33 @@ impl CoreToolRuntime for ExecCommandHandler {
         mut invocation: ToolInvocation,
         updated_input: serde_json::Value,
     ) -> Result<ToolInvocation, FunctionCallError> {
-        let ToolPayload::Function { arguments } = invocation.payload else {
+        let ToolPayload::Function { ref arguments } = invocation.payload else {
             return Err(FunctionCallError::RespondToModel(
                 "hook input rewrite received unsupported exec_command payload".to_string(),
             ));
         };
-        invocation.payload = ToolPayload::Function {
-            arguments: rewrite_function_string_argument(
-                &arguments,
-                "exec_command",
-                "cmd",
-                updated_hook_command(&updated_input)?,
-            )?,
-        };
+        let args: ExecCommandArgs = parse_arguments(arguments)?;
+        let updated_command = updated_hook_command(&updated_input)?;
+        if args.argv.is_some() {
+            if args
+                .hook_command()
+                .map_err(FunctionCallError::RespondToModel)?
+                != updated_command
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "hooks cannot rewrite a structured `argv` exec command".to_string(),
+                ));
+            }
+        } else {
+            invocation.payload = ToolPayload::Function {
+                arguments: rewrite_function_string_argument(
+                    arguments,
+                    "exec_command",
+                    "cmd",
+                    updated_command,
+                )?,
+            };
+        }
         Ok(invocation)
     }
 

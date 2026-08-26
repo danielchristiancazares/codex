@@ -257,6 +257,14 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "ThreadHistoryMode": {
       "enum": [
         "legacy",
@@ -392,10 +400,7 @@
       ]
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "$ref": "#/definitions/ServiceTier"
     },
     "sessionStartSource": {
       "anyOf": [

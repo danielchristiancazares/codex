@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::protocol::EventMsg;
@@ -65,7 +66,7 @@ async fn pending_rollout_compatible_metadata_does_not_deadlock() {
         .stage_pending_thread_metadata(
             thread_id,
             ThreadMetadataPatch {
-                name: Some(Some("staged-name".to_string())),
+                name: NullableField::Value("staged-name".to_string()),
                 model_provider: Some("staged-provider".to_string()),
                 ..Default::default()
             },

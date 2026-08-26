@@ -1,9 +1,10 @@
 use codex_prompts::BACKEND_PROMPT;
+use codex_protocol::NullableField;
 const DEFAULT_USER_FIRST_NAME: &str = "there";
 const USER_FIRST_NAME_PLACEHOLDER: &str = "{{ user_first_name }}";
 
 pub(crate) fn prepare_realtime_backend_prompt(
-    prompt: Option<Option<String>>,
+    prompt: NullableField<String>,
     config_prompt: Option<String>,
 ) -> String {
     if let Some(config_prompt) = config_prompt
@@ -13,9 +14,9 @@ pub(crate) fn prepare_realtime_backend_prompt(
     }
 
     match prompt {
-        Some(Some(prompt)) => return prompt,
-        Some(None) => return String::new(),
-        None => {}
+        NullableField::Value(prompt) => return prompt,
+        NullableField::Null => return String::new(),
+        NullableField::Omitted => {}
     }
 
     BACKEND_PROMPT
@@ -33,13 +34,15 @@ fn current_user_first_name() -> String {
 
 #[cfg(test)]
 mod tests {
+    use codex_protocol::NullableField;
+
     use super::prepare_realtime_backend_prompt;
 
     #[test]
     fn prepare_realtime_backend_prompt_prefers_config_override() {
         assert_eq!(
             prepare_realtime_backend_prompt(
-                Some(Some("prompt from request".to_string())),
+                NullableField::Value("prompt from request".to_string()),
                 Some("prompt from config".to_string()),
             ),
             "prompt from config"
@@ -50,7 +53,7 @@ mod tests {
     fn prepare_realtime_backend_prompt_uses_request_prompt() {
         assert_eq!(
             prepare_realtime_backend_prompt(
-                Some(Some("prompt from request".to_string())),
+                NullableField::Value("prompt from request".to_string()),
                 /*config_prompt*/ None,
             ),
             "prompt from request"
@@ -60,19 +63,24 @@ mod tests {
     #[test]
     fn prepare_realtime_backend_prompt_preserves_empty_request_prompt() {
         assert_eq!(
-            prepare_realtime_backend_prompt(Some(Some(String::new())), /*config_prompt*/ None),
+            prepare_realtime_backend_prompt(
+                NullableField::Value(String::new()),
+                /*config_prompt*/ None,
+            ),
             ""
         );
         assert_eq!(
-            prepare_realtime_backend_prompt(Some(None), /*config_prompt*/ None),
+            prepare_realtime_backend_prompt(NullableField::Null, /*config_prompt*/ None),
             ""
         );
     }
 
     #[test]
     fn prepare_realtime_backend_prompt_renders_default() {
-        let prompt =
-            prepare_realtime_backend_prompt(/*prompt*/ None, /*config_prompt*/ None);
+        let prompt = prepare_realtime_backend_prompt(
+            /*prompt*/ NullableField::Omitted,
+            /*config_prompt*/ None,
+        );
 
         assert!(prompt.starts_with("## Identity, tone, and role"));
         assert!(prompt.contains("You are Codex, an OpenAI general-purpose agentic assistant"));

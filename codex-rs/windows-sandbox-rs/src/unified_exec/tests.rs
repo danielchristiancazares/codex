@@ -1,5 +1,7 @@
 #![cfg(target_os = "windows")]
 
+use super::WindowsSandboxManagedNetwork;
+use super::WindowsSandboxReadRoots;
 use super::WindowsSandboxSessionRequest;
 use super::spawn_windows_sandbox_session_elevated_for_permission_profile;
 use super::spawn_windows_sandbox_session_for_level;
@@ -238,12 +240,12 @@ fn restricted_token_rejects_managed_network_before_spawn() {
             cwd: cwd.as_path(),
             env_map: HashMap::new(),
             windows_sandbox_level: WindowsSandboxLevel::RestrictedToken,
-            proxy_enforced: true,
-            network_proxy_restricting_sid: None,
-            proxy_settings_mode: crate::WindowsSandboxProxySettingsMode::Preserve,
+            managed_network: WindowsSandboxManagedNetwork::Enforced {
+                network_proxy_restricting_sid: "S-1-5-21-100-200-300-400".to_string(),
+                proxy_settings_mode: crate::WindowsSandboxProxySettingsMode::Preserve,
+            },
             timeout_ms: None,
-            read_roots_override: None,
-            read_roots_include_platform_defaults: false,
+            read_roots: WindowsSandboxReadRoots::ProfileDefaults,
             write_roots_override: None,
             deny_read_paths_override: &[],
             deny_write_paths_override: &[],
@@ -324,11 +326,11 @@ fn elevated_non_tty_cmd_forwards_env_output_and_exit() {
             ],
             cwd.as_path(),
             env_map,
-            /*proxy_enforced*/ false,
-            /*network_proxy_restricting_sid*/ None,
+            WindowsSandboxManagedNetwork::Disabled {
+                proxy_settings_mode: crate::WindowsSandboxProxySettingsMode::Reconcile,
+            },
             Some(5_000),
-            /*read_roots_override*/ None,
-            /*read_roots_include_platform_defaults*/ true,
+            WindowsSandboxReadRoots::ProfileDefaults,
             /*write_roots_override*/ None,
             &[],
             &[],

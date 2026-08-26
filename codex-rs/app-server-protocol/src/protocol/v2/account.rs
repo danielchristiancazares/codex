@@ -414,7 +414,7 @@ pub struct GetAccountTokenUsageResponse {
     pub daily_usage_buckets: Option<Vec<AccountTokenUsageDailyBucket>>,
     /// Estimated usage when a thread was requested and its billing route is available.
     #[serde(default)]
-    #[ts(optional, as = "Option<Option<ThreadUsage>>")]
+    #[ts(optional = nullable)]
     pub thread_usage: Option<ThreadUsage>,
 }
 

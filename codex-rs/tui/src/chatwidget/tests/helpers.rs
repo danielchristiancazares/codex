@@ -257,7 +257,7 @@ fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> Model
     let mut service_tiers = Vec::new();
     if supports_fast_mode {
         service_tiers.push(json!({
-            "id": ServiceTier::Fast.request_value(),
+            "id": ServiceTier::Fast,
             "name": "fast",
             "description": "Fastest inference with increased plan usage"
         }));

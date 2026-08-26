@@ -7,6 +7,7 @@ use codex_core::StartIfIdleSubmission;
 use codex_core::ThreadManager;
 use codex_core::TurnInput;
 use codex_core::TurnInputRequest;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ThreadGoal;
@@ -308,7 +309,7 @@ impl GoalRuntimeHandle {
                 codex_state::GoalUpdate {
                     objective: None,
                     status: Some(status),
-                    token_budget: None,
+                    token_budget: NullableField::Omitted,
                     expected_goal_id: Some(active_goal.goal_id),
                 },
             )

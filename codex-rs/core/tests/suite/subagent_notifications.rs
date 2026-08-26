@@ -7,6 +7,7 @@ use codex_core::config::CurrentTimeReminderConfig;
 use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::PermissionProfile;
@@ -1286,7 +1287,7 @@ async fn spawned_full_history_v2_child_uses_model_precedence_without_dropping_co
                         text_elements: Vec::new(),
                     }])
                     .with_thread_settings(ThreadSettingsOverrides {
-                        effort: Some(Some(effort)),
+                        effort: NullableField::Value(effort),
                         approval_policy,
                         ..Default::default()
                     }),

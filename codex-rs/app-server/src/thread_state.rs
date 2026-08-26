@@ -243,6 +243,7 @@ mod tests {
     use codex_app_server_protocol::SandboxPolicy;
     use codex_protocol::config_types::CollaborationMode;
     use codex_protocol::config_types::ModeKind;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::config_types::Settings;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
@@ -274,7 +275,7 @@ mod tests {
             active_permission_profile: None,
             model: model.to_string(),
             model_provider: "mock_provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             effort: None,
             summary: None,
             collaboration_mode: CollaborationMode {

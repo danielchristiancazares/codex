@@ -329,16 +329,14 @@ impl ChatWidget {
             )
         } else if let Some(plan_mask) = collaboration_modes::plan_mask(self.model_catalog.as_ref())
         {
-            match plan_mask
-                .reasoning_effort
-                .as_ref()
-                .and_then(|effort| effort.as_ref())
-            {
-                Some(plan_effort) => format!(
+            match plan_mask.reasoning_effort.as_ref() {
+                NullableField::Value(plan_effort) => format!(
                     "built-in Plan default ({})",
                     Self::reasoning_effort_sentence_label(plan_effort)
                 ),
-                None => "built-in Plan default (no reasoning)".to_string(),
+                NullableField::Omitted | NullableField::Null => {
+                    "built-in Plan default (no reasoning)".to_string()
+                }
             }
         } else {
             "built-in Plan default".to_string()

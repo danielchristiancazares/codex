@@ -16,6 +16,7 @@ use codex_http_client::RouteAwareClientPool;
 use codex_http_client::RouteAwareRequestBuilder;
 use codex_login::CodexAuth;
 use codex_login::default_client::get_codex_user_agent;
+use codex_protocol::NullableField;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitReachedType;
@@ -572,8 +573,16 @@ impl Client {
     ) -> RateLimitSnapshot {
         let (primary, secondary) = match rate_limit {
             Some(details) => (
-                Self::map_rate_limit_window(details.primary_window),
-                Self::map_rate_limit_window(details.secondary_window),
+                Self::map_rate_limit_window(match details.primary_window {
+                    None => NullableField::Omitted,
+                    Some(None) => NullableField::Null,
+                    Some(Some(window)) => NullableField::Value(window),
+                }),
+                Self::map_rate_limit_window(match details.secondary_window {
+                    None => NullableField::Omitted,
+                    Some(None) => NullableField::Null,
+                    Some(Some(window)) => NullableField::Value(window),
+                }),
             ),
             None => (None, None),
         };
@@ -647,9 +656,12 @@ impl Client {
     }
 
     fn map_rate_limit_window(
-        window: Option<Option<Box<crate::types::RateLimitWindowSnapshot>>>,
+        window: NullableField<Box<crate::types::RateLimitWindowSnapshot>>,
     ) -> Option<RateLimitWindow> {
-        let snapshot = window.flatten().map(|details| *details)?;
+        let NullableField::Value(snapshot) = window else {
+            return None;
+        };
+        let snapshot = *snapshot;
 
         let used_percent = f64::from(snapshot.used_percent);
         let window_minutes = Self::window_minutes_from_seconds(snapshot.limit_window_seconds);

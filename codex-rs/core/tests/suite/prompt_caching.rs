@@ -6,6 +6,7 @@ use std::path::Path;
 use codex_core::TurnInputRequest;
 use codex_core::shell::default_user_shell;
 use codex_features::Feature;
+use codex_protocol::NullableField;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;
@@ -413,7 +414,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
             approval_policy: Some(AskForApproval::Never),
             sandbox_policy: Some(sandbox_policy),
             permission_profile: Some(permission_profile),
-            effort: Some(Some(ReasoningEffort::High)),
+            effort: NullableField::Value(ReasoningEffort::High),
             summary: Some(ReasoningSummary::Detailed),
             ..Default::default()
         },
@@ -508,7 +509,7 @@ async fn override_before_first_turn_emits_environment_context() -> anyhow::Resul
         ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
             model: Some("gpt-5.4".to_string()),
-            effort: Some(Some(ReasoningEffort::Low)),
+            effort: NullableField::Value(ReasoningEffort::Low),
             collaboration_mode: Some(collaboration_mode),
             ..Default::default()
         },
@@ -688,7 +689,7 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() -> anyhow::Res
                 sandbox_policy: Some(sandbox_policy),
                 permission_profile,
                 model: Some("o3".to_string()),
-                effort: Some(Some(ReasoningEffort::High)),
+                effort: NullableField::Value(ReasoningEffort::High),
                 summary: Some(ReasoningSummary::Detailed),
                 ..Default::default()
             }),

@@ -9,10 +9,12 @@ use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_config::types::ApprovalsReviewer;
+use codex_protocol::NullableField;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
@@ -38,7 +40,7 @@ pub(crate) enum AppCommand {
         model: String,
         effort: Option<ReasoningEffortConfig>,
         summary: Option<ReasoningSummaryConfig>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         final_output_json_schema: Option<Value>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
@@ -51,9 +53,9 @@ pub(crate) enum AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         windows_sandbox_level: Option<WindowsSandboxLevel>,
         model: Option<String>,
-        effort: Option<Option<ReasoningEffortConfig>>,
+        effort: NullableField<ReasoningEffortConfig>,
         summary: Option<ReasoningSummaryConfig>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
     },
@@ -120,7 +122,7 @@ impl AppCommand {
         model: String,
         effort: Option<ReasoningEffortConfig>,
         summary: Option<ReasoningSummaryConfig>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         final_output_json_schema: Option<Value>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
@@ -150,9 +152,9 @@ impl AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         windows_sandbox_level: Option<WindowsSandboxLevel>,
         model: Option<String>,
-        effort: Option<Option<ReasoningEffortConfig>>,
+        effort: NullableField<ReasoningEffortConfig>,
         summary: Option<ReasoningSummaryConfig>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
     ) -> Self {

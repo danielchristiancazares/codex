@@ -149,6 +149,7 @@ fn recovery_handles_dense_tail_output_and_newer_notification() {
             .recover_events(ReadResponse {
                 chunks,
                 next_seq: last_seq + 1,
+                output_lost: false,
                 exited: true,
                 exit_code: Some(17),
                 closed: false,
@@ -184,6 +185,7 @@ fn recovery_rejects_output_at_closed_sequence() {
                 chunk: b"output".to_vec().into(),
             }],
             next_seq: 2,
+            output_lost: false,
             exited: false,
             exit_code: None,
             closed: true,
@@ -220,6 +222,7 @@ async fn recovery_adds_sandbox_denial_to_pending_exit_event() {
                 chunk: b"sandbox denied".to_vec().into(),
             }],
             next_seq: 3,
+            output_lost: false,
             exited: true,
             exit_code: Some(1),
             closed: false,

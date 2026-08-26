@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use codex_install_context::InstallContext;
+use codex_protocol::NullableField;
 use codex_rollout::RolloutConfig;
 use codex_rollout::first_rollout_content_match_snippet;
 use codex_rollout::parse_cursor;
@@ -99,8 +100,8 @@ pub(super) async fn search_threads(
         allowed_sources: params.allowed_sources.clone(),
         model_providers: None,
         cwd_filters: None,
-        section: None,
-        project_id: None,
+        section: NullableField::Omitted,
+        project_id: NullableField::Omitted,
         archived: params.archived,
         search_term: None,
         relation_filter: None,

@@ -53,6 +53,7 @@ use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
 use codex_login::is_workload_identity_selected;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::AltScreenMode;
@@ -165,7 +166,6 @@ mod render;
 mod resize_reflow_cap;
 mod resume_picker;
 mod selection_list;
-mod service_tier_resolution;
 mod session_archive_commands;
 mod session_log;
 mod session_queue_commands;
@@ -726,8 +726,8 @@ fn latest_session_lookup_params(
         },
         source_kinds: Some(resume_source_kinds(include_non_interactive)),
         archived: Some(false),
-        section_id: None,
-        project_id: None,
+        section_id: NullableField::Omitted,
+        project_id: NullableField::Omitted,
         parent_thread_id: None,
         ancestor_thread_id: None,
         cwd: cwd_filter.map(|cwd| ThreadListCwdFilter::One(cwd.to_string_lossy().to_string())),

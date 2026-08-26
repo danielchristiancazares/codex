@@ -36,7 +36,7 @@ pub enum ConfigEdit {
         effort: Option<ReasoningEffort>,
     },
     /// Update the service tier preference for future turns.
-    SetServiceTier { service_tier: Option<String> },
+    SetServiceTier { service_tier: ServiceTier },
     /// Update the active (or default) model personality.
     SetModelPersonality { personality: Option<Personality> },
     /// Toggle the acknowledgement flag under `[notice]`.
@@ -230,19 +230,13 @@ impl ConfigDocument {
                 );
                 mutated
             }),
-            ConfigEdit::SetServiceTier { service_tier } => Ok(self.write_optional_value(
-                &["service_tier"],
-                service_tier.as_ref().map(|service_tier| {
-                    // Keep the legacy config spelling stable. Runtime values use
-                    // `priority`, but config.toml continues to store it as `fast`.
-                    let config_value = match ServiceTier::from_request_value(service_tier) {
-                        Some(ServiceTier::Fast) => "fast",
-                        Some(ServiceTier::Flex) => "flex",
-                        None => service_tier.as_str(),
-                    };
-                    value(config_value)
-                }),
-            )),
+            ConfigEdit::SetServiceTier { service_tier } => {
+                let value = match service_tier {
+                    ServiceTier::Default => None,
+                    ServiceTier::Fast | ServiceTier::Flex => Some(value(service_tier.to_string())),
+                };
+                Ok(self.write_optional_value(&["service_tier"], value))
+            }
             ConfigEdit::SetModelPersonality { personality } => Ok(self.write_optional_value(
                 &["personality"],
                 personality.map(|personality| value(personality.to_string())),
@@ -805,7 +799,7 @@ impl ConfigEditsBuilder {
         self
     }
 
-    pub fn set_service_tier(mut self, service_tier: Option<String>) -> Self {
+    pub fn set_service_tier(mut self, service_tier: ServiceTier) -> Self {
         self.edits.push(ConfigEdit::SetServiceTier { service_tier });
         self
     }

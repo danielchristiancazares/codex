@@ -32,6 +32,7 @@ use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::set_project_trust_level;
 use codex_exec_server::CODEX_EXEC_SERVER_URL_ENV_VAR;
 use codex_exec_server::CreateDirectoryOptions;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
@@ -1272,7 +1273,7 @@ async fn skills_changed_notification_is_emitted_after_skill_change() -> Result<(
             model: None,
             model_provider: None,
             allow_provider_model_fallback: false,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             cwd: None,
             runtime_workspace_roots: None,
             approval_policy: None,

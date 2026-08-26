@@ -15,9 +15,46 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::SpawnedProcess;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+
+/// Managed-network authority applied to a Windows sandbox session.
+///
+/// The enforced form carries the restricting SID required to route the
+/// sandboxed process through the managed proxy.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WindowsSandboxManagedNetwork {
+    /// Launch without managed proxy enforcement.
+    Disabled {
+        /// Controls whether persistent proxy settings are reconciled for this launch.
+        proxy_settings_mode: crate::WindowsSandboxProxySettingsMode,
+    },
+    /// Enforce managed networking with the supplied restricting SID.
+    Enforced {
+        /// Restricting SID used by the shared Windows proxy ingress.
+        network_proxy_restricting_sid: String,
+        /// Controls whether persistent proxy settings are reconciled for this launch.
+        proxy_settings_mode: crate::WindowsSandboxProxySettingsMode,
+    },
+}
+
+/// Read-root authority applied while preparing a Windows sandbox session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowsSandboxReadRoots<'a> {
+    /// Resolve read roots from the permission profile.
+    ProfileDefaults,
+    /// Use an explicit root set, optionally retaining platform defaults.
+    Explicit {
+        /// Explicit readable roots. An empty slice intentionally grants no policy roots.
+        roots: &'a [PathBuf],
+        /// Whether the platform's default readable roots remain included.
+        include_platform_defaults: bool,
+    },
+}
 
 /// Fully resolved Windows sandbox session launch request.
 ///
@@ -31,12 +68,9 @@ pub struct WindowsSandboxSessionRequest<'a> {
     pub cwd: &'a Path,
     pub env_map: HashMap<String, String>,
     pub windows_sandbox_level: WindowsSandboxLevel,
-    pub proxy_enforced: bool,
-    pub network_proxy_restricting_sid: Option<String>,
-    pub proxy_settings_mode: crate::WindowsSandboxProxySettingsMode,
+    pub managed_network: WindowsSandboxManagedNetwork,
     pub timeout_ms: Option<u64>,
-    pub read_roots_override: Option<&'a [PathBuf]>,
-    pub read_roots_include_platform_defaults: bool,
+    pub read_roots: WindowsSandboxReadRoots<'a>,
     pub write_roots_override: Option<&'a [PathBuf]>,
     pub deny_read_paths_override: &'a [AbsolutePathBuf],
     pub deny_write_paths_override: &'a [AbsolutePathBuf],
@@ -56,12 +90,9 @@ pub async fn spawn_windows_sandbox_session_for_level(
             request.command,
             request.cwd,
             request.env_map,
-            request.proxy_enforced,
-            request.network_proxy_restricting_sid,
-            request.proxy_settings_mode,
+            request.managed_network,
             request.timeout_ms,
-            request.read_roots_override,
-            request.read_roots_include_platform_defaults,
+            request.read_roots,
             request.write_roots_override,
             request.deny_read_paths_override,
             request.deny_write_paths_override,
@@ -71,11 +102,11 @@ pub async fn spawn_windows_sandbox_session_for_level(
         )
         .await
     } else {
-        if request.proxy_enforced {
+        if matches!(
+            request.managed_network,
+            WindowsSandboxManagedNetwork::Enforced { .. }
+        ) {
             bail!("managed networking requires the elevated Windows sandbox backend");
-        }
-        if request.network_proxy_restricting_sid.is_some() {
-            bail!("network proxy restricting SID requires the elevated Windows sandbox backend");
         }
         spawn_windows_sandbox_session_legacy(
             request.permission_profile,
@@ -135,11 +166,9 @@ pub async fn spawn_windows_sandbox_session_elevated_for_permission_profile(
     command: Vec<String>,
     cwd: &Path,
     env_map: HashMap<String, String>,
-    proxy_enforced: bool,
-    network_proxy_restricting_sid: Option<String>,
+    managed_network: WindowsSandboxManagedNetwork,
     timeout_ms: Option<u64>,
-    read_roots_override: Option<&[PathBuf]>,
-    read_roots_include_platform_defaults: bool,
+    read_roots: WindowsSandboxReadRoots<'_>,
     write_roots_override: Option<&[PathBuf]>,
     deny_read_paths_override: &[AbsolutePathBuf],
     deny_write_paths_override: &[AbsolutePathBuf],
@@ -154,12 +183,9 @@ pub async fn spawn_windows_sandbox_session_elevated_for_permission_profile(
         command,
         cwd,
         env_map,
-        proxy_enforced,
-        network_proxy_restricting_sid,
-        crate::WindowsSandboxProxySettingsMode::Reconcile,
+        managed_network,
         timeout_ms,
-        read_roots_override,
-        read_roots_include_platform_defaults,
+        read_roots,
         write_roots_override,
         deny_read_paths_override,
         deny_write_paths_override,

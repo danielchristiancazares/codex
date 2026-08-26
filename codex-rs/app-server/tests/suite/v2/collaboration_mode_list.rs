@@ -55,7 +55,11 @@ async fn list_collaboration_modes_returns_presets() -> Result<()> {
             name: preset.name,
             mode: preset.mode,
             model: preset.model,
-            reasoning_effort: preset.reasoning_effort,
+            reasoning_effort: match preset.reasoning_effort {
+                codex_app_server_protocol::NullableField::Omitted
+                | codex_app_server_protocol::NullableField::Null => None,
+                codex_app_server_protocol::NullableField::Value(effort) => Some(effort),
+            },
         })
         .collect();
     assert_eq!(expected, items);

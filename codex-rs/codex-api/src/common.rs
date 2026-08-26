@@ -1,5 +1,6 @@
 use crate::error::ApiError;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -35,8 +36,8 @@ pub struct CompactionInput<'a> {
     pub parallel_tool_calls: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<&'a str>,
+    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,8 +265,8 @@ pub struct ResponsesApiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
     pub include: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,7 +290,7 @@ impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
             stream: request.stream,
             stream_options: request.stream_options.as_ref(),
             include: &request.include,
-            service_tier: request.service_tier.as_deref(),
+            service_tier: request.service_tier,
             prompt_cache_key: request.prompt_cache_key.as_deref(),
             text: request.text.as_ref(),
             generate: None,
@@ -316,8 +317,8 @@ pub struct ResponseCreateWsRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<&'a StreamOptions>,
     pub include: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<&'a str>,
+    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

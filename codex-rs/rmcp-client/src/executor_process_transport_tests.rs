@@ -139,6 +139,7 @@ fn retained_read_response(chunks: Vec<ProcessOutputChunk>, next_seq: u64) -> Rea
     ReadResponse {
         chunks,
         next_seq,
+        output_lost: false,
         exited: false,
         exit_code: None,
         closed: false,

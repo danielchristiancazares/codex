@@ -159,8 +159,11 @@ impl ThreadGoalRequestProcessor {
                         .unwrap_or(GoalObjectiveUpdate::Keep),
                     status,
                     token_budget: match params.token_budget {
-                        Some(token_budget) => GoalTokenBudgetUpdate::Set(token_budget),
-                        None => GoalTokenBudgetUpdate::Keep,
+                        NullableField::Omitted => GoalTokenBudgetUpdate::Keep,
+                        NullableField::Null => GoalTokenBudgetUpdate::ResetToMaximum,
+                        NullableField::Value(token_budget) => {
+                            GoalTokenBudgetUpdate::Set(token_budget)
+                        }
                     },
                     max_goal_token_budget,
                 },

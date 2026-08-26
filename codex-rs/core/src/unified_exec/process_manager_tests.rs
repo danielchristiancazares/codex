@@ -291,6 +291,7 @@ async fn output_collection_stays_bounded_across_repeated_drains() {
     let cancellation_token = CancellationToken::new();
     let output = OutputHandles {
         output_buffer: Arc::clone(&output_buffer),
+        artifact_capture: None,
         output_notify: Arc::clone(&output_notify),
         output_closed: Arc::clone(&output_closed),
         output_closed_notify: Arc::clone(&output_closed_notify),
@@ -348,6 +349,7 @@ async fn output_collection_preserves_omissions_from_drained_buffer() {
     cancellation_token.cancel();
     let output = OutputHandles {
         output_buffer,
+        artifact_capture: None,
         output_notify,
         output_closed,
         output_closed_notify,
@@ -401,6 +403,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
             "-lc".to_string(),
             "echo before".to_string(),
         ],
+        command_mode: crate::unified_exec::ExecCommandMode::Shell,
         shell_type: crate::shell::ShellType::Sh,
         hook_command: "echo before".to_string(),
         process_id: 123,
@@ -439,6 +442,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         "PRE_DENIAL_MARKER".to_string(),
         "Network access denied".to_string(),
         Duration::from_millis(7),
+        /*artifact_capture*/ None,
     )
     .await;
 

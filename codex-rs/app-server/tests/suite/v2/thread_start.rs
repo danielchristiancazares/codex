@@ -41,7 +41,7 @@ use codex_core::config::set_project_trust_level;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -920,31 +920,6 @@ model_reasoning_effort = "high"
 }
 
 #[tokio::test]
-async fn thread_start_drops_unsupported_service_tier_id() -> Result<()> {
-    let server = create_mock_responses_server_repeating_assistant("Done").await;
-
-    let codex_home = TempDir::new()?;
-    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
-
-    let mut mcp = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
-        .build_initialized()
-        .await?;
-
-    let service_tier_id = "experimental-tier-id".to_string();
-    let ThreadStartResponse { service_tier, .. } = mcp
-        .start_thread(ThreadStartParams {
-            service_tier: Some(Some(service_tier_id.clone())),
-            ..Default::default()
-        })
-        .await?;
-
-    // Unsupported catalog ids are dropped at session config time instead of echoed back.
-    assert_eq!(service_tier, None);
-    Ok(())
-}
-
-#[tokio::test]
 async fn thread_start_accepts_default_service_tier() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
 
@@ -958,15 +933,12 @@ async fn thread_start_accepts_default_service_tier() -> Result<()> {
 
     let ThreadStartResponse { service_tier, .. } = mcp
         .start_thread(ThreadStartParams {
-            service_tier: Some(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
+            service_tier: ServiceTier::Default,
             ..Default::default()
         })
         .await?;
 
-    assert_eq!(
-        service_tier,
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
+    assert_eq!(service_tier, ServiceTier::Default);
     Ok(())
 }
 

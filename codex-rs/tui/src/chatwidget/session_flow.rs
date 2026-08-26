@@ -47,7 +47,6 @@ impl ChatWidget {
         self.config
             .permissions
             .set_workspace_roots(runtime_workspace_roots);
-        self.effective_service_tier = session.service_tier.clone();
         if let Err(err) = self
             .config
             .permissions
@@ -86,8 +85,11 @@ impl ChatWidget {
         let default_model = session.model.clone();
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(default_model.clone()),
-            Some(session.reasoning_effort.clone()),
-            /*developer_instructions*/ None,
+            match session.reasoning_effort.clone() {
+                Some(effort) => NullableField::Value(effort),
+                None => NullableField::Null,
+            },
+            /*developer_instructions*/ NullableField::Omitted,
         );
         if session.reasoning_effort == Some(ReasoningEffortConfig::Ultra) {
             self.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Ultra));
@@ -103,7 +105,10 @@ impl ChatWidget {
                     Some(&default_model),
                 );
                 if let Some(mask) = self.active_collaboration_mask.as_mut() {
-                    mask.reasoning_effort = Some(session.reasoning_effort.clone());
+                    mask.reasoning_effort = match session.reasoning_effort.clone() {
+                        Some(effort) => NullableField::Value(effort),
+                        None => NullableField::Null,
+                    };
                 }
                 self.update_collaboration_mode_indicator();
                 self.refresh_plan_mode_nudge();
@@ -125,8 +130,8 @@ impl ChatWidget {
             SessionConfiguredDisplay::Normal | SessionConfiguredDisplay::PromptEdit
         ) {
             let startup_tooltip_override = self.startup_tooltip_override.take();
-            let show_fast_status = self
-                .should_show_fast_status(&model_for_header, self.effective_service_tier.as_deref());
+            let show_fast_status =
+                self.should_show_fast_status(&model_for_header, self.current_service_tier());
             let session_info_cell = history_cell::new_session_info(
                 &self.config,
                 &model_for_header,

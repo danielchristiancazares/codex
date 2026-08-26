@@ -226,6 +226,7 @@ impl BlockingTerminateExecProcess {
         Ok(ReadResponse {
             chunks: Vec::new(),
             next_seq: 1,
+            output_lost: false,
             exited: false,
             exit_code: None,
             closed: false,

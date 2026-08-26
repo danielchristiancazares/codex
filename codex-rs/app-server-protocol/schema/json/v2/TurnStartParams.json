@@ -304,6 +304,14 @@
         }
       ]
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "Settings": {
       "description": "Settings for a collaboration mode.",
       "properties": {
@@ -649,11 +657,12 @@
       "description": "Override the sandbox policy for this turn and subsequent turns."
     },
     "serviceTier": {
-      "description": "Override the service tier for this turn and subsequent turns.",
-      "type": [
-        "string",
-        "null"
-      ]
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Override the service tier for this turn and subsequent turns."
     },
     "summary": {
       "anyOf": [

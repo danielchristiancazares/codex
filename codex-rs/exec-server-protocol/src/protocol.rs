@@ -296,6 +296,12 @@ pub struct ProcessOutputChunk {
 pub struct ReadResponse {
     pub chunks: Vec<ProcessOutputChunk>,
     pub next_seq: u64,
+    /// Whether output after the requested cursor is unavailable.
+    ///
+    /// This is set when retained output was evicted or the process driver
+    /// reported that it lost bytes before they reached the exec server.
+    #[serde(default)]
+    pub output_lost: bool,
     pub exited: bool,
     pub exit_code: Option<i32>,
     pub closed: bool,
@@ -784,6 +790,9 @@ pub struct ExecExitedNotification {
 pub struct ExecClosedNotification {
     pub process_id: ProcessId,
     pub seq: u64,
+    /// Whether the process driver lost output before all streams closed.
+    #[serde(default)]
+    pub output_lost: bool,
 }
 
 mod base64_bytes {
@@ -815,6 +824,7 @@ mod base64_bytes {
 mod tests {
     use super::EnvironmentCapabilities;
     use super::EnvironmentInfo;
+    use super::ExecClosedNotification;
     use super::ExecExitedNotification;
     use super::ExecParams;
     use super::ExecResponse;
@@ -822,6 +832,7 @@ mod tests {
     use super::HttpRequestParams;
     use super::ProcessId;
     use super::ProcessSandboxType;
+    use super::ReadResponse;
     use super::ShellInfo;
     use codex_file_system::FileSystemSandboxContext;
     use codex_network_proxy::ManagedNetworkSandboxContext;
@@ -841,6 +852,47 @@ mod tests {
     use codex_utils_path_uri::PathUri;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
+
+    #[test]
+    fn output_loss_defaults_preserve_older_peer_payloads() {
+        let read_response = serde_json::from_value::<ReadResponse>(serde_json::json!({
+            "chunks": [],
+            "nextSeq": 1,
+            "exited": false,
+            "exitCode": null,
+            "closed": false,
+            "failure": null,
+            "sandboxDenied": false
+        }))
+        .expect("deserialize older process/read response");
+        assert_eq!(
+            read_response,
+            ReadResponse {
+                chunks: Vec::new(),
+                next_seq: 1,
+                output_lost: false,
+                exited: false,
+                exit_code: None,
+                closed: false,
+                failure: None,
+                sandbox_denied: false,
+            }
+        );
+
+        let closed = serde_json::from_value::<ExecClosedNotification>(serde_json::json!({
+            "processId": "process-1",
+            "seq": 2
+        }))
+        .expect("deserialize older process/closed notification");
+        assert_eq!(
+            closed,
+            ExecClosedNotification {
+                process_id: ProcessId::from("process-1"),
+                seq: 2,
+                output_lost: false,
+            }
+        );
+    }
 
     #[test]
     fn exec_params_keeps_proxy_launch_separate_from_sandbox_facts() {

@@ -4,40 +4,33 @@ use super::ChatWidget;
 use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
-use crate::service_tier_resolution;
 use codex_features::Feature;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::SPEED_TIER_FAST;
 
 impl ChatWidget {
-    pub(crate) fn set_service_tier(&mut self, service_tier: Option<String>) {
+    pub(crate) fn set_service_tier(&mut self, service_tier: ServiceTier) {
         self.config.service_tier = service_tier;
-        self.refresh_effective_service_tier();
         self.refresh_model_dependent_surfaces();
     }
 
-    pub(crate) fn current_service_tier(&self) -> Option<&str> {
-        self.effective_service_tier.as_deref()
+    pub(crate) fn current_service_tier(&self) -> ServiceTier {
+        self.config.service_tier
     }
 
-    pub(crate) fn configured_service_tier(&self) -> Option<String> {
-        self.config.service_tier.clone()
+    pub(crate) fn configured_service_tier(&self) -> ServiceTier {
+        self.config.service_tier
     }
 
-    pub(crate) fn service_tier_update_for_core(&self) -> Option<Option<String>> {
-        service_tier_resolution::service_tier_update_for_core(
-            &self.config,
-            self.current_model(),
-            &self.model_catalog.try_list_models().unwrap_or_default(),
-        )
-    }
-
-    pub(crate) fn should_show_fast_status(&self, model: &str, service_tier: Option<&str>) -> bool {
-        service_tier.is_some_and(|service_tier| {
-            service_tier == ServiceTier::Fast.request_value()
-                && self.model_supports_service_tier(model, service_tier)
-        }) && self.has_chatgpt_account
+    pub(crate) fn should_show_fast_status(&self, model: &str, service_tier: ServiceTier) -> bool {
+        service_tier == ServiceTier::Fast
+            && self
+                .model_catalog
+                .try_list_models()
+                .ok()
+                .and_then(|models| models.into_iter().find(|preset| preset.model == model))
+                .is_some_and(|preset| preset.supports_service_tier(service_tier))
+            && self.has_chatgpt_account
     }
 
     pub(super) fn fast_mode_enabled(&self) -> bool {
@@ -55,19 +48,19 @@ impl ChatWidget {
         let Some(fast_tier) = self.current_model_fast_service_tier() else {
             return;
         };
-        let next_tier = if self.current_service_tier() == Some(fast_tier.id.as_str()) {
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
+        let next_tier = if self.current_service_tier() == fast_tier.tier {
+            ServiceTier::Default
         } else {
-            Some(fast_tier.id)
+            fast_tier.tier
         };
         self.set_service_tier_selection(next_tier);
     }
 
     pub(crate) fn toggle_service_tier_from_ui(&mut self, command: ServiceTierCommand) {
-        let next_tier = if self.current_service_tier() == Some(command.id.as_str()) {
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
+        let next_tier = if self.current_service_tier() == command.tier {
+            ServiceTier::Default
         } else {
-            Some(command.id)
+            command.tier
         };
         self.set_service_tier_selection(next_tier);
     }
@@ -92,8 +85,9 @@ impl ChatWidget {
                         preset
                             .service_tiers
                             .into_iter()
+                            .filter(|tier| !tier.id.is_default())
                             .map(|tier| ServiceTierCommand {
-                                id: tier.id,
+                                tier: tier.id,
                                 name: tier.name.to_lowercase(),
                                 description: tier.description,
                             })
@@ -103,8 +97,8 @@ impl ChatWidget {
             .unwrap_or_default()
     }
 
-    fn set_service_tier_selection(&mut self, service_tier: Option<String>) {
-        self.set_service_tier(service_tier.clone());
+    fn set_service_tier_selection(&mut self, service_tier: ServiceTier) {
+        self.set_service_tier(service_tier);
         self.app_event_tx
             .send(AppEvent::CodexOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
@@ -114,9 +108,9 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ None,
+                /*effort*/ codex_protocol::NullableField::Omitted,
                 /*summary*/ None,
-                Some(service_tier.clone()),
+                service_tier,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
@@ -124,35 +118,9 @@ impl ChatWidget {
             .send(AppEvent::PersistServiceTierSelection { service_tier });
     }
 
-    fn model_supports_service_tier(&self, model: &str, service_tier: &str) -> bool {
-        self.model_catalog
-            .try_list_models()
-            .ok()
-            .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| {
-                        preset
-                            .service_tiers
-                            .iter()
-                            .any(|tier| tier.id == service_tier)
-                    })
-            })
-            .unwrap_or(false)
-    }
-
     fn current_model_fast_service_tier(&self) -> Option<ServiceTierCommand> {
         self.current_model_service_tier_commands()
             .into_iter()
             .find(|tier| tier.name.eq_ignore_ascii_case(SPEED_TIER_FAST))
-    }
-
-    pub(super) fn refresh_effective_service_tier(&mut self) {
-        self.effective_service_tier = service_tier_resolution::effective_service_tier(
-            &self.config,
-            self.current_model(),
-            &self.model_catalog.try_list_models().unwrap_or_default(),
-        );
     }
 }

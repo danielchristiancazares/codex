@@ -14,6 +14,7 @@ use codex_tools::ToolSpec;
 use serde::Deserialize;
 
 use super::super::shell_spec::create_write_stdin_tool;
+use super::super::shell_spec::create_write_stdin_tool_with_artifacts;
 use super::post_unified_exec_tool_use_payload;
 
 #[derive(Debug, Deserialize)]
@@ -28,7 +29,18 @@ struct WriteStdinArgs {
     max_output_tokens: Option<usize>,
 }
 
-pub struct WriteStdinHandler;
+#[derive(Default)]
+pub struct WriteStdinHandler {
+    include_exec_output_artifacts: bool,
+}
+
+impl WriteStdinHandler {
+    pub(crate) fn with_exec_output_artifacts() -> Self {
+        Self {
+            include_exec_output_artifacts: true,
+        }
+    }
+}
 
 impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     fn tool_name(&self) -> ToolName {
@@ -36,7 +48,11 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     }
 
     fn spec(&self) -> ToolSpec {
-        create_write_stdin_tool()
+        if self.include_exec_output_artifacts {
+            create_write_stdin_tool_with_artifacts()
+        } else {
+            create_write_stdin_tool()
+        }
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {

@@ -239,12 +239,19 @@ Response:
 {
   "chunks": [],
   "nextSeq": 1,
+  "outputLost": false,
   "exited": false,
   "exitCode": null,
   "closed": false,
-  "failure": null
+  "failure": null,
+  "sandboxDenied": false
 }
 ```
+
+`outputLost` is `true` when output after the requested cursor is no longer
+available, either because retained replay was evicted or because the process
+driver lost bytes before they reached the server. Consumers must treat the
+returned chunks as discontinuous from their prior cursor in that case.
 
 ### `process/write`
 
@@ -355,9 +362,12 @@ Params:
 ```json
 {
   "processId": "proc-1",
-  "seq": 3
+  "seq": 3,
+  "outputLost": false
 }
 ```
+
+`outputLost` reports source-side process-driver loss to streaming clients.
 
 ## Filesystem RPCs
 
@@ -455,5 +465,5 @@ Terminate it:
 {"id":4,"method":"process/terminate","params":{"processId":"proc-1"}}
 {"id":4,"result":{"running":true}}
 {"method":"process/exited","params":{"processId":"proc-1","seq":3,"exitCode":0,"sandboxDenied":false}}
-{"method":"process/closed","params":{"processId":"proc-1","seq":4}}
+{"method":"process/closed","params":{"processId":"proc-1","seq":4,"outputLost":false}}
 ```

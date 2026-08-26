@@ -46,6 +46,7 @@ members = [
     "http-client",
     "secrets",
     "exec",
+    "exec-output-artifacts",
     "file-system",
     "exec-server-protocol",
     "exec-server",
@@ -186,6 +187,7 @@ codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
 codex-diagnostics = { path = "diagnostics" }
 codex-exec = { path = "exec" }
+codex-exec-output-artifacts = { path = "exec-output-artifacts" }
 codex-file-system = { path = "file-system" }
 codex-exec-server-protocol = { path = "exec-server-protocol" }
 codex-exec-server = { path = "exec-server" }
@@ -329,6 +331,7 @@ flate2 = "1.1.8"
 futures = { version = "0.3", default-features = false }
 gethostname = "1.1.0"
 gix = { version = "0.81.0", default-features = false, features = ["sha1"] }
+gix-url = "0.35.2"
 glob = "0.3"
 globset = "0.4"
 hmac = "0.12.1"

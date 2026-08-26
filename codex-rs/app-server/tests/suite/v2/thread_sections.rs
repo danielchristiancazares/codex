@@ -6,6 +6,7 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use codex_app_server::INVALID_PARAMS_ERROR_CODE;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
@@ -174,7 +175,7 @@ async fn custom_sections_remain_discoverable_across_ordered_updates_and_restart(
             params: ThreadSectionUpdateParams {
                 section_id: persisted.data[1].id.clone(),
                 name: "Projects".to_string(),
-                appearance: Some(None),
+                appearance: NullableField::Null,
             },
         })
         .await?;
@@ -255,7 +256,7 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
             params: ThreadSectionUpdateParams {
                 section_id: created.section.id.clone(),
                 name: "Projects".to_string(),
-                appearance: None,
+                appearance: NullableField::Omitted,
             },
         })
         .await?;

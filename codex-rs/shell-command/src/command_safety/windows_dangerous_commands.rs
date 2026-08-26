@@ -5,6 +5,8 @@ use regex::Regex;
 use shlex::split as shlex_split;
 use url::Url;
 
+use crate::command_safety::powershell_dangerous_command_parser::parse_powershell_script_commands;
+
 pub fn is_dangerous_command_windows(command: &[String]) -> bool {
     // Prefer structured parsing for PowerShell/CMD so we can spot URL-bearing
     // invocations of ShellExecute-style entry points before falling back to
@@ -27,14 +29,15 @@ fn is_dangerous_powershell(command: &[String]) -> bool {
     if !is_powershell_executable(exe) {
         return false;
     }
-    // Parse the PowerShell invocation to get a flat token list we can scan for
-    // dangerous cmdlets/COM calls plus any URL-looking arguments. This is a
-    // best-effort shlex split of the script text, not a full PS parser.
-    let Some(parsed) = parse_powershell_invocation(rest) else {
+    // Keep each parsed command separate so a URL in one invocation cannot make
+    // a launcher in another invocation appear dangerous.
+    let Some(commands) = parse_powershell_invocation(rest) else {
         return false;
     };
 
-    is_dangerous_powershell_words(&parsed.tokens)
+    commands
+        .iter()
+        .any(|words| is_dangerous_powershell_words(words))
 }
 
 pub(crate) fn is_dangerous_powershell_words(words: &[String]) -> bool {
@@ -362,11 +365,7 @@ fn is_browser_executable(name: &str) -> bool {
     )
 }
 
-struct ParsedPowershell {
-    tokens: Vec<String>,
-}
-
-fn parse_powershell_invocation(args: &[String]) -> Option<ParsedPowershell> {
+fn parse_powershell_invocation(args: &[String]) -> Option<Vec<Vec<String>>> {
     if args.is_empty() {
         return None;
     }
@@ -381,16 +380,14 @@ fn parse_powershell_invocation(args: &[String]) -> Option<ParsedPowershell> {
                 if idx + 2 != args.len() {
                     return None;
                 }
-                let tokens = shlex_split(script)?;
-                return Some(ParsedPowershell { tokens });
+                return parse_powershell_script_commands(script);
             }
             _ if lower.starts_with("-command:") || lower.starts_with("/command:") => {
                 if idx + 1 != args.len() {
                     return None;
                 }
                 let (_, script) = arg.split_once(':')?;
-                let tokens = shlex_split(script)?;
-                return Some(ParsedPowershell { tokens });
+                return parse_powershell_script_commands(script);
             }
             "-nologo" | "-noprofile" | "-noninteractive" | "-mta" | "-sta" => {
                 idx += 1;
@@ -400,7 +397,7 @@ fn parse_powershell_invocation(args: &[String]) -> Option<ParsedPowershell> {
             }
             _ => {
                 let rest = args[idx..].to_vec();
-                return Some(ParsedPowershell { tokens: rest });
+                return Some(vec![rest]);
             }
         }
     }
@@ -455,6 +452,19 @@ mod tests {
             "-Command",
             "Start-Process notepad.exe"
         ])));
+    }
+
+    #[test]
+    fn powershell_local_start_process_and_separate_http_request_is_not_flagged() {
+        for script in [
+            "Start-Process notepad.exe\nInvoke-RestMethod https://example.com/api",
+            "Start-Process notepad.exe\n$response = Invoke-RestMethod https://example.com/api",
+        ] {
+            assert!(
+                !is_dangerous_command_windows(&vec_str(&["powershell", "-Command", script])),
+                "{script}"
+            );
+        }
     }
 
     #[test]

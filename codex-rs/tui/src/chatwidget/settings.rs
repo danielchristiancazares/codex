@@ -3,6 +3,7 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::chatwidget::rate_limits::RATE_LIMIT_SWITCH_PROMPT_VIEW_ID;
+use codex_protocol::config_types::ServiceTier;
 
 impl ChatWidget {
     /// Set the approval policy in the widget's config copy.
@@ -77,7 +78,6 @@ impl ChatWidget {
         }
         let enabled = self.config.features.enabled(feature);
         if feature == Feature::FastMode {
-            self.refresh_effective_service_tier();
             self.sync_service_tier_commands();
         }
         if feature == Feature::Personality {
@@ -146,7 +146,7 @@ impl ChatWidget {
             && mask.mode == Some(ModeKind::Plan)
         {
             if let Some(effort) = effort {
-                mask.reasoning_effort = Some(Some(effort));
+                mask.reasoning_effort = NullableField::Value(effort);
             } else if let Some(plan_mask) =
                 collaboration_modes::plan_mask(self.model_catalog.as_ref())
             {
@@ -163,8 +163,11 @@ impl ChatWidget {
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             /*model*/ None,
-            Some(effort.clone()),
-            /*developer_instructions*/ None,
+            match effort.clone() {
+                Some(effort) => NullableField::Value(effort),
+                None => NullableField::Null,
+            },
+            /*developer_instructions*/ NullableField::Omitted,
         );
         if self.collaboration_modes_enabled()
             && let Some(mask) = self.active_collaboration_mask.as_mut()
@@ -172,7 +175,10 @@ impl ChatWidget {
         {
             // Generic "global default" updates should not mutate the active Plan mask.
             // Plan reasoning is controlled by the Plan preset and Plan-only override updates.
-            mask.reasoning_effort = Some(effort);
+            mask.reasoning_effort = match effort {
+                Some(effort) => NullableField::Value(effort),
+                None => NullableField::Null,
+            };
         }
         self.refresh_model_dependent_surfaces();
     }
@@ -268,15 +274,14 @@ impl ChatWidget {
     pub(crate) fn set_model(&mut self, model: &str) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(model.to_string()),
-            /*effort*/ None,
-            /*developer_instructions*/ None,
+            /*effort*/ NullableField::Omitted,
+            /*developer_instructions*/ NullableField::Omitted,
         );
         if self.collaboration_modes_enabled()
             && let Some(mask) = self.active_collaboration_mask.as_mut()
         {
             mask.model = Some(model.to_string());
         }
-        self.refresh_effective_service_tier();
         self.refresh_model_dependent_surfaces();
     }
 
@@ -459,10 +464,15 @@ impl ChatWidget {
             return self.current_collaboration_mode.reasoning_effort();
         }
         let current_effort = self.current_collaboration_mode.reasoning_effort();
-        self.active_collaboration_mask
+        match self
+            .active_collaboration_mask
             .as_ref()
-            .and_then(|mask| mask.reasoning_effort.clone())
-            .unwrap_or(current_effort)
+            .map(|mask| mask.reasoning_effort.as_ref())
+        {
+            Some(NullableField::Value(effort)) => Some(effort.clone()),
+            Some(NullableField::Null) => None,
+            Some(NullableField::Omitted) | None => current_effort,
+        }
     }
 
     pub(crate) fn effective_collaboration_mode(&self) -> CollaborationMode {
@@ -538,7 +548,6 @@ impl ChatWidget {
         settings.collaboration_mode.settings.model = settings.model;
         settings.collaboration_mode.settings.reasoning_effort = settings.effort;
         self.set_effective_collaboration_mode(settings.collaboration_mode);
-        self.refresh_effective_service_tier();
         self.refresh_status_surfaces();
         self.sync_service_tier_commands();
         self.sync_personality_command_enabled();
@@ -585,8 +594,14 @@ impl ChatWidget {
             name: mode_kind.display_name().to_string(),
             mode: Some(mode_kind),
             model: Some(settings.model.clone()),
-            reasoning_effort: Some(settings.reasoning_effort.clone()),
-            developer_instructions: Some(settings.developer_instructions),
+            reasoning_effort: match settings.reasoning_effort.clone() {
+                Some(effort) => NullableField::Value(effort),
+                None => NullableField::Null,
+            },
+            developer_instructions: match settings.developer_instructions {
+                Some(instructions) => NullableField::Value(instructions),
+                None => NullableField::Null,
+            },
         });
         self.update_collaboration_mode_indicator();
         self.refresh_plan_mode_nudge();
@@ -709,7 +724,7 @@ impl ChatWidget {
         if mask.mode == Some(ModeKind::Plan)
             && let Some(effort) = self.config.plan_mode_reasoning_effort.clone()
         {
-            mask.reasoning_effort = Some(Some(effort));
+            mask.reasoning_effort = NullableField::Value(effort);
         }
         if mask.mode == Some(ModeKind::Plan) {
             self.dismissed_plan_mode_nudge_scopes
@@ -756,9 +771,9 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ None,
+                /*effort*/ NullableField::Omitted,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 Some(self.effective_collaboration_mode()),
                 /*personality*/ None,
             ),

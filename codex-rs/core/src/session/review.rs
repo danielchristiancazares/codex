@@ -91,11 +91,7 @@ pub(super) async fn spawn_review_thread(
         (
             state.session_configuration.forked_from_thread_id,
             state.session_configuration.thread_source.clone(),
-            state
-                .session_configuration
-                .service_tier
-                .clone()
-                .or_else(|| config.service_tier.clone()),
+            state.session_configuration.service_tier,
         )
     };
     per_turn_config.service_tier = service_tier;

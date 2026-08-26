@@ -461,7 +461,7 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(warmup.get("service_tier"), None);
 
-    test.submit_turn_with_service_tier("hello", Some(ServiceTier::Fast.request_value()))
+    test.submit_turn_with_service_tier("hello", ServiceTier::Fast)
         .await?;
 
     assert_eq!(server.handshakes().len(), 1);
@@ -473,7 +473,7 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
         .body_json();
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(first_turn["service_tier"].as_str(), Some("priority"));
+    assert_eq!(first_turn["service_tier"].as_str(), Some("fast"));
     assert_eq!(first_turn.get("previous_response_id"), None);
     assert!(
         first_turn
@@ -505,7 +505,7 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
             .features
             .enable(Feature::ResponsesWebsocketsV2)
             .expect("test config should allow feature update");
-        config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+        config.service_tier = ServiceTier::Fast;
     });
     let test = builder.build_with_websocket_server(&server).await?;
 
@@ -515,9 +515,9 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
         .body_json();
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert_eq!(warmup["service_tier"].as_str(), Some("priority"));
+    assert_eq!(warmup["service_tier"].as_str(), Some("fast"));
 
-    test.submit_turn_with_service_tier("hello", /*service_tier*/ None)
+    test.submit_turn_with_service_tier("hello", ServiceTier::Default)
         .await?;
 
     assert_eq!(server.handshakes().len(), 1);
@@ -577,9 +577,9 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(warmup.get("service_tier"), None);
 
-    test.submit_turn_with_service_tier("first", Some(ServiceTier::Fast.request_value()))
+    test.submit_turn_with_service_tier("first", ServiceTier::Fast)
         .await?;
-    test.submit_turn_with_service_tier("second", /*service_tier*/ None)
+    test.submit_turn_with_service_tier("second", ServiceTier::Default)
         .await?;
 
     assert_eq!(server.handshakes().len(), 1);
@@ -596,7 +596,7 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
         .body_json();
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(first_turn["service_tier"].as_str(), Some("priority"));
+    assert_eq!(first_turn["service_tier"].as_str(), Some("fast"));
     assert_eq!(first_turn.get("previous_response_id"), None);
     assert!(
         first_turn

@@ -16,6 +16,7 @@ use codex_history::InitialHistory;
 use codex_history::ResumedHistory;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
+use codex_protocol::NullableField;
 use codex_protocol::ResponseItemId;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
@@ -1844,7 +1845,7 @@ async fn metadata_update_without_result_reads_only_when_the_caller_needs_the_thr
         .update_thread_metadata(
             started.thread_id,
             ThreadMetadataPatch {
-                name: Some(Some("initial name".to_string())),
+                name: NullableField::Value("initial name".to_string()),
                 ..Default::default()
             },
             /*include_archived*/ false,
@@ -1858,7 +1859,7 @@ async fn metadata_update_without_result_reads_only_when_the_caller_needs_the_thr
         .update_thread_metadata(
             started.thread_id,
             ThreadMetadataPatch {
-                name: Some(Some("loaded name".to_string())),
+                name: NullableField::Value("loaded name".to_string()),
                 ..Default::default()
             },
             /*include_archived*/ false,
@@ -1907,7 +1908,7 @@ async fn metadata_update_without_result_reads_only_when_the_caller_needs_the_thr
         .update_thread_metadata(
             started.thread_id,
             ThreadMetadataPatch {
-                name: Some(Some("cold name".to_string())),
+                name: NullableField::Value("cold name".to_string()),
                 ..Default::default()
             },
             /*include_archived*/ false,

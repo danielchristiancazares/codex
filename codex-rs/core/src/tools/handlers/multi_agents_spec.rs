@@ -824,7 +824,7 @@ fn spawn_agent_models_description(
             let service_tiers = model
                 .service_tiers
                 .iter()
-                .map(|tier| tier.id.as_str())
+                .map(|tier| tier.id.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             let service_tiers_suffix = if service_tiers.is_empty() {

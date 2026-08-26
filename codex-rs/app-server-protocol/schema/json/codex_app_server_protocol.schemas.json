@@ -7873,14 +7873,7 @@
           "reasoning_effort": {
             "anyOf": [
               {
-                "anyOf": [
-                  {
-                    "$ref": "#/definitions/v2/ReasoningEffort"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "$ref": "#/definitions/v2/ReasoningEffort"
               },
               {
                 "type": "null"
@@ -8528,10 +8521,7 @@
             ]
           },
           "service_tier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "tools": {
             "anyOf": [
@@ -13943,12 +13933,12 @@
             "$ref": "#/definitions/v2/ReasoningEffort"
           },
           "defaultServiceTier": {
-            "default": null,
-            "description": "Catalog default service tier id for this model, when one is configured.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Catalog default service tier for this model."
           },
           "description": {
             "type": "string"
@@ -14233,7 +14223,7 @@
             "type": "string"
           },
           "id": {
-            "type": "string"
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "name": {
             "type": "string"
@@ -14519,10 +14509,7 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           }
         },
         "type": "object"
@@ -18343,6 +18330,14 @@
         "title": "ServerRequestResolvedNotification",
         "type": "object"
       },
+      "ServiceTier": {
+        "enum": [
+          "fast",
+          "flex",
+          "default"
+        ],
+        "type": "string"
+      },
       "SessionMigration": {
         "properties": {
           "cwd": {
@@ -19452,10 +19447,7 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "threadId": {
             "type": "string"
@@ -19528,10 +19520,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -21318,10 +21307,7 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "threadId": {
             "type": "string"
@@ -21383,10 +21369,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -21792,10 +21775,7 @@
             "$ref": "#/definitions/v2/SandboxPolicy"
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "summary": {
             "anyOf": [
@@ -21980,10 +21960,7 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "sessionStartSource": {
             "anyOf": [
@@ -22060,10 +22037,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -22859,11 +22833,12 @@
             "description": "Override the sandbox policy for this turn and subsequent turns."
           },
           "serviceTier": {
-            "description": "Override the service tier for this turn and subsequent turns.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Override the service tier for this turn and subsequent turns."
           },
           "summary": {
             "anyOf": [

@@ -205,7 +205,7 @@ async fn compact_uses_bearer_after_agent_identity_session_fallback() -> anyhow::
             CompactConversationRequestSettings {
                 effort: None,
                 summary: codex_protocol::config_types::ReasoningSummary::None,
-                service_tier: None,
+                service_tier: codex_protocol::config_types::ServiceTier::Default,
             },
             &test_session_telemetry(),
             &CompactionTraceContext::disabled(),

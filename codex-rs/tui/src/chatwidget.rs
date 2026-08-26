@@ -133,6 +133,7 @@ use codex_git_utils::recent_commits;
 use codex_otel::RuntimeMetricsSummary;
 use codex_otel::SessionTelemetry;
 use codex_plugin::PluginCapabilitySummary;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::GuardianAssessmentAction;
@@ -410,6 +411,7 @@ mod rendering;
 mod replay;
 mod review;
 mod review_popups;
+use self::review::PreReviewTokenInfo;
 use self::review::ReviewState;
 #[cfg(test)]
 pub(crate) use self::review_popups::show_review_commit_picker_with_entries;
@@ -555,7 +557,6 @@ pub(crate) struct ChatWidget {
     config: Config,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
-    effective_service_tier: Option<String>,
     /// The unmasked collaboration mode settings (always Default mode).
     ///
     /// Masks are applied on top of this base mode to derive the effective mode.
@@ -739,7 +740,7 @@ pub(crate) struct ChatWidget {
     // of `config.tui_terminal_title` (which is `None` when using defaults).
     // On cancel or persist-failure the inner value is restored to config;
     // on confirm the outer is set to `None` to end the session.
-    terminal_title_setup_original_items: Option<Option<Vec<String>>>,
+    terminal_title_setup_snapshot: status_controls::TerminalTitleSetupSnapshot,
     // Baseline instant used to animate spinner-prefixed title statuses.
     terminal_title_animation_origin: Instant,
     // Cached project-root display name keyed by cwd for status/title rendering.
@@ -1158,15 +1159,14 @@ impl ChatWidget {
     }
 
     fn restore_pre_review_token_info(&mut self) {
-        if let Some(saved) = self.review.pre_review_token_info.take() {
-            match saved {
-                Some(info) => self.apply_token_info(info),
-                None => {
-                    self.bottom_pane
-                        .set_context_window(/*percent*/ None, /*used_tokens*/ None);
-                    self.token_info = None;
-                }
+        match std::mem::take(&mut self.review.pre_review_token_info) {
+            PreReviewTokenInfo::NotCaptured => {}
+            PreReviewTokenInfo::WithoutTokenInfo => {
+                self.bottom_pane
+                    .set_context_window(/*percent*/ None, /*used_tokens*/ None);
+                self.token_info = None;
             }
+            PreReviewTokenInfo::WithTokenInfo(info) => self.apply_token_info(info),
         }
     }
 
@@ -1261,8 +1261,14 @@ impl ChatWidget {
     }
 
     fn enter_review_mode_with_hint(&mut self, hint: String, from_replay: bool) {
-        if self.review.pre_review_token_info.is_none() {
-            self.review.pre_review_token_info = Some(self.token_info.clone());
+        if matches!(
+            &self.review.pre_review_token_info,
+            PreReviewTokenInfo::NotCaptured
+        ) {
+            self.review.pre_review_token_info = match self.token_info.clone() {
+                Some(info) => PreReviewTokenInfo::WithTokenInfo(info),
+                None => PreReviewTokenInfo::WithoutTokenInfo,
+            };
         }
         if !from_replay && !self.bottom_pane.is_task_running() {
             self.bottom_pane.set_task_running(/*running*/ true);

@@ -344,7 +344,15 @@ mod tests {
     struct RecordingHttpClient {
         headers: Mutex<Option<Vec<(String, String)>>>,
         redirect_policy: Mutex<Option<HttpRedirectPolicy>>,
-        timeout_ms: Mutex<Option<Option<u64>>>,
+        timeout: Mutex<RecordedTimeout>,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    enum RecordedTimeout {
+        #[default]
+        NoRequest,
+        WithoutTimeout,
+        WithTimeout(u64),
     }
 
     impl HttpClient for RecordingHttpClient {
@@ -375,9 +383,12 @@ mod tests {
                     .collect(),
             );
             *self
-                .timeout_ms
+                .timeout
                 .lock()
-                .expect("timeout recorder lock should not be poisoned") = Some(params.timeout_ms);
+                .expect("timeout recorder lock should not be poisoned") = match params.timeout_ms {
+                Some(timeout_ms) => RecordedTimeout::WithTimeout(timeout_ms),
+                None => RecordedTimeout::WithoutTimeout,
+            };
             *self
                 .redirect_policy
                 .lock()
@@ -707,13 +718,13 @@ mod tests {
         assert_recorded_discovery_failure(discovery);
         assert_eq!(
             *http_client
-                .timeout_ms
+                .timeout
                 .lock()
                 .expect("timeout recorder lock should not be poisoned"),
-            Some(Some(
+            RecordedTimeout::WithTimeout(
                 u64::try_from(DISCOVERY_TIMEOUT.as_millis())
                     .expect("discovery timeout should fit in u64")
-            ))
+            )
         );
     }
 
@@ -734,10 +745,10 @@ mod tests {
         assert_recorded_discovery_failure(discovery);
         assert_eq!(
             *http_client
-                .timeout_ms
+                .timeout
                 .lock()
                 .expect("timeout recorder lock should not be poisoned"),
-            Some(Some(30_000))
+            RecordedTimeout::WithTimeout(30_000)
         );
     }
 

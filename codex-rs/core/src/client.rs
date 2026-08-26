@@ -76,6 +76,7 @@ use codex_otel::current_span_w3c_trace_context;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -168,7 +169,7 @@ pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
 pub(crate) struct CompactConversationRequestSettings {
     pub(crate) effort: Option<ReasoningEffortConfig>,
     pub(crate) summary: ReasoningSummaryConfig,
-    pub(crate) service_tier: Option<String>,
+    pub(crate) service_tier: ServiceTier,
 }
 
 fn reasoning_effort_for_request(effort: ReasoningEffortConfig) -> ReasoningEffortConfig {
@@ -183,7 +184,7 @@ fn session_telemetry_for_request(
     request: &ResponsesApiRequest,
 ) -> SessionTelemetry {
     session_telemetry.clone().with_inference_request(
-        request.service_tier.as_deref(),
+        request.service_tier,
         request
             .reasoning
             .as_ref()
@@ -571,7 +572,7 @@ impl ModelClient {
             tools,
             parallel_tool_calls,
             reasoning,
-            service_tier: service_tier.as_deref(),
+            service_tier,
             prompt_cache_key: prompt_cache_key.as_deref(),
             text,
         };
@@ -593,11 +594,9 @@ impl ModelClient {
         if let Some(header_value) = self.generate_attestation_header_for().await {
             extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
         }
-        if let Some(header_value) = self.build_routing_hint_header(
-            client_setup.auth.as_ref(),
-            &model,
-            service_tier.as_deref(),
-        ) {
+        if let Some(header_value) =
+            self.build_routing_hint_header(client_setup.auth.as_ref(), &model, service_tier)
+        {
             extra_headers.insert(X_CODEX_ROUTING_HINT_HEADER, header_value);
         }
         add_responses_lite_header(&mut extra_headers, model_info.use_responses_lite);
@@ -814,7 +813,7 @@ impl ModelClient {
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
     ) -> Result<ResponsesApiRequest> {
         let mut input = prompt.get_formatted_input_for_request(model_info.use_responses_lite);
@@ -886,7 +885,6 @@ impl ModelClient {
             prompt.output_schema_strict,
         );
         let prompt_cache_key = Some(self.prompt_cache_key(responses_metadata));
-        let service_tier = model_info.service_tier_for_request(service_tier);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions,
@@ -1005,7 +1003,7 @@ impl ModelClient {
         &self,
         auth: Option<&CodexAuth>,
         model: &str,
-        service_tier: Option<&str>,
+        service_tier: ServiceTier,
     ) -> Option<HeaderValue> {
         let provider = self.state.provider.info();
         if !auth.is_some_and(CodexAuth::uses_codex_backend)
@@ -1020,8 +1018,10 @@ impl ModelClient {
         }
 
         let routing_hint = match service_tier {
-            Some(tier) => format!("model={model};tier={tier}"),
-            None => format!("model={model}"),
+            ServiceTier::Fast | ServiceTier::Flex => {
+                format!("model={model};tier={service_tier}")
+            }
+            ServiceTier::Default => format!("model={model}"),
         };
         HeaderValue::from_str(&routing_hint).ok()
     }
@@ -1449,7 +1449,7 @@ impl ModelClientSession {
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
@@ -1494,13 +1494,13 @@ impl ModelClientSession {
                 model_info,
                 effort.clone(),
                 summary,
-                service_tier.clone(),
+                service_tier,
                 responses_metadata,
             )?;
             if let Some(header_value) = self.client.build_routing_hint_header(
                 client_setup.auth.as_ref(),
                 &request.model,
-                request.service_tier.as_deref(),
+                request.service_tier,
             ) {
                 options
                     .extra_headers
@@ -1594,7 +1594,7 @@ impl ModelClientSession {
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
@@ -1626,14 +1626,14 @@ impl ModelClientSession {
                 model_info,
                 effort.clone(),
                 summary,
-                service_tier.clone(),
+                service_tier,
                 responses_metadata,
             )?;
             let mut websocket_metadata = responses_metadata.clone();
             websocket_metadata.routing_hint = self.client.build_routing_hint_header(
                 client_setup.auth.as_ref(),
                 &request.model,
-                request.service_tier.as_deref(),
+                request.service_tier,
             );
             let request_session_telemetry = if warmup {
                 // `generate=false` prewarm is connection setup, not an inference request.
@@ -1810,7 +1810,7 @@ impl ModelClientSession {
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
     ) -> Result<()> {
         if !self.client.responses_websocket_enabled() {
@@ -1866,7 +1866,7 @@ impl ModelClientSession {
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
@@ -1882,7 +1882,7 @@ impl ModelClientSession {
                             session_telemetry,
                             effort.clone(),
                             summary,
-                            service_tier.clone(),
+                            service_tier,
                             responses_metadata,
                             /*warmup*/ false,
                             request_trace,

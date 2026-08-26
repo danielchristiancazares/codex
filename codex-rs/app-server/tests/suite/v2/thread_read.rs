@@ -15,6 +15,7 @@ use codex_app_server_protocol::InitializeCapabilities;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
@@ -71,6 +72,7 @@ use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_rollout::RolloutItem;
 use codex_thread_store::AppendThreadItemsParams;
+use codex_thread_store::ClearableField;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
@@ -253,8 +255,8 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -939,8 +941,8 @@ async fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> 
                 model_providers: Some(Vec::new()),
                 source_kinds: None,
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
@@ -1319,8 +1321,8 @@ async fn paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: true,
             search_term: None,
@@ -2271,7 +2273,7 @@ async fn seed_pathless_store_thread(
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: Some(Some("named pathless thread".to_string())),
+                name: ClearableField::Value("named pathless thread".to_string()),
                 ..Default::default()
             },
             include_archived: true,

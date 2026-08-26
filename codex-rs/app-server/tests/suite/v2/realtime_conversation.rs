@@ -10,6 +10,7 @@ use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::LoginAccountResponse;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -380,7 +381,7 @@ impl RealtimeE2eHarness {
                 initial_items: None,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: Some(Some("backend prompt".to_string())),
+                prompt: NullableField::Value("backend prompt".to_string()),
                 realtime_session_id: None,
                 transport: Some(ThreadRealtimeStartTransport::Webrtc {
                     sdp: offer_sdp.to_string(),
@@ -441,7 +442,7 @@ impl RealtimeE2eHarness {
                 initial_items: None,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: Some(Some("backend prompt".to_string())),
+                prompt: NullableField::Value("backend prompt".to_string()),
                 realtime_session_id: None,
                 transport: None,
                 version: None,
@@ -478,7 +479,7 @@ impl RealtimeE2eHarness {
                 initial_items,
                 realtime_start_instructions: None,
                 realtime_end_instructions: None,
-                prompt: Some(Some("backend prompt".to_string())),
+                prompt: NullableField::Value("backend prompt".to_string()),
                 realtime_session_id: None,
                 transport: None,
                 version: Some(RealtimeConversationVersion::V3),
@@ -749,7 +750,7 @@ async fn realtime_conversation_streams_v2_notifications() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: None,
+            prompt: NullableField::Omitted,
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1031,7 +1032,7 @@ async fn realtime_start_can_skip_startup_context() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: None,
+            prompt: NullableField::Omitted,
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1129,7 +1130,7 @@ async fn realtime_text_output_modality_requests_text_output_and_final_transcript
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: None,
+            prompt: NullableField::Omitted,
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1308,7 +1309,7 @@ async fn realtime_conversation_stop_emits_closed_notification() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1381,7 +1382,7 @@ async fn realtime_mode_uses_client_instructions_on_entry_and_exit() -> Result<()
             initial_items: None,
             realtime_start_instructions: Some(start_instructions.to_string()),
             realtime_end_instructions: Some(end_instructions.to_string()),
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1517,7 +1518,7 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -3158,7 +3159,7 @@ async fn realtime_webrtc_start_surfaces_backend_error() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -3224,7 +3225,7 @@ async fn realtime_conversation_requires_feature_flag() -> Result<()> {
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
+            prompt: NullableField::Value("backend prompt".to_string()),
             realtime_session_id: None,
             transport: None,
             version: None,

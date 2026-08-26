@@ -2,6 +2,7 @@
 
 use super::*;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
+use codex_protocol::config_types::ServiceTier;
 
 pub(super) const NUDGE_MODEL_SLUG: &str = "gpt-5.6-luna";
 pub(super) const RATE_LIMIT_SWITCH_PROMPT_THRESHOLD: f64 = 90.0;
@@ -379,9 +380,9 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 Some(switch_model_for_events.clone()),
-                Some(Some(default_effort.clone())),
+                NullableField::Value(default_effort.clone()),
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));

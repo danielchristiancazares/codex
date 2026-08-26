@@ -9,12 +9,18 @@ use crate::Project;
 use crate::ProjectRoot;
 use crate::ProjectsPage;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadProjectAssignmentOutcome {
+    Updated,
+    ThreadMissing,
+}
+
 impl StateRuntime {
     pub async fn set_thread_project(
         &self,
         thread_id: &str,
         project_id: Option<&str>,
-    ) -> anyhow::Result<Option<Option<String>>> {
+    ) -> anyhow::Result<ThreadProjectAssignmentOutcome> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         if let Some(project_id) = project_id {
             let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
@@ -26,15 +32,15 @@ impl StateRuntime {
                 anyhow::bail!("project not found: {project_id}");
             }
         }
-        let previous =
-            sqlx::query_scalar::<_, Option<String>>("SELECT project_id FROM threads WHERE id = ?")
-                .bind(thread_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let Some(previous) = previous else {
+        let previous_row = sqlx::query("SELECT project_id FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(previous_row) = previous_row else {
             tx.rollback().await?;
-            return Ok(None);
+            return Ok(ThreadProjectAssignmentOutcome::ThreadMissing);
         };
+        let previous: Option<String> = previous_row.try_get("project_id")?;
         if previous.as_deref() != project_id {
             sqlx::query("UPDATE threads SET project_id = ? WHERE id = ?")
                 .bind(project_id)
@@ -43,7 +49,7 @@ impl StateRuntime {
                 .await?;
         }
         tx.commit().await?;
-        Ok(Some(previous))
+        Ok(ThreadProjectAssignmentOutcome::Updated)
     }
 
     pub async fn list_projects(

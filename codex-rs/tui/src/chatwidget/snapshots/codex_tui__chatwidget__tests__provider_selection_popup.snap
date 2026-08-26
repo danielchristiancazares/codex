@@ -6,6 +6,6 @@ expression: popup
   Select Provider
 
 › 1. OpenAI (current)  Use your OpenAI account
-  2. GitHub Copilot    Use your GitHub Copilot account over WebSocket
+  2. GitHub Copilot    Use your GitHub account
 
   Press enter to confirm or esc to go back

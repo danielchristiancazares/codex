@@ -25,6 +25,7 @@ use codex_external_agent_migration::sessions::detect_imported_cla_session_connec
 use codex_external_agent_migration::sessions::prepare_validated_session_import_with_metadata_mode;
 use codex_external_agent_migration::sessions::record_completed_session_imports;
 use codex_models_manager::manager::RefreshStrategy;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::BaseInstructionsProvenance;
@@ -527,10 +528,19 @@ impl ExternalAgentSessionImporter {
             updated_at: Some(updated_at),
             advance_recency_at: Some(updated_at),
             source: Some(source.clone()),
-            thread_source: Some(None),
-            agent_nickname: Some(source.get_nickname()),
-            agent_role: Some(source.get_agent_role()),
-            agent_path: Some(source.get_agent_path().map(Into::into)),
+            thread_source: NullableField::Null,
+            agent_nickname: match source.get_nickname() {
+                Some(agent_nickname) => NullableField::Value(agent_nickname),
+                None => NullableField::Null,
+            },
+            agent_role: match source.get_agent_role() {
+                Some(agent_role) => NullableField::Value(agent_role),
+                None => NullableField::Null,
+            },
+            agent_path: match source.get_agent_path() {
+                Some(agent_path) => NullableField::Value(agent_path.into()),
+                None => NullableField::Null,
+            },
             cwd: Some(cwd),
             cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             first_user_message,

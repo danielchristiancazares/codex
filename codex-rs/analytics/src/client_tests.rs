@@ -88,6 +88,7 @@ use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 #[cfg(debug_assertions)]
 use codex_login::AuthManager;
+use codex_protocol::config_types::ServiceTier;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
@@ -618,7 +619,7 @@ fn sample_thread_start_response() -> ClientResponsePayload {
         thread: sample_thread("thread-1"),
         model: "gpt-5".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
@@ -636,7 +637,7 @@ fn sample_thread_resume_response() -> ClientResponsePayload {
         thread: sample_thread("thread-2"),
         model: "gpt-5".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
@@ -657,7 +658,7 @@ fn sample_thread_fork_response() -> ClientResponsePayload {
         thread: sample_thread("thread-3"),
         model: "gpt-5".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),

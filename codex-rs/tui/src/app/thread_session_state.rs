@@ -13,9 +13,9 @@ impl App {
             return;
         };
 
-        let service_tier = self.chat_widget.current_service_tier().map(str::to_string);
+        let service_tier = self.chat_widget.current_service_tier();
         let update_session = |session: &mut ThreadSessionState| {
-            session.service_tier = service_tier.clone();
+            session.service_tier = service_tier;
         };
 
         if self.primary_thread_id == Some(active_thread_id)
@@ -94,7 +94,7 @@ impl App {
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
-                service_tier: self.chat_widget.current_service_tier().map(str::to_string),
+                service_tier: self.chat_widget.current_service_tier(),
                 approval_policy: AskForApproval::from(
                     self.config.permissions.approval_policy.value(),
                 ),
@@ -178,7 +178,7 @@ mod tests {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -360,7 +360,7 @@ mod tests {
         let thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000406").expect("valid thread");
         let session = ThreadSessionState {
-            service_tier: Some(ServiceTier::Fast.request_value().to_string()),
+            service_tier: ServiceTier::Fast,
             ..test_thread_session(thread_id, test_path_buf("/tmp/main"))
         };
 
@@ -372,13 +372,13 @@ mod tests {
             ThreadEventChannel::new_with_session(/*capacity*/ 4, session.clone(), Vec::new()),
         );
         app.chat_widget.handle_thread_session(session);
-        app.chat_widget.set_service_tier(/*service_tier*/ None);
+        app.chat_widget.set_service_tier(ServiceTier::Default);
 
         app.sync_active_thread_service_tier_to_cached_session()
             .await;
 
         let expected_session = ThreadSessionState {
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             ..test_thread_session(thread_id, test_path_buf("/tmp/main"))
         };
         assert_eq!(

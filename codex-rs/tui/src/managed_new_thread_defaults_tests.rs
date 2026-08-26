@@ -1,5 +1,6 @@
 use super::*;
 use crate::legacy_core::config::ConfigBuilder;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 
@@ -16,7 +17,7 @@ fn defaults() -> NewThreadModelDefaults {
     NewThreadModelDefaults {
         model: Some("managed-model".to_string()),
         model_reasoning_effort: Some(ReasoningEffort::High),
-        service_tier: Some("fast".to_string()),
+        service_tier: ServiceTier::Fast,
     }
 }
 
@@ -25,11 +26,11 @@ async fn applies_managed_defaults_to_a_new_thread_config() {
     let mut actual = test_config().await;
     actual.model = Some("configured-model".to_string());
     actual.model_reasoning_effort = Some(ReasoningEffort::Low);
-    actual.service_tier = Some("flex".to_string());
+    actual.service_tier = ServiceTier::Flex;
     let mut expected = actual.clone();
     expected.model = Some("managed-model".to_string());
     expected.model_reasoning_effort = Some(ReasoningEffort::High);
-    expected.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    expected.service_tier = ServiceTier::Fast;
 
     apply_managed_new_thread_defaults(
         &mut actual,
@@ -46,9 +47,9 @@ async fn explicit_model_skips_managed_model_and_reasoning_effort() {
     let mut actual = test_config().await;
     actual.model = Some("explicit-model".to_string());
     actual.model_reasoning_effort = None;
-    actual.service_tier = Some("flex".to_string());
+    actual.service_tier = ServiceTier::Flex;
     let mut expected = actual.clone();
-    expected.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    expected.service_tier = ServiceTier::Fast;
     let harness_overrides = ConfigOverrides {
         model: Some("explicit-model".to_string()),
         ..ConfigOverrides::default()
@@ -64,9 +65,9 @@ async fn explicit_reasoning_effort_skips_managed_model_and_reasoning_effort() {
     let mut actual = test_config().await;
     actual.model = Some("configured-model".to_string());
     actual.model_reasoning_effort = Some(ReasoningEffort::Low);
-    actual.service_tier = Some("flex".to_string());
+    actual.service_tier = ServiceTier::Flex;
     let mut expected = actual.clone();
-    expected.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    expected.service_tier = ServiceTier::Fast;
     let cli_kv_overrides = vec![(
         "model_reasoning_effort".to_string(),
         TomlValue::String("low".to_string()),
@@ -87,15 +88,20 @@ async fn explicit_launch_overrides_take_precedence() {
     let mut actual = test_config().await;
     actual.model = Some("explicit-model".to_string());
     actual.model_reasoning_effort = Some(ReasoningEffort::Low);
-    actual.service_tier = Some("flex".to_string());
+    actual.service_tier = ServiceTier::Flex;
     let expected = actual.clone();
-    let cli_kv_overrides = vec![(
-        "model_reasoning_effort".to_string(),
-        TomlValue::String("low".to_string()),
-    )];
+    let cli_kv_overrides = vec![
+        (
+            "model_reasoning_effort".to_string(),
+            TomlValue::String("low".to_string()),
+        ),
+        (
+            "service_tier".to_string(),
+            TomlValue::String("flex".to_string()),
+        ),
+    ];
     let harness_overrides = ConfigOverrides {
         model: Some("explicit-model".to_string()),
-        service_tier: Some(Some("flex".to_string())),
         ..ConfigOverrides::default()
     };
 

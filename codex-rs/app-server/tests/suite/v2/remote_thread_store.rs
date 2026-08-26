@@ -29,6 +29,7 @@ use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadDeleteParams;
@@ -97,7 +98,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: section_id.clone(),
                 name: "Projects".to_string(),
-                appearance: None,
+                appearance: NullableField::Omitted,
             },
         },
         ClientRequest::ThreadSectionDelete {
@@ -116,7 +117,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: " ".to_string(),
                 name: "Work".to_string(),
-                appearance: None,
+                appearance: NullableField::Omitted,
             },
         },
         ClientRequest::ThreadSectionUpdate {
@@ -124,7 +125,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: PINNED_THREAD_SECTION_ID.to_string(),
                 name: "Pinned again".to_string(),
-                appearance: None,
+                appearance: NullableField::Omitted,
             },
         },
         ClientRequest::ThreadSectionDelete {
@@ -144,7 +145,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: PINNED_THREAD_SECTION_ID.to_string(),
                 name: " ".to_string(),
-                appearance: None,
+                appearance: NullableField::Omitted,
             },
         },
     ] {
@@ -277,8 +278,8 @@ async fn thread_delete_with_non_local_thread_store_does_not_create_local_persist
                 model_providers: Some(Vec::new()),
                 source_kinds: None,
                 archived: None,
-                section_id: None,
-                project_id: None,
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Omitted,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,

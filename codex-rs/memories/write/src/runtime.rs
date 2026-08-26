@@ -25,6 +25,7 @@ use codex_otel::TelemetryAuthMode;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::InternalSessionSource;
@@ -50,7 +51,7 @@ pub(crate) struct StageOneRequestContext {
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) reasoning_effort: Option<ReasoningEffort>,
     pub(crate) reasoning_summary: ReasoningSummary,
-    pub(crate) service_tier: Option<String>,
+    pub(crate) service_tier: ServiceTier,
 }
 
 impl StageOneRequestContext {
@@ -285,7 +286,7 @@ impl MemoryStartupContext {
                 &context.session_telemetry,
                 context.reasoning_effort.clone(),
                 context.reasoning_summary,
-                context.service_tier.clone(),
+                context.service_tier,
                 &responses_metadata,
                 &InferenceTraceContext::disabled(),
             )

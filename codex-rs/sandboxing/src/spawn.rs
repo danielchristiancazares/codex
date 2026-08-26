@@ -50,6 +50,37 @@ pub async fn spawn_process(request: SpawnRequest<'_>) -> Result<SpawnedProcess> 
                 .context("windows sandbox: failed to resolve codex_home")?;
             let empty_paths = &[];
             let overrides = windows.filesystem_overrides;
+            let managed_network = match (
+                windows.proxy_enforced,
+                windows.network_proxy_restricting_sid,
+            ) {
+                (false, None) => codex_windows_sandbox::WindowsSandboxManagedNetwork::Disabled {
+                    proxy_settings_mode: windows.proxy_settings_mode,
+                },
+                (true, Some(network_proxy_restricting_sid)) => {
+                    codex_windows_sandbox::WindowsSandboxManagedNetwork::Enforced {
+                        network_proxy_restricting_sid: network_proxy_restricting_sid.to_owned(),
+                        proxy_settings_mode: windows.proxy_settings_mode,
+                    }
+                }
+                (true, None) => {
+                    anyhow::bail!("managed Windows proxy route is missing its restricting SID")
+                }
+                (false, Some(_)) => {
+                    anyhow::bail!(
+                        "network proxy restricting SID requires managed Windows networking"
+                    )
+                }
+            };
+            let read_roots = match overrides.and_then(|value| value.read_roots_override.as_deref())
+            {
+                Some(roots) => codex_windows_sandbox::WindowsSandboxReadRoots::Explicit {
+                    roots,
+                    include_platform_defaults: overrides
+                        .is_some_and(|value| value.read_roots_include_platform_defaults),
+                },
+                None => codex_windows_sandbox::WindowsSandboxReadRoots::ProfileDefaults,
+            };
 
             return codex_windows_sandbox::spawn_windows_sandbox_session_for_level(
                 codex_windows_sandbox::WindowsSandboxSessionRequest {
@@ -60,16 +91,9 @@ pub async fn spawn_process(request: SpawnRequest<'_>) -> Result<SpawnedProcess> 
                     cwd: request.cwd,
                     env_map: request.env.clone(),
                     windows_sandbox_level: windows.windows_sandbox_level,
-                    proxy_enforced: windows.proxy_enforced,
-                    network_proxy_restricting_sid: windows
-                        .network_proxy_restricting_sid
-                        .map(str::to_owned),
-                    proxy_settings_mode: windows.proxy_settings_mode,
+                    managed_network,
                     timeout_ms: None,
-                    read_roots_override: overrides
-                        .and_then(|value| value.read_roots_override.as_deref()),
-                    read_roots_include_platform_defaults: overrides
-                        .is_some_and(|value| value.read_roots_include_platform_defaults),
+                    read_roots,
                     write_roots_override: overrides
                         .and_then(|value| value.write_roots_override.as_deref()),
                     deny_read_paths_override: overrides.map_or(empty_paths, |value| {

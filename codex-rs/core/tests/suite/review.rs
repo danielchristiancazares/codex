@@ -9,6 +9,7 @@ use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_login::CodexAuth;
+use codex_protocol::NullableField;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::items::TurnItem;
@@ -600,7 +601,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
         })
         .with_model_info_override("gpt-5.4", |model_info| {
             model_info.service_tiers = vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
+                id: ServiceTier::Fast,
                 name: "Fast".to_string(),
                 description: "Priority processing".to_string(),
             }];
@@ -626,7 +627,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
         .with_config(|config| {
             config.review_model = Some("gpt-5.4".to_string());
             config.model_context_window = Some(128_000);
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
             config
                 .features
                 .enable(Feature::TokenBudget)
@@ -671,7 +672,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
             approval_policy: Some(AskForApproval::Never),
             approvals_reviewer: Some(ApprovalsReviewer::User),
             permission_profile: Some(PermissionProfile::Disabled),
-            effort: Some(Some(ReasoningEffort::XHigh)),
+            effort: NullableField::Value(ReasoningEffort::XHigh),
             ..Default::default()
         },
     )
@@ -693,10 +694,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
 
     let request = request_log.single_request();
     assert_eq!(request.body_json()["reasoning"]["effort"], "medium");
-    assert_eq!(
-        request.body_json()["service_tier"],
-        ServiceTier::Fast.request_value()
-    );
+    assert_eq!(request.body_json()["service_tier"], "fast");
     assert!(
         request
             .message_input_texts("developer")

@@ -769,7 +769,7 @@ impl ChatWidget {
                 })
                 .is_none_or(|preset| preset.supports_fast_mode())
                 .then(|| {
-                    if self.current_service_tier() == Some(ServiceTier::Fast.request_value()) {
+                    if self.current_service_tier() == ServiceTier::Fast {
                         "Fast on".to_string()
                     } else {
                         "Fast off".to_string()
@@ -921,13 +921,10 @@ impl ChatWidget {
     fn model_with_reasoning_display_name(&self) -> String {
         let label = self.reasoning_display_name();
         let service_tier_label = self
-            .current_service_tier()
-            .and_then(|service_tier| {
-                self.current_model_service_tier_commands()
-                    .into_iter()
-                    .find(|tier| tier.id == service_tier)
-                    .map(|tier| tier.name)
-            })
+            .current_model_service_tier_commands()
+            .into_iter()
+            .find(|tier| tier.tier == self.current_service_tier())
+            .map(|tier| tier.name)
             .filter(|_| self.has_chatgpt_account)
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();

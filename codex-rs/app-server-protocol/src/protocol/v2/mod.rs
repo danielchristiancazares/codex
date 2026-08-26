@@ -36,6 +36,7 @@ pub use account::*;
 pub use apps::*;
 pub use attestation::*;
 pub use bedrock::*;
+pub use codex_protocol::NullableField;
 pub use collaboration_mode::*;
 pub use command_exec::*;
 pub use config::*;

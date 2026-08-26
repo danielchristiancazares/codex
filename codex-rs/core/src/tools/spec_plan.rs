@@ -14,6 +14,7 @@ use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
+use crate::tools::handlers::ExecOutputQueryHandler;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
@@ -905,6 +906,10 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
         let environment_mode = tool_environment_mode(context.environments);
         if environment_mode.has_environment() {
             let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+            let exec_output_artifacts_enabled = turn_context
+                .config
+                .features
+                .enabled(Feature::ExecOutputArtifacts);
             registry.add(ExecCommandHandler::new(ExecCommandHandlerOptions {
                 allow_login_shell: any_environment_allows_login_shell(context.environments),
                 exec_permission_approvals_enabled: false,
@@ -913,8 +918,16 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
                     turn_context,
                     context.environments,
                 ),
+                include_exec_output_artifacts: exec_output_artifacts_enabled,
             }));
-            registry.add(WriteStdinHandler);
+            registry.add(if exec_output_artifacts_enabled {
+                WriteStdinHandler::with_exec_output_artifacts()
+            } else {
+                WriteStdinHandler::default()
+            });
+            if exec_output_artifacts_enabled {
+                registry.add(ExecOutputQueryHandler);
+            }
             if turn_context.config.features.enabled(Feature::ViewImage) {
                 registry.add(ViewImageHandler::new(ViewImageToolOptions {
                     can_request_original_image_detail: can_request_original_image_detail(
@@ -969,6 +982,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
 
     let allow_login_shell = any_environment_allows_login_shell(context.environments);
     let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals);
+    let exec_output_artifacts_enabled = features.enabled(Feature::ExecOutputArtifacts);
     let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
     let supports_shell_command = context.environments.single_local_environment().is_some();
     let shell_command_options = ShellCommandHandlerOptions {
@@ -987,8 +1001,16 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
                     turn_context,
                     context.environments,
                 ),
+                include_exec_output_artifacts: exec_output_artifacts_enabled,
             }));
-            registry.add(WriteStdinHandler);
+            registry.add(if exec_output_artifacts_enabled {
+                WriteStdinHandler::with_exec_output_artifacts()
+            } else {
+                WriteStdinHandler::default()
+            });
+            if exec_output_artifacts_enabled {
+                registry.add(ExecOutputQueryHandler);
+            }
 
             if supports_shell_command {
                 // Keep the legacy shell tool registered while unified exec is

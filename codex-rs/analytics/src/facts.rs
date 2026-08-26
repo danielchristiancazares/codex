@@ -191,7 +191,7 @@ pub struct TurnResolvedConfigFact {
     pub permission_profile_cwd: PathBuf,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub reasoning_summary: Option<ReasoningSummary>,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: ServiceTier,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub sandbox_network_access: bool,

@@ -246,6 +246,13 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::ffi::OsStr;
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum CommandEnvironmentValue<'a> {
+        Unspecified,
+        Removed,
+        Set(&'a OsStr),
+    }
+
     #[test]
     fn full_git_sha_ref_is_already_a_remote_revision() {
         assert!(is_full_git_sha("0123456789abcdef0123456789abcdef01234567"));
@@ -267,13 +274,16 @@ mod tests {
         );
         assert_eq!(
             command_env(&command, "GIT_OPTIONAL_LOCKS"),
-            Some(Some(OsStr::new("0")))
+            CommandEnvironmentValue::Set(OsStr::new("0"))
         );
         assert_eq!(
             command_env(&command, "GIT_TERMINAL_PROMPT"),
-            Some(Some(OsStr::new("0")))
+            CommandEnvironmentValue::Set(OsStr::new("0"))
         );
-        assert_eq!(command_env(&command, "PATH"), None);
+        assert_eq!(
+            command_env(&command, "PATH"),
+            CommandEnvironmentValue::Unspecified
+        );
     }
 
     #[test]
@@ -300,10 +310,11 @@ mod tests {
     fn command_env<'a>(
         command: &'a std::process::Command,
         name: &str,
-    ) -> Option<Option<&'a OsStr>> {
-        command
-            .get_envs()
-            .find(|(key, _)| key == &OsStr::new(name))
-            .map(|(_, value)| value)
+    ) -> CommandEnvironmentValue<'a> {
+        match command.get_envs().find(|(key, _)| key == &OsStr::new(name)) {
+            None => CommandEnvironmentValue::Unspecified,
+            Some((_, None)) => CommandEnvironmentValue::Removed,
+            Some((_, Some(value))) => CommandEnvironmentValue::Set(value),
+        }
     }
 }

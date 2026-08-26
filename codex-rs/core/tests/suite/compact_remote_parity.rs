@@ -171,7 +171,7 @@ async fn remote_compaction_parity_v2_api_key_sends_service_tier_upgrade() -> Res
     );
     assert_eq!(
         v2.compact_body.get("service_tier").and_then(Value::as_str),
-        Some(ServiceTier::Fast.request_value()),
+        Some("fast"),
         "v2 compaction should send service_tier through /responses for API-key auth"
     );
 
@@ -528,7 +528,7 @@ async fn build_harness_inner(
         .expect("fixed cwd should be absolute");
         config.developer_instructions = Some("PARITY_DEVELOPER_INSTRUCTIONS".to_string());
         if settings.service_tier_fast {
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
         }
         config.model_auto_compact_token_limit = auto_compact_limit;
         if hooks {

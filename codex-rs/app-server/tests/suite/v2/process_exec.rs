@@ -2,6 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use app_test_support::TestAppServer;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::ProcessExitedNotification;
 use codex_app_server_protocol::ProcessKillParams;
 use codex_app_server_protocol::ProcessSpawnParams;
@@ -81,8 +82,8 @@ async fn process_spawn_returns_before_exit_and_emits_exit_notification() -> Resu
     let spawn_request_id = mcp
         .send_process_spawn_request(ProcessSpawnParams {
             env: Some(env),
-            output_bytes_cap: Some(None),
-            timeout_ms: Some(None),
+            output_bytes_cap: NullableField::Null,
+            timeout_ms: NullableField::Null,
             ..process_spawn_params(process_handle.clone(), codex_home.path(), command)?
         })
         .await?;
@@ -162,7 +163,7 @@ async fn process_spawn_reports_buffered_output_cap_reached() -> Result<()> {
     };
     let spawn_request_id = mcp
         .send_process_spawn_request(ProcessSpawnParams {
-            output_bytes_cap: Some(Some(3)),
+            output_bytes_cap: NullableField::Value(3),
             ..process_spawn_params(process_handle.clone(), codex_home.path(), command)?
         })
         .await?;
@@ -263,8 +264,8 @@ fn process_spawn_params(
         tty: false,
         stream_stdin: false,
         stream_stdout_stderr: false,
-        output_bytes_cap: None,
-        timeout_ms: None,
+        output_bytes_cap: NullableField::Omitted,
+        timeout_ms: NullableField::Omitted,
         env: None,
         size: None,
     })

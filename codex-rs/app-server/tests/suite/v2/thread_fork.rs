@@ -17,6 +17,7 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
@@ -100,8 +101,8 @@ async fn list_threads(mcp: &mut TestAppServer) -> Result<ThreadListResponse> {
             model_providers: None,
             source_kinds: None,
             archived: None,
-            section_id: None,
-            project_id: None,
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Omitted,
             cwd: None,
             use_state_db_only: false,
             search_term: None,

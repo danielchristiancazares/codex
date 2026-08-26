@@ -942,6 +942,14 @@
         }
       ]
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SessionSource": {
       "oneOf": [
         {
@@ -2685,10 +2693,7 @@
       "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "$ref": "#/definitions/ServiceTier"
     },
     "thread": {
       "$ref": "#/definitions/Thread"

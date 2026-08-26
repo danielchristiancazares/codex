@@ -83,10 +83,12 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_otel::set_parent_from_context;
 use codex_otel::traceparent_context_from_env;
+use codex_protocol::NullableField;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -412,7 +414,6 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cwd: resolved_cwd,
         workspace_roots: None,
         model_provider: model_provider.clone(),
-        service_tier: None,
         codex_self_exe: arg0_paths.codex_self_exe.clone(),
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
@@ -975,7 +976,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         sandbox_policy: None,
                         permissions: None,
                         model: None,
-                        service_tier: None,
+                        service_tier: ServiceTier::Default,
                         effort: default_effort,
                         summary: None,
                         personality: None,
@@ -1334,7 +1335,7 @@ fn session_configured_from_thread_response(
     rollout_path: Option<PathBuf>,
     model: String,
     model_provider_id: String,
-    service_tier: Option<String>,
+    service_tier: ServiceTier,
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
@@ -1510,8 +1511,8 @@ async fn resolve_resume_thread_id(
                         model_providers: model_providers.clone(),
                         source_kinds: Some(all_thread_source_kinds()),
                         archived: Some(false),
-                        section_id: None,
-                        project_id: None,
+                        section_id: NullableField::Omitted,
+                        project_id: NullableField::Omitted,
                         parent_thread_id: None,
                         ancestor_thread_id: None,
                         cwd: None,
@@ -1595,8 +1596,8 @@ async fn resolve_resume_thread_id(
                     model_providers: model_providers.clone(),
                     source_kinds: Some(all_thread_source_kinds()),
                     archived: Some(false),
-                    section_id: None,
-                    project_id: None,
+                    section_id: NullableField::Omitted,
+                    project_id: NullableField::Omitted,
                     parent_thread_id: None,
                     ancestor_thread_id: None,
                     cwd: None,

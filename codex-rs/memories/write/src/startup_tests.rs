@@ -445,25 +445,21 @@ async fn memories_startup_phase1_uses_live_thread_service_tier_and_detached_meta
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
     let test = build_test_codex(&server, home).await?;
-    assert_eq!(test.config.service_tier, None);
+    assert_eq!(test.config.service_tier, ServiceTier::Default);
     reset_git_repository(&test.config.cwd).await?;
 
     core_test_support::submit_thread_settings(
         &test.codex,
         codex_protocol::protocol::ThreadSettingsOverrides {
-            service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+            service_tier: ServiceTier::Fast,
             permission_profile: Some(codex_protocol::models::PermissionProfile::workspace_write()),
             ..Default::default()
         },
     )
     .await?;
 
-    let config_snapshot =
-        wait_for_service_tier(&test, Some(ServiceTier::Fast.request_value().to_string())).await?;
-    assert_eq!(
-        config_snapshot.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    let config_snapshot = wait_for_service_tier(&test, ServiceTier::Fast).await?;
+    assert_eq!(config_snapshot.service_tier, ServiceTier::Fast);
 
     let context = crate::runtime::MemoryStartupContext::new(
         Arc::clone(&test.thread_manager),
@@ -480,10 +476,7 @@ async fn memories_startup_phase1_uses_live_thread_service_tier_and_detached_meta
             ReasoningEffort::Low,
         )
         .await;
-    assert_eq!(
-        request_context.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(request_context.service_tier, ServiceTier::Fast);
 
     let stage_one = mount_sse_once(
         &server,
@@ -954,7 +947,7 @@ async fn wait_for_request(mock: &ResponseMock, expected_count: usize) -> Vec<Res
 
 async fn wait_for_service_tier(
     test: &TestCodex,
-    expected_service_tier: Option<String>,
+    expected_service_tier: ServiceTier,
 ) -> anyhow::Result<codex_core::ThreadConfigSnapshot> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

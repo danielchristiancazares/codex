@@ -7,6 +7,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
+use crate::unified_exec::ExecCommandMode;
 use codex_exec_server::Environment;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_tools::UnifiedExecShellMode;
@@ -26,7 +27,10 @@ pub use write_stdin::WriteStdinHandler;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecCommandArgs {
-    pub(crate) cmd: String,
+    #[serde(default)]
+    pub(crate) cmd: Option<String>,
+    #[serde(default)]
+    pub(crate) argv: Option<Vec<String>>,
     #[serde(default)]
     shell: Option<String>,
     #[serde(default)]
@@ -73,6 +77,7 @@ fn default_tty() -> bool {
 pub(crate) struct ResolvedCommand {
     pub(crate) command: Vec<String>,
     pub(crate) shell_type: ShellType,
+    pub(crate) command_mode: ExecCommandMode,
 }
 
 fn post_unified_exec_tool_use_payload(
@@ -100,6 +105,33 @@ pub(crate) fn get_command(
     shell_mode: &UnifiedExecShellMode,
     allow_login_shell: bool,
 ) -> Result<ResolvedCommand, String> {
+    let command_input = match (&args.cmd, &args.argv) {
+        (Some(cmd), None) if !cmd.is_empty() => EitherCommand::Shell(cmd),
+        (None, Some(argv)) if !argv.is_empty() && argv.iter().all(|arg| !arg.contains('\0')) => {
+            EitherCommand::Argv(argv)
+        }
+        (Some(_), Some(_)) => return Err("provide exactly one of `cmd` or `argv`".to_string()),
+        _ => {
+            return Err(
+                "`cmd` must be non-empty or `argv` must contain at least one argument".to_string(),
+            );
+        }
+    };
+    if matches!(command_input, EitherCommand::Argv(_))
+        && (args.shell.is_some() || args.login.is_some())
+    {
+        return Err("`shell` and `login` are only valid with `cmd`".to_string());
+    }
+    if let EitherCommand::Argv(argv) = command_input {
+        return Ok(ResolvedCommand {
+            command: argv.to_vec(),
+            shell_type: session_shell.shell_type,
+            command_mode: ExecCommandMode::Argv,
+        });
+    }
+    let EitherCommand::Shell(cmd) = command_input else {
+        unreachable!("argv returned above");
+    };
     let use_login_shell = match args.login {
         Some(true) if !allow_login_shell => {
             return Err(
@@ -118,8 +150,9 @@ pub(crate) fn get_command(
                 .map(|shell_str| get_shell_by_model_provided_path(&PathBuf::from(shell_str)));
             let shell = model_shell.as_ref().unwrap_or(session_shell.as_ref());
             Ok(ResolvedCommand {
-                command: shell.derive_exec_args(&args.cmd, use_login_shell),
+                command: shell.derive_exec_args(cmd, use_login_shell),
                 shell_type: shell.shell_type,
+                command_mode: ExecCommandMode::Shell,
             })
         }
         UnifiedExecShellMode::ZshFork(zsh_fork_config) => {
@@ -133,10 +166,33 @@ pub(crate) fn get_command(
                 command: vec![
                     zsh_fork_config.shell_zsh_path.to_string_lossy().to_string(),
                     if use_login_shell { "-lc" } else { "-c" }.to_string(),
-                    args.cmd.clone(),
+                    cmd.to_string(),
                 ],
                 shell_type: ShellType::Zsh,
+                command_mode: ExecCommandMode::Shell,
             })
+        }
+    }
+}
+
+enum EitherCommand<'a> {
+    Shell(&'a str),
+    Argv(&'a [String]),
+}
+
+impl ExecCommandArgs {
+    fn hook_command(&self) -> Result<String, String> {
+        match (&self.cmd, &self.argv) {
+            (Some(cmd), None) if !cmd.is_empty() => Ok(cmd.clone()),
+            (None, Some(argv))
+                if !argv.is_empty() && argv.iter().all(|arg| !arg.contains('\0')) =>
+            {
+                Ok(codex_shell_command::parse_command::shlex_join(argv))
+            }
+            (Some(_), Some(_)) => Err("provide exactly one of `cmd` or `argv`".to_string()),
+            _ => Err(
+                "`cmd` must be non-empty or `argv` must contain at least one argument".to_string(),
+            ),
         }
     }
 }

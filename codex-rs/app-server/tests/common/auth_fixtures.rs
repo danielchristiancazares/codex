@@ -22,7 +22,14 @@ pub struct ChatGptAuthFixture {
     refresh_token: String,
     account_id: Option<String>,
     claims: ChatGptIdTokenClaims,
-    last_refresh: Option<Option<DateTime<Utc>>>,
+    last_refresh: FixtureLastRefresh,
+}
+
+#[derive(Debug, Clone)]
+enum FixtureLastRefresh {
+    CurrentTime,
+    Missing,
+    At(DateTime<Utc>),
 }
 
 impl ChatGptAuthFixture {
@@ -32,7 +39,7 @@ impl ChatGptAuthFixture {
             refresh_token: "refresh-token".to_string(),
             account_id: None,
             claims: ChatGptIdTokenClaims::default(),
-            last_refresh: None,
+            last_refresh: FixtureLastRefresh::CurrentTime,
         }
     }
 
@@ -67,7 +74,10 @@ impl ChatGptAuthFixture {
     }
 
     pub fn last_refresh(mut self, last_refresh: Option<DateTime<Utc>>) -> Self {
-        self.last_refresh = Some(last_refresh);
+        self.last_refresh = match last_refresh {
+            Some(last_refresh) => FixtureLastRefresh::At(last_refresh),
+            None => FixtureLastRefresh::Missing,
+        };
         self
     }
 
@@ -157,7 +167,11 @@ pub fn write_chatgpt_auth(
         account_id: fixture.account_id,
     };
 
-    let last_refresh = fixture.last_refresh.unwrap_or_else(|| Some(Utc::now()));
+    let last_refresh = match fixture.last_refresh {
+        FixtureLastRefresh::CurrentTime => Some(Utc::now()),
+        FixtureLastRefresh::Missing => None,
+        FixtureLastRefresh::At(last_refresh) => Some(last_refresh),
+    };
 
     let auth = AuthDotJson {
         auth_mode: Some(AuthMode::Chatgpt),

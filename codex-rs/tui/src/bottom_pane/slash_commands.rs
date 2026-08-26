@@ -5,6 +5,7 @@
 //! and ensures they stay in sync.
 use std::str::FromStr;
 
+use codex_protocol::config_types::ServiceTier;
 use codex_utils_fuzzy_match::fuzzy_match;
 
 use crate::slash_command::SlashCommand;
@@ -12,7 +13,7 @@ use crate::slash_command::built_in_slash_commands;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ServiceTierCommand {
-    pub(crate) id: String,
+    pub(crate) tier: ServiceTier,
     pub(crate) name: String,
     pub(crate) description: String,
 }
@@ -219,7 +220,7 @@ mod tests {
         let mut flags = all_enabled_flags();
         flags.service_tier_commands_enabled = false;
         let commands = vec![ServiceTierCommand {
-            id: "priority".to_string(),
+            tier: ServiceTier::Fast,
             name: "fast".to_string(),
             description: "fastest inference".to_string(),
         }];
@@ -231,13 +232,13 @@ mod tests {
     fn all_service_tiers_are_exposed_as_commands_after_model() {
         let commands = vec![
             ServiceTierCommand {
-                id: "priority".to_string(),
+                tier: ServiceTier::Fast,
                 name: "fast".to_string(),
                 description: "fastest inference".to_string(),
             },
             ServiceTierCommand {
-                id: "batch".to_string(),
-                name: "slow".to_string(),
+                tier: ServiceTier::Flex,
+                name: "flex".to_string(),
                 description: "slower inference with lower priority".to_string(),
             },
         ];
@@ -333,7 +334,7 @@ mod tests {
     #[test]
     fn side_conversation_exact_lookup_still_resolves_service_tier_commands_for_dispatch_error() {
         let command = ServiceTierCommand {
-            id: "priority".to_string(),
+            tier: ServiceTier::Fast,
             name: "fast".to_string(),
             description: "fastest inference".to_string(),
         };

@@ -13,6 +13,16 @@ fn has_parameter(tool: &ToolSpec, parameter_name: &str) -> bool {
         .is_some()
 }
 
+fn has_output_property(tool: &ToolSpec, property_name: &str) -> bool {
+    let ToolSpec::Function(tool) = tool else {
+        return false;
+    };
+    tool.output_schema
+        .as_ref()
+        .and_then(|schema| schema.pointer(&format!("/properties/{property_name}")))
+        .is_some()
+}
+
 #[test]
 fn exec_command_tool_matches_expected_spec() {
     let tool = create_exec_command_tool(CommandToolOptions {
@@ -22,12 +32,11 @@ fn exec_command_tool_matches_expected_spec() {
 
     let description = if cfg!(windows) {
         format!(
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction.{}",
+            "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.{}",
             windows_shell_guidance_description()
         )
     } else {
-        "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
-            .to_string()
+        "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.".to_string()
     };
     let yield_time_ms_description = if cfg!(windows) {
         "Maximum time to wait before returning a session ID for a still-running command. Commands that finish sooner return immediately. For ordinary commands, omit this parameter to use the 10000 ms default. Effective range on Windows is 10000-30000 ms."
@@ -38,7 +47,18 @@ fn exec_command_tool_matches_expected_spec() {
     let mut properties = BTreeMap::from([
         (
             "cmd".to_string(),
-            JsonSchema::string(Some("Shell command to execute.".to_string())),
+            JsonSchema::string(Some(
+                "Shell command to execute. Provide exactly one of `cmd` or `argv`.".to_string(),
+            )),
+        ),
+        (
+            "argv".to_string(),
+            JsonSchema::array(
+                JsonSchema::string(/*description*/ None),
+                Some(
+                    "Direct program and argument vector. Provide exactly one of `cmd` or `argv`; `shell` and `login` apply only to `cmd`.".to_string(),
+                ),
+            ),
         ),
         (
             "workdir".to_string(),
@@ -88,11 +108,7 @@ fn exec_command_tool_matches_expected_spec() {
             description,
             strict: false,
             defer_loading: None,
-            parameters: JsonSchema::object(
-                properties,
-                Some(vec!["cmd".to_string()]),
-                Some(false.into())
-            ),
+            parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
             output_schema: Some(unified_exec_output_schema()),
         })
     );
@@ -111,6 +127,31 @@ fn exec_command_tool_can_hide_shell_parameter() {
 
     assert!(!has_parameter(&tool, "shell"));
     assert!(has_parameter(&tool, "cmd"));
+}
+
+#[test]
+fn exec_output_artifact_schema_is_feature_scoped() {
+    let options = CommandToolOptions {
+        allow_login_shell: true,
+        exec_permission_approvals_enabled: false,
+    };
+    let standard = create_exec_command_tool_with_environment_id(
+        options, /*include_environment_id*/ false, /*include_shell_parameter*/ true,
+    );
+    let with_artifacts = create_exec_command_tool_with_artifacts(
+        options, /*include_environment_id*/ false, /*include_shell_parameter*/ true,
+    );
+
+    assert!(!has_output_property(&standard, "artifacts"));
+    assert!(has_output_property(&with_artifacts, "artifacts"));
+    assert!(!has_output_property(
+        &create_write_stdin_tool(),
+        "artifacts"
+    ));
+    assert!(has_output_property(
+        &create_write_stdin_tool_with_artifacts(),
+        "artifacts"
+    ));
 }
 
 #[test]

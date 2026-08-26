@@ -10,6 +10,16 @@ use tokio::sync::oneshot;
 /// Forwards this process' stdio to a Windows sandbox session and returns the
 /// session exit code.
 pub async fn forward_sandbox_session_stdio(spawned: SpawnedProcess) -> i32 {
+    forward_sandbox_session_stdio_with_input(spawned, std::io::stdin()).await
+}
+
+pub(crate) async fn forward_sandbox_session_stdio_with_input<R>(
+    spawned: SpawnedProcess,
+    input: R,
+) -> i32
+where
+    R: Read + Send + 'static,
+{
     let session = Arc::new(spawned.session);
     let tokio_runtime = tokio::runtime::Handle::current();
     // Give large or slow tail output a better chance to finish draining without
@@ -24,7 +34,7 @@ pub async fn forward_sandbox_session_stdio(spawned: SpawnedProcess) -> i32 {
     // do not keep their JoinHandles; dropping the handle does not stop the
     // thread, it just means we are not going to wait on it later.
     drop(spawn_input_forwarder(
-        std::io::stdin(),
+        input,
         session.writer_sender(),
         stdin_eof_tx,
     ));

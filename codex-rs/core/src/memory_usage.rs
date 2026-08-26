@@ -41,7 +41,11 @@ pub(crate) fn shell_script_for_invocation(invocation: &ToolInvocation) -> Option
             .map(|params| params.command),
         "exec_command" => serde_json::from_str::<ExecCommandArgs>(arguments)
             .ok()
-            .map(|params| params.cmd),
+            .and_then(|params| match (params.cmd, params.argv) {
+                (Some(cmd), None) => Some(cmd),
+                (None, Some(argv)) => Some(codex_shell_command::parse_command::shlex_join(&argv)),
+                _ => None,
+            }),
         _ => None,
     }
 }

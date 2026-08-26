@@ -308,7 +308,7 @@ async fn run_command(
     command: SandboxExecRequest,
     request_json: Vec<u8>,
 ) -> Result<FsHelperPayload, JSONRPCErrorError> {
-    let mut child = spawn_command(command, std::process::Stdio::piped())?;
+    let mut child = spawn_command(command, std::process::Stdio::piped()).await?;
     let mut stdin = child
         .stdin
         .take()
@@ -339,9 +339,10 @@ pub(crate) async fn wait_for_helper_output(
     Ok(output)
 }
 
-pub(crate) fn spawn_command(
+pub(crate) async fn spawn_command(
     SandboxExecRequest {
         command: argv,
+        stdin_prelude,
         cwd,
         mut env,
         arg0,
@@ -379,7 +380,15 @@ pub(crate) fn spawn_command(
             Ok(())
         });
     }
-    command.spawn().map_err(io_error)
+    let mut child = command.spawn().map_err(io_error)?;
+    if !stdin_prelude.is_empty() {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| internal_error("failed to open sandbox wrapper stdin".to_string()))?;
+        stdin.write_all(&stdin_prelude).await.map_err(io_error)?;
+    }
+    Ok(child)
 }
 
 pub(crate) fn io_error(err: std::io::Error) -> JSONRPCErrorError {

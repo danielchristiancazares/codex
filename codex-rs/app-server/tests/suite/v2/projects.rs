@@ -7,6 +7,7 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::ProjectChangeType;
 use codex_app_server_protocol::ProjectChangedNotification;
 use codex_app_server_protocol::ProjectCreateParams;
@@ -176,8 +177,8 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(Some(created.project.id.clone())),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Value(created.project.id.clone()),
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -221,8 +222,8 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(None),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Null,
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -269,8 +270,8 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(Some(created.project.id.clone())),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Value(created.project.id.clone()),
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -452,8 +453,8 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(None),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Null,
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -542,8 +543,8 @@ async fn deleted_project_is_dropped_before_first_durable_thread_persistence() ->
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(None),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Null,
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -725,8 +726,8 @@ async fn projects_validate_filters_cursors_and_sqlite_less_assignment() -> Resul
                 model_providers: Some(Vec::new()),
                 source_kinds: Some(Vec::new()),
                 archived: None,
-                section_id: None,
-                project_id: Some(Some(project_id)),
+                section_id: NullableField::Omitted,
+                project_id: NullableField::Value(project_id),
                 cwd: None,
                 use_state_db_only: true,
                 search_term: None,
@@ -756,9 +757,9 @@ async fn projects_validate_filters_cursors_and_sqlite_less_assignment() -> Resul
             thread_id: started.thread.id.clone(),
             project_id: Some(Uuid::now_v7().to_string()),
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: Some(Some("abc123".to_string())),
-                branch: None,
-                origin_url: None,
+                sha: NullableField::Value("abc123".to_string()),
+                branch: NullableField::Omitted,
+                origin_url: NullableField::Omitted,
             }),
         })
         .await?;
@@ -807,8 +808,8 @@ async fn projects_validate_filters_cursors_and_sqlite_less_assignment() -> Resul
             model_providers: Some(Vec::new()),
             source_kinds: Some(Vec::new()),
             archived: None,
-            section_id: None,
-            project_id: Some(None),
+            section_id: NullableField::Omitted,
+            project_id: NullableField::Null,
             cwd: None,
             use_state_db_only: true,
             search_term: None,

@@ -16,6 +16,7 @@ use codex_app_server_protocol::ThreadSectionListParams;
 use codex_app_server_protocol::ThreadSectionListResponse;
 use codex_app_server_protocol::ThreadSectionUpdateParams;
 use codex_app_server_protocol::ThreadSectionUpdateResponse;
+use codex_protocol::NullableField;
 use codex_state::PINNED_THREAD_SECTION_ID;
 use codex_thread_store::CreateThreadSectionParams as StoreCreateThreadSectionParams;
 use codex_thread_store::DeleteThreadSectionParams as StoreDeleteThreadSectionParams;
@@ -104,7 +105,7 @@ impl ThreadRequestProcessor {
                 "the built-in pinned section cannot be renamed",
             ));
         }
-        if let Some(Some(appearance)) = params.appearance.as_ref() {
+        if let NullableField::Value(appearance) = params.appearance.as_ref() {
             validate_thread_section_appearance(appearance)?;
         }
         let section = self
@@ -112,9 +113,7 @@ impl ThreadRequestProcessor {
             .rename_thread_section(StoreRenameThreadSectionParams {
                 section_id: params.section_id.clone(),
                 name: name.to_string(),
-                appearance: params
-                    .appearance
-                    .map(|appearance| appearance.map(state_thread_section_appearance)),
+                appearance: params.appearance.map(state_thread_section_appearance),
             })
             .await
             .map_err(|err| thread_section_store_error(OPERATION, err))?

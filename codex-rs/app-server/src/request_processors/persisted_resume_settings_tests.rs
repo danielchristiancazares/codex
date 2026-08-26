@@ -3,6 +3,7 @@ use super::latest_persisted_resume_settings;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
@@ -31,7 +32,7 @@ fn settings_item(
             thread_settings: ThreadSettingsSnapshot {
                 model: "gpt-5".to_string(),
                 model_provider_id: "openai".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy,
                 approvals_reviewer,
                 permission_profile: PermissionProfile::read_only(),

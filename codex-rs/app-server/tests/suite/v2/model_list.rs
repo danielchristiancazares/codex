@@ -78,12 +78,12 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
             .service_tiers
             .iter()
             .map(|service_tier| ModelServiceTier {
-                id: service_tier.id.clone(),
+                id: service_tier.id,
                 name: service_tier.name.clone(),
                 description: service_tier.description.clone(),
             })
             .collect(),
-        default_service_tier: preset.default_service_tier.clone(),
+        default_service_tier: preset.default_service_tier,
         is_default: preset.is_default,
     }
 }

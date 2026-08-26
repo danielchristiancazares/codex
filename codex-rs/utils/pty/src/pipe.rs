@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use tokio::io::AsyncRead;
@@ -105,8 +106,11 @@ fn kill_process(pid: u32) -> io::Result<()> {
     }
 }
 
-async fn read_output_stream<R>(mut reader: R, output_tx: mpsc::Sender<Vec<u8>>)
-where
+async fn read_output_stream<R>(
+    mut reader: R,
+    output_tx: mpsc::Sender<Vec<u8>>,
+    output_lost: Arc<AtomicBool>,
+) where
     R: AsyncRead + Unpin,
 {
     let mut buf = vec![0u8; 8_192];
@@ -117,7 +121,10 @@ where
                 let _ = output_tx.send(buf[..n].to_vec()).await;
             }
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(_) => {
+                output_lost.store(true, Ordering::Release);
+                break;
+            }
         }
     }
 }
@@ -225,6 +232,7 @@ async fn spawn_process_with_stdin_mode(
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(128);
+    let output_lost = Arc::new(AtomicBool::new(false));
     let writer_handle = if let Some(stdin) = stdin {
         tokio::spawn(async move {
             let mut writer = stdin;
@@ -240,14 +248,16 @@ async fn spawn_process_with_stdin_mode(
 
     let stdout_handle = stdout.map(|stdout| {
         let stdout_tx = stdout_tx.clone();
+        let output_lost = Arc::clone(&output_lost);
         tokio::spawn(async move {
-            read_output_stream(BufReader::new(stdout), stdout_tx).await;
+            read_output_stream(BufReader::new(stdout), stdout_tx, output_lost).await;
         })
     });
     let stderr_handle = stderr.map(|stderr| {
         let stderr_tx = stderr_tx.clone();
+        let output_lost = Arc::clone(&output_lost);
         tokio::spawn(async move {
-            read_output_stream(BufReader::new(stderr), stderr_tx).await;
+            read_output_stream(BufReader::new(stderr), stderr_tx, output_lost).await;
         })
     });
     let mut reader_abort_handles = Vec::new();
@@ -312,6 +322,7 @@ async fn spawn_process_with_stdin_mode(
         wait_handle,
         exit_status,
         exit_code,
+        output_lost,
         /*pty_handles*/ None,
         /*resizer*/ None,
     );
@@ -368,6 +379,6 @@ pub async fn spawn_process_no_stdin(
     .await
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 #[path = "pipe_tests.rs"]
 mod tests;

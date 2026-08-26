@@ -3816,6 +3816,14 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SessionMigration": {
       "properties": {
         "cwd": {
@@ -4107,10 +4115,7 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         },
         "threadId": {
           "type": "string"
@@ -4641,10 +4646,7 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         },
         "threadId": {
           "type": "string"
@@ -4967,10 +4969,7 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         },
         "sessionStartSource": {
           "anyOf": [
@@ -5177,11 +5176,12 @@
           "description": "Override the sandbox policy for this turn and subsequent turns."
         },
         "serviceTier": {
-          "description": "Override the service tier for this turn and subsequent turns.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Override the service tier for this turn and subsequent turns."
         },
         "summary": {
           "anyOf": [

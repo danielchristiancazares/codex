@@ -31,6 +31,7 @@ use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::items::TurnItem;
@@ -1169,7 +1170,7 @@ async fn spawn_agent_fork_from_paginated_parent_uses_model_context_prefix() {
                     thread_settings: ThreadSettingsSnapshot {
                         model: "parent-only-model".to_string(),
                         model_provider_id: "parent-only-provider".to_string(),
-                        service_tier: None,
+                        service_tier: ServiceTier::Default,
                         approval_policy: AskForApproval::Never,
                         approvals_reviewer: ApprovalsReviewer::User,
                         permission_profile: PermissionProfile::workspace_write(),

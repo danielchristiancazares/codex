@@ -11,6 +11,7 @@ use codex_app_server_protocol::AskForApproval as AppServerAskForApproval;
 use codex_app_server_protocol::ThreadSettings;
 use codex_app_server_protocol::ThreadSettingsUpdateParams;
 use codex_config::types::ApprovalsReviewer;
+use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -174,7 +175,10 @@ impl App {
                 .as_ref()
                 .map(|profile| profile.id.clone()),
             model: model.clone(),
-            effort: effort.clone().unwrap_or_default(),
+            effort: match effort {
+                NullableField::Value(effort) => Some(effort.clone()),
+                NullableField::Omitted | NullableField::Null => None,
+            },
             summary: *summary,
             service_tier: service_tier.clone(),
             collaboration_mode: collaboration_mode.clone(),
@@ -255,7 +259,7 @@ fn thread_settings_update_has_changes(params: &ThreadSettingsUpdateParams) -> bo
         || params.sandbox_policy.is_some()
         || params.permissions.is_some()
         || params.model.is_some()
-        || params.service_tier.is_some()
+        || !params.service_tier.is_default()
         || params.effort.is_some()
         || params.summary.is_some()
         || params.collaboration_mode.is_some()
