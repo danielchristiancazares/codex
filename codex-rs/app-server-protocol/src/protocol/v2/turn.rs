@@ -123,7 +123,7 @@ pub struct TurnStartParams {
     /// Override the model for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub model: Option<String>,
-    /// Override the service tier for this turn and subsequent turns.
+    /// Complete current routing selection for this turn and subsequent turns.
     pub service_tier: ServiceTier,
     /// Override the reasoning effort for this turn and subsequent turns.
     #[ts(optional = nullable)]

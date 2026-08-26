@@ -3818,7 +3818,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "priority",
+        "fast",
         "flex",
         "default"
       ],
@@ -4115,7 +4115,12 @@
           ]
         },
         "serviceTier": {
-          "$ref": "#/definitions/ServiceTier"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the forked thread."
         },
         "threadId": {
           "type": "string"
@@ -4647,7 +4652,12 @@
           ]
         },
         "serviceTier": {
-          "$ref": "#/definitions/ServiceTier"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the resumed thread."
         },
         "threadId": {
           "type": "string"
@@ -4971,7 +4981,12 @@
           ]
         },
         "serviceTier": {
-          "$ref": "#/definitions/ServiceTier"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the new thread."
         },
         "sessionStartSource": {
           "anyOf": [
@@ -5186,7 +5201,7 @@
               "$ref": "#/definitions/ServiceTier"
             }
           ],
-          "description": "Override the service tier for this turn and subsequent turns."
+          "description": "Complete current routing selection for this turn and subsequent turns."
         },
         "summary": {
           "anyOf": [

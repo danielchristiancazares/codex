@@ -511,9 +511,7 @@ impl From<WebSearchToolConfig> for WebSearchConfig {
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum ServiceTier {
-    #[serde(rename = "priority", alias = "fast")]
-    #[strum(serialize = "priority")]
-    #[ts(rename = "priority")]
+    #[serde(alias = "priority")]
     Fast,
     Flex,
     #[default]

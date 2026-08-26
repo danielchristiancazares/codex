@@ -28,7 +28,7 @@ sandboxPolicy?: SandboxPolicy | null, /**
  * Override the model for this turn and subsequent turns.
  */
 model?: string | null, /**
- * Override the service tier for this turn and subsequent turns.
+ * Complete current routing selection for this turn and subsequent turns.
  */
 serviceTier: ServiceTier, /**
  * Override the reasoning effort for this turn and subsequent turns.

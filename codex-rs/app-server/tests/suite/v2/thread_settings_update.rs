@@ -5,7 +5,6 @@ use app_test_support::TestAppServer;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::write_models_cache;
-use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy;
@@ -19,6 +18,7 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use codex_config::types::Personality;
 use codex_core::test_support::all_model_presets;
 use codex_protocol::config_types::ServiceTier;
 use core_test_support::responses;
@@ -62,8 +62,6 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
         "settings-only update should not start a model request"
     );
 
-    start_text_turn(&mut mcp, thread.id.clone()).await?;
-
     let updated = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(updated.thread_id, thread.id);
     assert_eq!(updated.thread_settings.model, model_id);
@@ -73,7 +71,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
         &mut mcp,
         ThreadSettingsUpdateParams {
             thread_id: thread.id.clone(),
-            approval_policy: Some(AskForApproval::Never),
+            personality: Some(Personality::Friendly),
             service_tier,
             ..Default::default()
         },
@@ -81,6 +79,8 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     .await?;
     let unrelated_update = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(unrelated_update.thread_settings.service_tier, service_tier);
+
+    start_text_turn(&mut mcp, thread.id.clone(), service_tier).await?;
 
     timeout(
         DEFAULT_TIMEOUT,
@@ -142,7 +142,7 @@ async fn thread_settings_update_cwd_retargets_default_environment() -> Result<()
     let updated = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(updated.thread_settings.cwd.as_path(), workspace.path());
 
-    start_text_turn(&mut mcp, thread.id).await?;
+    start_text_turn(&mut mcp, thread.id, ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -188,7 +188,7 @@ async fn thread_settings_update_while_turn_is_active_emits_notification() -> Res
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;
     let thread = start_thread(&mut mcp).await?.thread;
-    start_text_turn(&mut mcp, thread.id.clone()).await?;
+    start_text_turn(&mut mcp, thread.id.clone(), ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/started"),
@@ -267,7 +267,7 @@ async fn thread_settings_update_default_service_tier_resets_selection() -> Resul
         ServiceTier::Default
     );
 
-    start_text_turn(&mut mcp, thread.id).await?;
+    start_text_turn(&mut mcp, thread.id, ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -378,7 +378,11 @@ async fn send_thread_settings_update(
     Ok(())
 }
 
-async fn start_text_turn(mcp: &mut TestAppServer, thread_id: String) -> Result<()> {
+async fn start_text_turn(
+    mcp: &mut TestAppServer,
+    thread_id: String,
+    service_tier: ServiceTier,
+) -> Result<()> {
     let turn_request_id = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id,
@@ -386,6 +390,7 @@ async fn start_text_turn(mcp: &mut TestAppServer, thread_id: String) -> Result<(
                 text: "hello".to_string(),
                 text_elements: Vec::new(),
             }],
+            service_tier,
             ..Default::default()
         })
         .await?;

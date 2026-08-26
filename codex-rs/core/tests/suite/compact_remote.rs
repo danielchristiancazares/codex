@@ -18,6 +18,7 @@ use codex_history::RolloutLine;
 use codex_login::CodexAuth;
 use codex_login::auth::AgentIdentityAuth;
 use codex_login::auth::AgentIdentityAuthRecord;
+use codex_models_manager::bundled_models_response;
 use codex_protocol::AgentPath;
 use codex_protocol::NullableField;
 use codex_protocol::account::PlanType as AccountPlanType;
@@ -219,10 +220,11 @@ fn test_codex() -> TestCodexBuilder {
     })
 }
 
-fn unrestricted_user_turn(items: Vec<UserInput>) -> TurnInputRequest {
+fn unrestricted_user_turn(items: Vec<UserInput>, service_tier: ServiceTier) -> TurnInputRequest {
     TurnInputRequest::user_input(items).with_thread_settings(ThreadSettingsOverrides {
         approval_policy: Some(AskForApproval::Never),
         permission_profile: Some(PermissionProfile::Disabled),
+        service_tier,
         ..Default::default()
     })
 }
@@ -898,6 +900,18 @@ async fn assert_remote_manual_compact_request_parity(
     let mut builder = test_codex().with_auth(auth);
     builder = builder.with_config(move |config| {
         config.service_tier = configured_service_tier;
+        match configured_service_tier {
+            ServiceTier::Default => {}
+            ServiceTier::Fast | ServiceTier::Flex => {
+                config
+                    .features
+                    .enable(Feature::FastMode)
+                    .expect("test config should allow Fast mode");
+                config.model_catalog = Some(
+                    bundled_models_response().expect("bundled models catalog should deserialize"),
+                );
+            }
+        }
     });
     let harness = TestCodexHarness::with_builder(builder).await?;
     let codex = harness.test().codex.clone();
@@ -959,10 +973,13 @@ async fn assert_remote_manual_compact_request_parity(
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "TURN_ONE_USER".to_string(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "TURN_ONE_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            configured_service_tier,
+        ))
         .await?;
     wait_for_turn_complete(&codex).await;
 
@@ -1908,10 +1925,13 @@ async fn remote_compact_runs_automatically() -> Result<()> {
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "hello remote compact".into(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "hello remote compact".into(),
+                text_elements: Vec::new(),
+            }],
+            ServiceTier::Default,
+        ))
         .await?;
 
     let message = wait_for_event_match(&codex, |event| match event {
@@ -4427,10 +4447,13 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_multi_summary_reinjec
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "USER_ONE".to_string(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "USER_ONE".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ServiceTier::Default,
+        ))
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 

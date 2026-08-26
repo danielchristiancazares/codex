@@ -27,7 +27,10 @@ import type { SandboxMode } from "./SandboxMode";
 export type ThreadResumeParams = {threadId: string, /**
  * Configuration overrides for the resumed thread, if any.
  */
-model?: string | null, modelProvider?: string | null, serviceTier: ServiceTier, cwd?: string | null, approvalPolicy?: AskForApproval | null, /**
+model?: string | null, modelProvider?: string | null, /**
+ * Complete routing selection for the resumed thread.
+ */
+serviceTier: ServiceTier, cwd?: string | null, approvalPolicy?: AskForApproval | null, /**
  * Override where approval requests are routed for review on this thread
  * and subsequent turns.
  */

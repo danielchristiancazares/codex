@@ -51,13 +51,13 @@ fn unadvertised_accelerated_routing_uses_standard_routing() {
 }
 
 #[test]
-fn legacy_fast_deserializes_to_canonical_priority_routing() {
+fn legacy_priority_deserializes_to_canonical_fast_routing() {
     let service_tier: ServiceTier =
-        serde_json::from_str("\"fast\"").expect("legacy service tier should deserialize");
+        serde_json::from_str("\"priority\"").expect("legacy service tier should deserialize");
 
     assert_eq!(service_tier, ServiceTier::Fast);
     assert_eq!(
         serde_json::to_string(&service_tier).expect("service tier should serialize"),
-        "\"priority\""
+        "\"fast\""
     );
 }

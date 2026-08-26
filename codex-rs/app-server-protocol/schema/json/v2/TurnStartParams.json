@@ -306,7 +306,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "priority",
+        "fast",
         "flex",
         "default"
       ],
@@ -662,7 +662,7 @@
           "$ref": "#/definitions/ServiceTier"
         }
       ],
-      "description": "Override the service tier for this turn and subsequent turns."
+      "description": "Complete current routing selection for this turn and subsequent turns."
     },
     "summary": {
       "anyOf": [

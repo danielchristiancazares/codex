@@ -44,7 +44,7 @@ Scenario: After five varied API-key-auth turns, remote manual compaction omits s
 +      ],
 +      "role": "assistant",
 +      "type": "message"
--  "service_tier": "priority",
+-  "service_tier": "fast",
 -  "store": false,
 -  "stream": true,
 -  "tool_choice": "auto",

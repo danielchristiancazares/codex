@@ -73,7 +73,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "priority",
+        "fast",
         "flex",
         "default"
       ],
@@ -165,7 +165,12 @@
       ]
     },
     "serviceTier": {
-      "$ref": "#/definitions/ServiceTier"
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Complete routing selection for the forked thread."
     },
     "threadId": {
       "type": "string"

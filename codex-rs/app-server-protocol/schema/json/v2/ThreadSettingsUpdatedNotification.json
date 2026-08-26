@@ -273,7 +273,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "priority",
+        "fast",
         "flex",
         "default"
       ],

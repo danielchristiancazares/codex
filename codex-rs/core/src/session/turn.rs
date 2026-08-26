@@ -2210,7 +2210,7 @@ async fn try_run_sampling_request(
             &step_context.session_telemetry,
             step_context.reasoning_effort.clone(),
             step_context.reasoning_summary,
-            step_context.service_tier.clone(),
+            step_context.service_tier,
             responses_metadata,
             &inference_trace,
         )

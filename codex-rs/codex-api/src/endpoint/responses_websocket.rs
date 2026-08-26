@@ -1072,7 +1072,7 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, expected_payload);
-        assert_eq!(wire_payload["service_tier"], "priority");
+        assert_eq!(wire_payload["service_tier"], "fast");
     }
 
     #[tokio::test]

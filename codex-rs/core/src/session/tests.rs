@@ -208,7 +208,7 @@ impl StepContext {
             model_info: Arc::clone(&turn.model_info),
             reasoning_effort: turn.reasoning_effort.clone(),
             reasoning_summary: turn.reasoning_summary,
-            service_tier: turn.config.service_tier.clone(),
+            service_tier: turn.config.service_tier,
             approval_policy: turn.approval_policy(),
             approvals_reviewer: turn.config.approvals_reviewer,
             session_telemetry: turn.session_telemetry.clone(),

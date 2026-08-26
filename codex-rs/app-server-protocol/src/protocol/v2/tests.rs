@@ -4656,6 +4656,27 @@ fn thread_start_params_round_trip_multi_agent_mode() {
 }
 
 #[test]
+fn service_tier_requests_require_complete_canonical_routing() {
+    let legacy: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "priority",
+    }))
+    .expect("legacy service tier should deserialize");
+    assert_eq!(legacy.service_tier, ServiceTier::Fast);
+    assert_eq!(
+        serde_json::to_value(legacy).expect("thread start params should serialize")["serviceTier"],
+        "fast"
+    );
+
+    let missing = serde_json::from_value::<ThreadStartParams>(json!({}));
+    assert_eq!(
+        missing
+            .expect_err("service tier should be required")
+            .to_string(),
+        "missing field `serviceTier`"
+    );
+}
+
+#[test]
 fn thread_settings_update_params_preserve_field_level_experimental_gates() {
     let permissions = ThreadSettingsUpdateParams {
         thread_id: "thread_123".to_string(),

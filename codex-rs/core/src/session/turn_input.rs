@@ -120,7 +120,13 @@ impl PreparedTurnInputSettings {
             root_turn_id,
         } = self.start_options;
         let emit_thread_settings_applied = self.thread_settings_update.is_some();
-        let mut updates = self.thread_settings_update.unwrap_or_default();
+        let mut updates = match self.thread_settings_update {
+            Some(updates) => updates,
+            None => SessionSettingsUpdate {
+                service_tier: session.thread_settings_snapshot().await.service_tier,
+                ..Default::default()
+            },
+        };
         updates.final_output_json_schema = match final_output_json_schema {
             Some(final_output_json_schema) => NullableField::Value(final_output_json_schema),
             None => NullableField::Null,

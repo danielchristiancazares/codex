@@ -68,6 +68,7 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.allowProviderModelFallback")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_provider_model_fallback: bool,
+    /// Complete routing selection for the new thread.
     pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
@@ -240,7 +241,7 @@ pub struct ThreadSettingsUpdateParams {
     /// Override the model for subsequent turns.
     #[ts(optional = nullable)]
     pub model: Option<String>,
-    /// Service tier for subsequent turns.
+    /// Complete current routing selection for subsequent turns.
     pub service_tier: ServiceTier,
     /// Override the reasoning effort for subsequent turns.
     #[ts(optional = nullable)]
@@ -347,6 +348,7 @@ pub struct ThreadResumeParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
+    /// Complete routing selection for the resumed thread.
     pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
@@ -530,6 +532,7 @@ pub struct ThreadForkParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
+    /// Complete routing selection for the forked thread.
     pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,

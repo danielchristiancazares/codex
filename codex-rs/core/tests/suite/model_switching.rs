@@ -63,6 +63,10 @@ use test_case::test_case;
 use wiremock::MockServer;
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "test values name the observed routing behavior"
+)]
 enum RequestRouting {
     #[default]
     StandardRouting,
@@ -676,7 +680,7 @@ async fn settings_update_during_active_turn_applies_to_next_turn_only() -> Resul
             json!({
                 "model": "gpt-5.4",
                 "reasoning": { "effort": "high", "summary": "detailed" },
-                "service_tier": "priority",
+                "service_tier": "fast",
                 "approval_policy_never": true,
             }),
         ]
@@ -702,6 +706,8 @@ async fn service_tier_is_resolved_against_each_turn_model() -> Result<()> {
                 .features
                 .enable(Feature::FastMode)
                 .expect("test config should allow Fast mode");
+            config.model_catalog =
+                Some(bundled_models_response().expect("bundled models catalog should deserialize"));
             config.service_tier = ServiceTier::Fast;
         });
     let test = builder.build(&server).await?;
@@ -758,7 +764,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let first_body = requests[0].body_json();
     let second_body = requests[1].body_json();
 
-    assert_eq!(first_body["service_tier"], "priority");
+    assert_eq!(first_body["service_tier"], "fast");
     assert_eq!(second_body.get("service_tier"), None);
 
     Ok(())

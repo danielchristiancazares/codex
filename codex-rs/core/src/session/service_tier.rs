@@ -12,6 +12,10 @@ use codex_protocol::protocol::WarningEvent;
 /// Each variant records either the routing behavior selected for the session
 /// or the exact fact that forced standard routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "each variant names its complete routing consequence"
+)]
 pub(super) enum InitialServiceTierResolution {
     ConfiguredStandardRouting,
     AdvertisedFastRouting,
@@ -48,6 +52,10 @@ pub(super) fn resolve_initial_service_tier(
     }
 }
 
+#[expect(
+    clippy::only_used_in_recursion,
+    reason = "the affine grant must gate every recursive lookup branch"
+)]
 fn resolve_advertised_fast_routing(
     grant: AcceleratedRoutingGrant,
     advertised_service_tiers: &[ModelServiceTier],
@@ -65,6 +73,10 @@ fn resolve_advertised_fast_routing(
     }
 }
 
+#[expect(
+    clippy::only_used_in_recursion,
+    reason = "the affine grant must gate every recursive lookup branch"
+)]
 fn resolve_advertised_flex_routing(
     grant: AcceleratedRoutingGrant,
     advertised_service_tiers: &[ModelServiceTier],

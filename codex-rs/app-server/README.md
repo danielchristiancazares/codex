@@ -165,6 +165,8 @@ Example with notification opt-out:
 - `thread/resume` — reopen an existing thread by id so subsequent `turn/start` calls append to it. Accepts the same permission override rules as `thread/start`.
 - `thread/fork` — fork an existing thread into a new thread id by copying the stored history; pass an optional `lastTurnId` to copy history only through that turn, inclusive, and drop later turns from the fork. An in-progress `lastTurnId` boundary is rejected. Experimental `beforeTurnId` instead copies history strictly before the referenced turn, including when that turn is in progress, and cannot be combined with `lastTurnId`. If both boundaries are null while the source thread is mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.status`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately, or `deferGoalContinuation: true` to carry the source thread's current goal into the fork and run an explicit turn before automatic continuation resumes. Deferred goal continuation is persisted until that turn starts and cannot be combined with `ephemeral: true`. Accepts the same permission override rules as `thread/start`.
 - `thread/start`, `thread/resume`, and `thread/fork` responses include the legacy `sandbox` compatibility projection. `instructionSources` lists loaded instruction files using each source environment's native absolute path syntax, including files loaded from remote environments. Experimental clients can read `runtimeWorkspaceRoots` for the thread-scoped runtime roots and `activePermissionProfile` for the named or implicit built-in profile identity/provenance when known. Their deprecated experimental `multiAgentMode` field, and the corresponding thread setting, always report `explicitRequestOnly`; Ultra reasoning effort is the source of proactive multi-agent behavior.
+
+`thread/start`, `thread/resume`, and `thread/fork` requests require `serviceTier`. Clients carry the complete current routing selection as `"default"`, `"fast"`, or `"flex"`; the legacy input spelling `"priority"` is accepted as `"fast"`.
 - `thread/list` — page through stored threads; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `sectionId`, `cwd`, and `searchTerm` filters. Experimental `projectId` filters one project, while `null` selects unassigned threads. Set `sortKey` to `"section_position"` when listing a section in its persisted manual order. Experimental clients can use `parentThreadId` for direct spawned children or `ancestorThreadId` for spawned descendants at any depth; the two filters are mutually exclusive. Review and Guardian threads are not included because they do not participate in that spawn-edge lifecycle. Each returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded. Subagent threads also include `parentThreadId` when the immediate parent is known.
 - `project/list`, `project/read`, `project/create`, `project/import`, `project/update`, `project/move`, and `project/delete` — experimental SQLite-backed project APIs. Projects have canonical server-generated IDs, persisted manual positions, ordered absolute roots, and an opaque string metadata bag. `project/move` places a project before another project or appends it when `beforeProjectId` is `null`. Create and import require an opaque `idempotencyKey`; clients should generate a UUID for ordinary creates and may use a stable namespaced legacy ID for migration. Reusing a key returns the original project without emitting notifications or repeating thread assignments, and keys remain reserved after deletion. Import can atomically assign existing thread IDs. Delete clears assignments but never deletes threads, directories, or files.
 - `project/changed` and `thread/project/updated` — experimental notifications emitted after committed project or assignment changes. Reconnect with `project/list` and `thread/list` to recover authoritative state.
@@ -209,7 +211,7 @@ Example with notification opt-out:
 - `thread/backgroundTerminals/terminate` — terminate one running background terminal by app-server `processId` (experimental; requires `capabilities.experimentalApi`); returns whether a process was terminated.
 - `thread/rollback` — deprecated and will be removed soon. Drop the last N turns from the agent’s in-memory context and persist a rollback marker in the rollout so future resumes see the pruned history; returns the updated `thread` (with `turns` populated) on success. Paginated threads do not support rollback. Parent-owned Multi-Agent V2 subagents reject direct rollback requests.
 - `thread/revert` — experimental. Replace a loaded paginated thread's durable history with the prefix strictly before `beforeTurnId` while preserving its thread id. The operation interrupts an active turn if needed, leaves older rollout files immutable, reloads the thread, returns updated thread metadata with empty `turns` plus pagination cursors, and emits `thread/reverted`. It does not revert local file changes. Parent-owned Multi-Agent V2 subagents reject direct revert requests.
-- `turn/start` — add user input to a thread and begin Codex generation; responds with the initial `turn` object and streams `turn/started`, `item/*`, and `turn/completed` notifications. `clientUserMessageId` is optional; when supplied, the corresponding `userMessage` item echoes it as `clientId`. Experimental `runtimeWorkspaceRoots` supplies the default roots for newly resolved environment selections. Explicit `environments[].runtimeWorkspaceRoots` override that fallback with environment-native absolute paths. Prefer experimental `permissions` profile selection by id for permission overrides; the legacy `sandboxPolicy` field is still accepted but cannot be combined with `permissions`. For `collaborationMode`, `settings.developer_instructions: null` means "use built-in instructions for the selected mode". Deprecated experimental `multiAgentMode` is ignored; Ultra reasoning effort selects proactive behavior. Parent-owned Multi-Agent V2 subagents reject direct turns.
+- `turn/start` — add user input to a thread and begin Codex generation; responds with the initial `turn` object and streams `turn/started`, `item/*`, and `turn/completed` notifications. `serviceTier` is required and carries the thread's complete current routing selection. `clientUserMessageId` is optional; when supplied, the corresponding `userMessage` item echoes it as `clientId`. Experimental `runtimeWorkspaceRoots` supplies the default roots for newly resolved environment selections. Explicit `environments[].runtimeWorkspaceRoots` override that fallback with environment-native absolute paths. Prefer experimental `permissions` profile selection by id for permission overrides; the legacy `sandboxPolicy` field is still accepted but cannot be combined with `permissions`. For `collaborationMode`, `settings.developer_instructions: null` means "use built-in instructions for the selected mode". Deprecated experimental `multiAgentMode` is ignored; Ultra reasoning effort selects proactive behavior. Parent-owned Multi-Agent V2 subagents reject direct turns.
 - `thread/inject_items` — append raw Responses API items to a loaded thread’s model-visible history without starting a user turn; returns `{}` on success. Parent-owned Multi-Agent V2 subagents reject direct item injection.
 - `turn/steer` — add user input to an already in-flight regular turn without starting a new turn; returns the active `turnId` that accepted the input. `clientUserMessageId` is optional; when supplied, the corresponding `userMessage` item echoes it as `clientId`. Review and manual compaction turns reject `turn/steer`. Parent-owned Multi-Agent V2 subagents reject direct steering.
 - `turn/interrupt` — request cancellation of an in-flight turn by `(thread_id, turn_id)`; success is an empty `{}` response and the turn finishes with `status: "interrupted"`. Also available for parent-owned Multi-Agent V2 subagents.
@@ -923,6 +925,7 @@ Models in `required_on_models` use `approvalsReviewer: "auto_review"` while pres
 { "method": "turn/start", "id": 30, "params": {
     "threadId": "thr_123",
     "clientUserMessageId": "client_msg_123",
+    "serviceTier": "default",
     "input": [ { "type": "text", "text": "Run tests" } ],
     // Below are optional config overrides
     "cwd": "/Users/me/project",
@@ -968,6 +971,7 @@ Invoke a skill explicitly by including `$<skill-name>` in the text input and add
 ```json
 { "method": "turn/start", "id": 33, "params": {
     "threadId": "thr_123",
+    "serviceTier": "default",
     "input": [
         { "type": "text", "text": "$skill-creator Add a new skill for triaging flaky CI and include step-by-step usage." },
         { "type": "skill", "name": "skill-creator", "path": "/Users/me/.codex/skills/skill-creator/SKILL.md" }
@@ -988,6 +992,7 @@ Invoke an app by including `$<app-slug>` in the text input and adding a `mention
 ```json
 { "method": "turn/start", "id": 34, "params": {
     "threadId": "thr_123",
+    "serviceTier": "default",
     "input": [
         { "type": "text", "text": "$demo-app Summarize the latest updates." },
         { "type": "mention", "name": "Demo App", "path": "app://demo-app" }
@@ -1008,6 +1013,7 @@ Invoke a plugin by including a UI mention token such as `@sample` in the text in
 ```json
 { "method": "turn/start", "id": 35, "params": {
     "threadId": "thr_123",
+    "serviceTier": "default",
     "input": [
         { "type": "text", "text": "@sample Summarize the latest updates." },
         { "type": "mention", "name": "Sample Plugin", "path": "plugin://sample@test" }
@@ -1865,6 +1871,7 @@ Invoke a skill by including `$<skill-name>` in the text input. Add a `skill` inp
   "id": 101,
   "params": {
     "threadId": "thread-1",
+    "serviceTier": "default",
     "input": [
       {
         "type": "text",
@@ -2226,6 +2233,7 @@ $demo-app Pull the latest updates from the team.
   "id": 51,
   "params": {
     "threadId": "thread-1",
+    "serviceTier": "default",
     "input": [
       {
         "type": "text",

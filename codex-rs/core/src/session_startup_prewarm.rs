@@ -317,7 +317,7 @@ async fn schedule_startup_prewarm_inner(
             &step_context.session_telemetry,
             step_context.reasoning_effort.clone(),
             step_context.reasoning_summary,
-            step_context.service_tier.clone(),
+            step_context.service_tier,
             &responses_metadata,
         )
         .await?;
