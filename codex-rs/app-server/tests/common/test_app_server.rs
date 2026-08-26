@@ -177,12 +177,17 @@ impl TestAppServer {
     /// Starts building a server with a temporary CODEX_HOME and the standard
     /// automatic test environment.
     pub fn builder() -> TestAppServerBuilder {
+        let args = if cfg!(debug_assertions) {
+            vec![DISABLE_PLUGIN_STARTUP_TASKS_ARG.to_string()]
+        } else {
+            Vec::new()
+        };
         TestAppServerBuilder {
             codex_home: None,
             environment: TestAppServerEnvironment::Auto,
             program: None,
             env_overrides: Vec::new(),
-            args: vec![DISABLE_PLUGIN_STARTUP_TASKS_ARG.to_string()],
+            args,
             exec_server_delay: None,
         }
     }
