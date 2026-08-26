@@ -210,6 +210,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::Widget;
@@ -278,6 +279,8 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
+use crate::style::accent_style;
+use crate::style::table_separator_style;
 use crate::style::user_message_style;
 use codex_protocol::ThreadId;
 use codex_protocol::user_input::ByteRange;
@@ -985,8 +988,13 @@ impl ChatComposer {
             }
             ActivePopup::None => Constraint::Max(footer_total_height),
         };
-        let [composer_rect, popup_rect] =
-            Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
+        let [composer_rect, popup_rect] = if matches!(self.popups.active, ActivePopup::None) {
+            Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area)
+        } else {
+            let [popup_rect, composer_rect] =
+                Layout::vertical([popup_constraint, Constraint::Min(3)]).areas(area);
+            [composer_rect, popup_rect]
+        };
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1,
             LIVE_PREFIX_COLS,
@@ -4825,7 +4833,11 @@ impl ChatComposer {
             }
         }
         let style = user_message_style();
-        Block::default().style(style).render(composer_rect, buf);
+        Block::default()
+            .borders(Borders::TOP | Borders::BOTTOM)
+            .border_style(table_separator_style())
+            .style(style)
+            .render(composer_rect, buf);
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
@@ -4843,7 +4855,7 @@ impl ChatComposer {
                         .unwrap_or(1.0);
                     tier.prompt(charge)
                 } else {
-                    "›".bold()
+                    Span::styled("›", accent_style())
                 }
             } else {
                 "›".dim()
@@ -4892,7 +4904,11 @@ impl ChatComposer {
         }
         if !self.draft.input_enabled || textarea_is_empty {
             let text = if self.draft.input_enabled {
-                self.placeholder_text.as_str().to_string()
+                if self.placeholder_text == "Ask Codex to do anything" && textarea_rect.width < 24 {
+                    "Ask Codex…".to_string()
+                } else {
+                    self.placeholder_text.clone()
+                }
             } else {
                 self.draft
                     .input_disabled_placeholder

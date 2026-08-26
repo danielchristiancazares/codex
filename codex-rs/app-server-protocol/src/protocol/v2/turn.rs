@@ -124,8 +124,6 @@ pub struct TurnStartParams {
     #[ts(optional = nullable)]
     pub model: Option<String>,
     /// Override the service tier for this turn and subsequent turns.
-    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
-    #[ts(optional, as = "Option<ServiceTier>")]
     pub service_tier: ServiceTier,
     /// Override the reasoning effort for this turn and subsequent turns.
     #[ts(optional = nullable)]

@@ -433,7 +433,7 @@ async fn spawn_agent_accepts_explicit_service_tier() {
                 function_payload(json!({
                     "message": "inspect this repo",
                     "model": "gpt-5.4",
-                    "service_tier": "fast"
+                    "service_tier": "priority"
                 })),
             ))
             .await
@@ -698,7 +698,7 @@ async fn spawn_agent_full_history_fork_accepts_explicit_service_tier() {
             function_payload(json!({
                 "message": "inspect this repo",
                 "fork_context": true,
-                "service_tier": "fast"
+                "service_tier": "priority"
             })),
         ))
         .await
@@ -751,7 +751,7 @@ async fn multi_agent_v2_full_history_fork_accepts_explicit_service_tier() {
             function_payload(json!({
                 "message": "inspect this repo",
                 "task_name": "fork_with_tier",
-                "service_tier": "fast"
+                "service_tier": "priority"
             })),
         ))
         .await

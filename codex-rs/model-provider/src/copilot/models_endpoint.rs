@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClient;
+use codex_http_client::HttpClientBuilder;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::HttpResponse;
 use codex_models_manager::bundled_models_response;
@@ -121,8 +122,13 @@ impl CopilotModelsEndpoint {
     ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
         let mut endpoint = self.endpoint_manager.endpoint().await?;
         let mut url = format!("{}/models", endpoint.base_url);
-        let client = http_client_factory
-            .build_client(&url, ClientRouteClass::Api)
+        let client = HttpClientBuilder::new()
+            .without_redirects()
+            .build_respecting_outbound_proxy_policy(
+                &http_client_factory,
+                &url,
+                ClientRouteClass::Api,
+            )
             .map_err(|error| CodexErr::Fatal(format!("Copilot models client: {error}")))?;
         let mut response = send_models_request(
             &client,
@@ -137,8 +143,13 @@ impl CopilotModelsEndpoint {
             self.endpoint_manager.reject_generation(endpoint.generation);
             endpoint = self.endpoint_manager.endpoint().await?;
             url = format!("{}/models", endpoint.base_url);
-            let client = http_client_factory
-                .build_client(&url, ClientRouteClass::Api)
+            let client = HttpClientBuilder::new()
+                .without_redirects()
+                .build_respecting_outbound_proxy_policy(
+                    &http_client_factory,
+                    &url,
+                    ClientRouteClass::Api,
+                )
                 .map_err(|error| CodexErr::Fatal(format!("Copilot models client: {error}")))?;
             response = send_models_request(
                 &client,

@@ -2,6 +2,7 @@
 
 use super::markdown_render_cache::MarkdownRenderCache;
 use super::*;
+use crate::style::accent_style;
 use crate::terminal_hyperlinks::annotate_web_urls_in_line;
 use crate::terminal_hyperlinks::remap_wrapped_line;
 use crate::wrapping::url_preserving_wrap_options;
@@ -262,8 +263,8 @@ impl HistoryCell for UserHistoryCell {
         if let Some(wrapped_message) = wrapped_message {
             lines.extend(prefix_hyperlink_lines(
                 wrapped_message,
-                "› ".bold().dim(),
-                "  ".into(),
+                Span::styled("› ", accent_style()),
+                "│ ".dim(),
             ));
         }
 

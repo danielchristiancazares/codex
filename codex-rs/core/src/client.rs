@@ -85,6 +85,7 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_protocol::service_tier::resolve_request_service_tier;
 use codex_rollout_trace::CompactionTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
@@ -885,6 +886,7 @@ impl ModelClient {
             prompt.output_schema_strict,
         );
         let prompt_cache_key = Some(self.prompt_cache_key(responses_metadata));
+        let service_tier = resolve_request_service_tier(&model_info.service_tiers, service_tier);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions,

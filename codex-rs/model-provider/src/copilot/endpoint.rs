@@ -276,6 +276,16 @@ fn validate_api_url(base_url: &str) -> Result<String, String> {
             .trim_matches(['[', ']'])
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback());
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    let is_openai_host = ["openai.com", "openai.org"].into_iter().any(|domain| {
+        normalized_host == domain
+            || normalized_host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    });
+    if is_openai_host {
+        return Err("Copilot API URL must not target an OpenAI domain".to_string());
+    }
     if scheme != Some("https") && !(scheme == Some("http") && loopback) {
         return Err("Copilot API URL must use HTTPS unless it targets loopback".to_string());
     }

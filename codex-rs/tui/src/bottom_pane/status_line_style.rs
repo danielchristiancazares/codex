@@ -114,6 +114,17 @@ where
         } else {
             Style::default().dim()
         };
+        let style = if matches!(
+            item,
+            StatusLineItem::CurrentDir
+                | StatusLineItem::ProjectRoot
+                | StatusLineItem::ThreadTitle
+                | StatusLineItem::WorkspaceHeadline
+        ) {
+            style.bold()
+        } else {
+            style
+        };
         let style = if item == StatusLineItem::PullRequestNumber {
             style.underlined()
         } else {

@@ -30,7 +30,7 @@ sandboxPolicy?: SandboxPolicy | null, /**
 model?: string | null, /**
  * Override the service tier for this turn and subsequent turns.
  */
-serviceTier?: ServiceTier, /**
+serviceTier: ServiceTier, /**
  * Override the reasoning effort for this turn and subsequent turns.
  */
 effort?: ReasoningEffort | null, /**

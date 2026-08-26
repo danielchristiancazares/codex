@@ -158,7 +158,7 @@ service_tier = "flex"
 [models.new_thread]
 model = "high-priority-model"
 model_reasoning_effort = "high"
-service_tier = "fast"
+service_tier = "priority"
 "#,
         ),
     ])
@@ -172,7 +172,7 @@ service_tier = "fast"
 [models.new_thread]
 model = "high-priority-model"
 model_reasoning_effort = "high"
-service_tier = "fast"
+service_tier = "priority"
 "#
         )
     );

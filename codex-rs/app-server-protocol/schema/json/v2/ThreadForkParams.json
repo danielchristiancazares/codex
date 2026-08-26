@@ -73,7 +73,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "fast",
+        "priority",
         "flex",
         "default"
       ],
@@ -183,6 +183,7 @@
     }
   },
   "required": [
+    "serviceTier",
     "threadId"
   ],
   "title": "ThreadForkParams",

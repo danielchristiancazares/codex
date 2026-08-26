@@ -309,6 +309,44 @@ async fn models_request_does_not_retry_an_unchanged_credential() {
 }
 
 #[tokio::test]
+async fn models_request_does_not_follow_redirects() {
+    let redirect_target = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .expect(0)
+        .mount(&redirect_target)
+        .await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/models", redirect_target.uri())),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let manager = Arc::new(manager_with_credential(credential(
+        "copilot-secret",
+        &server.uri(),
+    )));
+    let endpoint = CopilotModelsEndpoint::new(manager);
+
+    let error = ModelsEndpointClient::list_models(
+        &endpoint,
+        "test-client",
+        HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+    )
+    .await
+    .expect_err("Copilot model discovery must not follow redirects");
+
+    assert_eq!(
+        error.to_string(),
+        "Fatal error: Copilot models request returned 302 Found"
+    );
+}
+
+#[tokio::test]
 async fn models_request_uses_http_path_and_returns_eligible_catalog() {
     let (models, etag) = request_models(serde_json::json!({
         "data": [{
@@ -385,5 +423,21 @@ fn copilot_api_url_requires_a_safe_origin() {
     assert_eq!(
         validate_api_url("https://example.com?redirect=other"),
         Err("configured Copilot API URL is invalid".to_string())
+    );
+    for base_url in [
+        "https://openai.com",
+        "https://api.openai.com/v1",
+        "https://auth.api.openai.org",
+        "https://api.openai.com.",
+    ] {
+        assert_eq!(
+            validate_api_url(base_url),
+            Err("Copilot API URL must not target an OpenAI domain".to_string()),
+            "{base_url}"
+        );
+    }
+    assert_eq!(
+        validate_api_url("https://api.openai.com.example.test"),
+        Ok("https://api.openai.com.example.test".to_string())
     );
 }

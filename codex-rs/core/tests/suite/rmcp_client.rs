@@ -1683,12 +1683,6 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
                         owner_permission_profile.clone(),
                     ),
                     shell_environment_policy: Default::default(),
-                    windows_sandbox_level: WindowsSandboxLevel::from_config(&fixture.config),
-                    windows_sandbox_private_desktop: fixture
-                        .config
-                        .permissions
-                        .windows_sandbox_private_desktop,
-                    use_legacy_landlock: fixture.config.features.use_legacy_landlock(),
                     exec_policy: None,
                     mcp_policy: None,
                     network_policy: None,

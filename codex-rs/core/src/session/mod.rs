@@ -217,6 +217,7 @@ pub(crate) mod multi_agents;
 mod review;
 mod rollout_budget;
 mod rollout_reconstruction;
+mod service_tier;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
 pub(crate) mod step_context;
@@ -235,6 +236,7 @@ pub(crate) use self::input_queue::InputQueueActivity;
 pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 use self::review::spawn_review_thread;
+use self::service_tier::resolve_initial_service_tier;
 use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;
@@ -675,7 +677,12 @@ impl Session {
                 developer_instructions: None,
             },
         };
-        let service_tier = config.service_tier;
+        let initial_service_tier_resolution = resolve_initial_service_tier(
+            config.service_tier,
+            config.features.fast_mode_routing_policy(),
+            &model_info.service_tiers,
+        );
+        let service_tier = initial_service_tier_resolution.session_service_tier();
         let session_configuration = SessionConfiguration {
             provider: create_model_provider(
                 config.model_provider.clone(),
@@ -758,6 +765,9 @@ impl Session {
             error!("Failed to create session: {e:#}");
             map_session_init_error(&e, &config.codex_home)
         })?;
+        initial_service_tier_resolution
+            .emit_startup_warning(&session)
+            .await;
         let thread_id = session.thread_id;
 
         // This task will run until Op::Shutdown is received.

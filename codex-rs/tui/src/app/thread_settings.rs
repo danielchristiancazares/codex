@@ -60,6 +60,7 @@ impl App {
         let mut params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             model: Some(model),
+            service_tier: self.chat_widget.config_ref().service_tier,
             collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -105,6 +106,7 @@ impl App {
         let thread_id = self.active_thread_id?;
         Some(ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
+            service_tier: self.chat_widget.config_ref().service_tier,
             effort,
             collaboration_mode: Some(self.chat_widget.current_collaboration_mode().clone()),
             ..ThreadSettingsUpdateParams::default()
@@ -120,6 +122,7 @@ impl App {
         };
         let params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
+            service_tier: self.chat_widget.config_ref().service_tier,
             collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -136,6 +139,7 @@ impl App {
         };
         let params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
+            service_tier: self.chat_widget.config_ref().service_tier,
             personality: Some(personality),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -259,7 +263,6 @@ fn thread_settings_update_has_changes(params: &ThreadSettingsUpdateParams) -> bo
         || params.sandbox_policy.is_some()
         || params.permissions.is_some()
         || params.model.is_some()
-        || !params.service_tier.is_default()
         || params.effort.is_some()
         || params.summary.is_some()
         || params.collaboration_mode.is_some()

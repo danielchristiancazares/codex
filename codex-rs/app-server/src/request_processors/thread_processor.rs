@@ -3647,6 +3647,7 @@ impl ThreadRequestProcessor {
             // Attach to the resolved child with only the caller's history-paging preferences.
             let attach_params = ThreadResumeParams {
                 thread_id: child_thread_id.to_string(),
+                service_tier,
                 exclude_turns,
                 initial_turns_page,
                 ..Default::default()

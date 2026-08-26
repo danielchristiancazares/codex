@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
 use ratatui::layout::Size;
 
 use crate::tui::TuiEvent;
@@ -62,4 +63,43 @@ async fn entering_alternate_screen_updates_cached_screen_size() {
 
     assert_eq!(tui.terminal.last_known_screen_size, screen_size);
     tui.leave_alt_screen().expect("leave alternate screen");
+}
+
+#[test]
+fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shrinks() {
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let screen_size = Size::new(/*width*/ 80, /*height*/ 24);
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 0,
+    ));
+    tui.terminal.last_known_screen_size = screen_size;
+    let scrollback = tui.scrollback;
+
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut tui.terminal,
+        /*height*/ 14,
+        screen_size,
+        scrollback,
+    )
+    .expect("dock initial viewport");
+    assert_eq!(
+        tui.terminal.viewport_area,
+        Rect::new(
+            /*x*/ 0, /*y*/ 10, /*width*/ 80, /*height*/ 14
+        )
+    );
+
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut tui.terminal,
+        /*height*/ 8,
+        screen_size,
+        scrollback,
+    )
+    .expect("keep shrunken viewport docked");
+    assert_eq!(
+        tui.terminal.viewport_area,
+        Rect::new(
+            /*x*/ 0, /*y*/ 16, /*width*/ 80, /*height*/ 8
+        )
+    );
 }

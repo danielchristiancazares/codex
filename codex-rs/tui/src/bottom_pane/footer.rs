@@ -29,7 +29,7 @@
 //!      even if it means dropping the right-side context earlier; the queue
 //!      hint may also be shortened before it is removed.
 //!    - When the queue hint is not active but the mode cycle hint is applicable,
-//!      drop "? for shortcuts" before dropping "(shift+tab to cycle)".
+//!      drop "? shortcuts" before dropping "(shift+tab to cycle)".
 //!    - If "(shift+tab to cycle)" cannot fit, also hide the right-side
 //!      context to avoid too many state transitions in quick succession.
 //!    - Finally, try a mode-only line (with and without context), and fall
@@ -315,7 +315,7 @@ fn left_side_line(
         SummaryHintKind::Shortcuts => {
             if let Some(key) = key_hints.toggle_shortcuts {
                 line.push_span(key);
-                line.push_span(" for shortcuts".dim());
+                line.push_span(" shortcuts".dim());
             }
         }
         SummaryHintKind::QueueMessage => {

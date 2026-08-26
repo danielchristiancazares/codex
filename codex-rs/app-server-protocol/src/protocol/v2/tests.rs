@@ -247,6 +247,7 @@ fn thread_turns_list_params_accepts_items_view() {
 fn thread_resume_params_accept_turns_page_bootstrap() {
     let params = serde_json::from_value::<ThreadResumeParams>(json!({
         "threadId": "thr_123",
+        "serviceTier": "default",
         "initialTurnsPage": {
             "limit": 25,
             "sortDirection": "asc",
@@ -1080,6 +1081,7 @@ fn permissions_request_approval_response_accepts_strict_auto_review() {
 #[test]
 fn permission_profile_selection_uses_id_string() {
     let start: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/start params deserialize");
@@ -1091,6 +1093,7 @@ fn permission_profile_selection_uses_id_string() {
     let turn: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "input": [],
+        "serviceTier": "default",
         "permissions": "dev",
     }))
     .expect("turn/start params deserialize");
@@ -1105,6 +1108,7 @@ fn permission_profile_selection_uses_id_string() {
 
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/resume params deserialize");
@@ -1115,6 +1119,7 @@ fn permission_profile_selection_uses_id_string() {
 
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/fork params deserialize");
@@ -1128,6 +1133,7 @@ fn permission_profile_selection_uses_id_string() {
 fn thread_path_params_deserialize_empty_path_as_none() {
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "path": "",
     }))
     .expect("thread/resume params deserialize");
@@ -1135,6 +1141,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "path": "",
     }))
     .expect("thread/fork params deserialize");
@@ -1142,6 +1149,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 
     let resume_with_path: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "path": "/tmp/resume-thread.jsonl",
     }))
     .expect("thread/resume params deserialize");
@@ -1155,6 +1163,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 fn thread_fork_last_turn_id_round_trips() {
     let params: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
+        "serviceTier": "default",
         "lastTurnId": "turn-2",
     }))
     .expect("thread/fork params deserialize");
@@ -4605,6 +4614,7 @@ fn turn_start_params_round_trip_multi_agent_mode() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
+        "serviceTier": "default",
         "multiAgentMode": "proactive"
     }))
     .expect("params should deserialize");
@@ -4626,6 +4636,7 @@ fn turn_start_params_round_trip_multi_agent_mode() {
 #[test]
 fn thread_start_params_round_trip_multi_agent_mode() {
     let params: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "default",
         "multiAgentMode": "proactive"
     }))
     .expect("params should deserialize");
@@ -4704,6 +4715,7 @@ fn turn_start_params_round_trip_environments() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
+        "serviceTier": "default",
         "environments": [
             {
                 "environmentId": "local",
@@ -4745,6 +4757,7 @@ fn turn_start_params_preserve_empty_environments() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
+        "serviceTier": "default",
         "environments": [],
     }))
     .expect("params should deserialize");
@@ -4764,12 +4777,14 @@ fn turn_start_params_treat_null_or_omitted_environments_as_default() {
     let null_environments: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
+        "serviceTier": "default",
         "environments": null,
     }))
     .expect("params should deserialize");
     let omitted_environments: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
+        "serviceTier": "default",
     }))
     .expect("params should deserialize");
 

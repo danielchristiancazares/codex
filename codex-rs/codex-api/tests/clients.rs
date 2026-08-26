@@ -20,6 +20,7 @@ use codex_client::Response;
 use codex_client::StreamResponse;
 use codex_client::TransportError;
 use codex_protocol::ResponseItemId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
@@ -329,7 +330,7 @@ async fn responses_client_stream_request_preserves_item_ids() -> Result<()> {
         stream: true,
         stream_options: None,
         include: Vec::new(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         prompt_cache_key: None,
         text: None,
         client_metadata: None,
@@ -416,7 +417,7 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
         stream: true,
         stream_options: None,
         include: Vec::new(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         prompt_cache_key: None,
         text: None,
         client_metadata: None,
@@ -536,7 +537,7 @@ async fn azure_store_sends_ids_and_headers() -> Result<()> {
         stream: true,
         stream_options: None,
         include: Vec::new(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         prompt_cache_key: None,
         text: None,
         client_metadata: None,

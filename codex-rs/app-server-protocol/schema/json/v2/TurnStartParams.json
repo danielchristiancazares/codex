@@ -306,7 +306,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "fast",
+        "priority",
         "flex",
         "default"
       ],
@@ -681,6 +681,7 @@
   },
   "required": [
     "input",
+    "serviceTier",
     "threadId"
   ],
   "title": "TurnStartParams",

@@ -946,6 +946,7 @@ mod tests {
     use crate::provider::RetryConfig;
     use codex_http_client::OutboundProxyPolicy;
     use codex_protocol::ResponseItemId;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use futures::StreamExt;
@@ -1041,7 +1042,7 @@ mod tests {
             stream: true,
             stream_options: None,
             include: vec!["reasoning.encrypted_content".to_string()],
-            service_tier: Some("priority".to_string()),
+            service_tier: ServiceTier::Fast,
             prompt_cache_key: Some("cache-key".to_string()),
             text: None,
             client_metadata: Some(HashMap::from([(
@@ -1071,6 +1072,7 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, expected_payload);
+        assert_eq!(wire_payload["service_tier"], "priority");
     }
 
     #[tokio::test]

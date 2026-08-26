@@ -1836,7 +1836,7 @@ mod tests {
     }
 
     #[test]
-    fn service_tier_catalog_deserializes_legacy_priority_and_null_default() {
+    fn service_tier_catalog_deserializes_priority_and_null_default() {
         let mut value =
             serde_json::to_value(test_model(/*spec*/ None)).expect("test model should serialize");
         let object = value

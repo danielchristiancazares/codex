@@ -16084,7 +16084,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "fast",
+        "priority",
         "flex",
         "default"
       ],
@@ -17217,6 +17217,7 @@
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "title": "ThreadForkParams",
@@ -19066,6 +19067,7 @@
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "title": "ThreadResumeParams",
@@ -19736,6 +19738,9 @@
           "description": "Optional client-supplied analytics source classification for this thread."
         }
       },
+      "required": [
+        "serviceTier"
+      ],
       "title": "ThreadStartParams",
       "type": "object"
     },
@@ -20609,6 +20614,7 @@
       },
       "required": [
         "input",
+        "serviceTier",
         "threadId"
       ],
       "title": "TurnStartParams",

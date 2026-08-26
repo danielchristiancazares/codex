@@ -300,7 +300,7 @@ ignore_rules = ["gpt-protected"]
 [models.new_thread]
 model = "gpt-managed"
 model_reasoning_effort = "medium"
-service_tier = "fast"
+service_tier = "priority"
 "#,
     )?;
     let mut mcp = TestAppServer::builder()

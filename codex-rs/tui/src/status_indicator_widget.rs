@@ -23,8 +23,6 @@ use crate::key_hint;
 use crate::key_hint::ShortcutHint;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
-use crate::motion::activity_indicator;
 use crate::motion::shimmer_text;
 use crate::render::renderable::Renderable;
 use crate::text_formatting::capitalize_first;
@@ -250,29 +248,16 @@ impl Renderable for StatusIndicatorWidget {
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
         let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
 
-        let mut spans = Vec::with_capacity(5);
-        if let Some(indicator) = activity_indicator(
-            Some(self.last_resume_at),
-            motion_mode,
-            ReducedMotionIndicator::Hidden,
-        ) {
-            spans.push(indicator);
-            spans.push(" ".into());
-        }
+        let mut spans = vec!["✦".magenta().bold(), " ".into()];
         spans.extend(shimmer_text(&self.header, motion_mode));
-        if !spans.is_empty() {
-            spans.push(" ".into());
-        }
+        spans.push(" · ".dim());
+        spans.push(pretty_elapsed.dim());
         if self.show_interrupt_hint
             && let Some(interrupt_binding) = self.interrupt_binding
         {
-            spans.extend(vec![
-                format!("({pretty_elapsed} • ").dim(),
-                interrupt_binding.into(),
-                " to interrupt)".dim(),
-            ]);
-        } else {
-            spans.push(format!("({pretty_elapsed})").dim());
+            spans.push(" · ".dim());
+            spans.push(interrupt_binding.into());
+            spans.push(" interrupt".dim());
         }
         if let Some(message) = &self.inline_message {
             // Keep optional context after elapsed/interrupt text so that core

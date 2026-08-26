@@ -694,7 +694,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
 
     let request = request_log.single_request();
     assert_eq!(request.body_json()["reasoning"]["effort"], "medium");
-    assert_eq!(request.body_json()["service_tier"], "fast");
+    assert_eq!(request.body_json()["service_tier"], "priority");
     assert!(
         request
             .message_input_texts("developer")

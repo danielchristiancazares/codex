@@ -1,5 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
 use ratatui::widgets::WidgetRef;
 
 use super::popup_consts::MAX_POPUP_ROWS;
@@ -7,8 +8,7 @@ use super::scroll_state::ScrollState;
 use super::selection_popup_common::ColumnWidthConfig;
 use super::selection_popup_common::ColumnWidthMode;
 use super::selection_popup_common::GenericDisplayRow;
-use super::selection_popup_common::measure_rows_height_with_col_width_mode;
-use super::selection_popup_common::render_rows_with_col_width_mode;
+use super::selection_popup_common::render_rows_single_line_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
@@ -127,17 +127,9 @@ impl CommandPopup {
     }
 
     /// Determine the preferred height of the popup for a given width.
-    /// Accounts for wrapped descriptions so that long tooltips don't overflow.
-    pub(crate) fn calculate_required_height(&self, width: u16) -> u16 {
-        let rows = self.rows_from_matches(self.filtered());
-
-        measure_rows_height_with_col_width_mode(
-            &rows,
-            &self.state,
-            MAX_POPUP_ROWS,
-            width,
-            COMMAND_COLUMN_WIDTH,
-        )
+    /// Command rows stay single-line so moving the selection never changes the menu rhythm.
+    pub(crate) fn calculate_required_height(&self, _width: u16) -> u16 {
+        u16::try_from(self.filtered_items().len().clamp(1, MAX_POPUP_ROWS)).unwrap_or(u16::MAX)
     }
 
     /// Compute exact/prefix matches over built-in commands and user prompts,
@@ -203,12 +195,17 @@ impl CommandPopup {
     ) -> Vec<GenericDisplayRow> {
         matches
             .into_iter()
-            .map(|(item, indices)| {
+            .enumerate()
+            .map(|(index, (item, indices))| {
                 let name = format!("/{}", item.command());
                 let description = item.description().to_string();
                 GenericDisplayRow {
                     name,
-                    name_prefix_spans: Vec::new(),
+                    name_prefix_spans: vec![if self.state.selected_idx == Some(index) {
+                        "› ".bold()
+                    } else {
+                        "  ".into()
+                    }],
                     match_indices: indices.map(|v| v.into_iter().map(|i| i + 1).collect()),
                     display_shortcut: None,
                     description: Some(description),
@@ -264,9 +261,9 @@ impl CommandItem {
 impl WidgetRef for CommandPopup {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let rows = self.rows_from_matches(self.filtered());
-        render_rows_with_col_width_mode(
+        render_rows_single_line_with_col_width_mode(
             area.inset(Insets::tlbr(
-                /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
+                /*top*/ 0, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
             )),
             buf,
             &rows,

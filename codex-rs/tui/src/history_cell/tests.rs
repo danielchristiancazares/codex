@@ -721,7 +721,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
 
     let rendered = render_transcript(&cell).join("\n");
     assert!(!rendered.contains("Model just became available"));
-    assert!(rendered.contains("To get started"));
+    assert!(rendered.contains("Start with a task"));
 }
 
 #[tokio::test]
@@ -1706,10 +1706,10 @@ fn session_header_includes_reasoning_level_when_present() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
-    assert!(model_line.contains("gpt-4o high   fast"));
+    assert!(model_line.contains("gpt-4o high · fast"));
     assert!(model_line.contains("/model to change"));
 }
 
@@ -1726,7 +1726,7 @@ fn session_header_hides_fast_status_when_disabled() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
     assert!(model_line.contains("gpt-4o high"));
@@ -1748,7 +1748,11 @@ fn session_header_clamps_to_narrow_width() {
     let lines = cell.display_lines(WIDTH);
     let widths = lines.iter().map(line_width).collect::<Vec<_>>();
 
-    assert_eq!(widths, vec![usize::from(WIDTH); lines.len()]);
+    assert!(
+        widths
+            .iter()
+            .all(|line_width| *line_width <= usize::from(WIDTH))
+    );
     insta::assert_snapshot!(render_lines(&lines).join("\n"));
 }
 

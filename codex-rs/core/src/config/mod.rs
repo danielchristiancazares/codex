@@ -603,7 +603,7 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: Option<String>,
 
-    /// Effective service tier preference for new turns.
+    /// Effective, concrete service tier preference for new turns.
     pub service_tier: ServiceTier,
 
     /// Model used specifically for review sessions.

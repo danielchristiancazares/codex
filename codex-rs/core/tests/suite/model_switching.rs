@@ -56,10 +56,27 @@ use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use test_case::test_case;
 use wiremock::MockServer;
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+enum RequestRouting {
+    #[default]
+    StandardRouting,
+    #[serde(rename = "fast")]
+    FastRouting,
+    #[serde(rename = "flex")]
+    FlexRouting,
+}
+
+#[derive(Deserialize)]
+struct RequestRoutingSnapshot {
+    #[serde(default)]
+    service_tier: RequestRouting,
+}
 
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> TurnInputRequest {
     let (sandbox_policy, permission_profile) =
@@ -659,10 +676,59 @@ async fn settings_update_during_active_turn_applies_to_next_turn_only() -> Resul
             json!({
                 "model": "gpt-5.4",
                 "reasoning": { "effort": "high", "summary": "detailed" },
-                "service_tier": "fast",
+                "service_tier": "priority",
                 "approval_policy_never": true,
             }),
         ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn service_tier_is_resolved_against_each_turn_model() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![sse_completed("resp-1"), sse_completed("resp-2")],
+    )
+    .await;
+    let mut builder = test_codex()
+        .with_model("gpt-5.4-mini")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::FastMode)
+                .expect("test config should allow Fast mode");
+            config.service_tier = ServiceTier::Fast;
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_text_turn("unsupported fast turn").await?;
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        ThreadSettingsOverrides {
+            model: Some("gpt-5.4".to_string()),
+            service_tier: ServiceTier::Fast,
+            ..Default::default()
+        },
+    )
+    .await?;
+    test.submit_text_turn("supported fast turn").await?;
+
+    let request_routing = response_mock
+        .requests()
+        .into_iter()
+        .map(|request| serde_json::from_value::<RequestRoutingSnapshot>(request.body_json()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|snapshot| snapshot.service_tier)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_routing,
+        vec![RequestRouting::StandardRouting, RequestRouting::FastRouting,]
     );
 
     Ok(())
@@ -692,7 +758,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let first_body = requests[0].body_json();
     let second_body = requests[1].body_json();
 
-    assert_eq!(first_body["service_tier"].as_str(), Some("fast"));
+    assert_eq!(first_body["service_tier"], "priority");
     assert_eq!(second_body.get("service_tier"), None);
 
     Ok(())

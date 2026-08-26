@@ -2339,7 +2339,7 @@ mod tests {
                 [models.new_thread]
                 model = "managed-model"
                 model_reasoning_effort = "medium"
-                service_tier = "fast"
+                service_tier = "priority"
             "#,
         )?;
 

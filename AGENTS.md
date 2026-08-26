@@ -35,8 +35,8 @@ cd codex-rs && cargo check -p codex-tui
 just codex -- <args>
 
 # Test one crate or one test/filter
-just test -p codex-tui
-just test -p codex-tui custom_terminal::tests::diff_buffers
+just test --release -p codex-tui
+just test --release -p codex-tui custom_terminal::tests::diff_buffers
 
 # Lint and format
 just fix -p codex-tui
@@ -110,14 +110,15 @@ In the codex-rs folder where the rust code lives:
     the new implementation so the invariants stay close to the code that owns them.
   - Avoid adding new standalone methods to `codex-rs/tui/src/chatwidget.rs` unless the change is
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
-- When running Rust commands (e.g. `just fix` or `just test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
+- When running Rust commands (e.g. `just fix` or `just test --release`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
 Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
 
-1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.
-2. Use the smallest crate or test filter that covers the change. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
-3. For TUI-only work, run `just test -p codex-tui`, then `just fix -p codex-tui`, then `just fmt`.
-4. Once targeted tests pass, if changes were made in common, core, or protocol, run the complete test suite with `just test`. Before starting, explain why targeted coverage is insufficient, give a rough duration estimate, and get explicit user approval. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage.
+1. Do not run `cargo test` directly. Use `just test --release` so test execution follows the repo defaults.
+2. All test runs must use the `--release` flag.
+3. Use the smallest crate or test filter that covers the change. For example, if changes were made in `codex-rs/tui`, run `just test --release -p codex-tui`.
+4. For TUI-only work, run `just test --release -p codex-tui`, then `just fix -p codex-tui`, then `just fmt`.
+5. Once targeted tests pass, if changes were made in common, core, or protocol, run the complete test suite with `just test --release`. Before starting, explain why targeted coverage is insufficient, give a rough duration estimate, and get explicit user approval. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage.
 
 - Do not rerun tests after the final `just fix` and `just fmt`.
 - Before a long validation run, ensure the required repository tools are installed: `just`,
@@ -147,7 +148,7 @@ env \
   MACOSX_DEPLOYMENT_TARGET=12.0 \
   RUSTY_V8_ARCHIVE=/Users/daniel/rusty_v8/target/release/gn_out/obj/librusty_v8.a \
   RUSTY_V8_SRC_BINDING_PATH=/Users/daniel/rusty_v8/target/release/gn_out/src_binding.rs \
-  just test -p <crate>
+  just test --release -p <crate>
 ```
 
 - Verify both files are nonempty and `lipo -info "$RUSTY_V8_ARCHIVE"` reports `x86_64`; the archive
@@ -328,7 +329,7 @@ is easy to review and future diffs stay visual.
 When UI or text output changes intentionally, update the snapshots as follows:
 
 - Run tests to generate any updated snapshots:
-  - `just test -p codex-tui`
+  - `just test --release -p codex-tui`
 - Check what’s pending:
   - `cargo insta pending-snapshots -p codex-tui`
 - Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
@@ -440,7 +441,7 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Regenerate schema fixtures when API shapes change:
   `just write-app-server-schema`
   (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
-- Validate with `just test -p codex-app-server-protocol`.
+- Validate with `just test --release -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
 

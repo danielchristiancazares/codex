@@ -1719,6 +1719,7 @@ fn thread_resume_params_from_config(
     if model_settings == ResumeModelSettings::PreserveExistingThread {
         return ThreadResumeParams {
             thread_id: thread_id.to_string(),
+            service_tier: config.service_tier,
             ..ThreadResumeParams::default()
         };
     }

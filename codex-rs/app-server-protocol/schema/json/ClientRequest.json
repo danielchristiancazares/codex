@@ -3818,7 +3818,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "fast",
+        "priority",
         "flex",
         "default"
       ],
@@ -4133,6 +4133,7 @@
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "type": "object"
@@ -4653,6 +4654,7 @@
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "type": "object"
@@ -4993,6 +4995,9 @@
           "description": "Optional client-supplied analytics source classification for this thread."
         }
       },
+      "required": [
+        "serviceTier"
+      ],
       "type": "object"
     },
     "ThreadStartSource": {
@@ -5200,6 +5205,7 @@
       },
       "required": [
         "input",
+        "serviceTier",
         "threadId"
       ],
       "type": "object"

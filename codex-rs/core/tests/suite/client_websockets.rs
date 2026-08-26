@@ -1003,7 +1003,7 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
         .first()
         .expect("missing prewarm request")
         .body_json();
-    assert_eq!(prewarm["service_tier"].as_str(), Some("fast"));
+    assert_eq!(prewarm["service_tier"], "priority");
 
     server.shutdown().await;
 }

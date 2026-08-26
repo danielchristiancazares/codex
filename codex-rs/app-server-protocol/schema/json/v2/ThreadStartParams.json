@@ -259,7 +259,7 @@
     },
     "ServiceTier": {
       "enum": [
-        "fast",
+        "priority",
         "flex",
         "default"
       ],
@@ -424,6 +424,9 @@
       "description": "Optional client-supplied analytics source classification for this thread."
     }
   },
+  "required": [
+    "serviceTier"
+  ],
   "title": "ThreadStartParams",
   "type": "object"
 }

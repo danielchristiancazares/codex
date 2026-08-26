@@ -180,6 +180,7 @@ command = "tools-mcp-server"
         &HookToolName::new("mcp__tools__Read"),
         &metadata,
         &mcp_config,
+        &config.permissions.effective_permission_profile(),
         McpToolApprovalPolicy::for_server(AppToolApproval::Auto),
     )
     .await;
@@ -196,6 +197,7 @@ command = "tools-mcp-server"
         &HookToolName::new("mcp__tools__Read"),
         &metadata,
         &mcp_config,
+        &config.permissions.effective_permission_profile(),
         McpToolApprovalPolicy::for_server(AppToolApproval::Auto),
     )
     .await;

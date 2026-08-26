@@ -896,7 +896,7 @@ impl Tui {
         scrollback: ScrollbackStrategy,
     ) -> Result<bool> {
         let terminal_height_shrank = screen_size.height < terminal.last_known_screen_size.height;
-        let terminal_height_grew = screen_size.height > terminal.last_known_screen_size.height;
+        let viewport_was_empty = terminal.viewport_area.is_empty();
         let viewport_was_bottom_aligned =
             terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
         let previous_area = terminal.viewport_area;
@@ -912,7 +912,7 @@ impl Tui {
                 scrollback.grow_viewport(terminal, area.top(), screen_size, scroll_by)?;
             }
             area.y = screen_size.height - area.height;
-        } else if terminal_height_grew && viewport_was_bottom_aligned {
+        } else if viewport_was_empty || viewport_was_bottom_aligned {
             area.y = screen_size.height - area.height;
         }
 

@@ -5,6 +5,7 @@ use app_test_support::TestAppServer;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::write_models_cache;
+use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy;
@@ -67,6 +68,19 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     assert_eq!(updated.thread_id, thread.id);
     assert_eq!(updated.thread_settings.model, model_id);
     assert_eq!(updated.thread_settings.service_tier, service_tier);
+
+    send_thread_settings_update(
+        &mut mcp,
+        ThreadSettingsUpdateParams {
+            thread_id: thread.id.clone(),
+            approval_policy: Some(AskForApproval::Never),
+            service_tier,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let unrelated_update = read_thread_settings_updated(&mut mcp).await?;
+    assert_eq!(unrelated_update.thread_settings.service_tier, service_tier);
 
     timeout(
         DEFAULT_TIMEOUT,

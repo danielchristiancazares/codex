@@ -710,7 +710,7 @@ mod thread_processor_behavior_tests {
 
         assert_eq!(
             collect_resume_override_mismatches(&request, &config_snapshot),
-            vec!["service_tier requested=fast active=flex".to_string()]
+            vec!["service_tier requested=priority active=flex".to_string()]
         );
     }
 
