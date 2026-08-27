@@ -164,6 +164,7 @@ async fn slash_rename_generates_editable_title_through_embedded_app_server()
     let thread_id = started.session.thread_id;
     app.replace_chat_widget_with_app_server_thread(
         &mut tui,
+        &mut app_server,
         started,
         ThreadAttachPresentation::SessionLineage,
         /*initial_user_message*/ None,

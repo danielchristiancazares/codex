@@ -44,8 +44,10 @@ pub(crate) fn sandbox_type_from_protocol(
 /// The stream is scoped to one [`ExecProcess`] handle. `Output` events carry
 /// stdout, stderr, or pty bytes. `Exited` reports the process exit status, while
 /// `Closed` means all output streams have ended and no more output events will
-/// arrive. `Failed` is used when the process session cannot continue, for
-/// example because the remote environment connection disconnected.
+/// arrive; its `output_lost` field reports whether the process driver dropped
+/// bytes before closure. `Failed` is used when the process session cannot
+/// continue, for example because the remote environment connection
+/// disconnected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecProcessEvent {
     Output(ProcessOutputChunk),
@@ -56,6 +58,7 @@ pub enum ExecProcessEvent {
     },
     Closed {
         seq: u64,
+        output_lost: bool,
     },
     Failed(String),
 }
@@ -92,7 +95,9 @@ impl ExecProcessEvent {
     pub(crate) fn seq(&self) -> Option<u64> {
         match self {
             ExecProcessEvent::Output(chunk) => Some(chunk.seq),
-            ExecProcessEvent::Exited { seq, .. } | ExecProcessEvent::Closed { seq } => Some(*seq),
+            ExecProcessEvent::Exited { seq, .. } | ExecProcessEvent::Closed { seq, .. } => {
+                Some(*seq)
+            }
             ExecProcessEvent::Failed(_) => None,
         }
     }
@@ -276,7 +281,10 @@ mod tests {
             exit_code: 0,
             sandbox_denied: Some(false),
         });
-        log.publish(ExecProcessEvent::Closed { seq: 3 });
+        log.publish(ExecProcessEvent::Closed {
+            seq: 3,
+            output_lost: false,
+        });
 
         let mut events = log.subscribe();
         let replay = vec![
@@ -298,7 +306,10 @@ mod tests {
                     exit_code: 0,
                     sandbox_denied: Some(false),
                 },
-                ExecProcessEvent::Closed { seq: 3 },
+                ExecProcessEvent::Closed {
+                    seq: 3,
+                    output_lost: false,
+                },
             ]
         );
     }

@@ -93,6 +93,7 @@ impl SessionState {
         let ReadResponse {
             chunks,
             next_seq,
+            output_lost,
             exited,
             exit_code,
             closed,
@@ -182,7 +183,10 @@ impl SessionState {
                 )
             {
                 ordered_events
-                    .insert_pending(ExecProcessEvent::Closed { seq: target_seq })
+                    .insert_pending(ExecProcessEvent::Closed {
+                        seq: target_seq,
+                        output_lost,
+                    })
                     .map_err(ExecServerError::Protocol)?;
             }
 

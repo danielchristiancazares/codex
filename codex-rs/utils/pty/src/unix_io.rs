@@ -6,6 +6,8 @@ use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
 use std::os::fd::RawFd;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
@@ -45,6 +47,7 @@ impl PtyIo {
         stdout_tx: mpsc::Sender<Vec<u8>>,
         mut writer_rx: mpsc::Receiver<Vec<u8>>,
         stdin_close: StdinCloseBehavior,
+        output_lost: Arc<AtomicBool>,
     ) -> (JoinHandle<()>, JoinHandle<()>) {
         let fd = self.fd;
         let reader = Arc::clone(&fd);
@@ -62,7 +65,11 @@ impl PtyIo {
                     }
                     Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                     // Unix PTYs may report EIO rather than EOF when the slave closes.
-                    Err(_) => break,
+                    Err(err) if err.raw_os_error() == Some(libc::EIO) => break,
+                    Err(_) => {
+                        output_lost.store(true, Ordering::Release);
+                        break;
+                    }
                 }
             }
         });

@@ -47,7 +47,6 @@ impl ChatWidget {
         self.config
             .permissions
             .set_workspace_roots(runtime_workspace_roots);
-        self.effective_service_tier = session.service_tier.clone();
         if let Err(err) = self
             .config
             .permissions
@@ -124,8 +123,8 @@ impl ChatWidget {
             SessionConfiguredDisplay::Normal | SessionConfiguredDisplay::PromptEdit
         ) {
             let startup_tooltip_override = self.startup_tooltip_override.take();
-            let show_fast_status = self
-                .should_show_fast_status(&model_for_header, self.effective_service_tier.as_deref());
+            let show_fast_status =
+                self.should_show_fast_status(&model_for_header, self.current_service_tier());
             let session_info_cell = history_cell::new_session_info(
                 &self.config,
                 &model_for_header,

@@ -32,7 +32,7 @@ use crate::types::UriBasedFileOpener;
 use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
-use codex_model_provider_info::AMAZON_BEDROCK_RUNTIME_PROVIDER_ID;
+use codex_model_provider_info::COPILOT_PROVIDER_ID;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
@@ -44,6 +44,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
@@ -64,7 +65,7 @@ use serde_json::Value as JsonValue;
 
 const RESERVED_MODEL_PROVIDER_IDS: [&str; 5] = [
     AMAZON_BEDROCK_PROVIDER_ID,
-    AMAZON_BEDROCK_RUNTIME_PROVIDER_ID,
+    COPILOT_PROVIDER_ID,
     OPENAI_PROVIDER_ID,
     OLLAMA_OSS_PROVIDER_ID,
     LMSTUDIO_OSS_PROVIDER_ID,
@@ -364,9 +365,9 @@ pub struct ConfigToml {
     /// Optionally specify a personality for the model
     pub personality: Option<Personality>,
 
-    /// Optional explicit service tier request id for new turns (for example
-    /// `default`, `priority`, or `flex`; legacy `fast` also works).
-    pub service_tier: Option<String>,
+    /// Service tier for new turns.
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    pub service_tier: ServiceTier,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
@@ -888,10 +889,8 @@ pub fn validate_reserved_model_provider_ids(
     let mut conflicts = model_providers
         .keys()
         .filter(|key| {
-            !matches!(
-                key.as_str(),
-                AMAZON_BEDROCK_PROVIDER_ID | AMAZON_BEDROCK_RUNTIME_PROVIDER_ID
-            ) && RESERVED_MODEL_PROVIDER_IDS.contains(&key.as_str())
+            key.as_str() != AMAZON_BEDROCK_PROVIDER_ID
+                && RESERVED_MODEL_PROVIDER_IDS.contains(&key.as_str())
         })
         .map(|key| format!("`{key}`"))
         .collect::<Vec<_>>();
@@ -912,14 +911,11 @@ pub fn validate_model_providers(
 ) -> Result<(), String> {
     validate_reserved_model_provider_ids(model_providers)?;
     for (key, provider) in model_providers {
-        if !matches!(
-            key.as_str(),
-            AMAZON_BEDROCK_PROVIDER_ID | AMAZON_BEDROCK_RUNTIME_PROVIDER_ID
-        ) {
+        if key != AMAZON_BEDROCK_PROVIDER_ID {
             if provider.aws.is_some() {
                 return Err(format!(
                     "model_providers.{key}: provider aws is only supported for \
-`{AMAZON_BEDROCK_PROVIDER_ID}` or `{AMAZON_BEDROCK_RUNTIME_PROVIDER_ID}`"
+`{AMAZON_BEDROCK_PROVIDER_ID}`"
                 ));
             }
             if provider.name.trim().is_empty() {
@@ -945,10 +941,6 @@ where
     validate_model_providers(&model_providers).map_err(serde::de::Error::custom)?;
     Ok(model_providers)
 }
-
-#[cfg(test)]
-#[path = "bedrock_runtime_tests.rs"]
-mod bedrock_runtime_tests;
 
 pub fn validate_oss_provider(provider: &str) -> std::io::Result<()> {
     match provider {
@@ -1032,6 +1024,23 @@ command = "   "
             err.to_string().contains(
                 "model_providers.amazon-bedrock: provider auth.command must not be empty"
             )
+        );
+    }
+
+    #[test]
+    fn copilot_provider_id_is_reserved() {
+        let err = toml::from_str::<ConfigToml>(
+            r#"
+[model_providers.copilot]
+name = "lookalike"
+base_url = "https://example.com"
+"#,
+        )
+        .expect_err("Copilot provider ID should be reserved");
+
+        assert!(
+            err.to_string()
+                .contains("reserved built-in provider IDs: `copilot`")
         );
     }
 }

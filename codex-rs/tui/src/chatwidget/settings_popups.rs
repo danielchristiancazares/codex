@@ -4,6 +4,7 @@
 //! orchestration module without changing their event wiring.
 
 use super::*;
+use codex_protocol::config_types::ServiceTier;
 
 impl ChatWidget {
     pub(super) fn open_theme_picker(&mut self) {
@@ -55,7 +56,7 @@ impl ChatWidget {
                         /*model*/ None,
                         /*effort*/ None,
                         /*summary*/ None,
-                        /*service_tier*/ None,
+                        /*service_tier*/ ServiceTier::Default,
                         /*collaboration_mode*/ None,
                         Some(personality),
                     )));

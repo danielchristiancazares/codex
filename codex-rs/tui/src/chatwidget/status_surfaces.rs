@@ -668,7 +668,7 @@ impl ChatWidget {
     /// git metadata.
     pub(super) fn status_line_value_for_item(&mut self, item: StatusLineItem) -> Option<String> {
         match item {
-            StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
+            StatusLineItem::ModelName => Some(format_model_status_label(self.model_display_name())),
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
@@ -713,7 +713,7 @@ impl ChatWidget {
                 .map(|remaining| format!("Context {remaining}% left")),
             StatusLineItem::ContextUsed => self
                 .status_line_context_used_percent()
-                .map(|used| format!("Context {used}% used")),
+                .map(|used| format!("Context used {used}%")),
             StatusLineItem::FiveHourLimit => {
                 let (window, is_secondary) = self
                     .rate_limit_snapshots_by_limit_id
@@ -766,7 +766,7 @@ impl ChatWidget {
                 })
                 .is_none_or(|preset| preset.supports_fast_mode())
                 .then(|| {
-                    if self.current_service_tier() == Some(ServiceTier::Fast.request_value()) {
+                    if self.current_service_tier() == ServiceTier::Fast {
                         "Fast on".to_string()
                     } else {
                         "Fast off".to_string()
@@ -896,7 +896,7 @@ impl ChatWidget {
                 .status_line_value_for_item(StatusLineItem::FastMode)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
-                self.model_display_name().to_string(),
+                format_model_status_label(self.model_display_name()),
                 /*max_chars*/ 32,
             )),
             TerminalTitleItem::ModelWithReasoning => Some(Self::truncate_terminal_title_part(
@@ -919,17 +919,17 @@ impl ChatWidget {
     fn model_with_reasoning_display_name(&self) -> String {
         let label = self.reasoning_display_name();
         let service_tier_label = self
-            .current_service_tier()
-            .and_then(|service_tier| {
-                self.current_model_service_tier_commands()
-                    .into_iter()
-                    .find(|tier| tier.id == service_tier)
-                    .map(|tier| tier.name)
-            })
+            .current_model_service_tier_commands()
+            .into_iter()
+            .find(|tier| tier.tier == self.current_service_tier())
+            .map(|tier| crate::text_formatting::capitalize_first(&tier.name))
             .filter(|_| self.has_chatgpt_account)
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();
-        format!("{} {label}{service_tier_label}", self.model_display_name())
+        format!(
+            "{} {label}{service_tier_label}",
+            format_model_status_label(self.model_display_name())
+        )
     }
 
     /// Computes the compact runtime status label used by word-based status items.
@@ -1040,6 +1040,21 @@ impl ChatWidget {
         truncated.push_str("...");
         truncated
     }
+}
+
+fn format_model_status_label(model: &str) -> String {
+    let Some(suffix) = model
+        .strip_prefix("gpt-")
+        .or_else(|| model.strip_prefix("GPT-"))
+    else {
+        return model.to_string();
+    };
+    let suffix = suffix
+        .split('-')
+        .map(crate::text_formatting::capitalize_first)
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("GPT {suffix}")
 }
 
 fn five_hour_status_window(

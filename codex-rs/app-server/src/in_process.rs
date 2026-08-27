@@ -146,7 +146,7 @@ pub struct InProcessStartArgs {
     pub thread_config_loader: Arc<dyn ThreadConfigLoader>,
     /// Feedback sink used by app-server/core telemetry and logs.
     pub feedback: CodexFeedback,
-    /// SQLite tracing layer used to flush recently emitted logs before feedback upload.
+    /// SQLite tracing layer used to persist runtime logs.
     pub log_db: Option<LogDbLayer>,
     /// Process-wide SQLite state handle shared with embedded app-server consumers.
     pub state_db: Option<StateDbHandle>,

@@ -14,7 +14,6 @@ use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::BaseInstructionsProvenance;
@@ -56,10 +55,31 @@ use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use test_case::test_case;
 use wiremock::MockServer;
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "test values name the observed routing behavior"
+)]
+enum RequestRouting {
+    #[default]
+    StandardRouting,
+    #[serde(rename = "priority")]
+    FastRouting,
+    #[serde(rename = "flex")]
+    FlexRouting,
+}
+
+#[derive(Deserialize)]
+struct RequestRoutingSnapshot {
+    #[serde(default)]
+    service_tier: RequestRouting,
+}
 
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> TurnInputRequest {
     let (sandbox_policy, permission_profile) =
@@ -131,7 +151,7 @@ fn test_model_info(
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: ServiceTier::Default,
         upgrade: None,
         model_messages: None,
         include_skills_usage_instructions: false,
@@ -613,7 +633,7 @@ async fn settings_update_during_active_turn_applies_to_next_turn_only() -> Resul
             model: Some("gpt-5.4".to_string()),
             effort: Some(Some(ReasoningEffort::High)),
             summary: Some(ReasoningSummary::Detailed),
-            service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+            service_tier: Some(Some(ServiceTier::Fast)),
             approval_policy: Some(AskForApproval::Never),
             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
             ..Default::default()
@@ -684,6 +704,57 @@ async fn settings_update_during_active_turn_applies_to_next_turn_only() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn service_tier_is_resolved_against_each_turn_model() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![sse_completed("resp-1"), sse_completed("resp-2")],
+    )
+    .await;
+    let mut builder = test_codex()
+        .with_model("gpt-5.4-mini")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::FastMode)
+                .expect("test config should allow Fast mode");
+            config.model_catalog =
+                Some(bundled_models_response().expect("bundled models catalog should deserialize"));
+            config.service_tier = ServiceTier::Fast;
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_text_turn("unsupported fast turn").await?;
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        ThreadSettingsOverrides {
+            model: Some("gpt-5.4".to_string()),
+            service_tier: Some(Some(ServiceTier::Fast)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    test.submit_text_turn("supported fast turn").await?;
+
+    let request_routing = response_mock
+        .requests()
+        .into_iter()
+        .map(|request| serde_json::from_value::<RequestRoutingSnapshot>(request.body_json()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|snapshot| snapshot.service_tier)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_routing,
+        vec![RequestRouting::StandardRouting, RequestRouting::FastRouting,]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -696,9 +767,9 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
 
     let test = test_codex().build(&server).await?;
 
-    test.submit_turn_with_service_tier("fast turn", Some(ServiceTier::Fast.request_value()))
+    test.submit_turn_with_service_tier("fast turn", ServiceTier::Fast)
         .await?;
-    test.submit_turn_with_service_tier("standard turn", /*service_tier*/ None)
+    test.submit_turn_with_service_tier("standard turn", ServiceTier::Default)
         .await?;
 
     let requests = resp_mock.requests();
@@ -707,7 +778,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let first_body = requests[0].body_json();
     let second_body = requests[1].body_json();
 
-    assert_eq!(first_body["service_tier"].as_str(), Some("priority"));
+    assert_eq!(first_body["service_tier"], "priority");
     assert_eq!(second_body.get("service_tier"), None);
 
     Ok(())
@@ -726,7 +797,7 @@ async fn flex_service_tier_is_applied_to_http_turn() -> Result<()> {
         default_input_modalities(),
     );
     flex_model.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Flex.request_value().to_string(),
+        id: ServiceTier::Flex,
         name: "flex".to_string(),
         description: "Flexible processing.".to_string(),
     }];
@@ -741,86 +812,13 @@ async fn flex_service_tier_is_applied_to_http_turn() -> Result<()> {
         });
     let test = builder.build(&server).await?;
 
-    test.submit_turn_with_service_tier("flex turn", Some(ServiceTier::Flex.request_value()))
+    test.submit_turn_with_service_tier("flex turn", ServiceTier::Flex)
         .await?;
 
     let request = resp_mock.single_request();
     let body = request.body_json();
     assert_eq!(body["service_tier"].as_str(), Some("flex"));
 
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsupported_service_tier_is_omitted_from_http_turn() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let model_slug = "test-no-tier-model";
-    let model = test_model_info(
-        model_slug,
-        model_slug,
-        "no service tiers",
-        default_input_modalities(),
-    );
-    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
-
-    let mut builder = test_codex()
-        .with_model(model_slug)
-        .with_config(move |config| {
-            config.model_catalog = Some(ModelsResponse {
-                models: vec![model],
-            });
-        });
-    let test = builder.build(&server).await?;
-
-    test.submit_turn_with_service_tier("fast turn", Some(ServiceTier::Fast.request_value()))
-        .await?;
-
-    let request = resp_mock.single_request();
-    let body = request.body_json();
-    assert_eq!(body.get("service_tier"), None);
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsupported_configured_service_tier_warns_at_session_start() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let model_slug = "test-no-tier-model";
-    let model = test_model_info(
-        model_slug,
-        model_slug,
-        "no service tiers",
-        default_input_modalities(),
-    );
-    let mut builder = test_codex()
-        .with_model(model_slug)
-        .with_config(move |config| {
-            config.service_tier = Some(ServiceTier::Flex.request_value().to_string());
-            config.model_catalog = Some(ModelsResponse {
-                models: vec![model],
-            });
-        });
-    let test = builder.build(&server).await?;
-
-    let warning = wait_for_event(&test.codex, |event| {
-        matches!(
-            event,
-            EventMsg::Warning(warning)
-                if warning.message.contains("will be omitted from requests")
-        )
-    })
-    .await;
-    let EventMsg::Warning(warning) = warning else {
-        unreachable!("wait_for_event matched a warning")
-    };
-    assert_eq!(
-        warning.message,
-        "Configured service tier `flex` is not advertised as supported for model `test-no-tier-model` and will be omitted from requests."
-    );
     Ok(())
 }
 
@@ -837,11 +835,11 @@ async fn default_service_tier_override_is_omitted_from_http_turn() -> Result<()>
         default_input_modalities(),
     );
     model.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Fast.request_value().to_string(),
+        id: ServiceTier::Fast,
         name: "fast".to_string(),
         description: "Fast processing.".to_string(),
     }];
-    model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    model.default_service_tier = ServiceTier::Fast;
     let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
 
     let mut builder = test_codex()
@@ -853,46 +851,7 @@ async fn default_service_tier_override_is_omitted_from_http_turn() -> Result<()>
         });
     let test = builder.build(&server).await?;
 
-    test.submit_turn_with_service_tier("default turn", Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE))
-        .await?;
-
-    let request = resp_mock.single_request();
-    let body = request.body_json();
-    assert_eq!(body.get("service_tier"), None);
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn null_service_tier_override_is_omitted_from_http_turn_with_catalog_default() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let model_slug = "test-null-default-tier-model";
-    let mut model = test_model_info(
-        model_slug,
-        model_slug,
-        "has catalog default service tier",
-        default_input_modalities(),
-    );
-    model.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Fast.request_value().to_string(),
-        name: "fast".to_string(),
-        description: "Fast processing.".to_string(),
-    }];
-    model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
-    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
-
-    let mut builder = test_codex()
-        .with_model(model_slug)
-        .with_config(move |config| {
-            config.model_catalog = Some(ModelsResponse {
-                models: vec![model],
-            });
-        });
-    let test = builder.build(&server).await?;
-
-    test.submit_turn_with_service_tier("standard turn", /*service_tier*/ None)
+    test.submit_turn_with_service_tier("default turn", ServiceTier::Default)
         .await?;
 
     let request = resp_mock.single_request();
@@ -1367,7 +1326,7 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: ServiceTier::Default,
         upgrade: None,
         model_messages: None,
         include_skills_usage_instructions: false,

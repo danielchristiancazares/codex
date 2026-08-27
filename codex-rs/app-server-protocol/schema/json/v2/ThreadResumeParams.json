@@ -1321,6 +1321,22 @@
       ],
       "type": "string"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SortDirection": {
       "enum": [
         "asc",
@@ -1476,16 +1492,19 @@
       ]
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Complete routing selection for the resumed thread."
     },
     "threadId": {
       "type": "string"
     }
   },
   "required": [
+    "serviceTier",
     "threadId"
   ],
   "title": "ThreadResumeParams",

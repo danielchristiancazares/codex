@@ -72,6 +72,7 @@ where
 
     viewport.y -= previous_rows;
     terminal.clear_after_position(Position::new(/*x*/ 0, viewport.y))?;
+    terminal.note_history_rows_removed(previous_rows);
     terminal.set_viewport_area(viewport);
     terminal.invalidate_viewport();
     insert_history_hyperlink_lines_with_mode_and_wrap_policy(

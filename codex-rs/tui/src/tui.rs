@@ -46,6 +46,7 @@ pub(crate) use self::input_boundary::discard_pending_terminal_input;
 #[cfg(all(test, unix))]
 use self::input_boundary::terminal_input_is_readable;
 use crate::custom_terminal;
+use crate::custom_terminal::InlineViewportState;
 use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::notifications::DesktopNotificationBackend;
@@ -591,7 +592,7 @@ pub struct Tui {
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
-    alt_saved_viewport: Option<ratatui::layout::Rect>,
+    alt_saved_viewport: Option<InlineViewportState>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
     // True when overlay alt-screen UI is active
@@ -836,7 +837,7 @@ impl Tui {
         // Enable "alternate scroll" so terminals may translate wheel to arrows
         let _ = execute!(self.terminal.backend_mut(), EnableAlternateScroll);
         if let Ok(size) = self.terminal.size() {
-            self.alt_saved_viewport = Some(self.terminal.viewport_area);
+            self.alt_saved_viewport = Some(self.terminal.inline_viewport_state());
             self.terminal.resize(size)?;
             self.terminal.set_viewport_area(ratatui::layout::Rect::new(
                 0,
@@ -859,7 +860,7 @@ impl Tui {
         let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         if let Some(saved) = self.alt_saved_viewport.take() {
-            self.terminal.set_viewport_area(saved);
+            self.terminal.restore_inline_viewport_state(saved);
         }
         self.alt_screen_active.store(false, Ordering::Relaxed);
         Ok(())
@@ -905,17 +906,21 @@ impl Tui {
 
     /// Resize the inline viewport for the resize-reflow path.
     ///
-    /// Unlike the legacy draw path, this path does not scroll rows above the viewport when the
-    /// terminal shrinks. Resize reflow owns rebuilding those rows from transcript source, so
-    /// scrolling here would move the viewport once and then replay history into the wrong row.
-    fn update_inline_viewport_for_resize_reflow(
-        terminal: &mut Terminal,
+    /// Unlike the legacy draw path, a physical terminal resize leaves rows above the viewport for
+    /// source-backed transcript reflow. When the terminal size is stable and only live content
+    /// shrinks, the tracked visible history tail moves down with the bottom-docked viewport.
+    fn update_inline_viewport_for_resize_reflow<B>(
+        terminal: &mut CustomTerminal<B>,
         height: u16,
         screen_size: Size,
         scrollback: ScrollbackStrategy,
-    ) -> Result<bool> {
+    ) -> Result<bool>
+    where
+        B: Backend<Error = io::Error> + Write,
+    {
         let terminal_height_shrank = screen_size.height < terminal.last_known_screen_size.height;
-        let terminal_height_grew = screen_size.height > terminal.last_known_screen_size.height;
+        let terminal_size_changed = screen_size != terminal.last_known_screen_size;
+        let viewport_was_empty = terminal.viewport_area.is_empty();
         let viewport_was_bottom_aligned =
             terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
         let previous_area = terminal.viewport_area;
@@ -931,12 +936,22 @@ impl Tui {
                 scrollback.grow_viewport(terminal, area.top(), screen_size, scroll_by)?;
             }
             area.y = screen_size.height - area.height;
-        } else if terminal_height_grew && viewport_was_bottom_aligned {
+        } else if viewport_was_empty || viewport_was_bottom_aligned {
             area.y = screen_size.height - area.height;
         }
 
         if area != terminal.viewport_area {
-            let clear_position = Position::new(/*x*/ 0, previous_area.y.min(area.y));
+            let history_tail_moved = if terminal_size_changed {
+                false
+            } else {
+                scrollback.dock_sparse_history_tail(terminal, previous_area.top(), area.top())?
+            };
+            let clear_y = if history_tail_moved {
+                area.y
+            } else {
+                previous_area.y.min(area.y)
+            };
+            let clear_position = Position::new(/*x*/ 0, clear_y);
             terminal.set_viewport_area(area);
             terminal.clear_after_position(clear_position)?;
             needs_full_repaint = true;
@@ -1034,7 +1049,7 @@ impl Tui {
                 let area = terminal.viewport_area;
                 let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
                     self.alt_saved_viewport
-                        .map(|r| r.bottom().saturating_sub(1))
+                        .map(|state| state.area.bottom().saturating_sub(1))
                         .unwrap_or_else(|| area.bottom().saturating_sub(1))
                 } else {
                     area.bottom().saturating_sub(1)
@@ -1158,7 +1173,7 @@ impl Tui {
                 let area = terminal.viewport_area;
                 let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
                     self.alt_saved_viewport
-                        .map(|r| r.bottom().saturating_sub(1))
+                        .map(|state| state.area.bottom().saturating_sub(1))
                         .unwrap_or_else(|| area.bottom().saturating_sub(1))
                 } else {
                     area.bottom().saturating_sub(1)

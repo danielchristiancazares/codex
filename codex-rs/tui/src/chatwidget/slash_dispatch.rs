@@ -171,7 +171,6 @@ impl ChatWidget {
                     self.request_redraw();
                     return;
                 }
-                // Step 1: pick a category (UI built in feedback_view)
                 let params =
                     crate::bottom_pane::feedback_selection_params(self.app_event_tx.clone());
                 self.bottom_pane.show_selection_view(params);
@@ -296,6 +295,10 @@ impl ChatWidget {
             }
             SlashCommand::Model => {
                 self.open_model_popup();
+                self.defer_input_until_settings_applied();
+            }
+            SlashCommand::Provider => {
+                self.open_provider_popup();
                 self.defer_input_until_settings_applied();
             }
             SlashCommand::Personality => {
@@ -1167,6 +1170,7 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
+            | SlashCommand::Provider
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal

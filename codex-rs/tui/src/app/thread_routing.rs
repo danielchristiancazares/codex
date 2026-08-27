@@ -1754,7 +1754,7 @@ impl App {
                 self.chat_widget.handle_history_entry_response(event)
             }
             ThreadBufferedEvent::FeedbackSubmission(event) => {
-                self.handle_feedback_thread_event(event);
+                self.handle_feedback_thread_event(event)
             }
         }
     }

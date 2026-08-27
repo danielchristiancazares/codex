@@ -204,6 +204,13 @@ async fn returns_scanned_full_history_at_bof_without_checkpoint() {
             turn_complete("turn-1"),
         ],
     );
+    let token_count_line = r#"{"timestamp":"2025-01-03T13:00:02Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":null,"limit_name":null,"primary":{"used_percent":0.0,"window_minutes":60,"resets_at":1800000000},"secondary":{"used_percent":12.5,"window_minutes":10080,"resets_at":1800100000},"credits":null,"individual_limit":null,"spend_control_reached":null,"plan_type":null,"rate_limit_reached_type":null}}}"#;
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(path.as_path())
+        .expect("open session file");
+    writeln!(file, "{token_count_line}").expect("append float-bearing rollout line");
+    drop(file);
 
     assert_reverse_scan_matches_full_history(home.path(), path.as_path()).await;
 }

@@ -18,8 +18,9 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use codex_config::types::Personality;
 use codex_core::test_support::all_model_presets;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
+use codex_protocol::config_types::ServiceTier;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -38,7 +39,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
     write_models_cache(codex_home.path())?;
-    let (model_id, service_tier_id) = service_tier_model_and_tier_id()?;
+    let (model_id, service_tier) = service_tier_model_and_tier()?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -51,7 +52,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
         ThreadSettingsUpdateParams {
             thread_id: thread.id.clone(),
             model: Some(model_id.clone()),
-            service_tier: Some(Some(service_tier_id.clone())),
+            service_tier,
             ..Default::default()
         },
     )
@@ -61,15 +62,25 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
         "settings-only update should not start a model request"
     );
 
-    start_text_turn(&mut mcp, thread.id.clone()).await?;
-
     let updated = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(updated.thread_id, thread.id);
     assert_eq!(updated.thread_settings.model, model_id);
-    assert_eq!(
-        updated.thread_settings.service_tier.as_deref(),
-        Some(service_tier_id.as_str())
-    );
+    assert_eq!(updated.thread_settings.service_tier, service_tier);
+
+    send_thread_settings_update(
+        &mut mcp,
+        ThreadSettingsUpdateParams {
+            thread_id: thread.id.clone(),
+            personality: Some(Personality::Friendly),
+            service_tier,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let unrelated_update = read_thread_settings_updated(&mut mcp).await?;
+    assert_eq!(unrelated_update.thread_settings.service_tier, service_tier);
+
+    start_text_turn(&mut mcp, thread.id.clone(), service_tier).await?;
 
     timeout(
         DEFAULT_TIMEOUT,
@@ -84,8 +95,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     assert!(
         request_bodies.iter().any(|body| {
             body.get("model").and_then(Value::as_str) == Some(model_id.as_str())
-                && body.get("service_tier").and_then(Value::as_str)
-                    == Some(service_tier_id.as_str())
+                && body.get("service_tier") == Some(&serde_json::json!(service_tier))
         }),
         "future turn did not use updated model/service tier: {request_bodies:#?}"
     );
@@ -132,7 +142,7 @@ async fn thread_settings_update_cwd_retargets_default_environment() -> Result<()
     let updated = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(updated.thread_settings.cwd.as_path(), workspace.path());
 
-    start_text_turn(&mut mcp, thread.id).await?;
+    start_text_turn(&mut mcp, thread.id, ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -178,7 +188,7 @@ async fn thread_settings_update_while_turn_is_active_emits_notification() -> Res
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;
     let thread = start_thread(&mut mcp).await?.thread;
-    start_text_turn(&mut mcp, thread.id.clone()).await?;
+    start_text_turn(&mut mcp, thread.id.clone(), ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/started"),
@@ -208,7 +218,7 @@ async fn thread_settings_update_while_turn_is_active_emits_notification() -> Res
 }
 
 #[tokio::test]
-async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
+async fn thread_settings_update_default_service_tier_resets_selection() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(vec![
         create_final_assistant_message_sse_response("done")?,
     ])
@@ -216,7 +226,7 @@ async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
     write_models_cache(codex_home.path())?;
-    let (model_id, service_tier_id) = service_tier_model_and_tier_id()?;
+    let (model_id, service_tier) = service_tier_model_and_tier()?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -229,7 +239,7 @@ async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
         ThreadSettingsUpdateParams {
             thread_id: thread.id.clone(),
             model: Some(model_id.clone()),
-            service_tier: Some(Some(service_tier_id.clone())),
+            service_tier,
             ..Default::default()
         },
     )
@@ -237,16 +247,13 @@ async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
 
     let set_updated = read_thread_settings_updated(&mut mcp).await?;
     assert_eq!(set_updated.thread_id, thread.id);
-    assert_eq!(
-        set_updated.thread_settings.service_tier.as_deref(),
-        Some(service_tier_id.as_str())
-    );
+    assert_eq!(set_updated.thread_settings.service_tier, service_tier);
 
     send_thread_settings_update(
         &mut mcp,
         ThreadSettingsUpdateParams {
             thread_id: thread.id.clone(),
-            service_tier: Some(None),
+            service_tier: ServiceTier::Default,
             ..Default::default()
         },
     )
@@ -256,11 +263,11 @@ async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
     assert_eq!(clear_updated.thread_id, thread.id);
     assert_eq!(clear_updated.thread_settings.model, model_id);
     assert_eq!(
-        clear_updated.thread_settings.service_tier.as_deref(),
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE)
+        clear_updated.thread_settings.service_tier,
+        ServiceTier::Default
     );
 
-    start_text_turn(&mut mcp, thread.id).await?;
+    start_text_turn(&mut mcp, thread.id, ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -371,7 +378,11 @@ async fn send_thread_settings_update(
     Ok(())
 }
 
-async fn start_text_turn(mcp: &mut TestAppServer, thread_id: String) -> Result<()> {
+async fn start_text_turn(
+    mcp: &mut TestAppServer,
+    thread_id: String,
+    service_tier: ServiceTier,
+) -> Result<()> {
     let turn_request_id = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id,
@@ -379,6 +390,7 @@ async fn start_text_turn(mcp: &mut TestAppServer, thread_id: String) -> Result<(
                 text: "hello".to_string(),
                 text_elements: Vec::new(),
             }],
+            service_tier: Some(Some(service_tier)),
             ..Default::default()
         })
         .await?;
@@ -435,12 +447,12 @@ async fn received_response_bodies(server: &wiremock::MockServer) -> Result<Vec<V
     Ok(bodies)
 }
 
-fn service_tier_model_and_tier_id() -> Result<(String, String)> {
+fn service_tier_model_and_tier() -> Result<(String, ServiceTier)> {
     let model = all_model_presets()
         .iter()
         .find(|preset| preset.show_in_picker && !preset.service_tiers.is_empty())
         .context("bundled model catalog should include a picker model with service tiers")?;
-    Ok((model.id.clone(), model.service_tiers[0].id.clone()))
+    Ok((model.id.clone(), model.service_tiers[0].id))
 }
 
 fn create_config_toml(codex_home: &std::path::Path, server_uri: &str) -> std::io::Result<()> {

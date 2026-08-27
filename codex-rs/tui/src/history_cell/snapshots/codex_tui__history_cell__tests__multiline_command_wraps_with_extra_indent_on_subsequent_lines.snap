@@ -1,8 +1,6 @@
 ---
-source: tui/src/history_cell.rs
+source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
-• Ran set -o pipefail
-  │ cargo test -p codex-tui
-  │ --quiet
-  └ (no output)
+• Ran 1 command
+  └ set -o pipefail cargo t…

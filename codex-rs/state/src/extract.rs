@@ -178,6 +178,7 @@ mod tests {
     use codex_protocol::config_types::CollaborationMode;
     use codex_protocol::config_types::ModeKind;
     use codex_protocol::config_types::ReasoningSummary;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::config_types::Settings;
     use codex_protocol::items::TurnItem;
     use codex_protocol::items::UserMessageItem;
@@ -603,7 +604,7 @@ mod tests {
                 thread_settings: ThreadSettingsSnapshot {
                     model: "gpt-5.2-codex".to_string(),
                     model_provider_id: "updated-provider".to_string(),
-                    service_tier: None,
+                    service_tier: ServiceTier::Default,
                     approval_policy: AskForApproval::Never,
                     approvals_reviewer: ApprovalsReviewer::User,
                     permission_profile: permission_profile.clone(),

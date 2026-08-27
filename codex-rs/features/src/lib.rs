@@ -14,8 +14,11 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use toml::Table;
 
+mod fast_mode;
 mod feature_configs;
 mod legacy;
+pub use fast_mode::AcceleratedRoutingGrant;
+pub use fast_mode::FastModeRoutingPolicy;
 pub use feature_configs::CodeModeConfigToml;
 pub use feature_configs::CodeModeHostConfigToml;
 pub use feature_configs::CurrentTimeReminderConfigToml;
@@ -313,6 +316,8 @@ pub enum Feature {
     Personality,
     /// Enable native artifact tools.
     Artifact,
+    /// Retain bounded unified-exec streams outside model history.
+    ExecOutputArtifacts,
     /// Enable Fast mode selection in the TUI and request layer.
     FastMode,
     /// Enable explicitly requested model changes for later step captures.
@@ -1532,6 +1537,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::Artifact,
         key: "artifact",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ExecOutputArtifacts,
+        key: "exec_output_artifacts",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },

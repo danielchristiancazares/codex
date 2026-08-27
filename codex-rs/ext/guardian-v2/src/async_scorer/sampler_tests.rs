@@ -12,6 +12,7 @@ use codex_model_provider::create_model_provider;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::ResponseItemId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
@@ -148,7 +149,7 @@ fn sampler_config(base_url: String) -> LunaSamplerConfig {
         thread_id: "thread-1".to_owned(),
         originator: Some("guardian-v2-test".to_owned()),
         free_guardian: false,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     }
@@ -304,7 +305,7 @@ async fn classifier_uses_free_endpoint_only_with_codex_backend_auth() -> Result<
             Some(AuthManager::from_auth_for_testing(auth)),
         );
         config.free_guardian = free_guardian;
-        config.service_tier = Some("priority".to_owned());
+        config.service_tier = ServiceTier::Fast;
         let sampler = connect_sampler(config).await?;
 
         assert_eq!(sampler.sample(sample_request("turn-1")).await?, "low");
@@ -375,7 +376,7 @@ async fn preconnected_sampler_reuses_authenticated_websocket_for_classifications
         thread_id: "thread-1".to_owned(),
         originator: Some("guardian-v2-test".to_owned()),
         free_guardian: false,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     })
@@ -599,7 +600,7 @@ async fn sampler_returns_classification_token_before_terminal_response_events() 
         thread_id: "thread-1".to_owned(),
         originator: None,
         free_guardian: false,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         luna_compaction_hash: None,
         metrics: None,
     })

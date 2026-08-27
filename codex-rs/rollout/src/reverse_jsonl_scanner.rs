@@ -73,6 +73,14 @@ where
     where
         T: DeserializeOwned,
     {
+        self.scan_next_with(|bytes| serde_json::from_slice::<T>(bytes))
+    }
+
+    /// Scans the next nonblank record with the supplied JSON decoder.
+    pub fn scan_next_with<T>(
+        &mut self,
+        mut decode: impl FnMut(&[u8]) -> serde_json::Result<T>,
+    ) -> io::Result<Option<ScanOutcome<T>>> {
         loop {
             if self.chunk_position == 0 {
                 if self.next_chunk_end == 0 {
@@ -80,7 +88,7 @@ where
                         self.discarding_oversized_record = false;
                         return Ok(None);
                     }
-                    return Ok(self.finish_record());
+                    return Ok(self.finish_record_with(&mut decode));
                 }
 
                 let read_size = usize::try_from(self.next_chunk_end.min(READ_CHUNK_SIZE as u64))
@@ -109,7 +117,7 @@ where
                     self.discarding_oversized_record = false;
                     continue;
                 }
-                if let Some(outcome) = self.finish_record() {
+                if let Some(outcome) = self.finish_record_with(&mut decode) {
                     return Ok(Some(outcome));
                 }
             } else {
@@ -128,15 +136,15 @@ where
         }
     }
 
-    fn finish_record<T>(&mut self) -> Option<ScanOutcome<T>>
-    where
-        T: DeserializeOwned,
-    {
+    fn finish_record_with<T>(
+        &mut self,
+        decode: &mut impl FnMut(&[u8]) -> serde_json::Result<T>,
+    ) -> Option<ScanOutcome<T>> {
         self.record_reversed.reverse();
         let outcome = if self.record_reversed.iter().all(u8::is_ascii_whitespace) {
             None
         } else {
-            Some(match serde_json::from_slice::<T>(&self.record_reversed) {
+            Some(match decode(&self.record_reversed) {
                 Ok(value) => ScanOutcome::Parsed(value),
                 Err(error) => ScanOutcome::Rejected(error),
             })

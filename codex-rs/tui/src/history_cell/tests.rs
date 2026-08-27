@@ -1,6 +1,7 @@
 //! Coverage for history-cell rendering, wrapping, and transcript behavior.
 
 use super::*;
+use crate::diff_model::FileChange;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCall;
 use crate::exec_cell::ExecCell;
@@ -9,6 +10,7 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::line_truncation::line_width;
 use crate::render::highlight::MAX_HIGHLIGHT_LINE_BYTES;
 use crate::session_state::ThreadSessionState;
+use crate::test_support::sanitize_codex_version;
 use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::McpAuthStatus;
@@ -17,6 +19,7 @@ use codex_otel::RuntimeMetricTotals;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::UnexpectedResponseError;
 use codex_protocol::parse_command::ParsedCommand;
 use dirs::home_dir;
@@ -49,6 +52,10 @@ fn test_cwd() -> PathBuf {
     std::env::temp_dir()
 }
 
+fn render_lines_with_sanitized_codex_version(lines: &[Line<'static>]) -> String {
+    sanitize_codex_version(&render_lines(lines).join("\n"))
+}
+
 #[test]
 fn streaming_agent_tail_blank_line_uses_one_viewport_row() {
     let cell = StreamingAgentTailCell::new(
@@ -65,6 +72,28 @@ fn streaming_agent_tail_blank_line_uses_one_viewport_row() {
 
   second");
     assert_eq!(cell.desired_height(/*width*/ 80), 3);
+}
+
+#[test]
+fn patch_history_summarizes_files_and_keeps_full_transcript() {
+    let patch = diffy::create_patch("old\n", "new\n").to_string();
+    let changes = HashMap::from([(
+        PathBuf::from("src/example.rs"),
+        FileChange::Update {
+            unified_diff: patch,
+            move_path: None,
+        },
+    )]);
+    let cell = new_patch_event(changes, PathBuf::from("/project").as_path());
+
+    let display = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    let transcript = render_lines(&cell.transcript_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!("patch_history_file_summary", display);
+    assert!(!display.contains("old"));
+    assert!(!display.contains("new"));
+    assert!(transcript.contains("old"));
+    assert!(transcript.contains("new"));
 }
 
 fn stdio_server_config(
@@ -338,7 +367,9 @@ fn composite_cell_preserves_child_web_links() {
     let destination = "https://chatgpt.com/codex/settings/usage";
     let cell = CompositeHistoryCell::new(vec![
         Box::new(PlainHistoryCell::new(vec![Line::from("/status")])),
-        Box::new(WebHyperlinkHistoryCell::new(vec![Line::from(destination)])),
+        Box::new(WebHyperlinkHistoryCell::new_hyperlink_lines(vec![
+            crate::terminal_hyperlinks::annotate_web_urls_in_line(Line::from(destination)),
+        ])),
     ]);
 
     let lines = cell.display_hyperlink_lines(/*width*/ 80);
@@ -546,7 +577,7 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         thread_name: None,
         model: model.to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -620,7 +651,7 @@ fn final_message_separator_hides_short_worked_label_and_includes_runtime_metrics
     let rendered = render_lines(&cell.display_lines(/*width*/ 600));
 
     assert_eq!(rendered.len(), 1);
-    assert!(!rendered[0].contains("Worked for"));
+    assert!(rendered[0].contains("Worked for 12s"));
     assert!(rendered[0].contains("Local tools: 3 calls (2.5s)"));
     assert!(rendered[0].contains("Inference: 2 calls (1.2s)"));
     assert!(rendered[0].contains("WebSocket: 1 events send (700ms)"));
@@ -694,7 +725,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
         /*show_fast_status*/ false,
     );
 
-    let rendered = render_transcript(&cell).join("\n");
+    let rendered = sanitize_codex_version(&render_transcript(&cell).join("\n"));
     insta::assert_snapshot!(rendered);
 }
 
@@ -713,7 +744,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
 
     let rendered = render_transcript(&cell).join("\n");
     assert!(!rendered.contains("Model just became available"));
-    assert!(rendered.contains("To get started"));
+    assert!(rendered.contains("Start with a task"));
 }
 
 #[tokio::test]
@@ -1202,7 +1233,7 @@ fn web_search_history_cell_snapshot() {
 fn standalone_unix_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneUnix));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1211,7 +1242,7 @@ fn standalone_unix_update_available_history_cell_snapshot() {
 fn standalone_windows_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneWindows));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1220,7 +1251,7 @@ fn standalone_windows_update_available_history_cell_snapshot() {
 fn pnpm_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::PnpmGlobalLatest));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1708,10 +1739,10 @@ fn session_header_includes_reasoning_level_when_present() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
-    assert!(model_line.contains("gpt-4o high   fast"));
+    assert!(model_line.contains("gpt-4o high · fast"));
     assert!(model_line.contains("/model to change"));
 }
 
@@ -1728,7 +1759,7 @@ fn session_header_hides_fast_status_when_disabled() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
     assert!(model_line.contains("gpt-4o high"));
@@ -1750,7 +1781,11 @@ fn session_header_clamps_to_narrow_width() {
     let lines = cell.display_lines(WIDTH);
     let widths = lines.iter().map(line_width).collect::<Vec<_>>();
 
-    assert_eq!(widths, vec![usize::from(WIDTH); lines.len()]);
+    assert!(
+        widths
+            .iter()
+            .all(|line_width| *line_width <= usize::from(WIDTH))
+    );
     insta::assert_snapshot!(render_lines(&lines).join("\n"));
 }
 
@@ -2278,7 +2313,7 @@ fn user_history_cell_wraps_long_urls_inside_the_message_gutter() {
             line.line
                 .spans
                 .first()
-                .is_some_and(|span| span.content == "  ")
+                .is_some_and(|span| span.content == "│ ")
         }),
         "wrapped URL rows must retain the user-message gutter: {linked_rows:?}"
     );
@@ -2455,7 +2490,7 @@ fn render_uses_wrapping_for_long_url_like_line() {
             if index == 0 {
                 row.strip_prefix("› ").unwrap().trim()
             } else {
-                row.trim()
+                row.trim().strip_prefix("│ ").unwrap()
             }
         })
         .collect::<String>();
@@ -2499,7 +2534,18 @@ fn plan_update_with_note_and_wrapping_snapshot() {
     let cell = new_plan_update(update);
     // Narrow width to force wrapping for both the note and steps
     let lines = cell.display_lines(/*width*/ 32);
-    let rendered = render_lines(&lines).join("\n");
+    let rendered_lines = render_lines(&lines);
+    assert!(
+        rendered_lines.iter().any(|line| line.starts_with("  │   ")),
+        "non-final step continuations should retain the plan rail: {rendered_lines:?}"
+    );
+    assert!(
+        rendered_lines
+            .iter()
+            .any(|line| line.starts_with("      ") && !line.trim().is_empty()),
+        "final-step continuations should align under the step text: {rendered_lines:?}"
+    );
+    let rendered = rendered_lines.join("\n");
     insta::assert_snapshot!(rendered);
 }
 

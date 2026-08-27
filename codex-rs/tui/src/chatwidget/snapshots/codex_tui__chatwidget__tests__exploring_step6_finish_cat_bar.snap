@@ -1,5 +1,6 @@
 ---
-source: tui/src/chatwidget/tests.rs
+source: tui/src/chatwidget/tests/exec_flow.rs
 expression: active_blob(&chat)
 ---
-• Ran 4 commands · ctrl + t to view transcript
+✓ 4 commands completed
+  └ Ctrl+T transcript

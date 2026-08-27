@@ -22,6 +22,7 @@ use codex_app_server_protocol::UserInput;
 use codex_features::Feature;
 use codex_models_manager::bundled_models_response;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
 use core_test_support::responses;
@@ -131,7 +132,7 @@ async fn settings_updates_report_results_and_preserve_the_target_on_saved_thread
         model: Some(MODEL_B.to_string()),
         effort: Some(ReasoningEffort::High),
         summary: Some(ReasoningSummary::Detailed),
-        service_tier: Some(Some("priority".to_string())),
+        service_tier: Some(Some(ServiceTier::Fast)),
     };
     match scenario {
         UpdateScenario::Future => {
@@ -141,7 +142,7 @@ async fn settings_updates_report_results_and_preserve_the_target_on_saved_thread
                     model: patch.model,
                     effort: patch.effort,
                     summary: patch.summary,
-                    service_tier: patch.service_tier,
+                    service_tier: patch.service_tier.flatten().unwrap_or_default(),
                     ..Default::default()
                 })
                 .await?;

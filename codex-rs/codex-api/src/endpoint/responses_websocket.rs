@@ -928,6 +928,7 @@ mod tests {
     use crate::common::ResponseCreateWsRequest;
     use crate::common::ResponsesApiRequest;
     use codex_protocol::ResponseItemId;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
@@ -969,7 +970,7 @@ mod tests {
             stream: true,
             stream_options: None,
             include: vec!["reasoning.encrypted_content".to_string()],
-            service_tier: Some("priority".to_string()),
+            service_tier: ServiceTier::Fast,
             prompt_cache_key: Some("cache-key".to_string()),
             text: None,
             access_programs: Some(
@@ -988,6 +989,7 @@ mod tests {
 
         let mut expected_payload =
             serde_json::to_value(&api_request).expect("serialize responses API request");
+        assert_eq!(expected_payload["service_tier"], "priority");
         expected_payload["type"] = json!("response.create");
         expected_payload["previous_response_id"] = json!("resp-1");
         expected_payload["generate"] = json!(false);

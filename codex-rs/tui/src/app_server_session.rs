@@ -17,7 +17,6 @@ use crate::bottom_pane::FeedbackAudience;
 use crate::dynamic_tools_mcp::DynamicToolMcpServer;
 use crate::dynamic_tools_mcp::ThreadToolTransport;
 use crate::legacy_core::config::Config;
-use crate::service_tier_resolution;
 use crate::session_state::MessageHistoryMetadata;
 use crate::session_state::ThreadSessionState;
 use crate::status::StatusAccountDisplay;
@@ -123,7 +122,7 @@ use codex_config::ConfigLayerSource;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
@@ -176,6 +175,29 @@ pub(crate) enum ThreadHistorySupport {
 
 fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> color_eyre::Report {
     color_eyre::eyre::eyre!("{context}: {err}")
+}
+
+pub(crate) async fn list_models_for_provider_with_request_handle(
+    request_handle: AppServerRequestHandle,
+    model_provider: String,
+) -> Result<Vec<ModelPreset>> {
+    let response = request_handle
+        .request_typed::<ModelListResponse>(ClientRequest::ModelList {
+            request_id: RequestId::String(format!("provider-model-list-{}", Uuid::new_v4())),
+            params: ModelListParams {
+                cursor: None,
+                limit: None,
+                include_hidden: Some(true),
+                model_provider: Some(model_provider),
+            },
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("provider model/list failed", err))?;
+    Ok(response
+        .data
+        .into_iter()
+        .map(model_preset_from_api_model)
+        .collect())
 }
 
 pub(crate) fn is_history_pagination_unsupported(source: &JSONRPCErrorError) -> bool {
@@ -545,6 +567,7 @@ impl AppServerSession {
                             cursor: None,
                             limit: None,
                             include_hidden: Some(true),
+                            model_provider: None,
                         },
                     })
                     .await
@@ -629,10 +652,9 @@ impl AppServerSession {
                     true,
                 )
             }
-            Some(Account::AmazonBedrock { .. }) => {
+            Some(Account::AmazonBedrock { .. }) | None => {
                 (None, None, None, None, FeedbackAudience::External, false)
             }
-            None => (None, None, None, None, FeedbackAudience::External, false),
         };
         Ok(AppServerBootstrap {
             duration: started_at.elapsed(),
@@ -650,6 +672,22 @@ impl AppServerSession {
 
     pub(crate) fn managed_new_thread_defaults(&self) -> Option<&NewThreadModelDefaults> {
         self.managed_new_thread_defaults.as_ref()
+    }
+
+    pub(crate) async fn list_models_for_provider(
+        &mut self,
+        model_provider: String,
+    ) -> Result<Vec<ModelPreset>> {
+        list_models_for_provider_with_request_handle(self.request_handle(), model_provider).await
+    }
+
+    pub(crate) fn set_active_model_catalog(
+        &mut self,
+        default_model: String,
+        available_models: Vec<ModelPreset>,
+    ) {
+        self.default_model = Some(default_model);
+        self.available_models = available_models;
     }
 
     pub(crate) fn supports_paginated_history(&self) -> bool {
@@ -930,28 +968,8 @@ impl AppServerSession {
     }
 
     fn session_config_with_effective_service_tier(&self, config: &Config) -> Config {
-        let Some(model) = config.model.as_deref().or(self.default_model.as_deref()) else {
-            return config.clone();
-        };
         let mut session_config = config.clone();
-        match service_tier_resolution::service_tier_update_for_core(
-            config,
-            model,
-            &self.available_models,
-        ) {
-            Some(Some(service_tier)) => {
-                session_config.service_tier = Some(service_tier);
-                session_config.notices.fast_default_opt_out = None;
-            }
-            Some(None) => {
-                session_config.service_tier = Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string());
-                session_config.notices.fast_default_opt_out = None;
-            }
-            None => {
-                session_config.service_tier = None;
-                session_config.notices.fast_default_opt_out = None;
-            }
-        }
+        session_config.notices.fast_default_opt_out = None;
         session_config
     }
 
@@ -1192,7 +1210,7 @@ impl AppServerSession {
         model: String,
         effort: Option<codex_protocol::openai_models::ReasoningEffort>,
         summary: Option<codex_protocol::config_types::ReasoningSummary>,
-        service_tier: Option<Option<String>>,
+        service_tier: ServiceTier,
         collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
         personality: Option<codex_protocol::config_types::Personality>,
         output_schema: Option<serde_json::Value>,
@@ -1219,7 +1237,7 @@ impl AppServerSession {
                     sandbox_policy,
                     permissions,
                     model: Some(model),
-                    service_tier,
+                    service_tier: Some(Some(service_tier)),
                     service_tier_for_turn: None,
                     effort,
                     summary,
@@ -1597,6 +1615,28 @@ pub(crate) async fn start_thread_with_request_handle(
     Ok(started)
 }
 
+pub(crate) async fn resume_thread_with_request_handle(
+    request_handle: AppServerRequestHandle,
+    config: Config,
+    thread_id: ThreadId,
+    thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<PathBuf>,
+) -> Result<ThreadResumeResponse> {
+    request_handle
+        .request_typed(ClientRequest::ThreadResume {
+            request_id: RequestId::String(format!("startup-thread-resume-{}", Uuid::new_v4())),
+            params: thread_resume_params_from_config(
+                config,
+                thread_id,
+                thread_params_mode,
+                remote_cwd_override.as_deref(),
+                ResumeModelSettings::RestoreFromThread,
+            ),
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("thread/resume failed during TUI bootstrap", err))
+}
+
 pub(crate) fn status_account_display_from_auth_mode(
     auth_mode: Option<AuthMode>,
     plan_type: Option<codex_protocol::account::PlanType>,
@@ -1646,6 +1686,8 @@ fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
         display_name: model.display_name,
         description: model.description,
         model_specialty: model.model_specialty,
+        context_window: model.context_window,
+        max_context_window: model.max_context_window,
         default_reasoning_effort: model.default_reasoning_effort,
         supported_reasoning_efforts: model
             .supported_reasoning_efforts
@@ -1757,13 +1799,6 @@ fn config_request_overrides_from_config(
     Some(overrides)
 }
 
-fn service_tier_override_from_config(config: &Config) -> Option<Option<String>> {
-    config.service_tier.clone().map(Some).or_else(|| {
-        (config.notices.fast_default_opt_out == Some(true))
-            .then(|| Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()))
-    })
-}
-
 fn sandbox_mode_from_permission_profile(
     permission_profile: &PermissionProfile,
     cwd: &std::path::Path,
@@ -1858,7 +1893,7 @@ pub(crate) fn thread_start_params_from_config(
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(config),
-        service_tier: service_tier_override_from_config(config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1887,6 +1922,7 @@ fn thread_resume_params_from_config(
     if model_settings == ResumeModelSettings::PreserveExistingThread {
         return ThreadResumeParams {
             thread_id: thread_id.to_string(),
+            service_tier: config.service_tier,
             ..ThreadResumeParams::default()
         };
     }
@@ -1922,7 +1958,7 @@ fn thread_resume_params_from_config(
         thread_id: thread_id.to_string(),
         model,
         model_provider,
-        service_tier: service_tier_override_from_config(&config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1957,7 +1993,7 @@ fn thread_fork_params_from_config(
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
-        service_tier: service_tier_override_from_config(&config),
+        service_tier: config.service_tier,
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -2189,7 +2225,7 @@ async fn thread_session_state_from_thread_response(
     rollout_path: Option<PathBuf>,
     model: String,
     model_provider_id: String,
-    service_tier: Option<String>,
+    service_tier: ServiceTier,
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
@@ -2276,7 +2312,6 @@ mod tests {
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
     use codex_protocol::models::ManagedFileSystemPermissions;
-    use codex_protocol::openai_models::ModelServiceTier;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -2319,14 +2354,12 @@ mod tests {
                 bootstrap.account_email.as_deref(),
                 bootstrap.auth_mode,
                 bootstrap.plan_type,
-                bootstrap.feedback_audience,
                 bootstrap.has_chatgpt_account,
             ),
             (
                 Some("teammate@openai.com"),
                 Some(TelemetryAuthMode::Chatgpt),
                 Some(codex_protocol::account::PlanType::Plus),
-                FeedbackAudience::OpenAiEmployee,
                 true,
             )
         );
@@ -2387,13 +2420,27 @@ mod tests {
             supported_reasoning_efforts: Vec::new(),
             default_reasoning_effort: ReasoningEffort::Medium,
             input_modalities: Vec::new(),
+            context_window: Some(400_000),
+            max_context_window: Some(922_000),
             supports_personality: false,
             multi_agent_version: None,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
-            default_service_tier: None,
+            default_service_tier: ServiceTier::Default,
             is_default: false,
         }
+    }
+
+    #[test]
+    fn model_preset_from_api_model_preserves_context_windows() {
+        let preset = model_preset_from_api_model(api_model_with_upgrade_retirement_at(
+            /*retirement_at*/ None,
+        ));
+
+        assert_eq!(
+            (preset.context_window, preset.max_context_window),
+            (Some(400_000), Some(922_000))
+        );
     }
 
     #[test]
@@ -3095,7 +3142,7 @@ mod tests {
             .set(WebSearchMode::Disabled)
             .expect("test web search mode should be allowed");
         config.bypass_hook_trust = true;
-        config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+        config.service_tier = ServiceTier::Fast;
         let thread_id = ThreadId::new();
 
         let start = thread_start_params_from_config(
@@ -3118,7 +3165,7 @@ mod tests {
             /*remote_cwd_override*/ None,
         );
 
-        let expected_service_tier = Some(Some(ServiceTier::Fast.request_value().to_string()));
+        let expected_service_tier = ServiceTier::Fast;
         assert_eq!(start.service_tier, expected_service_tier);
         assert_eq!(resume.service_tier, expected_service_tier);
         assert_eq!(fork.service_tier, expected_service_tier);
@@ -3198,15 +3245,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn persisted_resume_does_not_forward_implicit_service_tier() -> Result<()> {
+    async fn startup_resume_request_restores_persisted_history() -> Result<()> {
         let codex_home = tempfile::tempdir().expect("tempdir");
-        let mut config = build_config(&codex_home).await;
-        config.model = Some("gpt-5.4".to_string());
-        config.service_tier = None;
-        config
-            .features
-            .enable(Feature::FastMode)
-            .expect("enable fast mode");
+        let config = build_config(&codex_home).await;
         let thread_id = ThreadId::from_string(
             &create_fake_rollout(
                 codex_home.path(),
@@ -3219,24 +3260,33 @@ mod tests {
             .expect("create source rollout"),
         )?;
         let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
-        let mut preset = crate::test_support::TEST_MODEL_PRESETS
-            .iter()
-            .find(|preset| preset.model == "gpt-5.4")
-            .expect("gpt-5.4 test preset")
-            .clone();
-        preset.service_tiers = vec![ModelServiceTier {
-            id: ServiceTier::Fast.request_value().to_string(),
-            name: "fast".to_string(),
-            description: "Fast tier".to_string(),
-        }];
-        preset.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
-        app_server.available_models = vec![preset];
 
-        let resumed = app_server
-            .resume_thread(config, thread_id, ResumeModelSettings::RestoreFromThread)
-            .await?;
+        let response = resume_thread_with_request_handle(
+            app_server.request_handle(),
+            config.clone(),
+            thread_id,
+            app_server.thread_params_mode(),
+            app_server
+                .remote_cwd_override()
+                .map(std::path::Path::to_path_buf),
+        )
+        .await?;
+        let resumed = app_server.complete_resume_thread(response, &config).await?;
 
-        assert_eq!(resumed.session.service_tier, None);
+        assert_eq!(resumed.session.thread_id, thread_id);
+        assert!(matches!(
+            resumed.turns.as_slice(),
+            [Turn { items, .. }]
+                if matches!(
+                    items.as_slice(),
+                    [codex_app_server_protocol::ThreadItem::UserMessage { content, .. }]
+                        if content == &[UserInput::Text {
+                            text: "Saved user message".to_string(),
+                            text_elements: Vec::new(),
+                        }]
+                )
+        ));
+        assert!(!resumed.blocks_direct_input);
         app_server.shutdown().await?;
         Ok(())
     }
@@ -3639,7 +3689,7 @@ mod tests {
             },
             model: "gpt-5.4".to_string(),
             model_provider: "openai".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             cwd: test_path_buf("/tmp/project").abs(),
             runtime_workspace_roots: vec![
                 test_path_buf("/tmp/project").abs(),
@@ -3782,7 +3832,7 @@ mod tests {
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
             "openai".to_string(),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
@@ -3817,7 +3867,7 @@ mod tests {
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
             "openai".to_string(),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),

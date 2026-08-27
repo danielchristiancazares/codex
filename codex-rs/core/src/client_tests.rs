@@ -4,6 +4,7 @@ use super::ModelClient;
 use super::PendingUnauthorizedRetry;
 use super::Prompt;
 use super::UnauthorizedRecoveryExecution;
+use super::WebsocketSession;
 use super::X_CODEX_INSTALLATION_ID_HEADER;
 use super::X_CODEX_PARENT_THREAD_ID_HEADER;
 use super::X_CODEX_TURN_METADATA_HEADER;
@@ -41,7 +42,7 @@ use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
-use codex_protocol::auth::AuthMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::BaseInstructions;
@@ -93,6 +94,18 @@ use wiremock::matchers::path;
 
 const TEST_CHATGPT_ID_TOKEN: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS9hdXRoIjp7ImNoYXRncHRfdXNlcl9pZCI6InVzZXItMTIzNDUiLCJ1c2VyX2lkIjoidXNlci0xMjM0NSIsImNoYXRncHRfcGxhbl90eXBlIjoicHJvIiwiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudC0xMjMifX0.c2ln";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+#[test]
+fn cached_websocket_connection_is_scoped_to_provider_credential_key() {
+    let session = WebsocketSession {
+        connection_key: Some("copilot-endpoint-1".to_string()),
+        ..WebsocketSession::default()
+    };
+
+    assert!(!session.connection_key_changed(&Some("copilot-endpoint-1".to_string())));
+    assert!(session.connection_key_changed(&Some("copilot-endpoint-2".to_string())));
+    assert!(session.connection_key_changed(&None));
+}
 
 fn test_model_client(session_source: SessionSource) -> ModelClient {
     test_model_client_with_thread_id(ThreadId::new(), session_source)
@@ -197,7 +210,7 @@ async fn compact_uses_bearer_after_agent_identity_session_fallback() -> anyhow::
             CompactConversationRequestSettings {
                 effort: None,
                 summary: codex_protocol::config_types::ReasoningSummary::None,
-                service_tier: None,
+                service_tier: codex_protocol::config_types::ServiceTier::Default,
             },
             &test_session_telemetry(),
             &CompactionTraceContext::disabled(),
@@ -303,7 +316,7 @@ fn responses_lite_prefix_ids_track_thread_and_payload() -> anyhow::Result<()> {
             &model,
             /*effort*/ None,
             codex_protocol::config_types::ReasoningSummary::None,
-            /*service_tier*/ None,
+            ServiceTier::Default,
             &test_responses_metadata_for_client(
                 client,
                 /*turn_id*/ None,
@@ -753,41 +766,6 @@ async fn response_stream_records_last_model_feedback_ids() {
     );
 }
 
-#[tokio::test]
-async fn bedrock_unauthorized_error_uses_provider_mapping() {
-    let provider = create_model_provider(
-        ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
-        /*auth_manager*/ None,
-    );
-    let mut auth_recovery = None;
-    let mut provider_auth_recovery_attempted = false;
-    let url = "https://bedrock-mantle.us-east-2.api.aws/openai/v1/responses";
-    let error = super::handle_unauthorized(
-        TransportError::Http {
-            status: http::StatusCode::UNAUTHORIZED,
-            url: Some(url.to_string()),
-            headers: None,
-            body: Some(
-                "Signature expired: 20260609T133205Z is now earlier than 20260614T062525Z"
-                    .to_string(),
-            ),
-        },
-        &mut auth_recovery,
-        &mut provider_auth_recovery_attempted,
-        &test_session_telemetry(),
-        &provider,
-    )
-    .await
-    .expect_err("expired Bedrock signature should fail");
-
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "Amazon Bedrock rejected the request because its AWS signature has expired. Refresh your AWS credentials and retry. If `AWS_BEARER_TOKEN_BEDROCK` is set, update or unset it, then restart Codex, url: {url}"
-        )
-    );
-}
-
 #[derive(Debug)]
 struct TestRecoveryProvider {
     inner: SharedModelProvider,
@@ -948,7 +926,7 @@ async fn dropped_backpressured_response_stream_traces_cancelled_partial_output()
 #[test]
 fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     let auth_context = AuthRequestTelemetryContext::new(
-        Some(AuthMode::Chatgpt),
+        /*auth_mode*/ None,
         &BearerAuthProvider::for_test(Some("access-token"), Some("workspace-123")),
         /*agent_identity_telemetry*/ None,
         PendingUnauthorizedRetry::from_recovery(UnauthorizedRecoveryExecution {
@@ -957,7 +935,6 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
         }),
     );
 
-    assert_eq!(auth_context.auth_mode, Some("Chatgpt"));
     assert!(auth_context.auth_header_attached);
     assert_eq!(auth_context.auth_header_name, Some("authorization"));
     assert!(auth_context.retry_after_unauthorized);
@@ -968,7 +945,7 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
 #[test]
 fn auth_request_telemetry_context_tracks_agent_identity_ids() {
     let auth_context = AuthRequestTelemetryContext::new(
-        Some(AuthMode::Chatgpt),
+        /*auth_mode*/ None,
         &BearerAuthProvider::for_test(/*token*/ None, /*account_id*/ None),
         Some(AgentIdentityTelemetry {
             agent_id: "agent-runtime-context".to_string(),

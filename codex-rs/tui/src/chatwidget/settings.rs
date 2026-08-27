@@ -3,6 +3,7 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::chatwidget::rate_limits::RATE_LIMIT_SWITCH_PROMPT_VIEW_ID;
+use codex_protocol::config_types::ServiceTier;
 
 impl ChatWidget {
     /// Set the approval policy in the widget's config copy.
@@ -77,7 +78,6 @@ impl ChatWidget {
         }
         let enabled = self.config.features.enabled(feature);
         if feature == Feature::FastMode {
-            self.refresh_effective_service_tier();
             self.sync_service_tier_commands();
         }
         if feature == Feature::Personality {
@@ -177,6 +177,11 @@ impl ChatWidget {
         self.refresh_model_dependent_surfaces();
     }
 
+    pub(crate) fn set_model_context_window(&mut self, context_window: Option<i64>) {
+        self.config.model_context_window = context_window;
+        self.refresh_model_dependent_surfaces();
+    }
+
     /// Set the personality in the widget's config copy.
     pub(crate) fn set_personality(&mut self, personality: Personality) {
         self.config.personality = Some(personality);
@@ -188,6 +193,10 @@ impl ChatWidget {
 
     pub(crate) fn runtime_model_provider_base_url(&self) -> Option<&str> {
         self.runtime_model_provider_base_url.as_deref()
+    }
+
+    pub(crate) fn set_runtime_model_provider_base_url(&mut self, base_url: Option<String>) {
+        self.runtime_model_provider_base_url = base_url;
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -267,7 +276,6 @@ impl ChatWidget {
         {
             mask.model = Some(model.to_string());
         }
-        self.refresh_effective_service_tier();
         self.refresh_model_dependent_surfaces();
     }
 
@@ -487,7 +495,6 @@ impl ChatWidget {
         settings.collaboration_mode.settings.model = settings.model;
         settings.collaboration_mode.settings.reasoning_effort = settings.effort;
         self.set_effective_collaboration_mode(settings.collaboration_mode);
-        self.refresh_effective_service_tier();
         self.refresh_status_surfaces();
         self.sync_service_tier_commands();
         self.sync_personality_command_enabled();
@@ -701,7 +708,7 @@ impl ChatWidget {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 Some(self.effective_collaboration_mode()),
                 /*personality*/ None,
             ),

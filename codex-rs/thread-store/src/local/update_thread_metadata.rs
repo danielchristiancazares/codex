@@ -13,6 +13,7 @@ use codex_rollout::append_rollout_item_to_path;
 use codex_rollout::append_thread_name;
 use codex_rollout::read_session_meta_line;
 use codex_state::ThreadMetadataBuilder;
+use codex_state::ThreadProjectAssignmentOutcome;
 use tracing::warn;
 
 use super::LocalThreadStore;
@@ -469,7 +470,7 @@ async fn apply_metadata_update(
             if existing.is_some()
                 && let Some(project_id) = project_id.as_ref()
             {
-                state_db
+                let outcome = state_db
                     .set_thread_project(&thread_id.to_string(), project_id.as_deref())
                     .await
                     .map_err(|err| {
@@ -483,12 +484,17 @@ async fn apply_metadata_update(
                                 ),
                             }
                         }
-                    })?
-                    .ok_or_else(|| ThreadStoreError::Internal {
-                        message: format!(
-                            "thread metadata unavailable before project update: {thread_id}"
-                        ),
                     })?;
+                match outcome {
+                    ThreadProjectAssignmentOutcome::Updated => {}
+                    ThreadProjectAssignmentOutcome::ThreadMissing => {
+                        return Err(ThreadStoreError::Internal {
+                            message: format!(
+                                "thread metadata unavailable before project update: {thread_id}"
+                            ),
+                        });
+                    }
+                }
             }
             if let Some(name) = patch.name.as_ref() {
                 let history_mode = history_mode.ok_or_else(|| ThreadStoreError::Internal {

@@ -61,6 +61,7 @@ use codex_features::Feature;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 
 use crate::history_cell::HistoryCell;
@@ -73,6 +74,14 @@ pub(crate) enum ThreadGoalSetMode {
         status: ThreadGoalStatus,
         token_budget: Option<i64>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelSelectionScope {
+    /// Update the global/default model selection.
+    Global,
+    /// Update both the global/default selection and the explicit Plan-mode effort.
+    GlobalAndPlan,
 }
 
 /// One absolute history offset returned by a batch lookup.
@@ -948,12 +957,19 @@ pub(crate) enum AppEvent {
 
     StartCommitAnimation,
     StopCommitAnimation,
+    CommitTick(u64),
 
     /// Update the current reasoning effort in the running app and widget.
     UpdateReasoningEffort(Option<ReasoningEffort>),
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
+
+    /// Continue the active conversation with another model provider.
+    SwitchModelProvider(String),
+
+    /// Provider discovery completed without occupying the TUI event loop.
+    ModelProviderSwitchPrepared(Uuid, ThreadId, String, Result<Vec<ModelPreset>, String>),
 
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),
@@ -963,10 +979,19 @@ pub(crate) enum AppEvent {
     /// Run after any nested settings events emitted while handling the close event.
     SettingsSelectionSettled,
 
-    /// Persist the selected model and reasoning effort to the appropriate config.
+    /// Persist the selected model, reasoning effort, and optional numeric context window.
     PersistModelSelection {
         model: String,
         effort: Option<ReasoningEffort>,
+        context_window: Option<i64>,
+    },
+
+    /// Apply a complete model-picker selection to the active thread and in-memory settings.
+    CommitModelSelection {
+        model: String,
+        effort: Option<ReasoningEffort>,
+        context_window: Option<i64>,
+        scope: ModelSelectionScope,
     },
 
     /// Show the cyber auto-review notice after the model selection confirmation.
@@ -979,12 +1004,19 @@ pub(crate) enum AppEvent {
 
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
-        service_tier: Option<String>,
+        service_tier: ServiceTier,
     },
 
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
         model: ModelPreset,
+    },
+
+    /// Open the context-window stage without mutating the active selection.
+    OpenContextWindowPicker {
+        model: String,
+        effort: Option<ReasoningEffort>,
+        scope: ModelSelectionScope,
     },
 
     /// Open the explicit Max/Ultra reasoning selection popup for a model.

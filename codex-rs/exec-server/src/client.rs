@@ -1334,6 +1334,7 @@ impl SessionState {
         ReadResponse {
             chunks: Vec::new(),
             next_seq,
+            output_lost: true,
             exited: true,
             exit_code: None,
             closed: true,
@@ -1653,8 +1654,10 @@ async fn handle_server_notification(
                 // Closed is terminal, but it can arrive before tail output or
                 // exited. Keep routing this process until the ordered publisher
                 // says Closed has actually been delivered.
-                let result =
-                    session.publish_ordered_event(ExecProcessEvent::Closed { seq: params.seq });
+                let result = session.publish_ordered_event(ExecProcessEvent::Closed {
+                    seq: params.seq,
+                    output_lost: params.output_lost,
+                });
                 if result.is_ok() {
                     session.note_change(params.seq);
                 }
@@ -2256,6 +2259,7 @@ mod tests {
                     serde_json::to_value(ExecClosedNotification {
                         process_id: process_id.clone(),
                         seq: 4,
+                        output_lost: true,
                     })
                     .expect("closed notification should serialize"),
                 ),
@@ -2331,7 +2335,10 @@ mod tests {
                     exit_code: 0,
                     sandbox_denied: Some(true),
                 },
-                ExecProcessEvent::Closed { seq: 4 },
+                ExecProcessEvent::Closed {
+                    seq: 4,
+                    output_lost: true,
+                },
             ]
         );
 
@@ -2587,6 +2594,7 @@ mod tests {
                     result: serde_json::to_value(ReadResponse {
                         chunks: Vec::new(),
                         next_seq: 1,
+                        output_lost: false,
                         exited: false,
                         exit_code: None,
                         closed: false,

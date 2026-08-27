@@ -9,6 +9,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -64,7 +65,7 @@ pub struct TurnSettingsUpdateParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: Option<Option<ServiceTier>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -217,12 +218,12 @@ pub struct TurnStartParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: Option<Option<ServiceTier>>,
     /// Override the service tier only when this request starts a new turn.
     /// Use "default" for standard speed. Omitted or null inherits the thread's tier.
     /// Does not change the thread's tier or a turn being steered.
     #[ts(optional = nullable)]
-    pub service_tier_for_turn: Option<String>,
+    pub service_tier_for_turn: Option<ServiceTier>,
     /// Override the reasoning effort for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,

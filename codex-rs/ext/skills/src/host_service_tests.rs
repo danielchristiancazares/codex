@@ -273,6 +273,12 @@ async fn snapshot_for_config_merges_extension_host_and_legacy_plugin_roots() {
         .outcome()
         .skills
         .iter()
+        .filter(|skill| {
+            skill
+                .path_to_skills_md
+                .as_path()
+                .starts_with(codex_home.path())
+        })
         .map(|skill| (skill.name.as_str(), skill.plugin_id.as_deref()))
         .collect::<Vec<_>>();
 

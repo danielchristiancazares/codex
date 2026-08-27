@@ -60,6 +60,7 @@ fn rollout_line_decoder_preserves_canonical_json_compatibility() -> Result<()> {
     for encoded in cases {
         let value = serde_json::from_str::<serde_json::Value>(encoded)?;
         let decoded = crate::decode_rollout_line(value.clone())?;
+        let decoded_from_slice = crate::decode_rollout_line_slice(encoded.as_bytes())?;
         let mut expected = value;
         if expected["type"] != "response_item" {
             expected
@@ -68,6 +69,7 @@ fn rollout_line_decoder_preserves_canonical_json_compatibility() -> Result<()> {
                 .remove("metadata");
         }
         assert_eq!(serde_json::to_value(decoded)?, expected);
+        assert_eq!(serde_json::to_value(decoded_from_slice)?, expected);
     }
 
     Ok(())

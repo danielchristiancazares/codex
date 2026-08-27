@@ -4,6 +4,17 @@ pub const TOOL_CALL_UNIFIED_EXEC_METRIC: &str = "codex.tool.unified_exec";
 pub const ARTIFACT_OPERATION_STARTED_METRIC: &str = "codex.artifact.operation.started";
 pub const ARTIFACT_OPERATION_EXPECTED_OUTPUT_COUNT_METRIC: &str =
     "codex.artifact.operation.expected_output_count";
+pub const EXEC_OUTPUT_ARTIFACT_FULL_OUTPUT_BYTES_METRIC: &str =
+    "codex.exec_output_artifact.full_output_bytes";
+pub const EXEC_OUTPUT_ARTIFACT_PRESENTED_OUTPUT_BYTES_METRIC: &str =
+    "codex.exec_output_artifact.presented_output_bytes";
+pub const EXEC_OUTPUT_ARTIFACT_QUERY_COUNT_METRIC: &str = "codex.exec_output_artifact.query";
+pub const EXEC_OUTPUT_ARTIFACT_PREVIEW_TRUNCATION_METRIC: &str =
+    "codex.exec_output_artifact.preview_truncated";
+pub const EXEC_OUTPUT_ARTIFACT_AUTHORIZATION_FAILURE_METRIC: &str =
+    "codex.exec_output_artifact.authorization_failure";
+pub const EXEC_OUTPUT_ARTIFACT_CORRUPTION_FAILURE_METRIC: &str =
+    "codex.exec_output_artifact.corruption_failure";
 pub const PROCESS_START_METRIC: &str = "codex.process.start";
 pub const API_CALL_COUNT_METRIC: &str = "codex.api_request";
 pub const API_CALL_DURATION_METRIC: &str = "codex.api_request.duration_ms";

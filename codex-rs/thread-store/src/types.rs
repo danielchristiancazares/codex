@@ -315,7 +315,7 @@ pub struct ListThreadsParams {
     pub cwd_filters: Option<Vec<PathBuf>>,
     /// Omit to include every section, set to `None` to match unsectioned
     /// threads, or provide a section ID to match that section.
-    pub section: Option<Option<String>>,
+    pub section: ClearableField<String>,
     /// Omit to include every project, set to None for unassigned threads,
     /// or provide a project ID to match that project.
     pub project_id: ClearableField<String>,
@@ -687,9 +687,8 @@ impl GitInfoPatch {
 
 /// Patch for thread metadata.
 ///
-/// Every field is literal: `None` leaves that field unchanged, while `Some`
-/// applies the supplied value. Fields whose value may itself be cleared use an
-/// inner `Option`, where `Some(None)` clears the field.
+/// Every field is literal. Optional values use explicit omitted, null, and
+/// value states.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ThreadMetadataPatch {
     /// Replacement user-facing thread name.
@@ -781,7 +780,7 @@ impl ThreadMetadataPatch {
     /// Merges another patch into this one using field-presence semantics.
     ///
     /// Omitted fields in `next` leave the current patch unchanged. Present fields replace the
-    /// current value, including clear requests like `Some(None)`. Nested patches use the same
+    /// current value, including explicit null requests. Nested patches use the same
     /// semantics.
     pub fn merge(&mut self, next: Self) {
         if next.name.is_some() {

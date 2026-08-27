@@ -81,6 +81,7 @@ use crate::color::is_light;
 use crate::color::perceptual_distance;
 use crate::diff_model::FileChange;
 use crate::exec_command::relativize_to_home;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::Insets;
 use crate::render::highlight::DiffScopeBackgroundRgbs;
 use crate::render::highlight::diff_scope_background_rgbs;
@@ -354,7 +355,22 @@ pub(crate) fn create_diff_summary(
     wrap_cols: usize,
 ) -> Vec<RtLine<'static>> {
     let rows = collect_rows(changes);
-    render_changes_block(rows, wrap_cols, cwd)
+    render_changes_block(rows, wrap_cols, cwd, DiffSummaryDetail::Full)
+}
+
+pub(crate) fn create_diff_file_summary(
+    changes: &HashMap<PathBuf, FileChange>,
+    cwd: &Path,
+    width: usize,
+) -> Vec<RtLine<'static>> {
+    let rows = collect_rows(changes);
+    render_changes_block(rows, width.max(1), cwd, DiffSummaryDetail::Files)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiffSummaryDetail {
+    Files,
+    Full,
 }
 
 // Shared row for per-file presentation
@@ -407,7 +423,12 @@ fn render_line_count_summary(added: usize, removed: usize) -> Vec<RtSpan<'static
     spans
 }
 
-fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec<RtLine<'static>> {
+fn render_changes_block(
+    rows: Vec<Row<'_>>,
+    wrap_cols: usize,
+    cwd: &Path,
+    detail: DiffSummaryDetail,
+) -> Vec<RtLine<'static>> {
     let mut out: Vec<RtLine<'static>> = Vec::new();
 
     let render_path = |row: &Row<'_>| -> Vec<RtSpan<'static>> {
@@ -442,6 +463,41 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
         header_spans.extend(render_line_count_summary(total_added, total_removed));
     }
     out.push(RtLine::from(header_spans));
+
+    if detail == DiffSummaryDetail::Files {
+        if file_count == 1 {
+            return out
+                .into_iter()
+                .map(|line| truncate_line_with_ellipsis_if_overflow(line, wrap_cols))
+                .collect();
+        }
+        for (index, row) in rows.iter().enumerate() {
+            let marker = match row.change {
+                FileChange::Add { .. } => "A",
+                FileChange::Delete { .. } => "D",
+                FileChange::Update {
+                    move_path: Some(_), ..
+                } => "R",
+                FileChange::Update {
+                    move_path: None, ..
+                } => "M",
+            };
+            let branch = if index + 1 == file_count {
+                "  └ "
+            } else {
+                "  ├ "
+            };
+            let mut line = vec![branch.dim(), marker.bold(), " ".dim()];
+            line.extend(render_path(row));
+            line.push(" ".into());
+            line.extend(render_line_count_summary(row.added, row.removed));
+            out.push(truncate_line_with_ellipsis_if_overflow(
+                RtLine::from(line),
+                wrap_cols,
+            ));
+        }
+        return out;
+    }
 
     for (idx, r) in rows.into_iter().enumerate() {
         // Insert a blank separator between file chunks (except before the first)
@@ -1612,6 +1668,13 @@ mod tests {
             lines,
             /*width*/ 80,
             /*height*/ 14,
+        );
+
+        snapshot_lines(
+            "apply_multiple_files_file_summary",
+            create_diff_file_summary(&changes, &PathBuf::from("/"), /*width*/ 80),
+            /*width*/ 80,
+            /*height*/ 5,
         );
     }
 

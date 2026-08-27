@@ -144,7 +144,7 @@ fn vim_insert_cursor_tracks_mode_and_normal_mode_commands() {
 
     assert!(matches!(
         view.cursor_style(area),
-        crossterm::cursor::SetCursorStyle::DefaultUserShape
+        crossterm::cursor::SetCursorStyle::SteadyBar
     ));
 
     view.enable_vim_in_insert_mode();
@@ -161,7 +161,7 @@ fn vim_insert_cursor_tracks_mode_and_normal_mode_commands() {
     assert!(view.keymap_contexts().contains(KeymapContext::VimNormal));
     assert!(matches!(
         view.cursor_style(area),
-        crossterm::cursor::SetCursorStyle::DefaultUserShape
+        crossterm::cursor::SetCursorStyle::SteadyBlock
     ));
 
     for key_code in [KeyCode::Enter, KeyCode::Esc] {

@@ -6,6 +6,7 @@
 use super::resize_reflow::trailing_run_start;
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
+use crate::app::commit_animation_ticker::run_commit_animation_ticks;
 use crate::app_event::RecapTrigger;
 use crate::app_event::ThreadTitleDestination;
 use crate::app_server_session::ForkGoalContinuation;
@@ -18,6 +19,8 @@ use crate::session_resume::cwds_differ;
 use codex_app_server_protocol::ThreadGoalStatus;
 #[cfg(target_os = "windows")]
 use codex_config::types::WindowsSandboxModeToml;
+use codex_protocol::config_types::ServiceTier;
+use std::thread;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
@@ -368,6 +371,7 @@ impl App {
                             match self
                                 .replace_chat_widget_with_app_server_thread(
                                     tui,
+                                    app_server,
                                     forked,
                                     ThreadAttachPresentation::SessionLineage,
                                     /*initial_user_message*/ None,
@@ -528,6 +532,7 @@ impl App {
                         match self
                             .replace_chat_widget_with_app_server_thread(
                                 tui,
+                                app_server,
                                 forked,
                                 ThreadAttachPresentation::PromptEdit,
                                 /*initial_user_message*/ None,
@@ -617,17 +622,24 @@ impl App {
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::StartCommitAnimation => {
-                self.commit_animation.get_or_insert_with(|| {
-                    let mut interval = tokio::time::interval_at(
-                        tokio::time::Instant::now() + COMMIT_ANIMATION_TICK,
-                        COMMIT_ANIMATION_TICK,
-                    );
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    interval
-                });
+                if let Some(generation) = self.commit_animation_ticker.start() {
+                    let tx = self.app_event_tx.clone();
+                    thread::spawn(move || {
+                        run_commit_animation_ticks(
+                            generation,
+                            || thread::sleep(COMMIT_ANIMATION_TICK),
+                            |generation| tx.send(AppEvent::CommitTick(generation)),
+                        );
+                    });
+                }
             }
             AppEvent::StopCommitAnimation => {
-                self.commit_animation = None;
+                self.commit_animation_ticker.stop();
+            }
+            AppEvent::CommitTick(generation) => {
+                if self.commit_animation_ticker.accepts_tick(generation) {
+                    self.chat_widget.on_commit_tick();
+                }
             }
             AppEvent::Exit(mode) => {
                 if matches!(mode, ExitMode::ShutdownFirst | ExitMode::ShutdownAfterInterrupt) {
@@ -1491,6 +1503,25 @@ impl App {
                         .await;
                 }
             }
+            AppEvent::SwitchModelProvider(provider_id) => {
+                self.start_model_provider_switch(app_server, provider_id);
+            }
+            AppEvent::ModelProviderSwitchPrepared(
+                request_id,
+                thread_id,
+                provider_id,
+                result,
+            ) => {
+                self.complete_model_provider_switch(
+                    tui,
+                    app_server,
+                    request_id,
+                    thread_id,
+                    provider_id,
+                    result,
+                )
+                .await;
+            }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
                 self.sync_active_thread_personality_setting(app_server, personality)
@@ -1500,7 +1531,9 @@ impl App {
                 self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             }
             AppEvent::SettingsSelectionSettled => {
-                if self.chat_widget.no_modal_or_popup_active() {
+                if self.pending_provider_switch.is_none()
+                    && self.chat_widget.no_modal_or_popup_active()
+                {
                     let config = self.chat_widget.config_ref();
                     let permissions_override = Self::turn_permissions_override_from_config(
                         config,
@@ -1520,6 +1553,29 @@ impl App {
             }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
+            }
+            AppEvent::OpenContextWindowPicker {
+                model,
+                effort,
+                scope,
+            } => {
+                self.chat_widget
+                    .open_context_window_picker(model, effort, scope);
+            }
+            AppEvent::CommitModelSelection {
+                model,
+                effort,
+                context_window,
+                scope,
+            } => {
+                self.commit_model_selection(
+                    app_server,
+                    model,
+                    effort,
+                    context_window,
+                    scope,
+                )
+                .await;
             }
             AppEvent::OpenAdvancedReasoningPopup { model } => {
                 self.chat_widget.open_advanced_reasoning_popup(model);
@@ -1991,7 +2047,7 @@ impl App {
                                         /*model*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                        /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -2018,7 +2074,7 @@ impl App {
                                         /*model*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                        /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -2047,7 +2103,7 @@ impl App {
                                         /*model*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
-                                        /*service_tier*/ None,
+                                        /*service_tier*/ ServiceTier::Default,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
                                     ),
@@ -2085,13 +2141,31 @@ impl App {
                     let _ = (preset, mode, profile_selection);
                 }
             }
-            AppEvent::PersistModelSelection { model, effort } => {
+            AppEvent::PersistModelSelection {
+                model,
+                effort,
+                context_window,
+            } => {
+                let mut edits = crate::config_update::build_model_selection_edits(
+                    model.as_str(),
+                    effort.as_ref(),
+                );
+                if let Some(context_window) = context_window {
+                    crate::config_update::append_model_context_window_edit(
+                        &mut edits,
+                        context_window,
+                    );
+                }
+                edits.insert(
+                    0,
+                    crate::config_update::replace_config_value(
+                        "model_provider",
+                        serde_json::json!(self.config.model_provider_id.clone()),
+                    ),
+                );
                 match crate::config_update::write_config_batch(
                     app_server.request_handle(),
-                    crate::config_update::build_model_selection_edits(
-                        model.as_str(),
-                        effort.as_ref(),
-                    ),
+                    edits,
                 )
                 .await
                 {
@@ -2182,21 +2256,18 @@ impl App {
             }
             AppEvent::PersistServiceTierSelection { service_tier } => {
                 self.refresh_status_line();
-                self.config.service_tier = service_tier.clone();
+                self.config.service_tier = service_tier;
                 self.sync_active_thread_service_tier_to_cached_session()
                     .await;
-                let edits = crate::config_update::build_service_tier_selection_edits(
-                    service_tier.as_deref(),
-                );
+                let mut edits = Vec::new();
+                edits.push(crate::config_update::service_tier_selection_edit(
+                    service_tier,
+                ));
                 match crate::config_update::write_config_batch(app_server.request_handle(), edits)
                     .await
                 {
                     Ok(_) => {
-                        let message = if let Some(service_tier) = service_tier {
-                            format!("Service tier set to {service_tier}")
-                        } else {
-                            "Service tier cleared".to_string()
-                        };
+                        let message = format!("Service tier set to {service_tier}");
                         self.chat_widget.add_info_message(message, /*hint*/ None);
                     }
                     Err(err) => {

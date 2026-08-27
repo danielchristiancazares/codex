@@ -1,6 +1,17 @@
 load("//:defs.bzl", "codex_rust_crate")
+load("//bazel/rules:e2e_benchmark.bzl", "codex_e2e_benchmark")
 
 codex_rust_crate(
     name = "code-mode-host",
     crate_name = "codex_code_mode_host",
+)
+
+codex_e2e_benchmark(
+    name = "stdio-throughput",
+    binaries = [":codex-code-mode-host"],
+)
+
+codex_e2e_benchmark(
+    name = "websocket-throughput",
+    binaries = [":codex-code-mode-host"],
 )

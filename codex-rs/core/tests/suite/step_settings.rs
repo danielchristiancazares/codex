@@ -93,7 +93,7 @@ fn step_settings_test() -> TestCodexBuilder {
         });
         config.model_reasoning_effort = Some(ReasoningEffort::Low);
         config.model_reasoning_summary = Some(ReasoningSummary::Concise);
-        config.service_tier = None;
+        config.service_tier = ServiceTier::Default;
         config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
         config.approvals_reviewer = ApprovalsReviewer::User;
     })
@@ -229,7 +229,7 @@ async fn settings_updates_preserve_turn_identity_and_target(target: SettingsTarg
                         model: Some(MODEL_B.to_string()),
                         effort: Some(Some(ReasoningEffort::High)),
                         summary: Some(ReasoningSummary::Detailed),
-                        service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                        service_tier: Some(Some(ServiceTier::Fast)),
                         ..Default::default()
                     },
                 })
@@ -240,7 +240,7 @@ async fn settings_updates_preserve_turn_identity_and_target(target: SettingsTarg
                 model: Some(MODEL_B.to_string()),
                 effort: Some(Some(ReasoningEffort::High)),
                 summary: Some(ReasoningSummary::Detailed),
-                service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                service_tier: Some(Some(ServiceTier::Fast)),
             };
             assert_eq!(
                 submit_turn_settings(&test.codex, "different-turn", update.clone()).await?,
@@ -279,7 +279,7 @@ async fn settings_updates_preserve_turn_identity_and_target(target: SettingsTarg
     changed_settings.model = MODEL_B.to_string();
     changed_settings.reasoning_effort = Some(ReasoningEffort::High);
     changed_settings.reasoning_summary = Some(ReasoningSummary::Detailed);
-    changed_settings.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    changed_settings.service_tier = ServiceTier::Fast;
     changed_settings.collaboration_mode = changed_settings.collaboration_mode.with_updates(
         Some(MODEL_B.to_string()),
         Some(Some(ReasoningEffort::High)),
@@ -676,7 +676,7 @@ async fn sparse_updates_preserve_divergent_active_and_future_models() -> Result<
     test.codex
         .submit(Op::ThreadSettings {
             thread_settings: ThreadSettingsOverrides {
-                service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                service_tier: Some(Some(ServiceTier::Fast)),
                 ..Default::default()
             },
         })
@@ -686,7 +686,7 @@ async fn sparse_updates_preserve_divergent_active_and_future_models() -> Result<
             &test.codex,
             &request.turn_id,
             TurnSettingsUpdate {
-                service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                service_tier: Some(Some(ServiceTier::Fast)),
                 ..Default::default()
             }
         )
@@ -703,10 +703,7 @@ async fn sparse_updates_preserve_divergent_active_and_future_models() -> Result<
         durable_settings.reasoning_effort,
         Some(ReasoningEffort::Low)
     );
-    assert_eq!(
-        durable_settings.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(durable_settings.service_tier, ServiceTier::Fast);
     answer_paused_turn(&test.codex, &second_request.turn_id).await?;
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -842,7 +839,7 @@ async fn model_activation_uses_destination_metadata_defaults(
             config.model_context_window = None;
             config.model_auto_compact_token_limit = None;
             config.model_reasoning_summary = configured_summary;
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
             config.base_instructions = None;
             for model in &mut config
                 .model_catalog
@@ -859,7 +856,7 @@ async fn model_activation_uses_destination_metadata_defaults(
                     model.default_reasoning_summary = ReasoningSummary::Detailed;
                     model
                         .service_tiers
-                        .retain(|tier| tier.id != ServiceTier::Fast.request_value());
+                        .retain(|tier| tier.id != ServiceTier::Fast);
                     model
                         .model_messages
                         .as_mut()

@@ -59,6 +59,7 @@ fn replacing_visible_history_tail_preserves_existing_terminal_scrollback() {
         )
         .expect("replace status-card tail")
     );
+    assert_eq!(terminal.visible_history_rows(), 4);
 
     let contents = terminal.backend().vt100().screen().contents();
     assert!(contents.contains("/status"), "{contents}");

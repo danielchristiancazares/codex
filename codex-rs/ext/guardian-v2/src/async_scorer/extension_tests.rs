@@ -1082,6 +1082,13 @@ async fn contributor_fails_closed_when_thread_lookup_fails() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let fixture = GuardianFailureFixture::new().await?;
+    let thread_store = fixture.test.codex.thread_extension_data();
+    let score_progress = thread_store
+        .get::<GuardianV2ScoreProgress>()
+        .expect("Guardian v2 should track score progress per thread");
+    let latest_scored_tool_call = score_progress
+        .latest_scored_tool_call
+        .load(Ordering::Acquire);
     fixture
         .test
         .thread_manager
@@ -1090,7 +1097,38 @@ async fn contributor_fails_closed_when_thread_lookup_fails() -> Result<()> {
         .expect("the test thread should exist before simulating a failed lookup");
 
     fixture.score_tool(ToolName::plain("read_file")).await;
-    fixture.assert_fails_closed("scoring_failure").await
+    assert_eq!(
+        score_progress
+            .latest_failed_tool_call
+            .load(Ordering::Acquire),
+        latest_scored_tool_call + 1
+    );
+    thread_store.insert(RecordingMetrics::default());
+    assert_eq!(
+        fixture
+            .registry
+            .fast_approval_decision(
+                &fixture.session_store,
+                thread_store,
+                "review action",
+                thread_store
+                    .get::<RecordingMetrics>()
+                    .map(|metrics| metrics as Arc<dyn ExtensionMetrics>),
+            )
+            .await,
+        None
+    );
+    assert!(
+        thread_store
+            .get::<RecordingMetrics>()
+            .unwrap()
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|sample| sample == &fast_decision_metric("deferred", "scoring_failure"))
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

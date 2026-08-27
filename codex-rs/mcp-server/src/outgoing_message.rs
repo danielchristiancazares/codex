@@ -239,6 +239,7 @@ mod tests {
 
     use anyhow::Result;
     use codex_protocol::ThreadId;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::models::PermissionProfile;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::protocol::AskForApproval;
@@ -329,7 +330,7 @@ mod tests {
                 thread_name: None,
                 model: "gpt-4o".to_string(),
                 model_provider_id: "test-provider".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy: AskForApproval::Never,
                 approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
                 permission_profile: PermissionProfile::read_only(),
@@ -373,7 +374,7 @@ mod tests {
             thread_name: None,
             model: "gpt-4o".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -439,7 +440,7 @@ mod tests {
             thread_name: None,
             model: "gpt-4o".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),

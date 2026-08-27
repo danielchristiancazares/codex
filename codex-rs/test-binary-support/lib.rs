@@ -44,7 +44,14 @@ where
         }
         TestBinaryDispatchMode::Skip => None,
         TestBinaryDispatchMode::InstallAliases => {
-            let codex_home = match tempfile::Builder::new().prefix(codex_home_prefix).tempdir() {
+            let current_dir = match std::env::current_dir() {
+                Ok(current_dir) => current_dir,
+                Err(error) => panic!("failed to resolve test working directory: {error}"),
+            };
+            let codex_home = match tempfile::Builder::new()
+                .prefix(codex_home_prefix)
+                .tempdir_in(current_dir)
+            {
                 Ok(codex_home) => codex_home,
                 Err(error) => panic!("failed to create test CODEX_HOME: {error}"),
             };

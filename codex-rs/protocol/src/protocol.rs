@@ -27,6 +27,7 @@ use crate::config_types::ModeKind;
 use crate::config_types::MultiAgentMode;
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use crate::config_types::ServiceTier;
 use crate::config_types::WindowsSandboxLevel;
 use crate::dynamic_tools::DynamicToolCallOutputContentItem;
 use crate::dynamic_tools::DynamicToolCallRequest;
@@ -480,7 +481,7 @@ pub struct TurnSettingsUpdate {
     pub effort: Option<Option<ReasoningEffortConfig>>,
     pub summary: Option<ReasoningSummaryConfig>,
     /// `None` preserves the requested tier; `Some(None)` clears it.
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: Option<Option<ServiceTier>>,
 }
 
 /// The result of processing a turn-settings update, not merely queueing it.
@@ -542,7 +543,7 @@ pub struct ThreadSettingsOverrides {
     ///
     /// Use `Some(Some(_))` to set a specific tier, `Some(None)` to clear the
     /// preference, or `None` to leave the existing value unchanged.
-    pub service_tier: Option<Option<String>>,
+    pub service_tier: Option<Option<ServiceTier>>,
 
     /// EXPERIMENTAL - set a pre-set collaboration mode.
     /// Takes precedence over model, effort, and developer instructions if set.
@@ -2148,8 +2149,9 @@ pub struct ThreadSettingsAppliedEvent {
 pub struct ThreadSettingsSnapshot {
     pub model: String,
     pub model_provider_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
@@ -3805,8 +3807,9 @@ pub struct SessionConfiguredEvent {
 
     pub model_provider_id: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
 
     /// When to escalate for approval for execution
     pub approval_policy: AskForApproval,
@@ -3867,7 +3870,8 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             thread_name: Option<String>,
             model: String,
             model_provider_id: String,
-            service_tier: Option<String>,
+            #[serde(default)]
+            service_tier: ServiceTier,
             approval_policy: AskForApproval,
             #[serde(default)]
             approvals_reviewer: ApprovalsReviewer,
@@ -6015,7 +6019,7 @@ mod tests {
                 thread_name: None,
                 model: "codex-mini-latest".to_string(),
                 model_provider_id: "openai".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy: AskForApproval::Never,
                 approvals_reviewer: ApprovalsReviewer::User,
                 permission_profile: permission_profile.clone(),

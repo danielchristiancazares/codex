@@ -290,6 +290,7 @@ async fn accepted_websocket_reconnect_recovers_running_process_and_output() -> R
             result: serde_json::to_value(ReadResponse {
                 chunks: Vec::new(),
                 next_seq: 1,
+                output_lost: false,
                 exited: false,
                 exit_code: None,
                 closed: false,
@@ -323,6 +324,7 @@ async fn accepted_websocket_reconnect_recovers_running_process_and_output() -> R
     let response = ReadResponse {
         chunks: Vec::new(),
         next_seq: 1,
+        output_lost: false,
         exited: false,
         exit_code: None,
         closed: false,

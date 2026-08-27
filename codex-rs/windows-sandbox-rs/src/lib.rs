@@ -318,6 +318,10 @@ pub use token::create_workspace_write_token_with_caps_from;
 #[cfg(target_os = "windows")]
 pub use token::get_current_token_for_restriction;
 #[cfg(target_os = "windows")]
+pub use unified_exec::WindowsSandboxManagedNetwork;
+#[cfg(target_os = "windows")]
+pub use unified_exec::WindowsSandboxReadRoots;
+#[cfg(target_os = "windows")]
 pub use unified_exec::WindowsSandboxSessionRequest;
 #[cfg(target_os = "windows")]
 pub use unified_exec::spawn_windows_sandbox_session_elevated_for_permission_profile;
@@ -348,7 +352,9 @@ pub use workspace_acl::is_command_cwd_root;
 #[cfg(target_os = "windows")]
 pub use wrapper::CODEX_WINDOWS_SANDBOX_ARG1;
 #[cfg(target_os = "windows")]
-pub use wrapper::create_windows_sandbox_command_args_for_permission_profile;
+pub use wrapper::WindowsSandboxCommand;
+#[cfg(target_os = "windows")]
+pub use wrapper::create_windows_sandbox_command_for_permission_profile;
 #[cfg(target_os = "windows")]
 pub use wrapper::run_windows_sandbox_wrapper_main;
 

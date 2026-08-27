@@ -258,7 +258,7 @@ fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> Model
     let mut service_tiers = Vec::new();
     if supports_fast_mode {
         service_tiers.push(json!({
-            "id": ServiceTier::Fast.request_value(),
+            "id": ServiceTier::Fast,
             "name": "fast",
             "description": "Fastest inference with increased plan usage"
         }));
@@ -1166,6 +1166,19 @@ pub(super) fn get_available_model(chat: &ChatWidget, model: &str) -> ModelPreset
         .find(|&preset| preset.model == model)
         .cloned()
         .unwrap_or_else(|| panic!("{model} preset not found"))
+}
+
+pub(super) fn disable_context_window_selection(chat: &mut ChatWidget, model: &str) {
+    let mut models = chat
+        .model_catalog
+        .try_list_models()
+        .expect("models lock available");
+    let preset = models
+        .iter_mut()
+        .find(|preset| preset.model == model)
+        .unwrap_or_else(|| panic!("{model} preset not found"));
+    preset.max_context_window = preset.context_window;
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(models));
 }
 
 pub(super) async fn assert_shift_left_edits_most_recent_queued_message_for_terminal(

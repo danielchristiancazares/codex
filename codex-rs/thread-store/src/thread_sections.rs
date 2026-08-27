@@ -22,7 +22,7 @@ pub struct RenameThreadSectionParams {
     pub section_id: String,
     /// Replacement user-facing section name.
     pub name: String,
-    pub appearance: Option<Option<codex_state::ThreadSectionAppearance>>,
+    pub appearance: ClearableField<codex_state::ThreadSectionAppearance>,
 }
 
 /// Parameters for deleting a thread section.
@@ -50,3 +50,4 @@ pub struct StoredThreadSectionsPage {
     /// Opaque cursor to continue listing sections.
     pub next_cursor: Option<String>,
 }
+use crate::ClearableField;

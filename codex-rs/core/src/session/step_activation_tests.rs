@@ -221,7 +221,7 @@ async fn activation_fixture(models: Vec<ModelInfo>) -> ActivationFixture {
         /*developer_instructions*/ None,
     );
     settings.reasoning_summary = Some(ReasoningSummary::Concise);
-    settings.service_tier = None;
+    settings.service_tier = ServiceTier::Default;
     let prepared = session
         .new_turn_with_default_settings("step-activation-turn".to_string(), Default::default())
         .await;
@@ -246,17 +246,12 @@ async fn activation_fixture(models: Vec<ModelInfo>) -> ActivationFixture {
 
 fn step_values(
     step: &StepContext,
-) -> (
-    &str,
-    Option<ReasoningEffort>,
-    ReasoningSummary,
-    Option<&str>,
-) {
+) -> (&str, Option<ReasoningEffort>, ReasoningSummary, ServiceTier) {
     (
         step.settings.model_info.slug.as_str(),
         step.settings.reasoning_effort().cloned(),
         step.settings.reasoning_summary,
-        step.settings.service_tier.as_deref(),
+        step.settings.service_tier,
     )
 }
 
@@ -365,7 +360,6 @@ async fn submitted_sparse_updates_preserve_captured_steps_and_ordering() {
         let mut context = std::task::Context::from_waker(futures::task::noop_waker_ref());
         assert!(std::future::Future::poll(during.as_mut(), &mut context).is_pending());
     }
-    let priority = ServiceTier::Fast.request_value();
     let mut replies = vec![first_reply];
     for (id, update) in [
         (
@@ -379,7 +373,7 @@ async fn submitted_sparse_updates_preserve_captured_steps_and_ordering() {
         (
             "activate-tier",
             TurnSettingsUpdate {
-                service_tier: Some(Some(priority.to_string())),
+                service_tier: Some(Some(ServiceTier::Fast)),
                 ..Default::default()
             },
         ),
@@ -414,7 +408,7 @@ async fn submitted_sparse_updates_preserve_captured_steps_and_ordering() {
         MODEL_A,
         Some(ReasoningEffort::Low),
         ReasoningSummary::Concise,
-        None,
+        ServiceTier::Default,
     );
     assert_eq!(
         [
@@ -429,7 +423,7 @@ async fn submitted_sparse_updates_preserve_captured_steps_and_ordering() {
                 MODEL_B,
                 Some(ReasoningEffort::High),
                 ReasoningSummary::Detailed,
-                Some(priority),
+                ServiceTier::Fast,
             ),
         ]
     );

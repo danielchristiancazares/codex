@@ -658,6 +658,52 @@ async fn driver_backed_process_can_expose_split_stdout_and_stderr() -> anyhow::R
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn driver_backed_process_stops_at_lagged_output() -> anyhow::Result<()> {
+    let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let (stdout_tx, stdout_driver_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(1);
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
+    stdout_tx.send(b"dropped".to_vec())?;
+    stdout_tx.send(b"retained".to_vec())?;
+
+    let spawned = spawn_from_driver(ProcessDriver {
+        writer_tx,
+        stdout_rx: stdout_driver_rx,
+        stderr_rx: None,
+        exit_rx,
+        terminator: None,
+        writer_handle: None,
+        resizer: None,
+        #[cfg(windows)]
+        tty: false,
+    });
+    let output_lost = spawned.session.output_lost_flag();
+    let SpawnedProcess {
+        session: _session,
+        stdout_rx,
+        stderr_rx: _stderr_rx,
+        exit_rx,
+    } = spawned;
+    drop(stdout_tx);
+    exit_tx.send(0).expect("send exit code");
+
+    let stdout = tokio::time::timeout(
+        tokio::time::Duration::from_secs(2),
+        collect_split_output(stdout_rx),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting to drain driver stdout"))?;
+    let code = tokio::time::timeout(tokio::time::Duration::from_secs(2), exit_rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out waiting for driver exit"))?
+        .unwrap_or(-1);
+
+    assert_eq!(stdout, Vec::<u8>::new());
+    assert_eq!(code, 0);
+    assert!(output_lost.load(std::sync::atomic::Ordering::Acquire));
+    Ok(())
+}
+
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_backed_interrupt_terminates_once() {

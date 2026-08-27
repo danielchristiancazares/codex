@@ -13,6 +13,7 @@ use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
@@ -158,7 +159,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
             &session_telemetry,
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -295,7 +296,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
             &session_telemetry,
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
@@ -417,7 +418,7 @@ async fn responses_respects_model_info_overrides_from_config() {
             &session_telemetry,
             effort,
             summary.unwrap_or(model_info.default_reasoning_summary),
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )

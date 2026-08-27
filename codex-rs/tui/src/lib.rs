@@ -170,7 +170,6 @@ mod render;
 mod resize_reflow_cap;
 mod resume_picker;
 mod selection_list;
-mod service_tier_resolution;
 mod session_archive_commands;
 mod session_log;
 mod session_queue_commands;
@@ -1666,6 +1665,42 @@ async fn run_ratatui_app(
     let bypass_hook_trust_for_startup_review = config.bypass_hook_trust && !is_persistent_resume;
     let hooks_request_handle = app_server.request_handle();
     let hooks_cwd = config.cwd.to_path_buf();
+    let startup_resume = match &session_selection {
+        resume_picker::SessionSelection::Resume(target_session)
+            if app::resume_model_settings_for_overrides(&config, &overrides)
+                == app_server_session::ResumeModelSettings::RestoreFromThread =>
+        {
+            Some((
+                app_server.request_handle(),
+                config.clone(),
+                target_session.thread_id,
+                app_server.thread_params_mode(),
+                app_server.remote_cwd_override().map(Path::to_path_buf),
+            ))
+        }
+        resume_picker::SessionSelection::StartFresh
+        | resume_picker::SessionSelection::AgentsOverview
+        | resume_picker::SessionSelection::Resume(_)
+        | resume_picker::SessionSelection::Fork(_)
+        | resume_picker::SessionSelection::Exit => None,
+    };
+    let startup_resume = async move {
+        match startup_resume {
+            Some((request_handle, config, thread_id, thread_params_mode, remote_cwd_override)) => {
+                Some(
+                    app_server_session::resume_thread_with_request_handle(
+                        request_handle,
+                        config,
+                        thread_id,
+                        thread_params_mode,
+                        remote_cwd_override,
+                    )
+                    .await,
+                )
+            }
+            None => None,
+        }
+    };
     let startup_prefetch_started_at = Instant::now();
     let startup_prefetch = startup_draft
         .run_until(&mut tui, async {
@@ -1677,10 +1712,11 @@ async fn run_ratatui_app(
                     }
                 },
                 load_startup_hooks_review_entry(hooks_request_handle, hooks_cwd),
+                startup_resume,
             )
         })
         .await;
-    let (startup_bootstrap, startup_hooks_entry) = match startup_prefetch {
+    let (startup_bootstrap, startup_hooks_entry, startup_resume_response) = match startup_prefetch {
         Ok(startup_prefetch) => startup_prefetch,
         Err(err) => {
             shutdown_startup_session(Some(app_server), &mut terminal_restore_guard).await;
@@ -1736,6 +1772,7 @@ async fn run_ratatui_app(
         environment_manager,
         startup_elapsed_before_app,
         startup_bootstrap,
+        startup_resume_response,
         startup_hooks_browser,
         startup_draft,
     )

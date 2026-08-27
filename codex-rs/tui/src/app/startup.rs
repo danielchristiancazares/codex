@@ -9,7 +9,9 @@ use crate::session_start::cancel_session_start;
 use crate::session_start::complete_session_start;
 use crate::unarchive_prompt::run_unarchive_prompt;
 
-async fn resolve_runtime_model_provider_base_url(provider: &ModelProviderInfo) -> Option<String> {
+pub(super) async fn resolve_runtime_model_provider_base_url(
+    provider: &ModelProviderInfo,
+) -> Option<String> {
     let provider = create_model_provider(provider.clone(), /*auth_manager*/ None);
     match provider.runtime_base_url().await {
         Ok(base_url) => base_url,
@@ -99,6 +101,7 @@ impl App {
         environment_manager: Arc<EnvironmentManager>,
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
+        mut startup_resume_response: Option<Result<ThreadResumeResponse>>,
         startup_hooks_browser: Option<HooksListEntry>,
         mut startup_draft: StartupDraftPump,
     ) -> Result<AppExitInfo> {
@@ -161,7 +164,7 @@ impl App {
             );
         }
         let mut model = config.model.clone().unwrap_or(bootstrap.default_model);
-        let available_models = bootstrap.available_models;
+        let mut available_models = bootstrap.available_models;
         let remote_connection = crate::status::remote_connection::remote_connection_status_value(
             &app_server_target,
             app_server.server_version(),
@@ -206,7 +209,7 @@ impl App {
         {
             tracing::warn!(%error, "TUI task delegation is unavailable without its MCP server");
         }
-        let model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
+        let mut model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
@@ -241,7 +244,7 @@ impl App {
             AppServerWorkspaceCommandRunner::new(app_server.request_handle()),
         );
         let runtime_model_provider_started_at = Instant::now();
-        let runtime_model_provider_base_url = match startup_draft
+        let mut runtime_model_provider_base_url = match startup_draft
             .run_until(
                 tui,
                 resolve_runtime_model_provider_base_url(&config.model_provider),
@@ -336,19 +339,32 @@ impl App {
                     &config,
                     &harness_overrides,
                 );
-                let resumed = match startup_draft
-                    .run_until(
-                        tui,
-                        app_server.resume_thread(
-                            config.clone(),
-                            target_session.thread_id,
-                            model_settings,
-                        ),
-                    )
-                    .await
-                {
-                    Ok(resumed) => resumed,
-                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                let resumed = if let Some(response) = startup_resume_response.take() {
+                    match startup_draft
+                        .run_until(tui, async {
+                            let response = response?;
+                            app_server.complete_resume_thread(response, &config).await
+                        })
+                        .await
+                    {
+                        Ok(resumed) => resumed,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
+                } else {
+                    match startup_draft
+                        .run_until(
+                            tui,
+                            app_server.resume_thread(
+                                config.clone(),
+                                target_session.thread_id,
+                                model_settings,
+                            ),
+                        )
+                        .await
+                    {
+                        Ok(resumed) => resumed,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
                 };
                 let action = SessionStartAction::Resume(model_settings);
                 let Some(resumed) = complete_session_start(
@@ -366,6 +382,24 @@ impl App {
                 else {
                     return Ok(cancel_session_start(app_server).await);
                 };
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &app_server_target,
+                            &resumed.session,
+                            &mut available_models,
+                            &mut runtime_model_provider_base_url,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -427,6 +461,24 @@ impl App {
                 else {
                     return Ok(cancel_session_start(app_server).await);
                 };
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &app_server_target,
+                            &forked.session,
+                            &mut available_models,
+                            &mut runtime_model_provider_base_url,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -504,7 +556,7 @@ See the Codex keymap documentation for supported actions and examples."
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
             scrollback_has_older_history: false,
-            commit_animation: None,
+            commit_animation_ticker: CommitAnimationTicker::default(),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
             skill_load_warnings: SkillLoadWarningState::default(),
@@ -539,6 +591,7 @@ See the Codex keymap documentation for supported actions and examples."
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
             recap: recap::RecapState::default(),
         };
         if !tui.is_terminal_focused() {
@@ -815,18 +868,6 @@ See the Codex keymap documentation for supported actions and examples."
                     } => {
                         app.chat_widget.refresh_goal_status_indicator_for_time_tick();
                         app.chat_widget.refresh_terminal_title();
-                        AppRunControl::Continue
-                    }
-                    () = async {
-                        match app.commit_animation.as_mut() {
-                            Some(interval) => {
-                                interval.tick().await;
-                            }
-                            None => std::future::pending().await,
-                        }
-                    }, if !has_pending_app_events => {
-                        crate::session_log::log_commit_tick();
-                        app.chat_widget.on_commit_tick();
                         AppRunControl::Continue
                     }
                 };

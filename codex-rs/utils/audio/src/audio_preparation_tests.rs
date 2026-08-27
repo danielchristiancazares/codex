@@ -4,6 +4,63 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
+fn pcm_wav_payload(sample_count: u32, prefix_chunk_bytes: usize) -> String {
+    let padding = sample_count % 2;
+    let prefix_padding = prefix_chunk_bytes % 2;
+    let riff_size = 36usize
+        .saturating_add(sample_count as usize)
+        .saturating_add(padding as usize)
+        .saturating_add(if prefix_chunk_bytes == 0 {
+            0
+        } else {
+            8 + prefix_chunk_bytes + prefix_padding
+        });
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(riff_size as u32).to_le_bytes());
+    bytes.extend_from_slice(b"WAVE");
+    if prefix_chunk_bytes != 0 {
+        bytes.extend_from_slice(b"JUNK");
+        bytes.extend_from_slice(&(prefix_chunk_bytes as u32).to_le_bytes());
+        bytes.resize(bytes.len() + prefix_chunk_bytes + prefix_padding, 0);
+    }
+    bytes.extend_from_slice(b"fmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&8_000u32.to_le_bytes());
+    bytes.extend_from_slice(&8_000u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&8u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&sample_count.to_le_bytes());
+    bytes.resize(
+        bytes.len() + sample_count as usize + padding as usize,
+        /*value*/ 0,
+    );
+    BASE64_STANDARD.encode(bytes)
+}
+
+#[test]
+fn reads_pcm_wav_duration_from_progressive_base64_prefix() {
+    let payload = pcm_wav_payload(
+        /*sample_count*/ 16_000, /*prefix_chunk_bytes*/ 8_192,
+    );
+
+    assert_eq!(wav_duration_seconds_from_base64(&payload), Some(2.0));
+}
+
+#[test]
+fn estimates_large_pcm_wav_without_hashing_or_full_decode() {
+    let payload = pcm_wav_payload(
+        /*sample_count*/ 5 * 1024 * 1024,
+        /*prefix_chunk_bytes*/ 0,
+    );
+    let audio_url = format!("data:audio/wav;base64,{payload}");
+
+    assert_eq!(estimate_audio_token_count(&audio_url), 6_554);
+}
+
 #[test]
 fn preparation_canonicalizes_data_urls_and_rejects_remote_urls() {
     let mut items = vec![ResponseItem::Message {

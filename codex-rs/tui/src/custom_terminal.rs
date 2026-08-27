@@ -28,7 +28,6 @@ use crossterm::cursor::MoveTo;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::queue;
 use crossterm::style::Colors;
-use crossterm::style::Print;
 use crossterm::style::SetAttribute;
 use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
@@ -145,8 +144,15 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    cursor_positioning: CursorPositioning,
     #[cfg(test)]
     screen_size_override: Option<Size>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InlineViewportState {
+    pub(crate) area: Rect,
+    pub(crate) visible_history_rows: u16,
 }
 
 impl<B> Drop for Terminal<B>
@@ -224,6 +230,11 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            cursor_positioning: if cfg!(windows) || std::env::var_os("WT_SESSION").is_some() {
+                CursorPositioning::Explicit
+            } else {
+                CursorPositioning::Predicted
+            },
             #[cfg(test)]
             screen_size_override: None,
         }
@@ -251,19 +262,9 @@ where
         }
     }
 
-    /// Gets the current buffer as a reference.
-    fn current_buffer(&self) -> &Buffer {
-        &self.buffers[self.current]
-    }
-
     /// Gets the current buffer as a mutable reference.
     fn current_buffer_mut(&mut self) -> &mut Buffer {
         &mut self.buffers[self.current]
-    }
-
-    /// Gets the previous buffer as a reference.
-    fn previous_buffer(&self) -> &Buffer {
-        &self.buffers[1 - self.current]
     }
 
     /// Gets the previous buffer as a mutable reference.
@@ -281,15 +282,34 @@ where
         &mut self.backend
     }
 
-    /// Obtains a difference between the previous and the current buffer and passes it to the
-    /// current backend for drawing.
+    /// Obtains a difference between the previous and the current buffer, passes it to the current
+    /// backend for drawing, and advances the buffers for the next frame.
     pub fn flush(&mut self) -> io::Result<()> {
-        let updates = diff_buffers(self.previous_buffer(), self.current_buffer());
-        let last_put_command = updates.iter().rfind(|command| command.is_put());
-        if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
-            self.last_known_cursor_pos = Position { x, y };
+        let last_put_position = {
+            let (previous, current) = if self.current == 0 {
+                let [current, previous] = &self.buffers;
+                (previous, current)
+            } else {
+                let [previous, current] = &self.buffers;
+                (previous, current)
+            };
+            let updates = diff_buffers(previous, current);
+            let last_put_position = updates.iter().rev().find_map(|command| match command {
+                DrawCommand::Put { x, y, .. } => Some(Position { x: *x, y: *y }),
+                DrawCommand::ClearToEnd { .. } => None,
+            });
+            draw(
+                &mut self.backend,
+                updates.into_iter(),
+                self.cursor_positioning,
+            )?;
+            last_put_position
+        };
+        if let Some(position) = last_put_position {
+            self.last_known_cursor_pos = position;
         }
-        draw(&mut self.backend, updates.into_iter())
+        self.swap_buffers();
+        Ok(())
     }
 
     /// Updates the Terminal so that internal buffers match the requested area.
@@ -307,6 +327,18 @@ where
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
         self.visible_history_rows = self.visible_history_rows.min(area.top());
+    }
+
+    pub(crate) fn inline_viewport_state(&self) -> InlineViewportState {
+        InlineViewportState {
+            area: self.viewport_area,
+            visible_history_rows: self.visible_history_rows,
+        }
+    }
+
+    pub(crate) fn restore_inline_viewport_state(&mut self, state: InlineViewportState) {
+        self.set_viewport_area(state.area);
+        self.visible_history_rows = state.visible_history_rows.min(state.area.top());
     }
 
     /// Queries the backend for size and resizes if it doesn't match the previous size.
@@ -434,8 +466,6 @@ where
             }
         }
 
-        self.swap_buffers();
-
         Backend::flush(&mut self.backend)?;
 
         Ok(())
@@ -551,6 +581,14 @@ where
             .min(self.viewport_area.top());
     }
 
+    pub(crate) fn note_history_rows_removed(&mut self, removed_rows: u16) {
+        self.visible_history_rows = self.visible_history_rows.saturating_sub(removed_rows);
+    }
+
+    pub(crate) fn visible_history_rows(&self) -> u16 {
+        self.visible_history_rows
+    }
+
     /// Clears the inactive buffer and swaps it with the current buffer
     pub fn swap_buffers(&mut self) {
         self.previous_buffer_mut().reset();
@@ -569,17 +607,42 @@ where
 
 use ratatui::buffer::Cell;
 
-#[derive(Debug, IsVariant)]
-enum DrawCommand {
-    Put { x: u16, y: u16, cell: Cell },
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+enum CursorPositioning {
+    #[default]
+    Predicted,
+    Explicit,
+}
+
+#[derive(Debug, Eq, IsVariant, PartialEq)]
+enum DrawCommand<'a> {
+    Put { x: u16, y: u16, cell: &'a Cell },
     ClearToEnd { x: u16, y: u16, bg: Color },
 }
 
-fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
+fn diff_buffers<'a>(a: &Buffer, b: &'a Buffer) -> Vec<DrawCommand<'a>> {
     let next_buffer = &b.content;
+    let visible_on_blank = Modifier::REVERSED
+        .union(Modifier::UNDERLINED)
+        .union(Modifier::SLOW_BLINK)
+        .union(Modifier::RAPID_BLINK)
+        .union(Modifier::CROSSED_OUT);
 
     let mut updates = vec![];
     let mut last_nonblank_columns = vec![0; a.area.height as usize];
+    let needs_forced_width_repair =
+        next_buffer
+            .iter()
+            .zip(a.content.iter())
+            .any(|(current, previous)| match current.diff_option {
+                CellDiffOption::ForcedWidth(current_width) => {
+                    let previous_width = usize::from(previous.cell_width());
+                    previous_width > usize::from(current_width.get())
+                        && (previous.bg != Color::Reset
+                            || previous.modifier.intersects(visible_on_blank))
+                }
+                _ => false,
+            });
     for y in 0..a.area.height {
         let row_start = y as usize * a.area.width as usize;
         let row_end = row_start + a.area.width as usize;
@@ -594,10 +657,8 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
         // After that point the rest of the row can be cleared with a single ClearToEnd, a perf win
         // versus emitting multiple space Put commands.
         let mut last_nonblank_column = 0usize;
-        let mut column = 0usize;
-        while column < row.len() {
+        for column in (0..row.len()).rev() {
             let cell = &row[column];
-            let width = usize::from(cell.cell_width());
             // Keep AlwaysUpdate blanks in the drawable prefix; otherwise filtering the tail
             // would discard the repaint explicitly requested by Ratatui.
             if cell.symbol() != " "
@@ -605,9 +666,10 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
                 || cell.modifier != Modifier::empty()
                 || cell.diff_option == CellDiffOption::AlwaysUpdate
             {
+                let width = usize::from(cell.cell_width());
                 last_nonblank_column = column + (width.saturating_sub(1));
+                break;
             }
-            column += width.max(1); // treat zero-width symbols as width 1
         }
 
         let clear_start = last_nonblank_column + 1;
@@ -635,14 +697,19 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
         last_nonblank_columns[y as usize] = last_nonblank_column as u16;
     }
 
-    // Preserve Ratatui's native Skip, AlwaysUpdate, and multi-width diff semantics.
+    if !needs_forced_width_repair {
+        // Preserve Ratatui's native Skip, AlwaysUpdate, and multi-width diff semantics.
+        for (x, y, cell) in a.diff_iter(b) {
+            let row = usize::from(y - a.area.y);
+            if x <= last_nonblank_columns[row] {
+                updates.push(DrawCommand::Put { x, y, cell });
+            }
+        }
+        return updates;
+    }
+
     let mut cell_updates = a.diff_iter(b).collect::<Vec<_>>();
     // Ratatui's ForcedWidth path skips trailing-cell invalidation when a styled wide cell shrinks.
-    let visible_on_blank = Modifier::REVERSED
-        .union(Modifier::UNDERLINED)
-        .union(Modifier::SLOW_BLINK)
-        .union(Modifier::RAPID_BLINK)
-        .union(Modifier::CROSSED_OUT);
     for (i, (current, previous)) in next_buffer.iter().zip(a.content.iter()).enumerate() {
         let CellDiffOption::ForcedWidth(current_width) = current.diff_option else {
             continue;
@@ -676,30 +743,31 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
     for (x, y, cell) in cell_updates {
         let row = usize::from(y - a.area.y);
         if x <= last_nonblank_columns[row] {
-            updates.push(DrawCommand::Put {
-                x,
-                y,
-                cell: cell.clone(),
-            });
+            updates.push(DrawCommand::Put { x, y, cell });
         }
     }
     updates
 }
 
-fn draw<I>(writer: &mut impl Write, commands: I) -> io::Result<()>
+fn draw<'a, I>(
+    writer: &mut impl Write,
+    commands: I,
+    cursor_positioning: CursorPositioning,
+) -> io::Result<()>
 where
-    I: Iterator<Item = DrawCommand>,
+    I: Iterator<Item = DrawCommand<'a>>,
 {
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
-    let mut last_pos: Option<Position> = None;
+    let mut next_cursor_pos: Option<Position> = None;
     let mut active_hyperlink: Option<String> = None;
     for command in commands {
         let (x, y) = match &command {
             DrawCommand::Put { x, y, .. } => (x, y),
             DrawCommand::ClearToEnd { x, y, .. } => (x, y),
         };
+        let command_pos = Position { x: *x, y: *y };
         let hyperlink = match &command {
             DrawCommand::Put { cell, .. } => osc8_hyperlink_parts(cell.symbol()),
             DrawCommand::ClearToEnd { .. } => None,
@@ -707,13 +775,12 @@ where
         let destination = hyperlink.map(|(destination, _)| destination);
         let hyperlink_changed = active_hyperlink.as_deref() != destination;
         if hyperlink_changed && active_hyperlink.is_some() {
-            queue!(writer, Print("\x1b]8;;\x07"))?;
+            writer.write_all(b"\x1b]8;;\x07")?;
         }
-        // Move the cursor if the previous location was not (x - 1, y)
-        if !matches!(last_pos, Some(p) if *x == p.x + 1 && *y == p.y) {
+        if cursor_positioning == CursorPositioning::Explicit || next_cursor_pos != Some(command_pos)
+        {
             queue!(writer, MoveTo(*x, *y))?;
         }
-        last_pos = Some(Position { x: *x, y: *y });
         match &command {
             DrawCommand::Put { cell, .. } => {
                 if cell.modifier != modifier {
@@ -737,10 +804,14 @@ where
                 }
 
                 if hyperlink_changed && let Some(destination) = destination {
-                    queue!(writer, Print(format!("\x1b]8;;{destination}\x07")))?;
+                    write!(writer, "\x1b]8;;{destination}\x07")?;
                 }
                 let symbol = hyperlink.map_or_else(|| cell.symbol(), |(_, visible)| visible);
-                queue!(writer, Print(symbol))?;
+                writer.write_all(symbol.as_bytes())?;
+                next_cursor_pos = Some(Position {
+                    x: x.saturating_add(cell.cell_width()),
+                    y: *y,
+                });
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
@@ -748,6 +819,7 @@ where
                 queue!(writer, SetBackgroundColor((*clear_bg).into_crossterm()))?;
                 bg = *clear_bg;
                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
+                next_cursor_pos = Some(command_pos);
             }
         }
         if hyperlink_changed {
@@ -755,7 +827,7 @@ where
         }
     }
     if active_hyperlink.is_some() {
-        queue!(writer, Print("\x1b]8;;\x07"))?;
+        writer.write_all(b"\x1b]8;;\x07")?;
     }
 
     queue!(
@@ -1041,10 +1113,11 @@ mod tests {
                 })
                 .expect("draw resized frame");
 
+            let rendered_buffer = terminal.previous_buffer_mut();
             let rendered = (0..size.height)
                 .map(|y| {
                     (0..size.width)
-                        .map(|x| terminal.previous_buffer()[(x, y)].symbol())
+                        .map(|x| rendered_buffer[(x, y)].symbol())
                         .collect::<String>()
                         .trim_end()
                         .to_string()
@@ -1118,6 +1191,34 @@ mod tests {
     }
 
     #[test]
+    fn diff_buffers_does_not_clear_unchanged_trailing_blanks() {
+        let previous = Buffer::with_lines(["a  "]);
+        let next = previous.clone();
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            !commands.iter().any(DrawCommand::is_clear_to_end),
+            "expected unchanged trailing blanks not to be cleared; commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn diff_buffers_clears_changed_trailing_suffix() {
+        let previous = Buffer::with_lines(["abc"]);
+        let next = Buffer::with_lines(["a  "]);
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 1, y: 0, .. })),
+            "expected the changed trailing suffix to be cleared; commands: {commands:?}"
+        );
+    }
+
+    #[test]
     fn diff_buffers_clear_to_end_starts_after_wide_char() {
         let area = Rect::new(0, 0, 10, 1);
         for (before, after) in [("中文", "中"), ("ｶﾞﾞ", "ｶﾞ")] {
@@ -1148,6 +1249,83 @@ mod tests {
     }
 
     #[test]
+    fn explicit_cursor_positioning_keeps_text_visible() {
+        let area = Rect::new(0, 0, 5, 1);
+        let mut terminal =
+            Terminal::with_options(VT100Backend::new(area.width, area.height)).expect("terminal");
+        terminal.set_viewport_area(area);
+        terminal.cursor_positioning = CursorPositioning::Explicit;
+
+        for _ in 0..2 {
+            terminal
+                .draw_with_size(area.as_size(), |frame| {
+                    frame.buffer_mut().set_string(0, 0, "⚠️x", Style::default());
+                })
+                .expect("draw explicitly positioned text");
+        }
+
+        assert_snapshot!(terminal.backend().vt100().screen().contents(), @"⚠️ x");
+    }
+
+    #[test]
+    fn draw_repositions_for_vs16_trailing_cell_repair() {
+        let previous = Buffer::with_lines(["abX"]);
+        let next = Buffer::with_lines(["⚠️X"]);
+        let commands = diff_buffers(&previous, &next);
+
+        assert_eq!(
+            commands,
+            vec![
+                DrawCommand::Put {
+                    x: 0,
+                    y: 0,
+                    cell: &next[(0, 0)],
+                },
+                DrawCommand::Put {
+                    x: 1,
+                    y: 0,
+                    cell: &next[(1, 0)],
+                },
+            ]
+        );
+
+        let mut output = Vec::new();
+        draw(
+            &mut output,
+            commands.into_iter(),
+            CursorPositioning::Predicted,
+        )
+        .expect("Vec writes should succeed");
+
+        assert!(
+            output.starts_with(b"\x1b[1;1H\xe2\x9a\xa0\xef\xb8\x8f\x1b[1;2H "),
+            "expected draw to reposition before the repaired cell: {output:?}"
+        );
+        assert!(output.ends_with(b"\x1b[0m"));
+    }
+
+    #[test]
+    fn explicit_cursor_positioning_moves_before_each_cell() {
+        let previous = Buffer::with_lines(["   "]);
+        let next = Buffer::with_lines(["abc"]);
+        let commands = diff_buffers(&previous, &next);
+        let mut output = Vec::new();
+
+        draw(
+            &mut output,
+            commands.into_iter(),
+            CursorPositioning::Explicit,
+        )
+        .expect("Vec writes should succeed");
+
+        assert!(
+            output.starts_with(b"\x1b[1;1Ha\x1b[1;2Hb\x1b[1;3Hc"),
+            "expected an explicit cursor move before every cell: {output:?}"
+        );
+        assert!(output.ends_with(b"\x1b[0m"));
+    }
+
+    #[test]
     fn terminal_draw_coalesces_wrapped_hyperlink_output() {
         let auth_url = format!(
             "https://auth.openai.com/oauth/authorize?response_type=code&state={}",
@@ -1159,6 +1337,7 @@ mod tests {
         let mut terminal =
             Terminal::with_options(CaptureBackend::new(width, height)).expect("terminal");
         terminal.set_viewport_area(area);
+        terminal.cursor_positioning = CursorPositioning::Predicted;
 
         terminal
             .draw(|frame| {
@@ -1200,6 +1379,56 @@ mod tests {
                 "expected the always-update cell in {text:?} to be emitted; commands: {commands:?}"
             );
         }
+    }
+
+    #[test]
+    fn diff_buffers_updates_equal_width_forced_cell_without_suffix_repair() {
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 3, /*height*/ 1,
+        );
+        let mut previous = Buffer::empty(area);
+        let mut next = Buffer::empty(area);
+        previous[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com/old\x07a\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+        next[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com/new\x07b\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+
+        assert_eq!(
+            diff_buffers(&previous, &next),
+            vec![DrawCommand::Put {
+                x: 0,
+                y: 0,
+                cell: &next[(0, 0)],
+            }]
+        );
+    }
+
+    #[test]
+    fn diff_buffers_clears_suffix_after_forced_width_hyperlink_shrinks() {
+        use ratatui::buffer::CellDiffOption;
+
+        let area = Rect::new(0, 0, 4, 1);
+        let mut previous = Buffer::empty(area);
+        let mut next = Buffer::empty(area);
+        previous[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com\x07ab\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(
+                NonZeroU16::new(2).expect("non-zero width"),
+            ));
+        next[(0, 0)]
+            .set_symbol("\x1b]8;;https://example.com\x07a\x1b]8;;\x07")
+            .set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+
+        let commands = diff_buffers(&previous, &next);
+
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 1, y: 0, .. })),
+            "expected the old forced-width hyperlink suffix to be cleared; commands: {commands:?}"
+        );
     }
 
     #[test]

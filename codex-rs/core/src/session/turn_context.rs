@@ -846,7 +846,7 @@ impl Session {
         let mut configuration = commit.configuration;
         // Apply the override only to the turn's copy, after persisting thread settings.
         if let Some(service_tier) = service_tier_for_turn {
-            Arc::make_mut(&mut configuration.step_settings).service_tier = Some(service_tier);
+            Arc::make_mut(&mut configuration.step_settings).service_tier = service_tier;
         }
         let turn_context = self
             .new_turn_from_configuration(sub_id, configuration, options)

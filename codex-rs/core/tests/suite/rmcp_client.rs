@@ -2731,7 +2731,7 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Re
                 priority: 1,
                 additional_speed_tiers: Vec::new(),
                 service_tiers: Vec::new(),
-                default_service_tier: None,
+                default_service_tier: Default::default(),
                 upgrade: None,
                 model_messages: None,
                 include_skills_usage_instructions: false,

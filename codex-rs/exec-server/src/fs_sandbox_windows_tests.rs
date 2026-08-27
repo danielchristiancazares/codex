@@ -241,6 +241,7 @@ fn powershell_command(script: &str, path: &Path) -> anyhow::Result<SandboxExecRe
             "-Command".to_string(),
             script.to_string(),
         ],
+        stdin_prelude: Vec::new(),
         cwd: cwd.clone(),
         sandbox_policy_cwd: cwd,
         env: HashMap::from([

@@ -92,7 +92,6 @@ fn env_overlay_for_exec_server_keeps_runtime_changes_only() {
         ])
     );
 }
-
 #[test]
 fn exec_env_policy_excludes_non_inheritable_and_runtime_variables() {
     let policy = ShellEnvironmentPolicy {

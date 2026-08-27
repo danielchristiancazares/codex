@@ -183,16 +183,24 @@ impl HistoryCell for PlanUpdateCell {
             out
         };
 
-        let render_step = |status: &StepStatus, text: &str| -> Vec<Line<'static>> {
-            let (box_str, step_style) = match status {
-                StepStatus::Completed => ("✔ ", Style::default().crossed_out().dim()),
-                StepStatus::InProgress => ("□ ", Style::default().cyan().bold()),
-                StepStatus::Pending => ("□ ", Style::default().dim()),
+        let render_step = |status: &StepStatus, text: &str, is_last: bool| -> Vec<Line<'static>> {
+            let (marker, marker_style, step_style) = match status {
+                StepStatus::Completed => ("✓ ", Style::default().green(), Style::default().dim()),
+                StepStatus::InProgress => (
+                    "● ",
+                    Style::default().cyan().bold(),
+                    Style::default().bold(),
+                ),
+                StepStatus::Pending => ("○ ", Style::default().dim(), Style::default().dim()),
             };
-
+            let branch = if is_last { "  └ " } else { "  ├ " };
+            let continuation = if is_last { "      " } else { "  │   " };
             let opts = RtOptions::new(width.saturating_sub(4).max(1) as usize)
-                .initial_indent(box_str.into())
-                .subsequent_indent("  ".into());
+                .initial_indent(Line::from(vec![
+                    branch.dim(),
+                    marker.set_style(marker_style),
+                ]))
+                .subsequent_indent(continuation.dim().into());
             let step = Line::from(text.to_string().set_style(step_style));
             let wrapped = adaptive_wrap_line(&step, opts);
             let mut out = Vec::new();
@@ -200,27 +208,36 @@ impl HistoryCell for PlanUpdateCell {
             out
         };
 
-        let mut lines: Vec<Line<'static>> = vec![];
-        lines.push(vec!["• ".dim(), "Updated Plan".bold()].into());
+        let completed = self
+            .plan
+            .iter()
+            .filter(|item| matches!(&item.status, StepStatus::Completed))
+            .count();
+        let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+            "• ".dim(),
+            "Plan".bold(),
+            format!(" {completed}/{}", self.plan.len()).dim(),
+        ])];
 
-        let mut indented_lines = vec![];
         let note = self
             .explanation
             .as_ref()
             .map(|s| s.trim())
             .filter(|t| !t.is_empty());
         if let Some(expl) = note {
-            indented_lines.extend(render_note(expl));
+            lines.extend(prefix_lines(render_note(expl), "  │ ".dim(), "  │ ".dim()));
         };
 
         if self.plan.is_empty() {
-            indented_lines.push(Line::from("(no steps provided)".dim().italic()));
+            lines.push(Line::from(vec![
+                "  └ ".dim(),
+                "(no steps provided)".dim().italic(),
+            ]));
         } else {
-            for PlanItemArg { step, status } in self.plan.iter() {
-                indented_lines.extend(render_step(status, step));
+            for (index, PlanItemArg { step, status }) in self.plan.iter().enumerate() {
+                lines.extend(render_step(status, step, index + 1 == self.plan.len()));
             }
         }
-        lines.extend(prefix_lines(indented_lines, "  └ ".dim(), "    ".into()));
 
         lines
     }

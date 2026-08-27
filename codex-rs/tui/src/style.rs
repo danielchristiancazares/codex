@@ -2,6 +2,7 @@ use crate::color::blend;
 use crate::color::is_light;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::best_color;
+use crate::terminal_palette::best_color_for_level;
 use crate::terminal_palette::default_bg;
 use crate::terminal_palette::default_fg;
 use crate::terminal_palette::effective_stdout_color_level;
@@ -11,6 +12,8 @@ use ratatui::style::Color;
 use ratatui::style::Style;
 
 const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (0, 95, 135);
+const DARK_BG_ATTACHMENT_RGB: (u8, u8, u8) = (0, 175, 175);
+const ATTACHMENT_CHIP_BG_ALPHA: f32 = 0.16;
 
 #[derive(Clone, Copy)]
 pub(crate) enum StatusTone {
@@ -61,6 +64,11 @@ pub(crate) fn accent_style() -> Style {
     accent_style_for(default_bg())
 }
 
+/// Returns the shared chip style for image attachments and references.
+pub(crate) fn attachment_chip_style() -> Style {
+    attachment_chip_style_for(default_bg(), stdout_color_level())
+}
+
 /// Returns the style for a user-authored message using the provided terminal background.
 pub fn user_message_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
     match terminal_bg {
@@ -83,6 +91,37 @@ pub(crate) fn accent_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
     } else {
         Style::default().fg(Color::Cyan).bold()
     }
+}
+
+fn attachment_chip_style_for(
+    terminal_bg: Option<(u8, u8, u8)>,
+    color_level: StdoutColorLevel,
+) -> Style {
+    if terminal_bg.is_none()
+        || matches!(
+            color_level,
+            StdoutColorLevel::Ansi16 | StdoutColorLevel::Unknown
+        )
+    {
+        return Style::default().fg(Color::Cyan).bold();
+    }
+
+    let foreground_rgb = if terminal_bg.is_some_and(is_light) {
+        LIGHT_BG_ACCENT_RGB
+    } else {
+        DARK_BG_ATTACHMENT_RGB
+    };
+    let mut style = Style::default()
+        .fg(best_color_for_level(foreground_rgb, color_level))
+        .bold();
+    let terminal_bg = terminal_bg.expect("terminal background checked above");
+    let chip_bg = blend(foreground_rgb, terminal_bg, ATTACHMENT_CHIP_BG_ALPHA);
+    style = match color_level {
+        StdoutColorLevel::TrueColor => style.bg(rgb_color(chip_bg)),
+        StdoutColorLevel::Ansi256 => style.bg(best_color_for_level(chip_bg, color_level)),
+        StdoutColorLevel::Ansi16 | StdoutColorLevel::Unknown => unreachable!(),
+    };
+    style
 }
 
 fn table_separator_style_for(
@@ -188,6 +227,48 @@ mod tests {
 
         assert_eq!(accent_style_for(Some((0, 0, 0))), expected);
         assert_eq!(accent_style_for(/*terminal_bg*/ None), expected);
+    }
+
+    #[test]
+    fn attachment_chip_style_blends_teal_into_the_terminal_background() {
+        assert_eq!(
+            attachment_chip_style_for(Some((0, 0, 0)), StdoutColorLevel::TrueColor),
+            Style::default()
+                .fg(best_color_for_level(
+                    DARK_BG_ATTACHMENT_RGB,
+                    StdoutColorLevel::TrueColor
+                ))
+                .bg(rgb_color((0, 28, 28)))
+                .bold()
+        );
+        assert_eq!(
+            attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::TrueColor),
+            Style::default()
+                .fg(best_color_for_level(
+                    LIGHT_BG_ACCENT_RGB,
+                    StdoutColorLevel::TrueColor
+                ))
+                .bg(rgb_color((214, 229, 235)))
+                .bold()
+        );
+    }
+
+    #[test]
+    fn attachment_chip_style_uses_cyan_when_palette_information_is_incomplete() {
+        let expected = Style::default().fg(Color::Cyan).bold();
+
+        assert_eq!(
+            attachment_chip_style_for(/*terminal_bg*/ None, StdoutColorLevel::TrueColor),
+            expected
+        );
+        assert_eq!(
+            attachment_chip_style_for(Some((0, 0, 0)), StdoutColorLevel::Ansi16),
+            expected
+        );
+        assert_eq!(
+            attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::Unknown),
+            expected
+        );
     }
 
     #[test]

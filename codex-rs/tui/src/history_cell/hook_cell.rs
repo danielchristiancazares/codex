@@ -19,7 +19,6 @@ use crate::motion::activity_indicator;
 use crate::motion::shimmer_text;
 use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
-use crate::ui_consts::TRANSCRIPT_HINT;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
 use codex_app_server_protocol::HookEventName;
@@ -553,7 +552,7 @@ fn hook_context_preview_lines(text: &str, width: u16) -> Vec<Line<'static>> {
     wrapped.truncate(retained_rows);
     let hint = vec![
         HOOK_OUTPUT_BODY_INDENT.into(),
-        format!("… +{omitted_rows} lines ({TRANSCRIPT_HINT})").dim(),
+        format!("… +{omitted_rows} lines").dim(),
     ]
     .into();
     wrapped.push(truncate_line_with_ellipsis_if_overflow(hint, width));
@@ -921,8 +920,8 @@ mod tests {
         assert!(
             display
                 .iter()
-                .any(|line| line.contains("ctrl + t to view transcript")),
-            "expected truncated context to advertise the transcript: {display:?}"
+                .any(|line| line.contains("… +") && line.contains("lines")),
+            "expected truncated context to report omitted lines: {display:?}"
         );
         assert!(display.iter().all(|line| !line.contains("tail-marker")));
 
@@ -962,7 +961,7 @@ mod tests {
             assert!(
                 display
                     .iter()
-                    .all(|line| !line.contains("ctrl + t to view transcript")),
+                    .all(|line| !line.contains("Ctrl+T transcript")),
                 "did not expect a transcript hint for {kind:?}: {display:?}"
             );
         }

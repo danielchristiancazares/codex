@@ -384,8 +384,10 @@ use self::plugins::PluginListFetchState;
 use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+mod context_window_picker;
 mod model_popups;
 mod notifications;
+mod provider_popup;
 use self::notifications::Notification;
 mod permission_popups;
 mod permission_shortcuts;
@@ -409,6 +411,7 @@ mod rendering;
 mod replay;
 mod review;
 mod review_popups;
+use self::review::PreReviewTokenInfo;
 use self::review::ReviewState;
 #[cfg(test)]
 pub(crate) use self::review_popups::show_review_commit_picker_with_entries;
@@ -555,7 +558,6 @@ pub(crate) struct ChatWidget {
     config: Config,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
-    effective_service_tier: Option<String>,
     /// The unmasked collaboration mode settings (always Default mode).
     ///
     /// Masks are applied on top of this base mode to derive the effective mode.
@@ -565,6 +567,7 @@ pub(crate) struct ChatWidget {
     has_chatgpt_account: bool,
     has_codex_backend_auth: bool,
     model_catalog: Arc<ModelCatalog>,
+    feedback: codex_feedback::CodexFeedback,
     session_telemetry: SessionTelemetry,
     session_header: SessionHeader,
     initial_user_message: Option<UserMessage>,
@@ -711,8 +714,6 @@ pub(crate) struct ChatWidget {
     // Runtime metrics accumulated across delta snapshots for the active turn.
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<u16>>,
-    // Feedback sink for /feedback
-    feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
     // Current working directory (if known)
@@ -731,14 +732,7 @@ pub(crate) struct ChatWidget {
     pub(crate) last_terminal_title: Option<String>,
     // Last visible "action required" state observed by the terminal-title renderer.
     last_terminal_title_requires_action: bool,
-    // Original terminal-title config captured when the setup UI opens.
-    //
-    // The outer `Option` tracks whether a setup session is active (`Some`)
-    // or not (`None`). The inner `Option<Vec<String>>` mirrors the shape
-    // of `config.tui_terminal_title` (which is `None` when using defaults).
-    // On cancel or persist-failure the inner value is restored to config;
-    // on confirm the outer is set to `None` to end the session.
-    terminal_title_setup_original_items: Option<Option<Vec<String>>>,
+    terminal_title_setup_snapshot: status_controls::TerminalTitleSetupSnapshot,
     // Baseline instant used to animate spinner-prefixed title statuses.
     terminal_title_animation_origin: Instant,
     // The foreground loop refreshes the title at this deadline without drawing a frame.
@@ -1004,6 +998,27 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn open_feedback_consent(&mut self, category: crate::app_event::FeedbackCategory) {
+        let snapshot = self.feedback.snapshot(self.thread_id);
+        #[cfg(target_os = "windows")]
+        let include_windows_sandbox_log =
+            codex_windows_sandbox::current_log_file_path_for_codex_home(&self.config.codex_home)
+                .is_file();
+        #[cfg(not(target_os = "windows"))]
+        let include_windows_sandbox_log = false;
+        let params = crate::bottom_pane::feedback_upload_consent_params(
+            self.app_event_tx.clone(),
+            category,
+            self.current_rollout_path.clone(),
+            self.thread_id
+                .map(|thread_id| format!("auto-review-rollout-{thread_id}.jsonl")),
+            include_windows_sandbox_log,
+            snapshot.feedback_diagnostics(),
+        );
+        self.bottom_pane.show_selection_view(params);
+        self.request_redraw();
+    }
+
     pub(crate) fn dismiss_app_server_request(&mut self, request: &ResolvedAppServerRequest) {
         // A remotely resolved request must not remain user-actionable. It may be
         // materialized in the bottom pane or still deferred behind active streaming.
@@ -1024,27 +1039,6 @@ impl ChatWidget {
         if removed_deferred || removed_visible {
             self.request_redraw();
         }
-    }
-
-    pub(crate) fn open_feedback_consent(&mut self, category: crate::app_event::FeedbackCategory) {
-        let snapshot = self.feedback.snapshot(self.thread_id);
-        #[cfg(target_os = "windows")]
-        let include_windows_sandbox_log =
-            codex_windows_sandbox::current_log_file_path_for_codex_home(&self.config.codex_home)
-                .is_file();
-        #[cfg(not(target_os = "windows"))]
-        let include_windows_sandbox_log = false;
-        let params = crate::bottom_pane::feedback_upload_consent_params(
-            self.app_event_tx.clone(),
-            category,
-            self.current_rollout_path.clone(),
-            self.thread_id
-                .map(|thread_id| format!("auto-review-rollout-{thread_id}.jsonl")),
-            include_windows_sandbox_log,
-            snapshot.feedback_diagnostics(),
-        );
-        self.bottom_pane.show_selection_view(params);
-        self.request_redraw();
     }
 
     pub(crate) fn open_multi_agent_enable_prompt(&mut self) {
@@ -1178,15 +1172,14 @@ impl ChatWidget {
     }
 
     fn restore_pre_review_token_info(&mut self) {
-        if let Some(saved) = self.review.pre_review_token_info.take() {
-            match saved {
-                Some(info) => self.apply_token_info(info),
-                None => {
-                    self.bottom_pane
-                        .set_context_window(/*percent*/ None, /*used_tokens*/ None);
-                    self.token_info = None;
-                }
+        match std::mem::take(&mut self.review.pre_review_token_info) {
+            PreReviewTokenInfo::NotCaptured => {}
+            PreReviewTokenInfo::WithoutTokenInfo => {
+                self.bottom_pane
+                    .set_context_window(/*percent*/ None, /*used_tokens*/ None);
+                self.token_info = None;
             }
+            PreReviewTokenInfo::WithTokenInfo(info) => self.apply_token_info(info),
         }
     }
 
@@ -1280,8 +1273,14 @@ impl ChatWidget {
     }
 
     fn enter_review_mode_with_hint(&mut self, hint: String, from_replay: bool) {
-        if self.review.pre_review_token_info.is_none() {
-            self.review.pre_review_token_info = Some(self.token_info.clone());
+        if matches!(
+            &self.review.pre_review_token_info,
+            PreReviewTokenInfo::NotCaptured
+        ) {
+            self.review.pre_review_token_info = match self.token_info.clone() {
+                Some(info) => PreReviewTokenInfo::WithTokenInfo(info),
+                None => PreReviewTokenInfo::WithoutTokenInfo,
+            };
         }
         if !from_replay && !self.bottom_pane.is_task_running() {
             self.bottom_pane.set_task_running(/*running*/ true);
@@ -1631,6 +1630,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
+        let streams_were_idle = self.stream_controllers_idle();
         self.raw_output_mode = enabled;
         self.config.tui_raw_output_mode = enabled;
         let render_mode = self.history_render_mode();
@@ -1640,7 +1640,15 @@ impl ChatWidget {
         if let Some(controller) = self.plan_stream_controller.as_mut() {
             controller.set_render_mode(render_mode);
         }
+        let stream_tail_changed = self.sync_active_stream_tail();
+        if streams_were_idle && !self.stream_controllers_idle() {
+            self.app_event_tx.send(AppEvent::StartCommitAnimation);
+            self.run_catch_up_commit_tick();
+        }
         self.refresh_status_surfaces();
+        if stream_tail_changed {
+            self.request_redraw();
+        }
     }
 
     pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
@@ -2006,7 +2014,7 @@ impl Drop for ChatWidget {
     }
 }
 
-const PLACEHOLDER: &str = "Ask Codex to do anything";
+const PLACEHOLDER: &str = "";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 
 // Extract the first bold (Markdown) element in the form **...** from `s`.

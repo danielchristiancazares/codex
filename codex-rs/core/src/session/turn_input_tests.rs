@@ -494,7 +494,7 @@ async fn automatic_admission_rechecks_plan_mode_without_committing_sparse_settin
     let default_mode = session.collaboration_mode().await;
     let overrides = ThreadSettingsOverrides {
         model: Some("automatic-model-must-not-be-applied".to_string()),
-        service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+        service_tier: Some(Some(ServiceTier::Fast)),
         environments: Some(proposed_environments.clone()),
         approval_policy: Some(AskForApproval::Never),
         approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
@@ -609,7 +609,7 @@ async fn admission_revalidates_constraints_before_committing(kind: TurnStartKind
         &session,
         ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
-            service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+            service_tier: Some(Some(ServiceTier::Fast)),
             ..Default::default()
         },
         TurnStartOptions::default(),

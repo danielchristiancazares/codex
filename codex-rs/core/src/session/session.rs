@@ -21,6 +21,7 @@ use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::SessionId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::permissions::FileSystemPath;
@@ -308,7 +309,7 @@ impl SessionConfiguration {
             active_permission_profile: self.active_permission_profile(),
             windows_sandbox_level: Some(self.windows_sandbox_level),
             summary: self.step_settings.reasoning_summary,
-            service_tier: Some(self.step_settings.service_tier.clone()),
+            service_tier: Some(Some(self.step_settings.service_tier)),
             collaboration_mode: Some(self.step_settings.collaboration_mode.clone()),
             personality: self.step_settings.personality,
             ..Default::default()
@@ -541,7 +542,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) permission_profile: Option<PermissionProfile>,
     pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
-    pub(crate) service_tier_for_turn: Option<String>,
+    pub(crate) service_tier_for_turn: Option<ServiceTier>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
 }

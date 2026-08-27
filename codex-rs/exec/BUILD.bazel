@@ -1,4 +1,5 @@
 load("//:defs.bzl", "codex_rust_crate")
+load("//bazel/rules:e2e_benchmark.bzl", "codex_e2e_benchmark")
 
 codex_rust_crate(
     name = "exec",
@@ -7,4 +8,9 @@ codex_rust_crate(
         "exec-all-test": 8,
     },
     test_tags = ["no-sandbox"],
+)
+
+codex_e2e_benchmark(
+    name = "codex-exec",
+    binaries = [":codex-exec"],
 )

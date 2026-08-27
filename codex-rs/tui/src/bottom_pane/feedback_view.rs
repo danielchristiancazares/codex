@@ -361,7 +361,9 @@ pub(crate) fn feedback_success_cell(
             ]);
         }
     }
-    history_cell::WebHyperlinkHistoryCell::new(lines)
+    history_cell::WebHyperlinkHistoryCell::new_hyperlink_lines(
+        lines.into_iter().map(Into::into).collect(),
+    )
 }
 
 fn issue_url_for_category(

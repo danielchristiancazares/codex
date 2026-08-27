@@ -9,6 +9,7 @@ use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_login::CodexAuth;
+use codex_models_manager::bundled_models_response;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -172,7 +173,7 @@ async fn remote_compaction_parity_v2_api_key_sends_service_tier_upgrade() -> Res
     );
     assert_eq!(
         v2.compact_body.get("service_tier").and_then(Value::as_str),
-        Some(ServiceTier::Fast.request_value()),
+        Some("priority"),
         "v2 compaction should send service_tier through /responses for API-key auth"
     );
 
@@ -530,7 +531,13 @@ async fn build_harness_inner(
         .expect("fixed cwd should be absolute");
         config.developer_instructions = Some("PARITY_DEVELOPER_INSTRUCTIONS".to_string());
         if settings.service_tier_fast {
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
+            config
+                .features
+                .enable(Feature::FastMode)
+                .expect("test config should allow Fast mode");
+            config.model_catalog =
+                Some(bundled_models_response().expect("bundled models catalog should deserialize"));
         }
         config.model_auto_compact_token_limit = auto_compact_limit;
         if hooks {
@@ -610,11 +617,13 @@ async fn capture_from_requests(
 }
 
 async fn submit_user_input(codex: &codex_core::CodexThread, items: Vec<UserInput>) -> Result<()> {
+    let service_tier = codex.config_snapshot().await.service_tier;
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(items).with_thread_settings(
             ThreadSettingsOverrides {
                 approval_policy: Some(AskForApproval::Never),
                 permission_profile: Some(PermissionProfile::Disabled),
+                service_tier: Some(Some(service_tier)),
                 ..Default::default()
             },
         ))

@@ -7,19 +7,6 @@ use crate::width::display_width;
 
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
-pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usize> {
-    if width < 4 {
-        return None;
-    }
-    let inner_width = std::cmp::min(width.saturating_sub(4) as usize, max_inner_width);
-    Some(inner_width)
-}
-
-/// Render `lines` inside a border sized to the widest span in the content.
-pub(crate) fn with_border(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    with_border_internal(lines, /*forced_inner_width*/ None)
-}
-
 /// Render `lines` inside a border whose inner width is at least `inner_width`.
 ///
 /// This is useful when callers have already clamped their content to a
@@ -146,38 +133,15 @@ pub(crate) fn new_session_info(
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
-        // Help lines below the header (new copy and list)
-        let help_lines: Vec<Line<'static>> = vec![
-            "  To get started, describe a task or try one of these commands:"
-                .dim()
-                .into(),
-            Line::from(""),
-            Line::from(vec![
-                "  ".into(),
-                "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/status".into(),
-                " - show current session configuration".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/model".into(),
-                " - choose what model and reasoning effort to use".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/review".into(),
-                " - review any changes and find issues".dim(),
-            ]),
-        ];
+        let help_lines = vec![Line::from(vec![
+            "  Start with a task, or try ".dim(),
+            "/init".cyan(),
+            ", ".dim(),
+            "/model".cyan(),
+            ", ".dim(),
+            "/permissions".cyan(),
+            ".".dim(),
+        ])];
 
         parts.push(Box::new(PlainHistoryCell { lines: help_lines }));
     } else {
@@ -311,39 +275,25 @@ impl SessionHeaderHistoryCell {
 
 impl HistoryCell for SessionHeaderHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+        if width == 0 {
             return Vec::new();
-        };
+        }
+        let content_width = usize::from(width).min(SESSION_HEADER_MAX_INNER_WIDTH + 4);
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
-            Span::from(">_ ").dim(),
+            "  >_ ".magenta().bold(),
             Span::from("OpenAI Codex").bold(),
-            Span::from(" ").dim(),
-            Span::from(format!("(v{})", self.version)).dim(),
+            Span::from(format!(" v{}", self.version)).dim(),
         ];
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
-        const DIR_LABEL: &str = "directory:";
-        const PERMISSIONS_LABEL: &str = "permissions:";
-        let label_width = if self.yolo_mode {
-            DIR_LABEL.len().max(PERMISSIONS_LABEL.len())
-        } else {
-            DIR_LABEL.len()
-        };
-
-        let model_label = format!(
-            "{model_label:<label_width$}",
-            model_label = "model:",
-            label_width = label_width
-        );
         let reasoning_label = self.reasoning_label();
         let model_spans: Vec<Span<'static>> = {
             let mut spans = vec![
-                Span::from(format!("{model_label} ")).dim(),
+                "  ".into(),
                 Span::styled(self.model.clone(), self.model_style),
             ];
             if let Some(reasoning) = reasoning_label {
@@ -351,42 +301,45 @@ impl HistoryCell for SessionHeaderHistoryCell {
                 spans.push(Span::from(reasoning.to_owned()));
             }
             if self.show_fast_status {
-                spans.push("   ".into());
+                spans.push(" · ".dim());
                 spans.push(Span::styled("fast", self.model_style.magenta()));
             }
-            spans.push("   ".dim());
+            spans.push("  ".into());
             spans.push(CHANGE_MODEL_HINT_COMMAND.cyan());
             spans.push(CHANGE_MODEL_HINT_EXPLANATION.dim());
             spans
         };
 
-        let dir_label = format!("{DIR_LABEL:<label_width$}");
-        let dir_prefix = format!("{dir_label} ");
-        let dir_prefix_width = display_width(dir_prefix.as_str());
-        let dir_max_width = inner_width.saturating_sub(dir_prefix_width);
+        let dir_max_width = content_width.saturating_sub(2);
         let dir = self.format_directory(Some(dir_max_width));
-        let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
+        let dir_spans = vec!["  ".into(), Span::from(dir)];
 
-        let mut lines = vec![
+        let access_spans = if self.yolo_mode {
+            vec![
+                "  ".into(),
+                "YOLO mode".magenta().bold(),
+                "  ".into(),
+                "/permissions".cyan(),
+                " to change".dim(),
+            ]
+        } else {
+            vec![
+                "  guarded access".into(),
+                "  ".into(),
+                "/permissions".cyan(),
+                " to review".dim(),
+            ]
+        };
+
+        vec![
             make_row(title_spans),
-            make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
-        ];
-
-        if self.yolo_mode {
-            let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
-            lines.push(make_row(vec![
-                Span::from(format!("{permissions_label} ")).dim(),
-                "YOLO mode".magenta().bold(),
-            ]));
-        }
-
-        let lines = lines
-            .into_iter()
-            .map(|line| truncate_line_with_ellipsis_if_overflow(line, inner_width))
-            .collect();
-        with_border(lines)
+            make_row(access_spans),
+        ]
+        .into_iter()
+        .map(|line| truncate_line_with_ellipsis_if_overflow(line, content_width))
+        .collect()
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

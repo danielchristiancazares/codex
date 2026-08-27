@@ -22,6 +22,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -40,6 +41,8 @@ use crate::keymap::ListKeymap;
 use crate::render::renderable::Renderable;
 
 const STATUS_LINE_USE_THEME_COLORS_ITEM_ID: &str = "status-line-use-theme-colors";
+const STATUS_LINE_SETUP_FOOTER_HINT: &str =
+    "↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel";
 
 /// Available items that can be displayed in the status line.
 ///
@@ -155,6 +158,41 @@ pub(crate) enum StatusLineItem {
 }
 
 impl StatusLineItem {
+    /// Human-facing label shown in the status-line picker.
+    fn display_name(self) -> &'static str {
+        match self {
+            StatusLineItem::ModelName => "Model",
+            StatusLineItem::ModelWithReasoning => "Model + reasoning",
+            StatusLineItem::Reasoning => "Reasoning",
+            StatusLineItem::CurrentDir => "Current directory",
+            StatusLineItem::ProjectRoot => "Project name",
+            StatusLineItem::Hostname => "Hostname",
+            StatusLineItem::GitBranch => "Git branch",
+            StatusLineItem::PullRequestNumber => "Pull request",
+            StatusLineItem::BranchChanges => "Branch changes",
+            StatusLineItem::Status => "Run state",
+            StatusLineItem::Permissions => "Permissions",
+            StatusLineItem::ApprovalMode => "Approval mode",
+            StatusLineItem::ContextRemaining => "Context remaining",
+            StatusLineItem::ContextUsed => "Context used",
+            StatusLineItem::FiveHourLimit => "Primary usage limit",
+            StatusLineItem::WeeklyLimit => "Secondary usage limit",
+            StatusLineItem::CodexVersion => "Codex version",
+            StatusLineItem::ContextWindowSize => "Context window",
+            StatusLineItem::UsedTokens => "Tokens used",
+            StatusLineItem::TotalInputTokens => "Input tokens",
+            StatusLineItem::TotalOutputTokens => "Output tokens",
+            StatusLineItem::ThreadCredits => "Thread credits",
+            StatusLineItem::EstimatedThreadCost => "Estimated thread cost",
+            StatusLineItem::SessionId => "Thread ID",
+            StatusLineItem::FastMode => "Fast mode",
+            StatusLineItem::RawOutput => "Raw output",
+            StatusLineItem::ThreadTitle => "Thread title",
+            StatusLineItem::WorkspaceHeadline => "Workspace headline",
+            StatusLineItem::TaskProgress => "Task progress",
+        }
+    }
+
     /// User-visible description shown in the popup.
     pub(crate) fn description(self) -> &'static str {
         match self {
@@ -180,12 +218,8 @@ impl StatusLineItem {
             StatusLineItem::ContextUsed => {
                 "Percentage of context window used (omitted when unknown)"
             }
-            StatusLineItem::FiveHourLimit => {
-                "Remaining usage on the primary usage limit (omitted when unavailable)"
-            }
-            StatusLineItem::WeeklyLimit => {
-                "Remaining usage on the secondary usage limit (omitted when unavailable)"
-            }
+            StatusLineItem::FiveHourLimit => "Primary usage remaining; hidden when unavailable",
+            StatusLineItem::WeeklyLimit => "Secondary usage remaining; hidden when unavailable",
             StatusLineItem::CodexVersion => "Codex application version",
             StatusLineItem::ContextWindowSize => {
                 "Total context window size in tokens (omitted when unknown)"
@@ -300,11 +334,7 @@ impl StatusLineSetupView {
                 if !used_ids.insert(item_id.clone()) {
                     continue;
                 }
-                items.push(Self::status_line_select_item(
-                    item,
-                    /*enabled*/ true,
-                    &preview_data,
-                ));
+                items.push(Self::status_line_select_item(item, /*enabled*/ true));
             }
         }
 
@@ -313,11 +343,7 @@ impl StatusLineSetupView {
             if used_ids.contains(&item_id) {
                 continue;
             }
-            items.push(Self::status_line_select_item(
-                item,
-                /*enabled*/ false,
-                &preview_data,
-            ));
+            items.push(Self::status_line_select_item(item, /*enabled*/ false));
         }
 
         Self {
@@ -364,25 +390,11 @@ impl StatusLineSetupView {
     }
 
     /// Converts a [`StatusLineItem`] into a [`MultiSelectItem`] for the picker.
-    fn status_line_select_item(
-        item: StatusLineItem,
-        enabled: bool,
-        preview_data: &StatusSurfacePreviewData,
-    ) -> MultiSelectItem {
-        let default_name = item.to_string();
-        let default_description = item.description();
-        let (name, description) = match item {
-            StatusLineItem::FiveHourLimit | StatusLineItem::WeeklyLimit => (
-                preview_data.rate_limit_item_name(item.preview_item(), &default_name),
-                preview_data.rate_limit_item_description(item.preview_item(), default_description),
-            ),
-            _ => (default_name, default_description.to_string()),
-        };
-
+    fn status_line_select_item(item: StatusLineItem, enabled: bool) -> MultiSelectItem {
         MultiSelectItem {
             id: item.to_string(),
-            name,
-            description: Some(description),
+            name: item.display_name().to_string(),
+            description: Some(item.description().to_string()),
             enabled,
             orderable: true,
             section_break_after: false,
@@ -411,7 +423,23 @@ impl BottomPaneView for StatusLineSetupView {
 
 impl Renderable for StatusLineSetupView {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.picker.render(area, buf)
+        self.picker.render(area, buf);
+        if area.is_empty() {
+            return;
+        }
+        let footer_area = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
+        ratatui::widgets::Widget::render(ratatui::widgets::Clear, footer_area, buf);
+        let hint_area = Rect::new(
+            footer_area.x.saturating_add(2),
+            footer_area.y,
+            footer_area.width.saturating_sub(2),
+            footer_area.height,
+        );
+        ratatui::widgets::Widget::render(
+            ratatui::text::Line::from(STATUS_LINE_SETUP_FOOTER_HINT).dim(),
+            hint_area,
+            buf,
+        );
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -696,7 +724,7 @@ mod tests {
                 ),
                 (
                     StatusLineItem::WeeklyLimit.preview_item(),
-                    "weekly 82% left".to_string(),
+                    "Weekly 82% left".to_string(),
                 ),
             ]),
             AppEventSender::new(tx_raw),

@@ -4,6 +4,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_preserving_symlinks;
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum GlobScanDepth {
+    #[default]
+    NotEncountered,
+    Unlimited,
+    Limited(usize),
+}
+
 use crate::models::PermissionProfile;
 use crate::permissions::FileSystemAccessMode;
 use crate::permissions::FileSystemPath;
@@ -153,7 +161,7 @@ pub fn intersect_effective_permission_profiles(
     ];
     let mut paths = Vec::new();
     let mut denies = Vec::new();
-    let mut glob_depth: Option<Option<usize>> = None;
+    let mut glob_depth = GlobScanDepth::NotEncountered;
     for (policy, _) in sources {
         let writable_roots = policy.get_writable_roots_with_cwd(cwd);
         for entry in &policy.entries {
@@ -161,13 +169,15 @@ pub fn intersect_effective_permission_profiles(
                 denies.push(entry.clone());
             }
             if matches!(entry.path, FileSystemPath::GlobPattern { .. }) {
-                glob_depth = Some(match glob_depth {
-                    None => policy.glob_scan_max_depth,
-                    Some(Some(previous)) => {
-                        policy.glob_scan_max_depth.map(|depth| previous.max(depth))
+                glob_depth = match (glob_depth, policy.glob_scan_max_depth) {
+                    (GlobScanDepth::NotEncountered, None)
+                    | (GlobScanDepth::Limited(_), None)
+                    | (GlobScanDepth::Unlimited, _) => GlobScanDepth::Unlimited,
+                    (GlobScanDepth::NotEncountered, Some(depth)) => GlobScanDepth::Limited(depth),
+                    (GlobScanDepth::Limited(previous), Some(depth)) => {
+                        GlobScanDepth::Limited(previous.max(depth))
                     }
-                    Some(None) => None,
-                });
+                };
             }
             let Some(path) = entry_path(entry, cwd)? else {
                 continue;
@@ -213,7 +223,10 @@ pub fn intersect_effective_permission_profiles(
     paths.dedup();
     denies.sort_by_cached_key(|entry| format!("{:?}", entry.path));
     let mut intersection = FileSystemSandboxPolicy::restricted(denies);
-    intersection.glob_scan_max_depth = glob_depth.flatten();
+    intersection.glob_scan_max_depth = match glob_depth {
+        GlobScanDepth::NotEncountered | GlobScanDepth::Unlimited => None,
+        GlobScanDepth::Limited(depth) => Some(depth),
+    };
     let intersection_denies = ReadDenyMatcher::new(&intersection, cwd);
 
     for path in paths {

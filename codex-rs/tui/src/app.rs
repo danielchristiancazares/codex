@@ -38,6 +38,7 @@ use crate::chatwidget::ChatWidget;
 use crate::chatwidget::ExternalEditorState;
 use crate::chatwidget::ReplayKind;
 use crate::chatwidget::ThreadInputState;
+use crate::chatwidget::ThreadInputStateRestoreMode;
 use crate::cwd_prompt::CwdPromptAction;
 use crate::diff_render::DiffSummary;
 use crate::exec_command::split_command_string;
@@ -130,6 +131,7 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadMemoryMode;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartSource;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -213,6 +215,8 @@ mod app_server_events;
 pub(crate) mod app_server_requests;
 mod background_requests;
 mod config_persistence;
+pub(crate) use config_persistence::resume_model_settings_for_overrides;
+mod commit_animation_ticker;
 mod connector_mentions;
 mod event_dispatch;
 mod exit_summary;
@@ -221,11 +225,13 @@ mod history_pagination;
 mod history_ui;
 mod input;
 mod loaded_threads;
+mod model_selection;
 mod pending_interactive_replay;
 mod permission_shortcuts;
 mod pets;
 mod platform_actions;
 mod plugin_mentions;
+mod provider_switch;
 mod recap;
 mod replay_filter;
 mod resize_reflow;
@@ -247,6 +253,7 @@ mod working_directory;
 use self::agent_navigation::AgentNavigationDirection;
 use self::agent_navigation::AgentNavigationState;
 use self::app_server_requests::PendingAppServerRequests;
+use self::commit_animation_ticker::CommitAnimationTicker;
 use self::loaded_threads::find_loaded_subagent_threads_for_primary;
 use self::pending_interactive_replay::PendingInteractiveReplayState;
 use self::platform_actions::*;
@@ -569,7 +576,7 @@ pub(crate) struct App {
     pub(crate) key_chord_matcher: KeyChordMatcher,
 
     /// The foreground loop owns stream pacing; stopped animations have no timer.
-    pub(crate) commit_animation: Option<tokio::time::Interval>,
+    commit_animation_ticker: CommitAnimationTicker,
     // Shared across ChatWidget instances so invalid status-line config warnings only emit once.
     status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared across ChatWidget instances so invalid terminal-title config warnings only emit once.
@@ -634,6 +641,7 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+    pending_provider_switch: Option<Uuid>,
     recap: recap::RecapState,
 }
 
@@ -723,6 +731,10 @@ impl App {
         cfg: crate::legacy_core::config::Config,
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
+        let model = cfg
+            .model
+            .clone()
+            .or_else(|| Some(self.chat_widget.current_model().to_string()));
         crate::chatwidget::ChatWidgetInit {
             config: cfg,
             frame_requester: tui.frame_requester(),
@@ -741,7 +753,7 @@ impl App {
                 .runtime_model_provider_base_url()
                 .map(str::to_string),
             initial_plan_type: self.chat_widget.current_plan_type(),
-            model: Some(self.chat_widget.current_model().to_string()),
+            model,
             startup_tooltip_override: None,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),

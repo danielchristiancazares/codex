@@ -24,7 +24,7 @@ fn thread_settings_for_test(
             ),
             model: model.to_string(),
             model_provider: "openai".to_string(),
-            service_tier: Some(ServiceTier::Fast.request_value().to_string()),
+            service_tier: ServiceTier::Fast,
             effort: Some(ReasoningEffortConfig::High),
             summary: None,
             collaboration_mode: CollaborationMode {
@@ -49,7 +49,7 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
         thread_name: None,
         model: "gpt-5.2".to_string(),
         model_provider_id: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -372,10 +372,7 @@ async fn thread_settings_updated_updates_visible_state_without_transcript() {
         chat.current_reasoning_effort(),
         Some(ReasoningEffortConfig::High)
     );
-    assert_eq!(
-        chat.current_service_tier(),
-        Some(ServiceTier::Fast.request_value())
-    );
+    assert_eq!(chat.current_service_tier(), ServiceTier::Fast);
     assert_eq!(
         chat.config_ref().permissions.approval_policy.value(),
         AskForApproval::OnRequest.to_core()
@@ -667,44 +664,6 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
 }
 
 #[tokio::test]
-async fn live_app_server_turn_started_sets_feedback_turn_id() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.handle_server_notification(
-        ServerNotification::TurnStarted(TurnStartedNotification {
-            thread_id: "thread-1".to_string(),
-            turn: AppServerTurn {
-                id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
-                items: Vec::new(),
-                status: AppServerTurnStatus::InProgress,
-                error: None,
-                started_at: Some(0),
-                completed_at: None,
-                duration_ms: None,
-            },
-        }),
-        /*replay_kind*/ None,
-    );
-
-    chat.open_feedback_note(
-        crate::app_event::FeedbackCategory::Bug,
-        /*include_logs*/ false,
-    );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::SubmitFeedback {
-            category: crate::app_event::FeedbackCategory::Bug,
-            reason: None,
-            turn_id: Some(turn_id),
-            include_logs: false,
-        }) if turn_id == "turn-1"
-    );
-}
-
-#[tokio::test]
 async fn live_app_server_warning_notification_renders_message() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -961,7 +920,7 @@ async fn live_app_server_command_output_delta_transcript_snapshot() {
 }
 
 #[tokio::test]
-async fn live_app_server_sub_agent_activity_renders_once() {
+async fn live_app_server_interacted_sub_agent_activity_renders_once() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let activity = AppServerThreadItem::SubAgentActivity {
         id: "activity-1".to_string(),
@@ -1082,6 +1041,52 @@ async fn live_app_server_collab_wait_items_render_history() {
         .collect::<Vec<_>>()
         .join("\n");
     assert_chatwidget_snapshot!("app_server_collab_wait_items_render_history", combined);
+}
+
+#[tokio::test]
+async fn live_app_server_started_sub_agent_activity_renders_once() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let agent_thread_id =
+        ThreadId::from_string("019cff70-2599-75e2-af72-b958ce5dc1cc").expect("valid thread id");
+    let item = AppServerThreadItem::SubAgentActivity {
+        id: "activity-1".to_string(),
+        kind: codex_app_server_protocol::SubAgentActivityKind::Started,
+        agent_thread_id: agent_thread_id.to_string(),
+        agent_path: "/root/sync_audit".to_string(),
+    };
+
+    chat.handle_server_notification(
+        ServerNotification::ItemStarted(ItemStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            started_at_ms: 0,
+            item: item.clone(),
+        }),
+        /*replay_kind*/ None,
+    );
+    chat.handle_server_notification(
+        ServerNotification::ItemCompleted(ItemCompletedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            completed_at_ms: 0,
+            item,
+        }),
+        /*replay_kind*/ None,
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(
+        cells.len(),
+        1,
+        "one activity item should render one history cell"
+    );
+    let rendered = lines_to_single_string(cells.first().expect("activity history cell"));
+    insta::assert_snapshot!(
+        rendered,
+        @r###"
+        • Started `/root/sync_audit`
+        "###
+    );
 }
 
 #[tokio::test]

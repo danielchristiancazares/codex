@@ -57,7 +57,6 @@ use codex_protocol::AgentPath;
 use codex_protocol::ResponseItemId;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -4356,7 +4355,7 @@ async fn set_rate_limits_retains_previous_credits() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -4472,7 +4471,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -4626,7 +4625,7 @@ async fn turn_context_with_model_updates_model_fields() {
         selected.collaboration_mode.settings.reasoning_effort =
             Some(ReasoningEffortConfig::Minimal);
         selected.reasoning_summary = Some(ReasoningSummaryConfig::Detailed);
-        selected.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+        selected.service_tier = ServiceTier::Fast;
         *settings = ResolvedStepSettings::new(
             Arc::new(selected),
             Arc::clone(&settings.model_info),
@@ -4638,7 +4637,7 @@ async fn turn_context_with_model_updates_model_fields() {
     let captured = turn_context.current_settings.load_full();
     let mut current_selection = captured.selected().clone();
     current_selection.reasoning_summary = Some(ReasoningSummaryConfig::None);
-    current_selection.service_tier = None;
+    current_selection.service_tier = ServiceTier::Default;
     current_selection
         .collaboration_mode
         .settings
@@ -4666,22 +4665,16 @@ async fn turn_context_with_model_updates_model_fields() {
     assert_eq!(
         (
             updated.reasoning_summary(),
-            updated.initial_settings.service_tier.as_deref()
+            updated.initial_settings.service_tier
         ),
-        (
-            ReasoningSummaryConfig::Detailed,
-            Some(ServiceTier::Fast.request_value())
-        ),
+        (ReasoningSummaryConfig::Detailed, ServiceTier::Fast),
     );
     assert_eq!(
         (
             updated.config.model_reasoning_summary,
-            updated.config.service_tier.as_deref()
+            updated.config.service_tier
         ),
-        (
-            Some(ReasoningSummaryConfig::Detailed),
-            Some(ServiceTier::Fast.request_value())
-        ),
+        (Some(ReasoningSummaryConfig::Detailed), ServiceTier::Fast),
     );
     assert!(Arc::ptr_eq(&captured, &turn_context.initial_settings));
     assert!(Arc::ptr_eq(
@@ -4910,138 +4903,106 @@ fn session_telemetry(
     )
 }
 
-fn model_with_default_service_tier(default_service_tier: Option<&str>) -> ModelInfo {
+fn model_with_default_service_tier(default_service_tier: ServiceTier) -> ModelInfo {
     let mut model_info = model_info::model_info_from_slug("gpt-5.4");
     model_info.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Fast.request_value().to_string(),
+        id: ServiceTier::Fast,
         name: "Fast".to_string(),
         description: "Priority processing.".to_string(),
     }];
-    model_info.default_service_tier = default_service_tier.map(str::to_string);
+    model_info.default_service_tier = default_service_tier;
     model_info
 }
 
 #[test]
 fn get_service_tier_does_not_use_model_default_when_absent_and_fast_mode_enabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
+    let model_info = model_with_default_service_tier(ServiceTier::Fast);
 
     assert_eq!(
         get_service_tier(
-            /*configured_service_tier*/ None,
+            /*configured_service_tier*/ ServiceTier::Default,
             /*fast_mode_enabled*/ true,
             &model_info,
         ),
-        None
+        ServiceTier::Default
     );
 }
 
 #[test]
 fn get_service_tier_does_not_use_model_default_when_fast_mode_disabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
+    let model_info = model_with_default_service_tier(ServiceTier::Fast);
 
     assert_eq!(
         get_service_tier(
-            /*configured_service_tier*/ None,
+            /*configured_service_tier*/ ServiceTier::Default,
             /*fast_mode_enabled*/ false,
             &model_info,
         ),
-        None
+        ServiceTier::Default
     );
 }
 
 #[test]
 fn get_service_tier_keeps_supported_explicit_tier() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
+    let model_info = model_with_default_service_tier(ServiceTier::Fast);
 
     assert_eq!(
         get_service_tier(
-            Some(ServiceTier::Fast.request_value().to_string()),
+            ServiceTier::Fast,
             /*fast_mode_enabled*/ true,
             &model_info,
         ),
-        Some(ServiceTier::Fast.request_value().to_string())
+        ServiceTier::Fast
     );
 }
 
 #[test]
 fn get_service_tier_does_not_default_when_model_has_no_default() {
-    let model_info = model_with_default_service_tier(/*default_service_tier*/ None);
+    let model_info = model_with_default_service_tier(ServiceTier::Default);
 
     assert_eq!(
         get_service_tier(
-            /*configured_service_tier*/ None,
+            /*configured_service_tier*/ ServiceTier::Default,
             /*fast_mode_enabled*/ true,
             &model_info,
         ),
-        None
+        ServiceTier::Default
     );
 }
 
 #[test]
 fn get_service_tier_drops_unsupported_configured_tier_when_fast_mode_enabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
+    let model_info = model_with_default_service_tier(ServiceTier::Fast);
 
     assert_eq!(
         get_service_tier(
-            Some("unsupported".to_string()),
+            ServiceTier::Flex,
             /*fast_mode_enabled*/ true,
             &model_info,
         ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some(ServiceTier::Flex.request_value().to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
-            /*fast_mode_enabled*/ true,
-            &model_info,
-        ),
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
+        ServiceTier::Default
     );
 }
 
 #[test]
 fn get_service_tier_ignores_configured_tier_when_fast_mode_disabled() {
-    let model_info = model_with_default_service_tier(Some(ServiceTier::Fast.request_value()));
+    let model_info = model_with_default_service_tier(ServiceTier::Fast);
 
     assert_eq!(
         get_service_tier(
-            Some(ServiceTier::Fast.request_value().to_string()),
+            ServiceTier::Fast,
             /*fast_mode_enabled*/ false,
             &model_info,
         ),
-        None
+        ServiceTier::Default
     );
     assert_eq!(
         get_service_tier(
-            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()),
+            /*configured_service_tier*/ ServiceTier::Default,
             /*fast_mode_enabled*/ false,
             &model_info,
         ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            Some("unsupported".to_string()),
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
-    );
-    assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
-            /*fast_mode_enabled*/ false,
-            &model_info,
-        ),
-        None
+        ServiceTier::Default
     );
 }
 
@@ -5062,21 +5023,18 @@ async fn session_settings_null_service_tier_update_uses_default_service_tier() {
         )
         .expect("null service tier update should apply");
 
-    assert_eq!(
-        updated.step_settings.service_tier,
-        Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
-    );
+    assert_eq!(updated.step_settings.service_tier, ServiceTier::Default);
 }
 
 #[tokio::test]
-async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_value() {
+async fn session_settings_fast_service_tier_update_uses_fast_tier() {
     let session_configuration = make_session_configuration_for_tests().await;
 
     let updated = session_configuration
         .apply(
             &SessionSettingsUpdate {
                 step_settings: StepSettingsUpdate {
-                    service_tier: Some(Some("fast".to_string())),
+                    service_tier: Some(Some(ServiceTier::Fast)),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -5085,10 +5043,7 @@ async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_
         )
         .expect("legacy fast service tier update should apply");
 
-    assert_eq!(
-        updated.step_settings.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(updated.step_settings.service_tier, ServiceTier::Fast);
 }
 
 pub(crate) async fn make_session_configuration_for_tests() -> SessionConfiguration {
@@ -5113,7 +5068,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -5760,7 +5715,7 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
     let mut first_update = Box::pin(tokio::task::unconstrained(session.update_settings(
         SessionSettingsUpdate {
             step_settings: StepSettingsUpdate {
-                service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                service_tier: Some(Some(ServiceTier::Fast)),
                 ..Default::default()
             },
             permission_profile: Some(PermissionProfile::read_only()),
@@ -6022,7 +5977,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -6175,7 +6130,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -6474,7 +6429,7 @@ async fn make_session_with_config_and_rx(
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -6600,7 +6555,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,
@@ -8455,7 +8410,7 @@ where
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
             approvals_reviewer: config.approvals_reviewer,

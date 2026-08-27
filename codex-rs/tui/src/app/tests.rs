@@ -11,11 +11,14 @@ mod key_chords;
 #[path = "tests/mcp_startup.rs"]
 mod mcp_startup;
 mod model_catalog;
+#[path = "tests/model_selection.rs"]
+mod model_selection_tests;
 #[path = "tests/patch_approval_tests.rs"]
 mod patch_approval_tests;
 #[path = "tests/permission_shortcuts_tests.rs"]
 mod permission_shortcuts_tests;
 mod plugin_catalog;
+mod provider_switch;
 mod rate_limits;
 #[path = "tests/recap_generation_tests.rs"]
 mod recap_generation;
@@ -24,8 +27,6 @@ mod safety_buffering;
 mod session_lifecycle_requests;
 mod session_summary;
 mod startup;
-#[path = "tests/stream_animation_tests.rs"]
-mod stream_animation_tests;
 #[path = "tests/thread_usage.rs"]
 mod thread_usage;
 #[path = "tests/turn_submission.rs"]
@@ -2354,6 +2355,7 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
         assert!(resumed.blocks_direct_input);
         app.replace_chat_widget_with_app_server_thread(
             &mut tui,
+            &mut app_server,
             resumed,
             crate::app::session_lifecycle::ThreadAttachPresentation::SessionLineage,
             /*initial_user_message*/ None,
@@ -2828,7 +2830,7 @@ default_permissions = "locked-down"
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         }
@@ -2922,7 +2924,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3017,7 +3019,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3098,7 +3100,7 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -3158,7 +3160,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         })
@@ -4339,13 +4341,12 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
     app.config.model = Some("persisted-default-model".to_string());
     app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Low);
 
-    let parent_service_tier = ServiceTier::Fast.request_value();
+    let parent_service_tier = ServiceTier::Fast;
     let parent_permission_profile = PermissionProfile::workspace_write();
     app.chat_widget.set_model("parent-thread-model");
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::High));
-    app.chat_widget
-        .set_service_tier(Some(parent_service_tier.to_string()));
+    app.chat_widget.set_service_tier(parent_service_tier);
     app.chat_widget
         .set_approval_policy(AskForApproval::OnRequest);
     app.chat_widget
@@ -4362,7 +4363,7 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
         (
             fork_config.model.as_deref(),
             fork_config.model_reasoning_effort,
-            fork_config.service_tier.as_deref(),
+            fork_config.service_tier,
             fork_config.permissions.approval_policy.value(),
             fork_config.permissions.permission_profile(),
             fork_config.approvals_reviewer,
@@ -4370,7 +4371,7 @@ async fn side_fork_config_inherits_parent_thread_runtime_settings() {
         (
             Some("parent-thread-model"),
             Some(ReasoningEffortConfig::High),
-            Some(parent_service_tier),
+            parent_service_tier,
             AskForApproval::OnRequest.to_core(),
             &parent_permission_profile,
             ApprovalsReviewer::AutoReview,
@@ -5281,7 +5282,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -5377,11 +5378,7 @@ async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
     set_fast_mode_test_catalog(&mut app.chat_widget);
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
-            .request_value()
-            .to_string(),
-    ));
+    app.chat_widget.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut app.chat_widget);
     set_fast_mode_test_catalog(&mut app.chat_widget);
 
@@ -5437,7 +5434,7 @@ async fn make_test_app() -> App {
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
         key_chord_matcher: crate::keymap::KeyChordMatcher::default(),
-        commit_animation: None,
+        commit_animation_ticker: CommitAnimationTicker::default(),
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         skill_load_warnings: SkillLoadWarningState::default(),
@@ -5472,6 +5469,7 @@ async fn make_test_app() -> App {
         rate_limit_hard_stop_generation: 0,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        pending_provider_switch: None,
         recap: recap::RecapState::default(),
     }
 }
@@ -5518,7 +5516,7 @@ async fn make_test_app_with_channels() -> (
             enhanced_keys_supported: false,
             keymap: crate::keymap::RuntimeKeymap::defaults(),
             key_chord_matcher: crate::keymap::KeyChordMatcher::default(),
-            commit_animation: None,
+            commit_animation_ticker: CommitAnimationTicker::default(),
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             skill_load_warnings: SkillLoadWarningState::default(),
@@ -5553,6 +5551,7 @@ async fn make_test_app_with_channels() -> (
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
             recap: recap::RecapState::default(),
         },
         rx,
@@ -5788,7 +5787,7 @@ fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState 
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -6364,95 +6363,6 @@ fn request_user_input_request(thread_id: ThreadId, turn_id: &str, item_id: &str)
     }
 }
 
-#[tokio::test]
-async fn feedback_submission_without_thread_emits_error_history_cell() {
-    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
-
-    app.handle_feedback_submitted(
-        /*origin_thread_id*/ None,
-        FeedbackCategory::Bug,
-        /*include_logs*/ true,
-        Err("boom".to_string()),
-    )
-    .await;
-
-    let cell = match app_event_rx.try_recv() {
-        Ok(AppEvent::InsertHistoryCell(cell)) => cell,
-        other => panic!("expected feedback error history cell, saw {other:?}"),
-    };
-    assert_eq!(
-        lines_to_single_string(&cell.display_lines(/*width*/ 120)),
-        "■ Failed to upload feedback: boom"
-    );
-}
-
-#[tokio::test]
-async fn feedback_submission_for_inactive_thread_replays_into_origin_thread() {
-    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
-    let origin_thread_id = ThreadId::new();
-    let active_thread_id = ThreadId::new();
-    let origin_session = test_thread_session(origin_thread_id, test_path_buf("/tmp/origin"));
-    let active_session = test_thread_session(active_thread_id, test_path_buf("/tmp/active"));
-    app.thread_event_channels.insert(
-        origin_thread_id,
-        ThreadEventChannel::new_with_session(
-            THREAD_EVENT_CHANNEL_CAPACITY,
-            origin_session.clone(),
-            Vec::new(),
-        ),
-    );
-    app.thread_event_channels.insert(
-        active_thread_id,
-        ThreadEventChannel::new_with_session(
-            THREAD_EVENT_CHANNEL_CAPACITY,
-            active_session.clone(),
-            Vec::new(),
-        ),
-    );
-    app.activate_thread_channel(active_thread_id).await;
-    app.chat_widget.handle_thread_session(active_session);
-    while app_event_rx.try_recv().is_ok() {}
-
-    app.handle_feedback_submitted(
-        Some(origin_thread_id),
-        FeedbackCategory::Bug,
-        /*include_logs*/ true,
-        Ok("uploaded-thread".to_string()),
-    )
-    .await;
-
-    assert_matches!(
-        app_event_rx.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-    );
-
-    let snapshot = {
-        let channel = app
-            .thread_event_channels
-            .get(&origin_thread_id)
-            .expect("origin thread channel should exist");
-        let store = channel.store.lock().await;
-        assert!(matches!(
-            store.buffer.back(),
-            Some(ThreadBufferedEvent::FeedbackSubmission(_))
-        ));
-        store.snapshot()
-    };
-
-    app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ false);
-
-    let mut rendered_cells = Vec::new();
-    while let Ok(event) = app_event_rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = event {
-            rendered_cells.push(lines_to_single_string(&cell.display_lines(/*width*/ 120)));
-        }
-    }
-    assert!(rendered_cells.iter().any(|cell| {
-        cell.contains("• Feedback uploaded. Please open an issue using the following URL:")
-            && cell.contains("uploaded-thread")
-    }));
-}
-
 fn next_user_turn_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) -> Op {
     let mut seen = Vec::new();
     while let Ok(op) = op_rx.try_recv() {
@@ -6576,22 +6486,11 @@ fn active_turn_interrupt_race_extracts_actual_turn_id_from_mismatch() {
 #[tokio::test]
 async fn fresh_session_config_uses_current_service_tier() {
     let mut app = make_test_app().await;
-    app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
-            .request_value()
-            .to_string(),
-    ));
+    app.chat_widget.set_service_tier(ServiceTier::Fast);
 
     let config = app.fresh_session_config();
 
-    assert_eq!(
-        config.service_tier,
-        Some(
-            codex_protocol::config_types::ServiceTier::Fast
-                .request_value()
-                .to_string()
-        )
-    );
+    assert_eq!(config.service_tier, ServiceTier::Fast);
 }
 
 #[tokio::test]
@@ -6625,7 +6524,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -6696,7 +6595,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -7591,7 +7490,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         has_chatgpt_account: app.chat_widget.has_chatgpt_account(),
         has_codex_backend_auth: app.chat_widget.has_codex_backend_auth(),
         model_catalog: app.model_catalog.clone(),
-        feedback: app.feedback.clone(),
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: false,
         status_account_display: app.chat_widget.status_account_display().cloned(),
         runtime_model_provider_base_url: app
@@ -7770,7 +7669,7 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
@@ -7902,7 +7801,7 @@ async fn override_turn_context_sends_thread_settings_update() {
         app.enqueue_primary_thread_session(started.session, started.turns)
             .await
             .expect("primary thread should be registered");
-        let service_tier = ServiceTier::Fast.request_value().to_string();
+        let service_tier = ServiceTier::Fast;
         let collaboration_mode = CollaborationMode {
             mode: ModeKind::Plan,
             settings: Settings {
@@ -7923,7 +7822,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             Some("gpt-5.4".to_string()),
             Some(Some(ReasoningEffortConfig::High)),
             /*summary*/ None,
-            Some(Some(service_tier.clone())),
+            service_tier,
             Some(collaboration_mode.clone()),
             Some(Personality::Pragmatic),
         );
@@ -7949,10 +7848,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             notification.thread_settings.effort,
             Some(ReasoningEffortConfig::High)
         );
-        assert_eq!(
-            notification.thread_settings.service_tier,
-            Some(service_tier.clone())
-        );
+        assert_eq!(notification.thread_settings.service_tier, service_tier);
         assert_eq!(
             notification.thread_settings.approval_policy,
             AskForApproval::OnRequest
@@ -8003,7 +7899,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             collaboration_mode.settings.reasoning_effort
         );
         assert_eq!(updated_session.personality, Some(Personality::Pragmatic));
-        assert_eq!(updated_session.service_tier, Some(service_tier));
+        assert_eq!(updated_session.service_tier, service_tier);
         assert_eq!(updated_session.approval_policy, AskForApproval::OnRequest);
         assert_eq!(
             updated_session.approvals_reviewer,
@@ -8407,7 +8303,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
             ),
             model: "gpt-plan".to_string(),
             model_provider: "openai".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             effort: collaboration_mode.settings.reasoning_effort.clone(),
             summary: None,
             collaboration_mode: collaboration_mode.clone(),
@@ -8471,7 +8367,7 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
             thread_name: Some("keep me".to_string()),
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),

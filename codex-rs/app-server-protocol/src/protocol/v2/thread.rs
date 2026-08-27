@@ -26,6 +26,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 pub use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 pub use codex_protocol::dynamic_tools::DynamicToolNamespaceSpec;
 pub use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
@@ -69,14 +70,8 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.allowProviderModelFallback")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_provider_model_fallback: bool,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    /// Complete routing selection for the new thread.
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -182,7 +177,9 @@ pub struct ThreadStartResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
@@ -246,16 +243,8 @@ pub struct ThreadSettingsUpdateParams {
     /// Override the model for subsequent turns.
     #[ts(optional = nullable)]
     pub model: Option<String>,
-    /// Override the service tier for subsequent turns. `null` clears the
-    /// current service tier; omission leaves it unchanged.
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    /// Complete current routing selection for subsequent turns.
+    pub service_tier: ServiceTier,
     /// Override the reasoning effort for subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,
@@ -294,7 +283,9 @@ pub struct ThreadSettings {
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub effort: Option<ReasoningEffort>,
     pub summary: Option<ReasoningSummary>,
     pub collaboration_mode: CollaborationMode,
@@ -359,14 +350,8 @@ pub struct ThreadResumeParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    /// Complete routing selection for the resumed thread.
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -416,7 +401,9 @@ pub struct ThreadResumeResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
@@ -546,14 +533,8 @@ pub struct ThreadForkParams {
     pub model: Option<String>,
     #[ts(optional = nullable)]
     pub model_provider: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
-        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional = nullable)]
-    pub service_tier: Option<Option<String>>,
+    /// Complete routing selection for the forked thread.
+    pub service_tier: ServiceTier,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -607,7 +588,9 @@ pub struct ThreadForkResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub cwd: AbsolutePathBuf,
     /// Thread-scoped runtime workspace roots used to materialize
     /// `:workspace_roots`.
