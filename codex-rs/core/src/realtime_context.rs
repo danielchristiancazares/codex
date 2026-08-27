@@ -4,7 +4,6 @@ use crate::session::session::Session;
 use chrono::Utc;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
-use codex_protocol::NullableField;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::plaintext_agent_message_content;
 use codex_thread_store::ListThreadsParams;
@@ -142,8 +141,8 @@ async fn load_recent_threads(sess: &Session) -> Vec<StoredThread> {
             cwd_filters: None,
             relation_filter: None,
             archived: false,
-            section: NullableField::Omitted,
-            project_id: NullableField::Omitted,
+            section: None,
+            project_id: None,
             search_term: None,
             use_state_db_only: false,
         })

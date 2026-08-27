@@ -20,8 +20,24 @@ use strum_macros::EnumIter;
 use ts_rs::TS;
 use wildmatch::WildMatchPattern;
 
-use crate::NullableField;
 use crate::openai_models::ReasoningEffort;
+
+/// Limit for the text included in `codex.tool_result` log records.
+/// This does not affect model-visible output. Raising it can expose more tool data to logs.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(default)]
+pub struct ToolResultLogConfig {
+    /// Maximum UTF-8 bytes before the truncation notice. Defaults to 2048.
+    pub max_bytes: usize,
+}
+
+impl Default for ToolResultLogConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: 2 * 1024,
+        }
+    }
+}
 
 /// Selects which part of the active context is charged against
 /// `model_auto_compact_token_limit`.
@@ -698,30 +714,23 @@ impl CollaborationMode {
 
     /// Updates the collaboration mode with new model and/or effort values.
     ///
-    /// - `model`: `Some(s)` updates the model and `None` keeps the current model
-    /// - `effort`: explicit omitted, null, and value states update the effort
-    /// - `developer_instructions`: explicit omitted, null, and value states update the instructions
+    /// - `model`: `Some(s)` to update the model, `None` to keep the current model
+    /// - `effort`: `Some(Some(e))` to set effort to `e`, `Some(None)` to clear effort, `None` to keep current effort
+    /// - `developer_instructions`: `Some(Some(s))` to set instructions, `Some(None)` to clear them, `None` to keep current
     ///
     /// Returns a new `CollaborationMode` with updated values, preserving the mode.
     pub fn with_updates(
         &self,
         model: Option<String>,
-        effort: NullableField<ReasoningEffort>,
-        developer_instructions: NullableField<String>,
+        effort: Option<Option<ReasoningEffort>>,
+        developer_instructions: Option<Option<String>>,
     ) -> Self {
         let settings = self.settings_ref();
         let updated_settings = Settings {
             model: model.unwrap_or_else(|| settings.model.clone()),
-            reasoning_effort: match effort {
-                NullableField::Omitted => settings.reasoning_effort.clone(),
-                NullableField::Null => None,
-                NullableField::Value(effort) => Some(effort),
-            },
-            developer_instructions: match developer_instructions {
-                NullableField::Omitted => settings.developer_instructions.clone(),
-                NullableField::Null => None,
-                NullableField::Value(instructions) => Some(instructions),
-            },
+            reasoning_effort: effort.unwrap_or_else(|| settings.reasoning_effort.clone()),
+            developer_instructions: developer_instructions
+                .unwrap_or_else(|| settings.developer_instructions.clone()),
         };
 
         CollaborationMode {
@@ -741,16 +750,14 @@ impl CollaborationMode {
             mode: mask.mode.unwrap_or(self.mode),
             settings: Settings {
                 model: mask.model.clone().unwrap_or_else(|| settings.model.clone()),
-                reasoning_effort: match mask.reasoning_effort.clone() {
-                    NullableField::Omitted => settings.reasoning_effort.clone(),
-                    NullableField::Null => None,
-                    NullableField::Value(effort) => Some(effort),
-                },
-                developer_instructions: match mask.developer_instructions.clone() {
-                    NullableField::Omitted => settings.developer_instructions.clone(),
-                    NullableField::Null => None,
-                    NullableField::Value(instructions) => Some(instructions),
-                },
+                reasoning_effort: mask
+                    .reasoning_effort
+                    .clone()
+                    .unwrap_or_else(|| settings.reasoning_effort.clone()),
+                developer_instructions: mask
+                    .developer_instructions
+                    .clone()
+                    .unwrap_or_else(|| settings.developer_instructions.clone()),
             },
         }
     }
@@ -771,12 +778,8 @@ pub struct CollaborationModeMask {
     pub name: String,
     pub mode: Option<ModeKind>,
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
-    #[ts(optional = nullable)]
-    pub reasoning_effort: NullableField<ReasoningEffort>,
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
-    #[ts(optional = nullable)]
-    pub developer_instructions: NullableField<String>,
+    pub reasoning_effort: Option<Option<ReasoningEffort>>,
+    pub developer_instructions: Option<Option<String>>,
 }
 
 #[cfg(test)]
@@ -824,8 +827,8 @@ mod tests {
             name: "Clear".to_string(),
             mode: None,
             model: None,
-            reasoning_effort: NullableField::Null,
-            developer_instructions: NullableField::Null,
+            reasoning_effort: Some(None),
+            developer_instructions: Some(None),
         };
 
         let expected = CollaborationMode {

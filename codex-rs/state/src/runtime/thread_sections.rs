@@ -2,7 +2,6 @@ use super::StateRuntime;
 use crate::PINNED_THREAD_SECTION_ID;
 use crate::ThreadSection;
 use crate::ThreadSectionAppearance;
-use codex_protocol::NullableField;
 use uuid::Uuid;
 
 impl StateRuntime {
@@ -39,17 +38,17 @@ impl StateRuntime {
         &self,
         id: &str,
         name: &str,
-        appearance: NullableField<ThreadSectionAppearance>,
+        appearance: Option<Option<ThreadSectionAppearance>>,
     ) -> anyhow::Result<Option<ThreadSection>> {
         if id == PINNED_THREAD_SECTION_ID {
             anyhow::bail!("built-in pinned thread section cannot be renamed");
         }
 
-        let replace_appearance = !appearance.is_omitted();
-        let appearance = match appearance {
-            NullableField::Omitted | NullableField::Null => None,
-            NullableField::Value(appearance) => Some(serde_json::to_string(&appearance)?),
-        };
+        let replace_appearance = appearance.is_some();
+        let appearance = appearance
+            .flatten()
+            .map(|appearance| serde_json::to_string(&appearance))
+            .transpose()?;
         let section = sqlx::query_as::<_, (String, String, Option<String>)>(
             "UPDATE thread_sections SET name = ?, appearance = CASE WHEN ? THEN ? ELSE appearance END WHERE id = ? RETURNING id, name, appearance",
         )

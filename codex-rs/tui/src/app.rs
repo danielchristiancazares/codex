@@ -8,6 +8,7 @@ use crate::app_backtrack::BacktrackState;
 use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
+use crate::app_event::FeedbackCategory;
 use crate::app_event::HistoryLookupResponse;
 use crate::app_event::PermissionProfileSelection;
 use crate::app_event::PluginLocation;
@@ -26,6 +27,7 @@ use crate::bottom_pane::AppLinkViewParams;
 use crate::bottom_pane::ApplyPatchApprovalRequest;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::ExecApprovalRequest;
+use crate::bottom_pane::FeedbackAudience;
 use crate::bottom_pane::McpElicitationApprovalRequest;
 use crate::bottom_pane::McpServerElicitationFormRequest;
 use crate::bottom_pane::PermissionsApprovalRequest;
@@ -98,6 +100,8 @@ use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigReadResponse;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
+use codex_app_server_protocol::FeedbackUploadParams;
+use codex_app_server_protocol::FeedbackUploadResponse;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::ListMcpServerStatusParams;
@@ -149,7 +153,6 @@ use codex_models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT
 use codex_models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::Personality;
 #[cfg(target_os = "windows")]
@@ -211,11 +214,12 @@ mod app_server_event_targets;
 mod app_server_events;
 pub(crate) mod app_server_requests;
 mod background_requests;
-mod commit_animation_ticker;
 mod config_persistence;
 pub(crate) use config_persistence::resume_model_settings_for_overrides;
+mod commit_animation_ticker;
 mod connector_mentions;
 mod event_dispatch;
+mod exit_summary;
 mod file_change_approvals;
 mod history_pagination;
 mod history_ui;
@@ -223,10 +227,12 @@ mod input;
 mod loaded_threads;
 mod model_selection;
 mod pending_interactive_replay;
+mod permission_shortcuts;
 mod pets;
 mod platform_actions;
 mod plugin_mentions;
 mod provider_switch;
+mod recap;
 mod replay_filter;
 mod resize_reflow;
 mod safety_buffering;
@@ -240,6 +246,7 @@ mod thread_goal_actions;
 mod thread_routing;
 mod thread_session_state;
 mod thread_settings;
+mod thread_title;
 mod transcript_export;
 mod working_directory;
 
@@ -421,6 +428,7 @@ pub struct AppExitInfo {
     pub token_usage: TokenUsage,
     pub thread_id: Option<ThreadId>,
     pub resume_hint: Option<String>,
+    pub disconnect_info: Option<DisconnectInfo>,
     pub update_action: Option<UpdateAction>,
     pub exit_reason: ExitReason,
 }
@@ -431,11 +439,14 @@ impl AppExitInfo {
             token_usage: TokenUsage::default(),
             thread_id: None,
             resume_hint: None,
+            disconnect_info: None,
             update_action: None,
             exit_reason: ExitReason::Fatal(message.into()),
         }
     }
 }
+
+pub use exit_summary::DisconnectInfo;
 
 #[derive(Debug)]
 pub(crate) enum AppRunControl {
@@ -446,6 +457,10 @@ pub(crate) enum AppRunControl {
 #[derive(Debug, Clone)]
 pub enum ExitReason {
     UserRequested,
+    Archived(ThreadId),
+    TurnInterrupted,
+    /// The current thread was deleted, rather than disconnected.
+    ThreadRemoved,
     Fatal(String),
 }
 
@@ -560,7 +575,7 @@ pub(crate) struct App {
     pub(crate) keymap: RuntimeKeymap,
     pub(crate) key_chord_matcher: KeyChordMatcher,
 
-    /// Controls the animation thread that sends CommitTick events.
+    /// The foreground loop owns stream pacing; stopped animations have no timer.
     commit_animation_ticker: CommitAnimationTicker,
     // Shared across ChatWidget instances so invalid status-line config warnings only emit once.
     status_line_invalid_items_warned: Arc<AtomicBool>,
@@ -576,6 +591,8 @@ pub(crate) struct App {
     /// This is used after a confirmed thread rollback to ensure scrollback reflects the trimmed
     /// transcript cells.
     pub(crate) backtrack_render_pending: bool,
+    pub(crate) feedback: codex_feedback::CodexFeedback,
+    feedback_audience: FeedbackAudience,
     environment_manager: Arc<EnvironmentManager>,
     app_server_target: AppServerTarget,
     /// Set when the user confirms an update; propagated on exit.
@@ -594,6 +611,7 @@ pub(crate) struct App {
     windows_sandbox: WindowsSandboxState,
 
     thread_event_channels: HashMap<ThreadId, ThreadEventChannel>,
+    temporary_structured_requests: HashMap<ThreadId, mpsc::UnboundedSender<ServerNotification>>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
     agent_navigation: AgentNavigationState,
     agents_overview: agents_overview::AgentsOverviewState,
@@ -606,6 +624,9 @@ pub(crate) struct App {
     primary_session_configured: Option<ThreadSessionState>,
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
     pending_app_server_requests: PendingAppServerRequests,
+    dynamic_tool_status_updates:
+        tokio::sync::broadcast::Sender<codex_app_server_protocol::ThreadStatusChangedNotification>,
+    dynamic_tool_tasks: HashMap<codex_app_server_protocol::RequestId, (String, JoinHandle<()>)>,
     pending_startup_thread_start: bool,
     /// Keeps protected screens quarantined until initialized chat receives genuine user input.
     startup_protected_input_boundary: bool,
@@ -621,6 +642,7 @@ pub(crate) struct App {
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
     pending_provider_switch: Option<Uuid>,
+    recap: recap::RecapState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -723,6 +745,7 @@ impl App {
             has_chatgpt_account: self.chat_widget.has_chatgpt_account(),
             has_codex_backend_auth: self.chat_widget.has_codex_backend_auth(),
             model_catalog: self.model_catalog.clone(),
+            feedback: self.feedback.clone(),
             is_first_run: false,
             status_account_display: self.chat_widget.status_account_display().cloned(),
             runtime_model_provider_base_url: self
@@ -745,7 +768,10 @@ impl App {
         event: TuiEvent,
     ) -> Result<AppRunControl> {
         let screen_size = tui.screen_size_for_event(&event)?;
-        if !matches!(&event, TuiEvent::Key(_) | TuiEvent::Paste(_)) {
+        if !matches!(
+            &event,
+            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
+        ) {
             self.expire_pending_key_chord();
             self.handle_draw_pre_render(tui, screen_size)?;
         }
@@ -758,6 +784,24 @@ impl App {
         } else {
             event
         };
+
+        match &event {
+            TuiEvent::FocusLost => {
+                let now = Instant::now();
+                let thread_id = self.current_displayed_thread_id();
+
+                self.recap.note_focus_lost(now);
+
+                if let Some(thread_id) = thread_id {
+                    self.recap
+                        .schedule_check(thread_id, self.app_event_tx.clone(), now);
+                }
+            }
+            TuiEvent::FocusGained => {
+                self.recap.note_focus_gained();
+            }
+            _ => {}
+        }
 
         if self.overlay.is_some() {
             let _ = self
@@ -777,7 +821,7 @@ impl App {
                     let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
                     self.chat_widget.handle_paste(pasted);
                 }
-                TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) => {
+                TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                     if self.backtrack_render_pending {
                         self.rebuild_transcript_after_backtrack(tui, screen_size.into())?;
                         self.backtrack_render_pending = false;
@@ -830,6 +874,7 @@ impl App {
                         self.app_event_tx.send(AppEvent::LaunchExternalEditor);
                     }
                 }
+                TuiEvent::FocusLost => {}
             }
         }
         Ok(AppRunControl::Continue)

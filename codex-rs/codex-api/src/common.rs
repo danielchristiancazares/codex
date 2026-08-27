@@ -1,4 +1,5 @@
 use crate::error::ApiError;
+use codex_protocol::ResponseUsageMetadata;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
@@ -9,6 +10,7 @@ use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TurnModerationMetadataEvent;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_protocol::turn_input::CyberAccessProgram;
 use futures::Stream;
 use serde::Deserialize;
 use serde::Serialize;
@@ -48,6 +50,24 @@ where
     serializer.serialize_str(openai_service_tier_wire_value(*service_tier))
 }
 
+/// Explicit per-request access selection using the Responses API wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct AccessPrograms {
+    cyber: &'static str,
+}
+
+impl From<CyberAccessProgram> for AccessPrograms {
+    fn from(program: CyberAccessProgram) -> Self {
+        Self {
+            cyber: match program {
+                CyberAccessProgram::Standard => "standard",
+                CyberAccessProgram::DaybreakBlue => "daybreak_blue",
+                CyberAccessProgram::DaybreakRed => "daybreak_red",
+            },
+        }
+    }
+}
+
 /// Canonical input payload for the compaction endpoint.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompactionInput<'a> {
@@ -69,6 +89,8 @@ pub struct CompactionInput<'a> {
     pub prompt_cache_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_programs: Option<AccessPrograms>,
 }
 
 /// Canonical input payload for the memory summarize endpoint.
@@ -120,6 +142,7 @@ pub enum ResponseEvent {
     Completed {
         response_id: String,
         token_usage: Option<TokenUsage>,
+        usage_metadata: Option<ResponseUsageMetadata>,
         /// Did the model affirmatively end its turn? Some providers do not set this,
         /// so we rely on fallback logic when this is `None`.
         end_turn: Option<bool>,
@@ -303,6 +326,8 @@ pub struct ResponsesApiRequest {
     pub text: Option<TextControls>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_metadata: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_programs: Option<AccessPrograms>,
 }
 
 impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
@@ -325,6 +350,7 @@ impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
             text: request.text.as_ref(),
             generate: None,
             client_metadata: request.client_metadata.clone(),
+            access_programs: request.access_programs,
         }
     }
 }
@@ -360,6 +386,8 @@ pub struct ResponseCreateWsRequest<'a> {
     pub generate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_metadata: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_programs: Option<AccessPrograms>,
 }
 
 pub fn response_create_client_metadata(

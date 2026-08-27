@@ -13,7 +13,8 @@ use std::path::Path;
 use tracing::warn;
 use url::Url;
 
-use crate::MitmHookConfig;
+use crate::mitm_hook::MitmHookConfig;
+use crate::policy::normalize_host;
 
 /// Variant order encodes effective precedence for duplicate patterns:
 /// `None < Allow < Deny`, so deny wins over allow when entries conflict.
@@ -290,13 +291,7 @@ pub(crate) fn trusted_credential_broker_host(base_url: &str) -> Option<String> {
         .filter(|url| {
             url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
         })
-        .and_then(|url| {
-            url.host_str().map(|host| {
-                host.trim_matches(['[', ']'])
-                    .trim_end_matches('.')
-                    .to_ascii_lowercase()
-            })
-        })
+        .and_then(|url| url.host_str().map(normalize_host))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

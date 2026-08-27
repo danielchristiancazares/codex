@@ -9,9 +9,8 @@ use codex_protocol::user_input::UserInput;
 use core_test_support::responses::WebSocketConnectionConfig;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
-use core_test_support::responses::ev_function_call_with_namespace;
+use core_test_support::responses::ev_exec_command_call;
 use core_test_support::responses::ev_response_created;
-use core_test_support::responses::ev_shell_command_call;
 use core_test_support::responses::start_websocket_server;
 use core_test_support::responses::start_websocket_server_with_headers;
 use core_test_support::skip_if_no_network;
@@ -19,7 +18,6 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
-use serde_json::json;
 use std::time::Duration;
 
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
@@ -121,11 +119,11 @@ async fn websocket_model_switch_to_responses_lite_omits_top_level_tools() -> Res
 async fn websocket_test_codex_shell_chain() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let call_id = "shell-command-call";
+    let call_id = "exec-command-call";
     let server = start_websocket_server(vec![vec![
         vec![
             ev_response_created("resp-1"),
-            ev_shell_command_call(call_id, "echo websocket"),
+            ev_exec_command_call(call_id, "echo websocket"),
             ev_completed("resp-1"),
         ],
         vec![
@@ -219,77 +217,16 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
             .expect("turn metadata"),
     )?;
     assert_eq!(turn_metadata["request_kind"].as_str(), Some("turn"));
-
-    server.shutdown().await;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawned_agent_opens_websocket_lazily_without_startup_warmup() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_websocket_server(vec![
-        vec![
-            vec![ev_response_created("warm-root"), ev_completed("warm-root")],
-            vec![
-                ev_response_created("resp-root"),
-                ev_function_call_with_namespace(
-                    "spawn-call",
-                    "collaboration",
-                    "spawn_agent",
-                    &json!({
-                        "message": "reply with child complete",
-                        "task_name": "child",
-                        "fork_turns": "none"
-                    })
-                    .to_string(),
-                ),
-                ev_completed("resp-root"),
-            ],
-            vec![
-                ev_response_created("resp-root-final"),
-                ev_assistant_message("msg-root-final", "spawned"),
-                ev_completed("resp-root-final"),
-            ],
-        ],
-        vec![vec![
-            ev_response_created("resp-child"),
-            ev_assistant_message("msg-child", "child complete"),
-            ev_completed("resp-child"),
-        ]],
-    ])
-    .await;
-
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::Collab)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::MultiAgentV2)
-            .expect("test config should allow feature update");
-    });
-    let test = builder.build_with_websocket_server(&server).await?;
-    test.submit_turn("spawn one child").await?;
-    let child_request = tokio::time::timeout(Duration::from_secs(5), server.wait_for_request(1, 0))
-        .await?
-        .body_json();
-
-    let connections = server.connections();
+    assert_eq!(warmup_metadata["window_number"].as_u64(), Some(0));
     assert_eq!(
-        connections.iter().map(Vec::len).collect::<Vec<_>>(),
-        vec![3, 1]
+        warmup_metadata["window_number"],
+        turn_metadata["window_number"]
     );
-    assert_eq!(child_request["type"], "response.create");
-    assert_eq!(child_request.get("generate"), None);
-    let child_metadata: Value = serde_json::from_str(
-        child_request["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("child turn metadata"),
-    )?;
-    assert_eq!(child_metadata["request_kind"], "turn");
-    assert_eq!(child_metadata["subagent_kind"], "thread_spawn");
+    assert!(warmup_metadata["context_window_id"].is_string());
+    assert_eq!(
+        warmup_metadata["context_window_id"],
+        turn_metadata["context_window_id"]
+    );
 
     server.shutdown().await;
     Ok(())
@@ -346,16 +283,16 @@ async fn websocket_first_turn_handles_handshake_delay_with_startup_prewarm() -> 
 async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let call_id = "shell-command-call";
-    let mut shell_command_call = ev_shell_command_call(call_id, "echo websocket");
-    shell_command_call["item"]["id"] = serde_json::json!("fc_shell_command_call");
-    shell_command_call["item"]["internal_chat_message_metadata_passthrough"] =
+    let call_id = "exec-command-call";
+    let mut exec_command_call = ev_exec_command_call(call_id, "echo websocket");
+    exec_command_call["item"]["id"] = serde_json::json!("fc_exec_command_call");
+    exec_command_call["item"]["internal_chat_message_metadata_passthrough"] =
         serde_json::json!({"turn_id": "turn-123"});
     let server = start_websocket_server(vec![vec![
         vec![ev_response_created("warm-1"), ev_completed("warm-1")],
         vec![
             ev_response_created("resp-1"),
-            shell_command_call,
+            exec_command_call,
             ev_completed("resp-1"),
         ],
         vec![

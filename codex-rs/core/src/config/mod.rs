@@ -1,5 +1,6 @@
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
+use crate::context::world_state::validate_managed_developer_instructions;
 use crate::guardian::BUNDLED_GUARDIAN_POLICY;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
@@ -7,6 +8,7 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use codex_agent_roles::load_agent_roles;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
@@ -153,13 +155,13 @@ use codex_network_proxy::NetworkProxyConfig;
 use toml::Value as TomlValue;
 use toml_edit::DocumentMut;
 
-pub(crate) mod agent_roles;
 mod auth_keyring;
 pub mod edit;
 mod managed_features;
 mod network_proxy_spec;
 mod otel;
 mod permission_profile_catalog;
+mod permission_profile_selection;
 mod permissions;
 mod requirements;
 mod resolved_permission_profile;
@@ -167,6 +169,7 @@ mod resolved_permission_profile;
 mod schema;
 pub use auth_keyring::bootstrap_auth_config;
 pub use auth_keyring::resolve_bootstrap_auth_keyring_backend_kind;
+pub use codex_agent_roles::AgentRoleConfig;
 pub use codex_config::ConfigLoadOptions;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
@@ -183,7 +186,11 @@ pub use permission_profile_catalog::permission_profile_catalog;
 use permission_profile_catalog::permission_profile_catalog_from_permissions;
 use permission_profile_catalog::permission_profile_is_allowed;
 use permission_profile_catalog::validate_permission_profile_for_deny_read;
+pub use permission_profile_selection::ResolvedPermissionProfileSelection;
+pub use permission_profile_selection::resolve_permission_profile_selection;
+pub use permissions::compile_permission_profile;
 pub(crate) use permissions::is_builtin_permission_profile_name;
+pub use permissions::resolve_permission_profile;
 pub(crate) use resolved_permission_profile::PermissionProfileState;
 
 const DEFAULT_IGNORE_LARGE_UNTRACKED_DIRS: i64 = 200;
@@ -1014,9 +1021,6 @@ pub struct Config {
     /// Configuration for the experimental code-mode tool surface.
     pub code_mode: CodeModeConfig,
 
-    /// If set to `true`, used only the experimental unified exec tool.
-    pub use_experimental_unified_exec_tool: bool,
-
     /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
     /// Default: `300000` (5 minutes).
     pub background_terminal_max_timeout: u64,
@@ -1484,6 +1488,17 @@ impl ConfigBuilder {
 impl Config {
     pub fn sqlite_config(&self) -> &codex_state::SqliteConfig {
         &self.sqlite
+    }
+
+    /// Whether Guardian may use the unmetered Codex inference endpoints.
+    pub fn free_guardian_enabled(&self) -> bool {
+        self.config_layer_stack
+            .effective_config()
+            .get("features")
+            .and_then(|features| features.get("guardianv2"))
+            .and_then(|guardian| guardian.get("free_guardian"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
     }
 
     /// Resolves the configured, reviewer-catalog, or bundled Guardian policy.
@@ -2304,17 +2319,6 @@ pub fn set_default_oss_provider(codex_home: &Path, provider: &str) -> std::io::R
         .with_edits(edits)
         .apply_blocking()
         .map_err(|err| std::io::Error::other(format!("failed to persist config.toml: {err}")))
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AgentRoleConfig {
-    /// Human-facing role documentation used in spawn tool guidance.
-    /// Required for loaded user-defined roles after deprecated/new metadata precedence resolves.
-    pub description: Option<String>,
-    /// Path to a role-specific config layer.
-    pub config_file: Option<PathBuf>,
-    /// Candidate nicknames for agents spawned with this role.
-    pub nickname_candidates: Option<Vec<String>>,
 }
 
 fn resolve_tool_suggest_config(
@@ -3138,6 +3142,12 @@ impl Config {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
             })?;
         }
+        validate_managed_developer_instructions(
+            config_layer_stack
+                .requirements()
+                .additional_developer_instructions
+                .as_ref(),
+        )?;
         let orchestrator = cfg.orchestrator.as_ref();
         let orchestrator_skills_enabled =
             resolve_orchestrator_feature_enabled(orchestrator.and_then(|value| value.skills.as_ref()));
@@ -3186,6 +3196,7 @@ impl Config {
             enforce_residency,
             network: network_requirements,
             filesystem: filesystem_requirements,
+            additional_developer_instructions: _,
             guardian_policy_config_source: _,
         } = config_layer_stack.requirements().clone();
 
@@ -3591,6 +3602,8 @@ impl Config {
                     network_proxy,
                 );
             }
+            configured_network_proxy_config
+                .set_credential_broker_openai_base_url(cfg.openai_base_url.as_deref());
             configured_network_proxy_config.enabled = true;
         }
         if cfg.approval_policy == Some(AskForApproval::UnlessTrusted) {
@@ -3663,8 +3676,7 @@ impl Config {
         let terminal_resize_reflow = resolve_terminal_resize_reflow_config(&cfg);
 
         let agent_roles =
-            agent_roles::load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings)
-                .await?;
+            load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings).await?;
 
         let openai_base_url = cfg
             .openai_base_url
@@ -3794,8 +3806,6 @@ impl Config {
             }
             config
         };
-
-        let use_experimental_unified_exec_tool = features.enabled(Feature::UnifiedExec);
 
         let forced_chatgpt_workspace_id = cfg
             .forced_chatgpt_workspace_id
@@ -4238,7 +4248,6 @@ impl Config {
             update_plan_enabled,
             tool_registry,
             code_mode,
-            use_experimental_unified_exec_tool,
             background_terminal_max_timeout,
             ghost_snapshot,
             multi_agent_v2,
@@ -4454,6 +4463,8 @@ impl Config {
                         network_proxy,
                     );
                 }
+                configured_network_proxy_config
+                    .set_credential_broker_openai_base_url(cfg.openai_base_url.as_deref());
                 configured_network_proxy_config.enabled = true;
             }
             configured_network_proxy_config

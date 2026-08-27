@@ -40,6 +40,7 @@ mod agent_execution;
 mod agent_websocket;
 mod agents_md;
 mod apply_patch_cli;
+mod apply_patch_serialization;
 #[cfg(not(target_os = "windows"))]
 mod approvals;
 mod audio_truncation;
@@ -57,11 +58,13 @@ mod compact;
 mod compact_remote;
 mod compact_remote_parity;
 mod compact_resume_fork;
+mod context_annotations;
 mod current_time_reminder;
+mod cyber_access_program;
 mod cyber_exec_policy;
+mod daybreak_access;
 mod deprecation_notice;
 mod exec;
-mod exec_output_artifacts;
 mod exec_policy;
 #[cfg(not(target_os = "windows"))]
 mod extension_sandbox;
@@ -72,7 +75,13 @@ mod guardian_mcp_elicitation;
 #[cfg(not(target_os = "windows"))]
 mod guardian_review;
 #[cfg(not(target_os = "windows"))]
+mod guardian_review_cancellation;
+#[cfg(not(target_os = "windows"))]
+mod guardian_subagent_authorization;
+#[cfg(not(target_os = "windows"))]
 mod hooks;
+#[cfg(not(target_os = "windows"))]
+mod hooks_executor;
 #[cfg(not(target_os = "windows"))]
 mod hooks_mcp;
 mod image_rollout;
@@ -138,14 +147,16 @@ mod safety_buffering;
 mod safety_check_downgrade;
 mod search_tool;
 mod send_user_message_async;
-mod shell_command;
-mod shell_serialization;
+mod settings_commits;
+mod settings_constraints;
 mod shell_snapshot;
 mod skill_approval;
 mod skills;
 mod skills_extension;
 mod spawn_agent_description;
 mod sqlite_state;
+mod step_settings;
+mod step_settings_snapshots;
 mod stream_error_allows_next_turn;
 mod stream_no_completed;
 mod subagent_notifications;

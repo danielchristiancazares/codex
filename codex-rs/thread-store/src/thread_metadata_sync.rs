@@ -6,7 +6,6 @@ use chrono::NaiveDateTime;
 use chrono::Utc;
 use codex_git_utils::collect_git_info;
 use codex_git_utils::get_git_repo_root;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::EventMsg;
@@ -68,22 +67,10 @@ impl ThreadMetadataSync {
             created_at: Some(created_at),
             updated_at: Some(created_at),
             source: Some(params.source.clone()),
-            thread_source: match params.thread_source.clone() {
-                Some(thread_source) => NullableField::Value(thread_source),
-                None => NullableField::Null,
-            },
-            agent_nickname: match params.source.get_nickname() {
-                Some(agent_nickname) => NullableField::Value(agent_nickname),
-                None => NullableField::Null,
-            },
-            agent_role: match params.source.get_agent_role() {
-                Some(agent_role) => NullableField::Value(agent_role),
-                None => NullableField::Null,
-            },
-            agent_path: match params.source.get_agent_path() {
-                Some(agent_path) => NullableField::Value(agent_path.into()),
-                None => NullableField::Null,
-            },
+            thread_source: Some(params.thread_source.clone()),
+            agent_nickname: Some(params.source.get_nickname()),
+            agent_role: Some(params.source.get_agent_role()),
+            agent_path: Some(params.source.get_agent_path().map(Into::into)),
             cwd: Some(cwd.clone()),
             cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             git_info: git_info.map(git_info_patch_from_observation),
@@ -241,22 +228,10 @@ impl ThreadMetadataSync {
                 RolloutItem::SessionMeta(meta_line) if meta_line.meta.id == self.thread_id => {
                     update.created_at = parse_session_timestamp(meta_line.meta.timestamp.as_str());
                     update.source = Some(meta_line.meta.source.clone());
-                    update.thread_source = match meta_line.meta.thread_source.clone() {
-                        Some(thread_source) => NullableField::Value(thread_source),
-                        None => NullableField::Null,
-                    };
-                    update.agent_nickname = match meta_line.meta.agent_nickname.clone() {
-                        Some(agent_nickname) => NullableField::Value(agent_nickname),
-                        None => NullableField::Null,
-                    };
-                    update.agent_role = match meta_line.meta.agent_role.clone() {
-                        Some(agent_role) => NullableField::Value(agent_role),
-                        None => NullableField::Null,
-                    };
-                    update.agent_path = match meta_line.meta.agent_path.clone() {
-                        Some(agent_path) => NullableField::Value(agent_path),
-                        None => NullableField::Null,
-                    };
+                    update.thread_source = Some(meta_line.meta.thread_source.clone());
+                    update.agent_nickname = Some(meta_line.meta.agent_nickname.clone());
+                    update.agent_role = Some(meta_line.meta.agent_role.clone());
+                    update.agent_path = Some(meta_line.meta.agent_path.clone());
                     if let Some(model_provider) = meta_line.meta.model_provider.clone()
                         && !model_provider.is_empty()
                     {
@@ -284,10 +259,7 @@ impl ThreadMetadataSync {
                         update.cwd = Some(turn_ctx.cwd.clone().into_path_buf());
                     }
                     update.model = Some(turn_ctx.model.clone());
-                    update.reasoning_effort = match turn_ctx.effort.clone() {
-                        Some(reasoning_effort) => NullableField::Value(reasoning_effort),
-                        None => NullableField::Null,
-                    };
+                    update.reasoning_effort = Some(turn_ctx.effort.clone());
                     update.approval_mode = Some(turn_ctx.approval_policy);
                     update.permission_profile = Some(turn_ctx.permission_profile());
                 }
@@ -321,10 +293,7 @@ impl ThreadMetadataSync {
                     self.cwd_seen = true;
                     update.model = Some(settings.model.clone());
                     update.model_provider = Some(settings.model_provider_id.clone());
-                    update.reasoning_effort = match settings.reasoning_effort.clone() {
-                        Some(reasoning_effort) => NullableField::Value(reasoning_effort),
-                        None => NullableField::Null,
-                    };
+                    update.reasoning_effort = Some(settings.reasoning_effort.clone());
                     update.cwd = Some(settings.cwd.clone().into_path_buf());
                     update.approval_mode = Some(settings.approval_policy);
                     update.permission_profile = Some(settings.permission_profile.clone());
@@ -335,6 +304,7 @@ impl ThreadMetadataSync {
                 | RolloutItem::InterAgentCommunication(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. }
                 | RolloutItem::Compacted(_)
+                | RolloutItem::RealtimeItem(_)
                 | RolloutItem::SecurityRiskScore(_)
                 | RolloutItem::WorldState(_) => {}
             }
@@ -405,14 +375,14 @@ fn update_has_metadata_facts(update: &ThreadMetadataPatch) -> bool {
         || update.title.is_some()
         || update.model_provider.is_some()
         || update.model.is_some()
-        || update.reasoning_effort.is_present()
+        || update.reasoning_effort.is_some()
         || update.created_at.is_some()
         || update.advance_recency_at.is_some()
         || update.source.is_some()
-        || update.thread_source.is_present()
-        || update.agent_nickname.is_present()
-        || update.agent_role.is_present()
-        || update.agent_path.is_present()
+        || update.thread_source.is_some()
+        || update.agent_nickname.is_some()
+        || update.agent_role.is_some()
+        || update.agent_path.is_some()
         || update.cwd.is_some()
         || update.cli_version.is_some()
         || update.approval_mode.is_some()
@@ -425,18 +395,9 @@ fn update_has_metadata_facts(update: &ThreadMetadataPatch) -> bool {
 
 fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {
     GitInfoPatch {
-        sha: match git_info.commit_hash {
-            Some(sha) => NullableField::Value(sha.0),
-            None => NullableField::Omitted,
-        },
-        branch: match git_info.branch {
-            Some(branch) => NullableField::Value(branch),
-            None => NullableField::Omitted,
-        },
-        origin_url: match git_info.repository_url {
-            Some(origin_url) => NullableField::Value(origin_url),
-            None => NullableField::Omitted,
-        },
+        sha: git_info.commit_hash.map(|sha| Some(sha.0)),
+        branch: git_info.branch.map(Some),
+        origin_url: git_info.repository_url.map(Some),
     }
 }
 
@@ -448,6 +409,7 @@ mod tests {
     use codex_protocol::config_types::CollaborationMode;
     use codex_protocol::config_types::ModeKind;
     use codex_protocol::config_types::ReasoningSummary;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::config_types::Settings;
     use codex_protocol::items::UserMessageItem;
     use codex_protocol::models::PermissionProfile;
@@ -501,7 +463,7 @@ mod tests {
         .await;
 
         let update = sync.take_pending_update().expect("pending metadata update");
-        assert_eq!(update.patch.project_id, NullableField::Omitted);
+        assert_eq!(update.patch.project_id, None);
     }
 
     #[test]
@@ -680,7 +642,7 @@ mod tests {
                 thread_settings: ThreadSettingsSnapshot {
                     model: "gpt-5.2-codex".to_string(),
                     model_provider_id: "updated-provider".to_string(),
-                    service_tier: None,
+                    service_tier: ServiceTier::Default,
                     approval_policy: AskForApproval::Never,
                     approvals_reviewer: ApprovalsReviewer::User,
                     permission_profile: permission_profile.clone(),
@@ -712,7 +674,7 @@ mod tests {
         );
         assert_eq!(
             update.patch.reasoning_effort,
-            NullableField::Value(ReasoningEffort::Ultra)
+            Some(Some(ReasoningEffort::Ultra))
         );
         assert_eq!(update.patch.cwd, Some(cwd));
         assert_eq!(update.patch.approval_mode, Some(AskForApproval::Never));
@@ -731,7 +693,7 @@ mod tests {
         let update = sync
             .observe_appended_items(&[item])
             .expect("thread settings clear metadata update");
-        assert_eq!(update.patch.reasoning_effort, NullableField::Null);
+        assert_eq!(update.patch.reasoning_effort, Some(None));
     }
 
     #[test]

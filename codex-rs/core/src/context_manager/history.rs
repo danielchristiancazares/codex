@@ -1,5 +1,6 @@
 use crate::context::ContextualUserFragment;
 use crate::context::ModelSwitchInstructions;
+use crate::context::world_state::PersistentModeState;
 use crate::context::world_state::WorldState;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::normalize;
@@ -7,6 +8,11 @@ use crate::event_mapping::has_non_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::turn_context::TurnContext;
+use crate::utils::json::serialized_json_bytes;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_context_fragments::set_annotated_content;
+use codex_context_fragments::to_annotated_content;
 use codex_extension_api::ConversationHistorySnapshot;
 use codex_history::CodexHarnessMetadata;
 use codex_history::ResponseItemEnvelope;
@@ -26,8 +32,7 @@ use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::WorldStateItem;
 use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_cache::BlockingLruCache;
-use codex_utils_cache::blake3_digest;
-use codex_utils_image::dimensions_from_base64;
+use codex_utils_cache::sha1_digest;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use codex_utils_output_truncation::approx_token_count;
@@ -65,9 +70,14 @@ pub(crate) struct ContextManager {
 
 struct SharedConversationHistory {
     items: Arc<Vec<ResponseItemEnvelope>>,
+    history_version: u64,
 }
 
 impl ConversationHistorySnapshot for SharedConversationHistory {
+    fn history_version(&self) -> u64 {
+        self.history_version
+    }
+
     fn items(&self) -> Box<dyn Iterator<Item = &ResponseItem> + Send + '_> {
         Box::new(
             self.items
@@ -100,6 +110,7 @@ impl ContextManager {
     pub(crate) fn conversation_history_snapshot(&self) -> Arc<dyn ConversationHistorySnapshot> {
         Arc::new(SharedConversationHistory {
             items: Arc::clone(&self.items),
+            history_version: self.history_version,
         })
     }
 
@@ -244,8 +255,10 @@ impl ContextManager {
     // Estimate token usage using byte-based heuristics from the truncation helpers.
     // This is a coarse lower bound, not a tokenizer-accurate count.
     pub(crate) fn estimate_token_count(&self, turn_context: &TurnContext) -> Option<i64> {
-        let model_info = &turn_context.model_info;
-        let personality = turn_context.personality.or(turn_context.config.personality);
+        let model_info = &turn_context.model_info();
+        let personality = turn_context
+            .personality()
+            .or(turn_context.config.personality);
         let base_instructions = BaseInstructions {
             text: model_info.get_model_instructions(personality),
             provenance: None,
@@ -338,17 +351,21 @@ impl ContextManager {
         {
             retained_items.retain_mut(|item| {
                 if item.turn_id() == Some(first_turn_id)
-                    && let ResponseItem::Message { role, content, .. } = &mut item.item
-                    && role == "developer"
+                    && matches!(&item.item, ResponseItem::Message { role, .. } if role == "developer")
                 {
+                    let Some(mut content) = to_annotated_content(&mut item.item) else {
+                        return false;
+                    };
                     content.retain(|content| {
+                        // Rebuild these from the next step's model and effort after rollback.
                         !matches!(
-                            content,
+                            content.content(),
                             ContentItem::InputText { text }
                                 if ModelSwitchInstructions::matches_text(text)
+                                    || PersistentModeState::matches_text(text)
                         )
                     });
-                    !content.is_empty()
+                    !content.is_empty() && set_annotated_content(&mut item.item, content).is_some()
                 } else {
                     true
                 }
@@ -438,7 +455,7 @@ impl ContextManager {
 
     /// This function enforces a couple of invariants on the in-memory history:
     /// 1. every call (function/custom) has a corresponding output entry
-    /// 2. every output has a corresponding call entry
+    /// 2. every output has a corresponding call entry or names an external tool event
     /// 3. unsupported image and audio content is stripped from messages and tool outputs
     fn normalize_history(&mut self, input_modalities: &[InputModality]) {
         let items = Arc::make_mut(&mut self.items);
@@ -446,7 +463,7 @@ impl ContextManager {
         // all function/tool calls must have a corresponding output
         normalize::ensure_call_outputs_present(items);
 
-        // all outputs must have a corresponding function/tool call
+        // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);
 
         // strip images when model does not support them
@@ -462,11 +479,15 @@ impl ContextManager {
             ResponseItem::FunctionCallOutput {
                 id,
                 call_id,
+                name,
+                namespace,
                 output,
                 internal_chat_message_metadata_passthrough: metadata,
             } => ResponseItem::FunctionCallOutput {
                 id: id.clone(),
                 call_id: call_id.clone(),
+                name: name.clone(),
+                namespace: namespace.clone(),
                 output: truncate_function_output_payload(output, policy_with_serialization_budget),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
@@ -628,9 +649,8 @@ const ORIGINAL_IMAGE_PATCH_SIZE: u32 = 32;
 // budget starts changing often across model releases.
 const ORIGINAL_IMAGE_MAX_PATCHES: usize = 10_000;
 const ORIGINAL_IMAGE_ESTIMATE_CACHE_SIZE: usize = 32;
-const SMALL_ORIGINAL_IMAGE_CACHE_MAX_BASE64_BYTES: usize = 16 * 1024;
 
-static ORIGINAL_IMAGE_ESTIMATE_CACHE: LazyLock<BlockingLruCache<[u8; 32], Option<i64>>> =
+static ORIGINAL_IMAGE_ESTIMATE_CACHE: LazyLock<BlockingLruCache<[u8; 20], Option<i64>>> =
     LazyLock::new(|| {
         BlockingLruCache::new(
             NonZeroUsize::new(ORIGINAL_IMAGE_ESTIMATE_CACHE_SIZE).unwrap_or(NonZeroUsize::MIN),
@@ -652,8 +672,8 @@ fn estimate_response_item_model_visible_bytes(item: &ResponseItem) -> i64 {
             ..
         } => i64::try_from(estimate_reasoning_length(content.len())).unwrap_or(i64::MAX),
         item => {
-            let raw = crate::util::serialized_json_bytes(item)
-                .map(|serialized_len| i64::try_from(serialized_len).unwrap_or(i64::MAX))
+            let raw = serialized_json_bytes(item)
+                .map(|len| i64::try_from(len).unwrap_or(i64::MAX))
                 .unwrap_or_default();
             let (image_payload_bytes, image_replacement_bytes) =
                 image_data_url_estimate_adjustment(item);
@@ -720,38 +740,49 @@ fn parse_base64_data_url<'a>(url: &'a str, media_type_prefix: &str) -> Option<&'
 }
 
 fn estimate_original_image_bytes(image_url: &str) -> Option<i64> {
-    let payload = match parse_base64_image_data_url(image_url) {
-        Some(payload) => payload,
-        None => {
-            tracing::trace!("skipping original-detail estimate for non-base64 image data URL");
-            return None;
-        }
-    };
-    if payload.len() <= SMALL_ORIGINAL_IMAGE_CACHE_MAX_BASE64_BYTES {
-        let key = blake3_digest(payload.as_bytes());
-        return ORIGINAL_IMAGE_ESTIMATE_CACHE
-            .get_or_insert_with(key, || estimate_original_image_payload_bytes(payload));
-    }
-    estimate_original_image_payload_bytes(payload)
+    let key = sha1_digest(image_url.as_bytes());
+    ORIGINAL_IMAGE_ESTIMATE_CACHE.get_or_insert_with(key, || {
+        let payload = match parse_base64_image_data_url(image_url) {
+            Some(payload) => payload,
+            None => {
+                tracing::trace!("skipping original-detail estimate for non-base64 image data URL");
+                return None;
+            }
+        };
+        let bytes = match BASE64_STANDARD.decode(payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::trace!("failed to decode original-detail image payload: {error}");
+                return None;
+            }
+        };
+        let dynamic = match image::load_from_memory(&bytes) {
+            Ok(dynamic) => dynamic,
+            Err(error) => {
+                tracing::trace!("failed to decode original-detail image bytes: {error}");
+                return None;
+            }
+        };
+        let width = i64::from(dynamic.width());
+        let height = i64::from(dynamic.height());
+        let patch_size = i64::from(ORIGINAL_IMAGE_PATCH_SIZE);
+        let patches_wide = width.saturating_add(patch_size.saturating_sub(1)) / patch_size;
+        let patches_high = height.saturating_add(patch_size.saturating_sub(1)) / patch_size;
+        let patch_count = patches_wide.saturating_mul(patches_high);
+        let patch_count = usize::try_from(patch_count).unwrap_or(usize::MAX);
+        let patch_count = patch_count.min(ORIGINAL_IMAGE_MAX_PATCHES);
+        Some(i64::try_from(approx_bytes_for_tokens(patch_count)).unwrap_or(i64::MAX))
+    })
 }
 
-fn estimate_original_image_payload_bytes(payload: &str) -> Option<i64> {
-    let (width, height) = match dimensions_from_base64(payload) {
-        Ok(dimensions) => dimensions,
-        Err(error) => {
-            tracing::trace!("failed to read original-detail image dimensions: {error}");
-            return None;
+/// Shared image estimate, excluding the data URL prefix and message framing.
+pub(crate) fn estimate_image_bytes(image_url: &str, detail: Option<ImageDetail>) -> i64 {
+    match detail {
+        Some(ImageDetail::Original) => {
+            estimate_original_image_bytes(image_url).unwrap_or(RESIZED_IMAGE_BYTES_ESTIMATE)
         }
-    };
-    let width = i64::from(width);
-    let height = i64::from(height);
-    let patch_size = i64::from(ORIGINAL_IMAGE_PATCH_SIZE);
-    let patches_wide = width.saturating_add(patch_size.saturating_sub(1)) / patch_size;
-    let patches_high = height.saturating_add(patch_size.saturating_sub(1)) / patch_size;
-    let patch_count = patches_wide.saturating_mul(patches_high);
-    let patch_count = usize::try_from(patch_count).unwrap_or(usize::MAX);
-    let patch_count = patch_count.min(ORIGINAL_IMAGE_MAX_PATCHES);
-    Some(i64::try_from(approx_bytes_for_tokens(patch_count)).unwrap_or(i64::MAX))
+        _ => RESIZED_IMAGE_BYTES_ESTIMATE,
+    }
 }
 
 /// Scans one response item for discount-eligible inline image data URLs and
@@ -766,12 +797,8 @@ fn image_data_url_estimate_adjustment(item: &ResponseItem) -> (i64, i64) {
         if let Some(payload_len) = parse_base64_image_data_url(image_url).map(str::len) {
             payload_bytes =
                 payload_bytes.saturating_add(i64::try_from(payload_len).unwrap_or(i64::MAX));
-            replacement_bytes = replacement_bytes.saturating_add(match detail {
-                Some(ImageDetail::Original) => {
-                    estimate_original_image_bytes(image_url).unwrap_or(RESIZED_IMAGE_BYTES_ESTIMATE)
-                }
-                _ => RESIZED_IMAGE_BYTES_ESTIMATE,
-            });
+            replacement_bytes =
+                replacement_bytes.saturating_add(estimate_image_bytes(image_url, detail));
         }
     };
 

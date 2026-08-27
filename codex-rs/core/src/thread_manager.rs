@@ -53,9 +53,9 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::mcp::OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID;
 use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -118,8 +118,12 @@ pub(crate) type ThreadIdGenerator = Arc<dyn Fn() -> ThreadId + Send + Sync>;
 fn capture_test_op(op: &Op) -> Option<Op> {
     match op {
         Op::Interrupt => Some(Op::Interrupt),
-        Op::InterAgentCommunication { communication } => Some(Op::InterAgentCommunication {
+        Op::InterAgentCommunication {
+            communication,
+            start_options,
+        } => Some(Op::InterAgentCommunication {
             communication: communication.clone(),
+            start_options: start_options.clone(),
         }),
         Op::Shutdown => Some(Op::Shutdown),
         _ => None,
@@ -341,8 +345,6 @@ pub(crate) struct ThreadManagerState {
     thread_id_generator: ThreadIdGenerator,
     auth_manager: Arc<AuthManager>,
     models_manager: SharedModelsManager,
-    startup_model_provider: ModelProviderInfo,
-    startup_model_catalog: Option<ModelsResponse>,
     environment_manager: Arc<EnvironmentManager>,
     starting_mcp_runtimes: std::sync::Mutex<Vec<std::sync::Weak<AtomicBool>>>,
     skills_service: Arc<HostSkillsService>,
@@ -470,8 +472,6 @@ impl ThreadManager {
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
                 models_manager,
-                startup_model_provider: config.model_provider.clone(),
-                startup_model_catalog: config.model_catalog.clone(),
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
                 skills_service,
@@ -582,8 +582,6 @@ impl ThreadManager {
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
-        let models_manager = create_model_provider(provider.clone(), Some(auth_manager.clone()))
-            .models_manager(codex_home.clone(), /*config_model_catalog*/ None);
         let installation_id = uuid::Uuid::new_v4().to_string();
         let absolute_codex_home = match AbsolutePathBuf::from_absolute_path_checked(&codex_home) {
             Ok(codex_home) => codex_home,
@@ -607,7 +605,7 @@ impl ThreadManager {
         // process store should construct ThreadManager::new with an explicit store.
         let thread_store: Arc<dyn ThreadStore> = Arc::new(LocalThreadStore::new(
             LocalThreadStoreConfig {
-                codex_home,
+                codex_home: codex_home.clone(),
                 sqlite: codex_state::SqliteConfig::new_for_testing(absolute_codex_home),
                 default_model_provider_id: OPENAI_PROVIDER_ID.to_string(),
             },
@@ -619,9 +617,8 @@ impl ThreadManager {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
-                models_manager,
-                startup_model_provider: provider,
-                startup_model_catalog: None,
+                models_manager: create_model_provider(provider, Some(auth_manager.clone()))
+                    .models_manager(codex_home, /*config_model_catalog*/ None),
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
                 skills_service,
@@ -669,6 +666,27 @@ impl ThreadManager {
 
     pub fn environment_manager(&self) -> Arc<EnvironmentManager> {
         self.state.environment_manager.clone()
+    }
+
+    /// Starts the local rollout migration path after a runtime feature enablement.
+    ///
+    /// Startup config handles the initial launch in [`thread_store_from_config`]. This covers
+    /// clients that decide to enable background migration after constructing the app-server.
+    pub fn start_background_rollout_migration(&self) {
+        let Some(store) = self
+            .state
+            .thread_store
+            .as_any()
+            .downcast_ref::<LocalThreadStore>()
+        else {
+            return;
+        };
+        let store = store.clone();
+        tokio::spawn(async move {
+            if let Err(err) = store.migrate_rollouts_on_startup().await {
+                warn!("failed to migrate legacy rollouts on startup: {err}");
+            }
+        });
     }
 
     /// Refreshes every loaded thread and marks threads that are still being created.
@@ -913,6 +931,28 @@ impl ThreadManager {
 
     pub async fn start_thread(&self, options: StartThreadOptions) -> CodexResult<NewThread> {
         Box::pin(self.start_thread_inner(options, /*forked_from_thread_id*/ None)).await
+    }
+
+    /// Starts a fresh internal session associated with an existing parent thread.
+    pub async fn spawn_internal_session(
+        &self,
+        parent_thread_id: ThreadId,
+        mut options: StartThreadOptions,
+    ) -> CodexResult<NewThread> {
+        if !matches!(options.session_source, Some(SessionSource::Internal(_))) {
+            return Err(CodexErr::InvalidRequest(
+                "internal sessions require an internal session source".to_string(),
+            ));
+        }
+        let parent = self.get_thread(parent_thread_id).await?;
+        options.initial_history = InitialHistory::New;
+        let mut request = ThreadSpawnRequest::new(
+            options,
+            Arc::clone(&parent.session.services.auth_manager),
+            parent.session.services.agent_control.clone(),
+        );
+        request.parent_thread_id = Some(parent_thread_id);
+        Box::pin(self.state.spawn_thread(request)).await
     }
 
     /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
@@ -1388,24 +1428,6 @@ impl ThreadManager {
 }
 
 impl ThreadManagerState {
-    fn models_manager_for_config(
-        &self,
-        config: &Config,
-        auth_manager: Arc<AuthManager>,
-    ) -> SharedModelsManager {
-        if config.model_provider == self.startup_model_provider
-            && config.model_catalog == self.startup_model_catalog
-        {
-            Arc::clone(&self.models_manager)
-        } else {
-            let mut manager_config = config.clone();
-            if manager_config.model_provider != self.startup_model_provider {
-                manager_config.model_catalog = None;
-            }
-            build_models_manager(&manager_config, auth_manager)
-        }
-    }
-
     pub(crate) fn agent_graph_store(&self) -> Option<Arc<dyn AgentGraphStore>> {
         self.agent_graph_store.clone()
     }
@@ -1886,21 +1908,44 @@ impl ThreadManagerState {
                 threads.remove(&resumed.conversation_id);
             }
         }
-        let user_instructions = self
-            .user_instructions_for_spawn(&session_source, parent_thread_id, forked_from_thread_id)
-            .await;
+        let (
+            user_instructions,
+            inherited_exec_policy,
+            extensions,
+            mcp_manager,
+            multi_agent_version,
+        ) = if crate::guardian::is_basic_session_source(&session_source) {
+            (
+                LoadedUserInstructions::default(),
+                None,
+                empty_extension_registry(),
+                Arc::new(McpManager::new(Arc::clone(&self.plugins_manager))),
+                Some(MultiAgentVersion::Disabled),
+            )
+        } else {
+            (
+                self.user_instructions_for_spawn(
+                    &session_source,
+                    parent_thread_id,
+                    forked_from_thread_id,
+                )
+                .await,
+                inherited_exec_policy,
+                Arc::clone(&self.extensions),
+                Arc::clone(&self.mcp_manager),
+                self.initial_multi_agent_version_for_spawn(
+                    &initial_history,
+                    Some(&session_source),
+                    parent_thread_id,
+                    forked_from_thread_id,
+                )
+                .await,
+            )
+        };
         let parent_rollout_thread_trace = self
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
         let tracked_session_source = session_source.clone();
-        let multi_agent_version = self
-            .initial_multi_agent_version_for_spawn(
-                &initial_history,
-                Some(&session_source),
-                parent_thread_id,
-                forked_from_thread_id,
-            )
-            .await;
         let originator = self
             .effective_originator(
                 &initial_history,
@@ -1919,20 +1964,27 @@ impl ThreadManagerState {
             starting.retain(|runtime| runtime.strong_count() != 0);
             starting.push(Arc::downgrade(&source_changed_during_startup));
         }
-        let models_manager = self.models_manager_for_config(&config, Arc::clone(&auth_manager));
+        let windows_sandbox_proxy_settings_mode = if matches!(
+            &session_source,
+            SessionSource::Internal(InternalSessionSource::Guardian)
+        ) {
+            codex_sandboxing::WindowsSandboxProxySettingsMode::Preserve
+        } else {
+            codex_sandboxing::WindowsSandboxProxySettingsMode::Reconcile
+        };
         let (session, io) = Box::pin(Session::spawn(SessionSpawnArgs {
             config,
             allow_provider_model_fallback,
             user_instructions,
             installation_id: self.installation_id.clone(),
             auth_manager,
-            models_manager,
+            models_manager: Arc::clone(&self.models_manager),
             environment_manager: Arc::clone(&self.environment_manager),
             skills_service: Arc::clone(&self.skills_service),
             plugins_manager: Arc::clone(&self.plugins_manager),
-            mcp_manager: Arc::clone(&self.mcp_manager),
+            mcp_manager,
             code_mode_session_provider: Arc::clone(&self.code_mode_session_provider),
-            extensions: Arc::clone(&self.extensions),
+            extensions,
             conversation_history: initial_history,
             requested_history_mode: history_mode,
             fork_persistence,
@@ -1959,8 +2011,7 @@ impl ThreadManagerState {
             external_time_provider: self.external_time_provider.clone(),
             inherited_multi_agent_version: multi_agent_version,
             git_enrichment_policy: GitEnrichmentPolicy::Fresh,
-            windows_sandbox_proxy_settings_mode:
-                codex_sandboxing::WindowsSandboxProxySettingsMode::Reconcile,
+            windows_sandbox_proxy_settings_mode,
         }))
         .await?;
         // Enable Full Access form input only after session startup so a required MCP server cannot
@@ -1977,6 +2028,7 @@ impl ThreadManagerState {
         let new_thread = self
             .finalize_thread_spawn(session, io, tracked_session_source)
             .await?;
+        new_thread.thread.emit_thread_ready_lifecycle().await;
         if source_changed_during_startup.load(Ordering::Acquire) {
             new_thread.thread.session.request_mcp_runtime_refresh();
         }

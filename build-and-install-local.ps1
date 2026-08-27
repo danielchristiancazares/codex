@@ -277,7 +277,6 @@ try {
     try {
         Invoke-Checked -FilePath $cargoCommand.Source -Arguments @(
             "build",
-            "--quiet",
             "--release",
             "--target-dir", $targetDir,
             "--bin", "codex",

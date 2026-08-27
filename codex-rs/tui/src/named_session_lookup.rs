@@ -8,7 +8,6 @@ use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionSource;
@@ -282,8 +281,8 @@ impl<'a> NamedSessionCandidates<'a> {
                     model_providers: None,
                     source_kinds: Some(self.source_kinds.clone()),
                     archived: Some(self.collection == SessionCollection::Archived),
-                    section_id: NullableField::Omitted,
-                    project_id: NullableField::Omitted,
+                    section_id: None,
+                    project_id: None,
                     parent_thread_id: None,
                     ancestor_thread_id: None,
                     cwd: None,

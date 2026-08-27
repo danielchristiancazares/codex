@@ -82,6 +82,7 @@ use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
 use codex_network_proxy::NetworkMode;
+use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
@@ -1027,6 +1028,148 @@ env_http_headers = { "x-openai-internal-codex-residency" = "CODEX_TEST_UNSET_RES
     }
 
     Ok(())
+}
+
+#[test]
+fn accepts_amazon_bedrock_aws_profile_override() {
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+[model_providers.amazon-bedrock.aws]
+profile = "codex-bedrock"
+region = "us-west-2"
+"#,
+    )
+    .expect("Amazon Bedrock AWS overrides should deserialize");
+
+    assert_eq!(
+        cfg.model_providers
+            .get("amazon-bedrock")
+            .and_then(|provider| provider.aws.as_ref())
+            .and_then(|aws| aws.profile.as_deref()),
+        Some("codex-bedrock")
+    );
+    assert_eq!(
+        cfg.model_providers
+            .get("amazon-bedrock")
+            .and_then(|provider| provider.aws.as_ref())
+            .and_then(|aws| aws.region.as_deref()),
+        Some("us-west-2")
+    );
+}
+
+#[tokio::test]
+async fn load_config_applies_amazon_bedrock_aws_profile_override() {
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock.aws]
+profile = "codex-bedrock"
+region = "us-west-2"
+"#,
+    )
+    .expect("Amazon Bedrock AWS overrides should deserialize");
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    assert_eq!(config.model_provider_id, "amazon-bedrock");
+    assert_eq!(
+        config
+            .model_provider
+            .aws
+            .as_ref()
+            .and_then(|aws| aws.profile.as_deref()),
+        Some("codex-bedrock")
+    );
+    assert_eq!(
+        config
+            .model_provider
+            .aws
+            .as_ref()
+            .and_then(|aws| aws.region.as_deref()),
+        Some("us-west-2")
+    );
+}
+
+#[tokio::test]
+async fn load_config_applies_amazon_bedrock_transport_overrides() {
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock]
+base_url = "https://bedrock.example.com/v1"
+http_headers = { "X-Custom-Header" = "value" }
+
+[model_providers.amazon-bedrock.auth]
+command = "print-token"
+"#,
+    )
+    .expect("Amazon Bedrock transport overrides should deserialize");
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    let mut expected_provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove("amazon-bedrock")
+        .expect("Amazon Bedrock provider should be built in");
+    expected_provider.base_url = Some("https://bedrock.example.com/v1".to_string());
+    expected_provider.auth = Some(ModelProviderAuthInfo {
+        command: "print-token".to_string(),
+        args: Vec::new(),
+        timeout_ms: std::num::NonZeroU64::new(5_000).expect("timeout should be non-zero"),
+        refresh_interval_ms: 300_000,
+        cwd: std::env::current_dir()
+            .expect("current directory should be available")
+            .try_into()
+            .expect("current directory should be absolute"),
+    });
+    expected_provider
+        .http_headers
+        .get_or_insert_default()
+        .insert("X-Custom-Header".to_string(), "value".into());
+
+    assert_eq!(config.model_provider_id, "amazon-bedrock");
+    assert_eq!(config.model_provider, expected_provider);
+}
+
+#[tokio::test]
+async fn load_config_rejects_unsupported_amazon_bedrock_overrides() {
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock]
+name = "Custom Bedrock"
+requires_openai_auth = true
+supports_websockets = true
+"#,
+    )
+    .expect("Amazon Bedrock unsupported overrides should deserialize");
+
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains(
+        "model_providers.amazon-bedrock only supports changing `base_url`, `auth`, `http_headers`, `aws.profile`, `aws.region`, and `aws.auth_refresh`; other non-default provider fields are not supported"
+    ));
 }
 
 #[test]
@@ -6297,7 +6440,49 @@ async fn legacy_toggles_map_to_features() -> std::io::Result<()> {
 
     assert!(config.features.enabled(Feature::UnifiedExec));
 
-    assert!(config.use_experimental_unified_exec_tool);
+    Ok(())
+}
+
+#[tokio::test]
+async fn legacy_unified_exec_disable_flags_do_not_disable_command_execution() -> std::io::Result<()>
+{
+    for cfg in [
+        ConfigToml {
+            features: Some(FeaturesToml::from(BTreeMap::from([(
+                "unified_exec".to_string(),
+                false,
+            )]))),
+            ..Default::default()
+        },
+        ConfigToml {
+            experimental_use_unified_exec_tool: Some(false),
+            ..Default::default()
+        },
+    ] {
+        let codex_home = TempDir::new()?;
+        let mut config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await?;
+
+        assert!(config.features.enabled(Feature::UnifiedExec));
+        assert!(config.features.enabled(Feature::ShellTool));
+
+        config
+            .features
+            .disable(Feature::UnifiedExec)
+            .expect("legacy unified-exec toggle should normalize successfully");
+        assert!(config.features.enabled(Feature::UnifiedExec));
+
+        config
+            .features
+            .disable(Feature::ShellTool)
+            .expect("shell tool should remain independently configurable");
+        assert!(!config.features.enabled(Feature::ShellTool));
+        assert!(config.features.enabled(Feature::UnifiedExec));
+    }
 
     Ok(())
 }
@@ -7645,6 +7830,7 @@ async fn replace_mcp_servers_streamable_http_serializes_oauth_resource() -> anyh
             scopes: None,
             oauth: Some(McpServerOAuthConfig {
                 client_id: Some("eci-prd-pub-codex-123".to_string()),
+                callback_url: None,
                 callback_port: None,
             }),
             oauth_resource: Some("https://resource.example.com".to_string()),
@@ -9369,6 +9555,7 @@ async fn trace_exporter_defaults_to_none_when_log_exporter_is_set() -> std::io::
     let fixture = create_test_fixture()?;
     let mut cfg = fixture.cfg.clone();
     cfg.otel = Some(OtelConfigToml {
+        tool_result: toml::from_str("max_bytes = 8192").expect("tool-result logging config"),
         exporter: Some(OtelExporterKind::OtlpHttp {
             endpoint: "http://localhost:14318/v1/logs".to_string(),
             headers: HashMap::new(),
@@ -9389,6 +9576,7 @@ async fn trace_exporter_defaults_to_none_when_log_exporter_is_set() -> std::io::
     )
     .await?;
 
+    assert_eq!(config.otel.tool_result.max_bytes, 8192);
     assert!(matches!(
         config.otel.exporter,
         OtelExporterKind::OtlpHttp { .. }
@@ -9605,8 +9793,10 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
         allow_managed_hooks_only: None,
         allow_appshots: None,
         allow_remote_control: None,
+        allow_browser_and_computer_use: None,
         computer_use: None,
         browser_use: None,
+        in_app_browser: None,
         windows: None,
         feature_requirements: None,
         hooks: None,
@@ -9620,6 +9810,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
         permissions: None,
         auto_review: None,
         models: None,
+        additional_developer_instructions: None,
         guardian_policy_config: None,
     };
     let requirement_source = codex_config::RequirementSource::Unknown;
@@ -10281,6 +10472,38 @@ async fn test_untrusted_project_gets_unless_trusted_approval_policy() -> anyhow:
 }
 
 #[tokio::test]
+async fn oversized_managed_developer_instructions_are_rejected_during_config_load()
+-> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    // The policy text alone fits; rendering its required context markers must not.
+    let instructions = "x".repeat(codex_utils_string::approx_bytes_for_tokens(
+        /*tokens*/ 10_000,
+    ));
+
+    let error = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .cloud_config_bundle(
+            CloudConfigBundleFixture::loader_with_enterprise_requirement(format!(
+                "additional_developer_instructions = {instructions:?}"
+            )),
+        )
+        .build()
+        .await
+        .expect_err("oversized managed instructions must fail during config loading");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    let message = error.to_string();
+    assert!(
+        message.starts_with(
+            "`additional_developer_instructions` from enterprise-managed requirements Base requirements (req_1) exceeds the model-context limit of 10000 estimated tokens"
+        ),
+        "unexpected config-load error: {message}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn requirements_disallowing_default_sandbox_falls_back_to_required_default()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -10707,6 +10930,52 @@ shell_tool = false
 }
 
 #[tokio::test]
+async fn feature_requirements_can_still_disable_unified_exec() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .cloud_config_bundle(
+            CloudConfigBundleFixture::loader_with_enterprise_requirement(
+                r#"
+[features]
+unified_exec = false
+shell_tool = true
+unified_exec_zsh_fork = false
+"#,
+            ),
+        )
+        .build()
+        .await?;
+
+    assert!(!config.features.enabled(Feature::UnifiedExec));
+    assert!(config.features.enabled(Feature::ShellTool));
+    assert!(!config.features.enabled(Feature::UnifiedExecZshFork));
+    assert!(
+        !config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains("Ignoring unknown `features` requirement")),
+        "{:?}",
+        config.startup_warnings
+    );
+
+    config
+        .features
+        .enable(Feature::UnifiedExec)
+        .expect("managed feature mutations should normalize successfully");
+    config
+        .features
+        .enable(Feature::UnifiedExecZshFork)
+        .expect("managed feature updates should preserve administrator policy");
+    assert!(!config.features.enabled(Feature::UnifiedExec));
+    assert!(config.features.enabled(Feature::ShellTool));
+    assert!(!config.features.enabled(Feature::UnifiedExecZshFork));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn feature_requirements_auto_review_disables_guardian_approval() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
 
@@ -10794,6 +11063,28 @@ in_app_dictation = false
         .await?;
 
     assert!(!config.features.enabled(Feature::InAppDictation));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn in_app_local_automation_feature_requirements_are_valid() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .cloud_config_bundle(
+            CloudConfigBundleFixture::loader_with_enterprise_requirement(
+                r#"
+[features]
+in_app_local_automation = false
+"#,
+            ),
+        )
+        .build()
+        .await?;
+
+    assert!(!config.features.enabled(Feature::InAppLocalAutomation));
 
     Ok(())
 }

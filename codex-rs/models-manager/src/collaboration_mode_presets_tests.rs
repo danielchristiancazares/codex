@@ -8,17 +8,18 @@ fn preset_names_use_mode_display_names() {
     assert_eq!(plan_preset().model, None);
     assert_eq!(
         plan_preset().reasoning_effort,
-        NullableField::Value(ReasoningEffort::Medium)
+        Some(Some(ReasoningEffort::Medium))
     );
     assert_eq!(default_preset().model, None);
-    assert_eq!(default_preset().reasoning_effort, NullableField::Omitted);
+    assert_eq!(default_preset().reasoning_effort, None);
 }
 
 #[test]
 fn default_mode_instructions_replace_mode_names_placeholder() {
-    let NullableField::Value(default_instructions) = default_preset().developer_instructions else {
-        panic!("default preset should include instructions");
-    };
+    let default_instructions = default_preset()
+        .developer_instructions
+        .expect("default preset should include instructions")
+        .expect("default instructions should be set");
 
     assert!(!default_instructions.contains("{{KNOWN_MODE_NAMES}}"));
 

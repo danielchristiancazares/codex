@@ -29,7 +29,6 @@ use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadDeleteParams;
@@ -54,6 +53,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
+use codex_feedback::CodexFeedback;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::protocol::SessionSource;
@@ -98,7 +98,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: section_id.clone(),
                 name: "Projects".to_string(),
-                appearance: NullableField::Omitted,
+                appearance: None,
             },
         },
         ClientRequest::ThreadSectionDelete {
@@ -117,7 +117,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: " ".to_string(),
                 name: "Work".to_string(),
-                appearance: NullableField::Omitted,
+                appearance: None,
             },
         },
         ClientRequest::ThreadSectionUpdate {
@@ -125,7 +125,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: PINNED_THREAD_SECTION_ID.to_string(),
                 name: "Pinned again".to_string(),
-                appearance: NullableField::Omitted,
+                appearance: None,
             },
         },
         ClientRequest::ThreadSectionDelete {
@@ -145,7 +145,7 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
             params: ThreadSectionUpdateParams {
                 section_id: PINNED_THREAD_SECTION_ID.to_string(),
                 name: " ".to_string(),
-                appearance: NullableField::Omitted,
+                appearance: None,
             },
         },
     ] {
@@ -165,6 +165,25 @@ async fn thread_section_operations_without_sqlite_return_method_not_found() -> R
     client.shutdown().await?;
     assert_no_local_persistence_artifacts(codex_home.path())?;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_defaults_to_legacy_without_history_list_support() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    let store_id = Uuid::new_v4().to_string();
+    create_config_toml_with_thread_store(codex_home.path(), &server.uri(), &store_id)?;
+
+    let _in_memory_store = InMemoryThreadStoreId { store_id };
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+
+    let ThreadStartResponse { thread, .. } = mcp.start_thread(ThreadStartParams::default()).await?;
+
+    assert_eq!(thread.history_mode, ThreadHistoryMode::Legacy);
     Ok(())
 }
 
@@ -278,8 +297,8 @@ async fn thread_delete_with_non_local_thread_store_does_not_create_local_persist
                 model_providers: Some(Vec::new()),
                 source_kinds: None,
                 archived: None,
-                section_id: NullableField::Omitted,
-                project_id: NullableField::Omitted,
+                section_id: None,
+                project_id: None,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
@@ -458,6 +477,7 @@ async fn start_in_process_client(
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),

@@ -1002,6 +1002,7 @@ async fn mcp_tools_output_lists_tools_for_hyphenated_server_names() {
 fn mcp_tools_output_from_statuses_renders_status_only_servers() {
     let statuses = vec![McpServerStatus {
         name: "plugin_docs".to_string(),
+        runtime_status: None,
         plugin_id: None,
         server_info: None,
         tools: HashMap::from([(
@@ -1033,6 +1034,7 @@ fn mcp_tools_output_from_statuses_renders_status_only_servers() {
 fn mcp_tools_output_from_statuses_renders_verbose_inventory() {
     let statuses = vec![McpServerStatus {
         name: "plugin_docs".to_string(),
+        runtime_status: None,
         plugin_id: None,
         server_info: None,
         tools: HashMap::from([(
@@ -1447,6 +1449,14 @@ fn mcp_inventory_loading_without_animations_is_stable() {
 
     assert_eq!(first, second);
     assert_eq!(first, vec!["• Loading MCP inventory…".to_string()]);
+}
+
+#[test]
+fn thread_recap_loading_without_animations_snapshot() {
+    let cell = ThreadRecapLoadingCell::new(/*animations_enabled*/ false);
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!(rendered, @"• Generating conversation recap…");
 }
 
 #[test]

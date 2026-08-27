@@ -18,7 +18,6 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::cache::ModelsCache;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
-use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::SessionSource;
 
@@ -37,7 +36,6 @@ use crate::provider::ProviderAccountState;
 use crate::provider::ProviderCapabilities;
 use crate::provider::ProviderUnauthorizedRecovery;
 use crate::provider::RemoteCompactionSupport;
-use crate::provider::ResolvedProviderApi;
 
 /// Native GitHub Copilot provider backed by direct credentials.
 pub(crate) struct CopilotModelProvider {
@@ -185,23 +183,6 @@ impl ModelProvider for CopilotModelProvider {
             Ok(ResolvedProviderAuth::new(
                 self.auth_from_endpoint(endpoint, request_identity),
             ))
-        })
-    }
-
-    fn resolve_api_for_model<'a>(
-        &'a self,
-        _model: &'a str,
-        _thread_id: ThreadId,
-        scope: ProviderAuthScope,
-    ) -> ModelProviderFuture<'a, codex_protocol::error::Result<ResolvedProviderApi>> {
-        Box::pin(async move {
-            let endpoint = self.endpoint_manager.endpoint().await?;
-            let provider = self.api_provider_from_endpoint(&endpoint)?;
-            let request_identity =
-                identity::RequestIdentity::new(&scope.request_context, &scope.session_source);
-            let auth =
-                ResolvedProviderAuth::new(self.auth_from_endpoint(endpoint, request_identity));
-            Ok(ResolvedProviderApi { provider, auth })
         })
     }
 

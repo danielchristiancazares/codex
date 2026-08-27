@@ -235,14 +235,11 @@ impl ChatWidget {
                         .find(|preset| preset.model == model)
                         .map(|preset| preset.default_reasoning_effort)
                 });
-        let reasoning_effort_override = match self
-            .effective_reasoning_effort()
-            .or_else(|| self.config.model_reasoning_effort.clone())
-            .or(model_default_reasoning_effort)
-        {
-            Some(effort) => NullableField::Value(effort),
-            None => NullableField::Null,
-        };
+        let reasoning_effort_override = Some(
+            self.effective_reasoning_effort()
+                .or_else(|| self.config.model_reasoning_effort.clone())
+                .or(model_default_reasoning_effort),
+        );
         let rate_limit_snapshots: Vec<RateLimitSnapshotDisplay> = self
             .rate_limit_snapshots_by_limit_id
             .values()
@@ -453,6 +450,7 @@ impl ChatWidget {
             Some(ReasoningEffortConfig::XHigh) => "XHigh".to_string(),
             Some(ReasoningEffortConfig::Max) => "Max".to_string(),
             Some(ReasoningEffortConfig::Ultra) => "Ultra".to_string(),
+            Some(ReasoningEffortConfig::Persistent) => "Persistent".to_string(),
             Some(ReasoningEffortConfig::Custom(effort)) => {
                 crate::text_formatting::capitalize_first(effort)
             }

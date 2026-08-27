@@ -112,6 +112,9 @@ pub struct GuardianV2TranscriptConfigToml {
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuardianV2ReviewScopeConfigToml {
+    /// Restrict asynchronous classification and fast approvals to browser and computer-use tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_use_only: Option<bool>,
     /// Include sandboxed shell command calls in Guardian v2 classification.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandboxed_exec_commands: Option<bool>,
@@ -123,6 +126,12 @@ pub struct GuardianV2ReviewScopeConfigToml {
 pub struct GuardianV2ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Route Guardian review and classification through the unmetered Codex endpoints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_guardian: Option<bool>,
+    /// Persist reviewed actions and risk scores to rollout files for debugging.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persist_scores: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classifier_instructions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,6 +147,8 @@ pub struct GuardianV2ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 100, max = 100000))]
     pub max_classifier_instruction_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse_parent_compaction: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 100, max = 100000))]
     pub max_parent_compaction_tokens: Option<usize>,
@@ -421,6 +432,8 @@ pub struct NetworkProxyConfigToml {
     pub unix_sockets: Option<BTreeMap<String, NetworkProxyUnixSocketPermissionToml>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_local_binding: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_broker: Option<bool>,
 }
 
 impl FeatureConfig for NetworkProxyConfigToml {

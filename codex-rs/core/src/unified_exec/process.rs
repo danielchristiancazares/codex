@@ -12,8 +12,6 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use codex_exec_output_artifacts::ArtifactStream;
-use codex_exec_server::ExecOutputStream as ExecServerOutputStream;
 use codex_exec_server::ExecProcess;
 use codex_exec_server::ExecProcessEvent;
 use codex_exec_server::ProcessSignal as ExecServerProcessSignal;
@@ -31,11 +29,9 @@ use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::ProcessSignal as PtyProcessSignal;
 use codex_utils_pty::SpawnedPty;
 
-use super::RawExecOutputCapture;
 use super::UNIFIED_EXEC_OUTPUT_MAX_BYTES;
 use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
 use super::UnifiedExecError;
-use super::combine_captured_output_receivers;
 use super::head_tail_buffer::HeadTailBuffer;
 use super::process_state::ProcessState;
 
@@ -65,7 +61,6 @@ impl SpawnLifecycle for NoopSpawnLifecycle {}
 #[derive(Clone)]
 pub(crate) struct OutputHandles<const MAX_BYTES: usize = UNIFIED_EXEC_OUTPUT_MAX_BYTES> {
     pub(crate) output_buffer: Arc<Mutex<HeadTailBuffer<MAX_BYTES>>>,
-    pub(crate) artifact_capture: Option<Arc<RawExecOutputCapture>>,
     pub(crate) output_notify: Arc<Notify>,
     pub(crate) output_closed: Arc<AtomicBool>,
     pub(crate) output_closed_notify: Arc<Notify>,
@@ -75,27 +70,10 @@ pub(crate) struct OutputHandles<const MAX_BYTES: usize = UNIFIED_EXEC_OUTPUT_MAX
 struct OutputTaskGuard {
     output_closed: Arc<AtomicBool>,
     output_closed_notify: Arc<Notify>,
-    artifact_capture: Option<Arc<RawExecOutputCapture>>,
-    complete: bool,
-}
-
-impl OutputTaskGuard {
-    fn mark_complete(&mut self) {
-        self.complete = true;
-    }
-
-    fn mark_incomplete(&self) {
-        if let Some(capture) = self.artifact_capture.as_ref() {
-            capture.mark_truncated();
-        }
-    }
 }
 
 impl Drop for OutputTaskGuard {
     fn drop(&mut self) {
-        if !self.complete {
-            self.mark_incomplete();
-        }
         self.output_closed.store(true, Ordering::Release);
         self.output_closed_notify.notify_waiters();
     }
@@ -137,11 +115,9 @@ impl UnifiedExecProcess {
         process_handle: ProcessHandle,
         sandbox_type: SandboxType,
         spawn_lifecycle: Option<SpawnLifecycleHandle>,
-        artifact_bytes_cap: Option<usize>,
     ) -> Self {
         let output = OutputHandles {
             output_buffer: Arc::new(Mutex::new(HeadTailBuffer::default())),
-            artifact_capture: artifact_bytes_cap.map(RawExecOutputCapture::new),
             output_notify: Arc::new(Notify::new()),
             output_closed: Arc::new(AtomicBool::new(false)),
             output_closed_notify: Arc::new(Notify::new()),
@@ -351,7 +327,6 @@ impl UnifiedExecProcess {
         spawned: SpawnedPty,
         sandbox_type: SandboxType,
         spawn_lifecycle: SpawnLifecycleHandle,
-        artifact_bytes_cap: Option<usize>,
     ) -> Result<Self, UnifiedExecError> {
         let SpawnedPty {
             session: process_handle,
@@ -359,18 +334,11 @@ impl UnifiedExecProcess {
             stderr_rx,
             mut exit_rx,
         } = spawned;
-        let output_lost = process_handle.output_lost_flag();
+        let output_rx = codex_utils_pty::combine_output_receivers(stdout_rx, stderr_rx);
         let mut managed = Self::new(
             ProcessHandle::Local(Box::new(process_handle)),
             sandbox_type,
             Some(spawn_lifecycle),
-            artifact_bytes_cap,
-        );
-        let output_rx = combine_captured_output_receivers(
-            stdout_rx,
-            stderr_rx,
-            managed.output_handles().artifact_capture.clone(),
-            output_lost,
         );
         managed.output_task = Some(Self::spawn_local_output_task(
             output_rx,
@@ -414,18 +382,12 @@ impl UnifiedExecProcess {
 
     pub(super) async fn from_exec_server_started(
         started: StartedExecProcess,
-        artifact_bytes_cap: Option<usize>,
     ) -> Result<Self, UnifiedExecError> {
         let process_handle = ProcessHandle::ExecServer(Arc::clone(&started.process));
         // Older peers do not report this field. In that case, skip local
         // classification rather than attributing a violation to a guessed backend.
         let sandbox_type = started.sandbox_type.unwrap_or(SandboxType::None);
-        let mut managed = Self::new(
-            process_handle,
-            sandbox_type,
-            /*spawn_lifecycle*/ None,
-            artifact_bytes_cap,
-        );
+        let mut managed = Self::new(process_handle, sandbox_type, /*spawn_lifecycle*/ None);
         let output_handles = managed.output_handles().clone();
         managed.output_task = Some(Self::spawn_exec_server_output_task(
             started,
@@ -463,7 +425,6 @@ impl UnifiedExecProcess {
     ) -> JoinHandle<()> {
         let OutputHandles {
             output_buffer,
-            artifact_capture,
             output_notify,
             output_closed,
             output_closed_notify,
@@ -472,11 +433,9 @@ impl UnifiedExecProcess {
         let process = started.process;
         let mut events = process.subscribe_events();
         tokio::spawn(async move {
-            let mut output_task_guard = OutputTaskGuard {
+            let _output_task_guard = OutputTaskGuard {
                 output_closed: Arc::clone(&output_closed),
                 output_closed_notify: Arc::clone(&output_closed_notify),
-                artifact_capture: artifact_capture.clone(),
-                complete: false,
             };
             let mut last_seq: u64 = 0;
             loop {
@@ -488,7 +447,6 @@ impl UnifiedExecProcess {
                         let _ = state_tx.send_replace(
                             state.failed("exec-server process event stream closed".to_string()),
                         );
-                        output_task_guard.mark_incomplete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         cancellation_token.cancel();
@@ -525,7 +483,6 @@ impl UnifiedExecProcess {
                         Err(err) => {
                             let state = state_tx.borrow().clone();
                             let _ = state_tx.send_replace(state.failed(err.to_string()));
-                            output_task_guard.mark_incomplete();
                             output_closed.store(true, Ordering::Release);
                             output_closed_notify.notify_waiters();
                             cancellation_token.cancel();
@@ -535,39 +492,25 @@ impl UnifiedExecProcess {
                     let ExecReadResponse {
                         chunks,
                         next_seq,
-                        output_lost,
                         exited,
                         exit_code,
                         closed,
                         failure,
                         sandbox_denied,
+                        ..
                     } = response;
-                    let expected_seq = last_seq.saturating_add(1);
-                    let replay_starts_after_gap = chunks
-                        .iter()
-                        .find(|chunk| chunk.seq > last_seq)
-                        .is_some_and(|chunk| chunk.seq != expected_seq);
-                    if output_lost || replay_starts_after_gap {
-                        output_task_guard.mark_incomplete();
-                    }
                     for chunk in chunks.into_iter().filter(|chunk| chunk.seq > last_seq) {
-                        let artifact_stream = artifact_stream_from_exec_server(chunk.stream);
                         let bytes = chunk.chunk.into_inner();
-                        Self::record_output_chunk(
-                            &output_buffer,
-                            artifact_capture.as_ref(),
-                            &output_tx,
-                            &output_notify,
-                            artifact_stream,
-                            bytes,
-                        )
-                        .await;
+                        let mut guard = output_buffer.lock().await;
+                        guard.push_chunk(&bytes);
+                        drop(guard);
+                        let _ = output_tx.send(bytes);
+                        output_notify.notify_waiters();
                     }
                     last_seq = last_seq.max(next_seq.saturating_sub(1));
                     if let Some(message) = failure {
                         let state = state_tx.borrow().clone();
                         let _ = state_tx.send_replace(state.failed(message));
-                        output_task_guard.mark_incomplete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         cancellation_token.cancel();
@@ -583,7 +526,6 @@ impl UnifiedExecProcess {
                         });
                     }
                     if closed {
-                        output_task_guard.mark_complete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         cancellation_token.cancel();
@@ -601,17 +543,12 @@ impl UnifiedExecProcess {
                             continue;
                         }
                         last_seq = chunk.seq;
-                        let artifact_stream = artifact_stream_from_exec_server(chunk.stream);
                         let bytes = chunk.chunk.into_inner();
-                        Self::record_output_chunk(
-                            &output_buffer,
-                            artifact_capture.as_ref(),
-                            &output_tx,
-                            &output_notify,
-                            artifact_stream,
-                            bytes,
-                        )
-                        .await;
+                        let mut guard = output_buffer.lock().await;
+                        guard.push_chunk(&bytes);
+                        drop(guard);
+                        let _ = output_tx.send(bytes);
+                        output_notify.notify_waiters();
                     }
                     ExecProcessEvent::Exited {
                         seq,
@@ -626,14 +563,10 @@ impl UnifiedExecProcess {
                         state.sandbox_denied |= sandbox_denied.unwrap_or(false);
                         let _ = state_tx.send_replace(state.exited(Some(exit_code)));
                     }
-                    ExecProcessEvent::Closed { seq, output_lost } => {
-                        if output_lost {
-                            output_task_guard.mark_incomplete();
-                        }
+                    ExecProcessEvent::Closed { seq, .. } => {
                         if seq <= last_seq {
                             continue;
                         }
-                        output_task_guard.mark_complete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         cancellation_token.cancel();
@@ -642,7 +575,6 @@ impl UnifiedExecProcess {
                     ExecProcessEvent::Failed(message) => {
                         let state = state_tx.borrow().clone();
                         let _ = state_tx.send_replace(state.failed(message));
-                        output_task_guard.mark_incomplete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         cancellation_token.cancel();
@@ -660,18 +592,15 @@ impl UnifiedExecProcess {
     ) -> JoinHandle<()> {
         let OutputHandles {
             output_buffer,
-            artifact_capture,
             output_notify,
             output_closed,
             output_closed_notify,
             ..
         } = output_handles;
         tokio::spawn(async move {
-            let mut output_task_guard = OutputTaskGuard {
+            let _output_task_guard = OutputTaskGuard {
                 output_closed: Arc::clone(&output_closed),
                 output_closed_notify: Arc::clone(&output_closed_notify),
-                artifact_capture,
-                complete: false,
             };
             loop {
                 match receiver.recv().await {
@@ -684,45 +613,19 @@ impl UnifiedExecProcess {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        output_task_guard.mark_complete();
                         output_closed.store(true, Ordering::Release);
                         output_closed_notify.notify_waiters();
                         break;
                     }
-                }
+                };
             }
         })
-    }
-
-    async fn record_output_chunk(
-        output_buffer: &Arc<Mutex<HeadTailBuffer>>,
-        artifact_capture: Option<&Arc<RawExecOutputCapture>>,
-        output_tx: &broadcast::Sender<Vec<u8>>,
-        output_notify: &Arc<Notify>,
-        stream: ArtifactStream,
-        bytes: Vec<u8>,
-    ) {
-        if let Some(capture) = artifact_capture {
-            capture.record(stream, &bytes);
-        }
-        let mut guard = output_buffer.lock().await;
-        guard.push_chunk(&bytes);
-        drop(guard);
-        let _ = output_tx.send(bytes);
-        output_notify.notify_waiters();
     }
 
     fn signal_exit(&self, exit_code: Option<i32>) {
         let state = self.state_rx.borrow().clone();
         let _ = self.state_tx.send_replace(state.exited(exit_code));
         self.output.cancellation_token.cancel();
-    }
-}
-
-fn artifact_stream_from_exec_server(stream: ExecServerOutputStream) -> ArtifactStream {
-    match stream {
-        ExecServerOutputStream::Stdout | ExecServerOutputStream::Pty => ArtifactStream::Stdout,
-        ExecServerOutputStream::Stderr => ArtifactStream::Stderr,
     }
 }
 

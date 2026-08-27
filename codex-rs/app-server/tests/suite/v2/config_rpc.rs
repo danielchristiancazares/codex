@@ -1,15 +1,28 @@
 use anyhow::Result;
-use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::test_path_buf_with_windows;
 use app_test_support::test_tmp_path_buf;
+use codex_app_server_protocol::AllowDenyRequirement;
 use codex_app_server_protocol::AppConfig;
 use codex_app_server_protocol::AppToolApproval;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AppsConfig;
 use codex_app_server_protocol::AppsDefaultConfig;
 use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::BrowserUseAccessApprovalLifetime;
+use codex_app_server_protocol::BrowserUseConfig;
+use codex_app_server_protocol::BrowserUseOriginPolicy;
+use codex_app_server_protocol::BrowserUseOriginPolicyConfig;
+use codex_app_server_protocol::BrowserUseRequirements;
 use codex_app_server_protocol::CliAuthCredentialsStoreMode;
+use codex_app_server_protocol::ComputerUseConfig;
+use codex_app_server_protocol::ComputerUseMacosConfig;
+use codex_app_server_protocol::ComputerUseMacosRequirements;
+use codex_app_server_protocol::ComputerUseRequirements;
+use codex_app_server_protocol::ComputerUseWindowsConfig;
+use codex_app_server_protocol::ComputerUseWindowsExeConfig;
+use codex_app_server_protocol::ComputerUseWindowsExeRequirement;
+use codex_app_server_protocol::ComputerUseWindowsRequirements;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigEdit;
 use codex_app_server_protocol::ConfigLayerSource;
@@ -24,13 +37,7 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use codex_app_server_protocol::ToolsV2;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::WriteStatus;
 use codex_core::config::set_project_trust_level;
 use codex_protocol::config_types::ServiceTier;
@@ -40,9 +47,9 @@ use codex_protocol::config_types::WebSearchLocation;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -224,13 +231,52 @@ statusMessage = "Scanning file"
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn config_requirements_read_includes_browser_use_auto_review_setting() -> Result<()> {
+async fn config_requirements_read_includes_browser_and_computer_use_schema() -> Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join("requirements.toml"),
         r#"
+allow_browser_and_computer_use = false
+
 [browser_use]
+allow_history_access = false
 disable_auto_review = true
+allow_global_persistent_approval = false
+
+[browser_use.default_origin_policy]
+access = "deny"
+downloads = "allow"
+uploads = "deny"
+full_cdp_access = "allow"
+auto_review = "deny"
+persistent_approval = false
+access_approval_lifetime = "turn"
+
+[browser_use.origins."https://example.com"]
+access = "allow"
+downloads = "deny"
+uploads = "allow"
+full_cdp_access = "deny"
+auto_review = "deny"
+persistent_approval = true
+access_approval_lifetime = "thread"
+
+[computer_use]
+allow_locked_computer_use = false
+allow_persistent_approval = false
+default_app_access = "deny"
+
+[computer_use.macos.bundle_ids]
+"com.apple.Safari" = "allow"
+
+[computer_use.windows.aumids]
+"Microsoft.Paint_8wekyb3d8bbwe!App" = "allow"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Google LLC"
+product_name = "Google Chrome"
+binary_name = "chrome.exe"
+access = "deny"
 "#,
     )?;
     let mut mcp = TestAppServer::builder()
@@ -243,12 +289,64 @@ disable_auto_review = true
     let request_id = mcp.send_config_requirements_read_request().await?;
     let response: ConfigRequirementsReadResponse =
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
+    let requirements = response
+        .requirements
+        .expect("managed requirements should be returned");
+    assert_eq!(requirements.allow_browser_and_computer_use, Some(false));
     assert_eq!(
-        response
-            .requirements
-            .and_then(|requirements| requirements.browser_use)
-            .and_then(|browser_use| browser_use.disable_auto_review),
-        Some(true)
+        requirements.browser_use,
+        Some(BrowserUseRequirements {
+            allow_history_access: Some(false),
+            disable_auto_review: Some(true),
+            allow_global_persistent_approval: Some(false),
+            default_origin_policy: Some(BrowserUseOriginPolicy {
+                access: Some(AllowDenyRequirement::Deny),
+                downloads: Some(AllowDenyRequirement::Allow),
+                uploads: Some(AllowDenyRequirement::Deny),
+                full_cdp_access: Some(AllowDenyRequirement::Allow),
+                auto_review: Some(AllowDenyRequirement::Deny),
+                persistent_approval: Some(false),
+                access_approval_lifetime: Some(BrowserUseAccessApprovalLifetime::Turn),
+            }),
+            origins: Some(BTreeMap::from([(
+                "https://example.com".to_string(),
+                BrowserUseOriginPolicy {
+                    access: Some(AllowDenyRequirement::Allow),
+                    downloads: Some(AllowDenyRequirement::Deny),
+                    uploads: Some(AllowDenyRequirement::Allow),
+                    full_cdp_access: Some(AllowDenyRequirement::Deny),
+                    auto_review: Some(AllowDenyRequirement::Deny),
+                    persistent_approval: Some(true),
+                    access_approval_lifetime: Some(BrowserUseAccessApprovalLifetime::Thread),
+                },
+            )])),
+        })
+    );
+    assert_eq!(
+        requirements.computer_use,
+        Some(ComputerUseRequirements {
+            allow_locked_computer_use: Some(false),
+            allow_persistent_approval: Some(false),
+            default_app_access: Some(AllowDenyRequirement::Deny),
+            macos: Some(ComputerUseMacosRequirements {
+                bundle_ids: Some(BTreeMap::from([(
+                    "com.apple.Safari".to_string(),
+                    AllowDenyRequirement::Allow,
+                )])),
+            }),
+            windows: Some(ComputerUseWindowsRequirements {
+                aumids: Some(BTreeMap::from([(
+                    "Microsoft.Paint_8wekyb3d8bbwe!App".to_string(),
+                    AllowDenyRequirement::Allow,
+                )])),
+                exes: Some(vec![ComputerUseWindowsExeRequirement {
+                    publisher_name: "CN=Google LLC".to_string(),
+                    product_name: "Google Chrome".to_string(),
+                    binary_name: Some("chrome.exe".to_string()),
+                    access: AllowDenyRequirement::Deny,
+                }]),
+            }),
+        })
     );
     Ok(())
 }
@@ -287,12 +385,17 @@ in_app_updates = false
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn config_requirements_read_includes_model_auto_review_and_new_thread_defaults() -> Result<()>
-{
+async fn config_requirements_read_includes_managed_model_policy_and_instructions() -> Result<()> {
     let codex_home = TempDir::new()?;
+    write_config(
+        &codex_home,
+        "developer_instructions = \"ordinary instructions\"\n",
+    )?;
     std::fs::write(
         codex_home.path().join("requirements.toml"),
         r#"
+additional_developer_instructions = "Follow the managed policy.\nPreserve its formatting."
+
 [auto_review]
 required_on_models = ["gpt-protected", "gpt-sensitive"]
 ignore_rules = ["gpt-protected"]
@@ -314,6 +417,10 @@ service_tier = "priority"
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
 
     let requirements = response.requirements.expect("managed requirements");
+    assert_eq!(
+        requirements.additional_developer_instructions.as_deref(),
+        Some("Follow the managed policy.\nPreserve its formatting.")
+    );
     let auto_review = requirements
         .auto_review
         .expect("managed automatic-review requirements");
@@ -336,6 +443,25 @@ service_tier = "priority"
         Some(ReasoningEffort::Medium)
     );
     assert_eq!(defaults.service_tier, ServiceTier::Fast);
+
+    let config_id = mcp
+        .send_config_read_request(ConfigReadParams {
+            include_layers: false,
+            cwd: None,
+        })
+        .await?;
+    let config: ConfigReadResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(config_id)).await??;
+    assert_eq!(
+        (
+            config.config.developer_instructions.as_deref(),
+            config
+                .config
+                .additional
+                .get("additional_developer_instructions"),
+        ),
+        (Some("ordinary instructions"), None),
+    );
     Ok(())
 }
 
@@ -490,6 +616,236 @@ allowed_domains = ["example.com"]
     );
     let layers = layers.expect("layers present");
     assert_layers_user_then_optional_system(&layers, user_file)?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config_read_includes_browser_and_computer_use_config() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_config(
+        &codex_home,
+        r#"
+[browser_use]
+allow_history_access = true
+
+[browser_use.default_origin_policy]
+access = "deny"
+downloads = "allow"
+
+[browser_use.origins."https://example.com"]
+downloads = "deny"
+uploads = "allow"
+
+[computer_use]
+default_app_access = "deny"
+
+[computer_use.macos.bundle_ids]
+"com.apple.Safari" = "allow"
+
+[computer_use.windows.aumids]
+"Microsoft.Paint_8wekyb3d8bbwe!App" = "deny"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Google LLC"
+product_name = "Google Chrome"
+binary_name = "chrome.exe"
+access = "allow"
+"#,
+    )?;
+    std::fs::write(
+        codex_home.path().join("requirements.toml"),
+        r#"
+allow_browser_and_computer_use = false
+
+[browser_use]
+allow_history_access = false
+allow_global_persistent_approval = false
+
+[browser_use.default_origin_policy]
+access = "allow"
+
+[computer_use]
+default_app_access = "allow"
+"#,
+    )?;
+
+    let workspace = TempDir::new()?;
+    let project_config_dir = workspace.path().join(".codex");
+    std::fs::create_dir_all(&project_config_dir)?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+[browser_use.default_origin_policy]
+uploads = "deny"
+full_cdp_access = "allow"
+
+[browser_use.origins."https://example.com"]
+access = "allow"
+full_cdp_access = "deny"
+
+[computer_use.macos.bundle_ids]
+"com.apple.TextEdit" = "allow"
+"com.apple.Safari" = "deny"
+
+[computer_use.windows.aumids]
+"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" = "allow"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Microsoft Corporation"
+product_name = "Microsoft Visual Studio Code"
+access = "deny"
+"#,
+    )?;
+    set_project_trust_level(codex_home.path(), workspace.path(), TrustLevel::Trusted)?;
+    let codex_home_path = codex_home.path().canonicalize()?;
+    let user_file = AbsolutePathBuf::try_from(codex_home_path.join("config.toml"))?;
+    let project_config = AbsolutePathBuf::try_from(project_config_dir)?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+
+    let request_id = mcp
+        .send_config_read_request(ConfigReadParams {
+            include_layers: false,
+            cwd: Some(workspace.path().to_string_lossy().into_owned()),
+        })
+        .await?;
+    let ConfigReadResponse {
+        config, origins, ..
+    } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
+
+    assert_eq!(
+        config.browser_use,
+        Some(BrowserUseConfig {
+            allow_history_access: Some(true),
+            default_origin_policy: Some(BrowserUseOriginPolicyConfig {
+                access: Some(AllowDenyRequirement::Deny),
+                downloads: Some(AllowDenyRequirement::Allow),
+                uploads: Some(AllowDenyRequirement::Deny),
+                full_cdp_access: Some(AllowDenyRequirement::Allow),
+            }),
+            origins: Some(BTreeMap::from([(
+                "https://example.com".to_string(),
+                BrowserUseOriginPolicyConfig {
+                    access: Some(AllowDenyRequirement::Allow),
+                    downloads: Some(AllowDenyRequirement::Deny),
+                    uploads: Some(AllowDenyRequirement::Allow),
+                    full_cdp_access: Some(AllowDenyRequirement::Deny),
+                },
+            )])),
+        })
+    );
+    assert_eq!(
+        config.computer_use,
+        Some(ComputerUseConfig {
+            default_app_access: Some(AllowDenyRequirement::Deny),
+            macos: Some(ComputerUseMacosConfig {
+                bundle_ids: Some(BTreeMap::from([
+                    ("com.apple.Safari".to_string(), AllowDenyRequirement::Deny,),
+                    (
+                        "com.apple.TextEdit".to_string(),
+                        AllowDenyRequirement::Allow,
+                    ),
+                ])),
+            }),
+            windows: Some(ComputerUseWindowsConfig {
+                aumids: Some(BTreeMap::from([
+                    (
+                        "Microsoft.Paint_8wekyb3d8bbwe!App".to_string(),
+                        AllowDenyRequirement::Deny,
+                    ),
+                    (
+                        "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".to_string(),
+                        AllowDenyRequirement::Allow,
+                    ),
+                ])),
+                exes: Some(vec![ComputerUseWindowsExeConfig {
+                    publisher_name: "CN=Microsoft Corporation".to_string(),
+                    product_name: "Microsoft Visual Studio Code".to_string(),
+                    binary_name: None,
+                    access: AllowDenyRequirement::Deny,
+                }]),
+            }),
+        })
+    );
+    assert_eq!(
+        origins
+            .get("browser_use.default_origin_policy.access")
+            .expect("user policy origin")
+            .name,
+        ConfigLayerSource::User {
+            file: user_file.clone(),
+            profile: None,
+        }
+    );
+    assert_eq!(
+        origins
+            .get("browser_use.default_origin_policy.full_cdp_access")
+            .expect("project policy origin")
+            .name,
+        ConfigLayerSource::Project {
+            dot_codex_folder: project_config.clone(),
+        }
+    );
+    assert_eq!(
+        origins
+            .get("browser_use.allow_history_access")
+            .expect("user browser use origin")
+            .name,
+        ConfigLayerSource::User {
+            file: user_file,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        origins
+            .get("computer_use.windows.exes.0.access")
+            .expect("project computer use origin")
+            .name,
+        ConfigLayerSource::Project {
+            dot_codex_folder: project_config,
+        }
+    );
+
+    let request_id = mcp.send_config_requirements_read_request().await?;
+    let response: ConfigRequirementsReadResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
+    let requirements = response
+        .requirements
+        .expect("managed requirements should be returned");
+    assert_eq!(requirements.allow_browser_and_computer_use, Some(false));
+    assert_eq!(
+        requirements.browser_use,
+        Some(BrowserUseRequirements {
+            allow_history_access: Some(false),
+            disable_auto_review: None,
+            allow_global_persistent_approval: Some(false),
+            default_origin_policy: Some(BrowserUseOriginPolicy {
+                access: Some(AllowDenyRequirement::Allow),
+                downloads: None,
+                uploads: None,
+                full_cdp_access: None,
+                auto_review: None,
+                persistent_approval: None,
+                access_approval_lifetime: None,
+            }),
+            origins: None,
+        })
+    );
+    assert_eq!(
+        requirements.computer_use,
+        Some(ComputerUseRequirements {
+            allow_locked_computer_use: None,
+            allow_persistent_approval: None,
+            default_app_access: Some(AllowDenyRequirement::Allow),
+            macos: None,
+            windows: None,
+        })
+    );
 
     Ok(())
 }
@@ -1304,128 +1660,232 @@ async fn config_batch_write_applies_multiple_edits() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn config_batch_write_reloads_context_window_for_next_turn_only() -> Result<()> {
-    const INITIAL_CONTEXT_WINDOW: i64 = 100_000;
-    const UPDATED_CONTEXT_WINDOW: i64 = 200_000;
-    const EFFECTIVE_CONTEXT_WINDOW_PERCENT: i64 = 95;
+async fn config_batch_write_round_trips_browser_and_computer_use_config() -> Result<()> {
+    let tmp_dir = TempDir::new()?;
+    let codex_home = tmp_dir.path().canonicalize()?;
+    write_config(
+        &tmp_dir,
+        r#"
+model = "gpt-existing"
 
-    let server = responses::start_mock_server().await;
-    let first_response = responses::sse_response(responses::sse(vec![
-        responses::ev_response_created("resp-1"),
-        responses::ev_completed_with_tokens("resp-1", /*total_tokens*/ 10),
-    ]))
-    .set_delay(std::time::Duration::from_secs(/*secs*/ 2));
-    let second_response = responses::sse_response(responses::sse(vec![
-        responses::ev_response_created("resp-2"),
-        responses::ev_completed_with_tokens("resp-2", /*total_tokens*/ 20),
-    ]));
-    let _response_mock =
-        responses::mount_response_sequence(&server, vec![first_response, second_response]).await;
-    let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
-        .with_root_config(&format!("model_context_window = {INITIAL_CONTEXT_WINDOW}"))
-        .write(codex_home.path())?;
+[browser_use.origins."https://stale.example"]
+access = "deny"
 
-    let mut app_server = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
+[computer_use.macos.bundle_ids]
+"com.example.Stale" = "deny"
+
+[computer_use.windows.aumids]
+"Stale.App_123!App" = "allow"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Stale"
+product_name = "Stale App"
+binary_name = "stale.exe"
+access = "deny"
+"#,
+    )?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(&codex_home)
+        .without_auto_env()
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
-    let thread_start_id = app_server
-        .send_thread_start_request_with_auto_env(ThreadStartParams {
-            model: Some("mock-model".to_string()),
-            ..Default::default()
-        })
-        .await?;
-    let ThreadStartResponse { thread, .. } = timeout(
-        DEFAULT_READ_TIMEOUT,
-        app_server.read_response(thread_start_id),
-    )
-    .await??;
 
-    let first_turn_id = app_server
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "first turn".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    let TurnStartResponse { turn: first_turn } = timeout(
-        DEFAULT_READ_TIMEOUT,
-        app_server.read_response(first_turn_id),
-    )
-    .await??;
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        app_server.read_stream_until_notification_message("turn/started"),
-    )
-    .await??;
-
-    let batch_id = app_server
+    let batch_id = mcp
         .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "model_context_window".to_string(),
-                value: json!(UPDATED_CONTEXT_WINDOW),
-                merge_strategy: MergeStrategy::Replace,
-            }],
             file_path: None,
+            edits: vec![
+                ConfigEdit {
+                    key_path: "browser_use.allow_history_access".to_string(),
+                    value: json!(true),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "browser_use.default_origin_policy".to_string(),
+                    value: json!({
+                        "access": "allow",
+                        "downloads": "deny",
+                        "uploads": "allow",
+                        "full_cdp_access": "deny",
+                    }),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "browser_use.origins.\"https://example.com\"".to_string(),
+                    value: json!({
+                        "access": "deny",
+                        "downloads": "allow",
+                        "uploads": "deny",
+                        "full_cdp_access": "allow",
+                    }),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "browser_use.origins.\"https://stale.example\"".to_string(),
+                    value: json!(null),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.default_app_access".to_string(),
+                    value: json!("deny"),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.macos.bundle_ids.\"com.apple.Safari\"".to_string(),
+                    value: json!("allow"),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.macos.bundle_ids.\"com.example.Stale\"".to_string(),
+                    value: json!(null),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.windows.aumids.\"Microsoft.Paint_8wekyb3d8bbwe!App\""
+                        .to_string(),
+                    value: json!("deny"),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.windows.aumids.\"Stale.App_123!App\"".to_string(),
+                    value: json!(null),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+                ConfigEdit {
+                    key_path: "computer_use.windows.exes".to_string(),
+                    value: json!([
+                        {
+                            "publisher_name": "CN=Google LLC",
+                            "product_name": "Google Chrome",
+                            "binary_name": "chrome.exe",
+                            "access": "allow",
+                        },
+                        {
+                            "publisher_name": "CN=Microsoft Corporation",
+                            "product_name": "Microsoft Visual Studio Code",
+                            "access": "deny",
+                        },
+                    ]),
+                    merge_strategy: MergeStrategy::Replace,
+                },
+            ],
             expected_version: None,
-            reload_user_config: true,
+            reload_user_config: false,
         })
         .await?;
-    let _: ConfigWriteResponse =
-        timeout(DEFAULT_READ_TIMEOUT, app_server.read_response(batch_id)).await??;
-
-    let first_usage = loop {
-        let usage: ThreadTokenUsageUpdatedNotification = timeout(
-            DEFAULT_READ_TIMEOUT,
-            app_server.read_notification("thread/tokenUsage/updated"),
-        )
-        .await??;
-        if usage.turn_id == first_turn.id {
-            break usage;
-        }
-    };
+    let batch_write: ConfigWriteResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(batch_id)).await??;
+    assert_eq!(batch_write.status, WriteStatus::Ok);
     assert_eq!(
-        first_usage.token_usage.model_context_window,
-        Some(INITIAL_CONTEXT_WINDOW * EFFECTIVE_CONTEXT_WINDOW_PERCENT / 100)
+        batch_write.file_path,
+        AbsolutePathBuf::resolve_path_against_base("config.toml", &codex_home)
     );
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        app_server.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
+    assert_eq!(batch_write.overridden_metadata, None);
 
-    let second_turn_id = app_server
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id,
-            input: vec![UserInput::Text {
-                text: "second turn".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
+    let persisted: toml::Value =
+        toml::from_str(&std::fs::read_to_string(codex_home.join("config.toml"))?)?;
+    let expected_persisted: toml::Value = toml::from_str(
+        r#"
+model = "gpt-existing"
+
+[browser_use]
+allow_history_access = true
+
+[browser_use.default_origin_policy]
+access = "allow"
+downloads = "deny"
+uploads = "allow"
+full_cdp_access = "deny"
+
+[browser_use.origins."https://example.com"]
+access = "deny"
+downloads = "allow"
+uploads = "deny"
+full_cdp_access = "allow"
+
+[computer_use]
+default_app_access = "deny"
+
+[computer_use.macos.bundle_ids]
+"com.apple.Safari" = "allow"
+
+[computer_use.windows.aumids]
+"Microsoft.Paint_8wekyb3d8bbwe!App" = "deny"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Google LLC"
+product_name = "Google Chrome"
+binary_name = "chrome.exe"
+access = "allow"
+
+[[computer_use.windows.exes]]
+publisher_name = "CN=Microsoft Corporation"
+product_name = "Microsoft Visual Studio Code"
+access = "deny"
+"#,
+    )?;
+    assert_eq!(persisted, expected_persisted);
+
+    let read_id = mcp
+        .send_config_read_request(ConfigReadParams {
+            include_layers: false,
+            cwd: None,
         })
         .await?;
-    let TurnStartResponse { turn: second_turn } = timeout(
-        DEFAULT_READ_TIMEOUT,
-        app_server.read_response(second_turn_id),
-    )
-    .await??;
-    let second_usage = loop {
-        let usage: ThreadTokenUsageUpdatedNotification = timeout(
-            DEFAULT_READ_TIMEOUT,
-            app_server.read_notification("thread/tokenUsage/updated"),
-        )
-        .await??;
-        if usage.turn_id == second_turn.id {
-            break usage;
-        }
-    };
+    let read: ConfigReadResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
     assert_eq!(
-        second_usage.token_usage.model_context_window,
-        Some(UPDATED_CONTEXT_WINDOW * EFFECTIVE_CONTEXT_WINDOW_PERCENT / 100)
+        read.config.browser_use,
+        Some(BrowserUseConfig {
+            allow_history_access: Some(true),
+            default_origin_policy: Some(BrowserUseOriginPolicyConfig {
+                access: Some(AllowDenyRequirement::Allow),
+                downloads: Some(AllowDenyRequirement::Deny),
+                uploads: Some(AllowDenyRequirement::Allow),
+                full_cdp_access: Some(AllowDenyRequirement::Deny),
+            }),
+            origins: Some(BTreeMap::from([(
+                "https://example.com".to_string(),
+                BrowserUseOriginPolicyConfig {
+                    access: Some(AllowDenyRequirement::Deny),
+                    downloads: Some(AllowDenyRequirement::Allow),
+                    uploads: Some(AllowDenyRequirement::Deny),
+                    full_cdp_access: Some(AllowDenyRequirement::Allow),
+                },
+            )])),
+        })
+    );
+    assert_eq!(
+        read.config.computer_use,
+        Some(ComputerUseConfig {
+            default_app_access: Some(AllowDenyRequirement::Deny),
+            macos: Some(ComputerUseMacosConfig {
+                bundle_ids: Some(BTreeMap::from([(
+                    "com.apple.Safari".to_string(),
+                    AllowDenyRequirement::Allow,
+                )])),
+            }),
+            windows: Some(ComputerUseWindowsConfig {
+                aumids: Some(BTreeMap::from([(
+                    "Microsoft.Paint_8wekyb3d8bbwe!App".to_string(),
+                    AllowDenyRequirement::Deny,
+                )])),
+                exes: Some(vec![
+                    ComputerUseWindowsExeConfig {
+                        publisher_name: "CN=Google LLC".to_string(),
+                        product_name: "Google Chrome".to_string(),
+                        binary_name: Some("chrome.exe".to_string()),
+                        access: AllowDenyRequirement::Allow,
+                    },
+                    ComputerUseWindowsExeConfig {
+                        publisher_name: "CN=Microsoft Corporation".to_string(),
+                        product_name: "Microsoft Visual Studio Code".to_string(),
+                        binary_name: None,
+                        access: AllowDenyRequirement::Deny,
+                    },
+                ]),
+            }),
+        })
     );
 
     Ok(())

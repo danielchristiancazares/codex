@@ -231,6 +231,7 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
             process_id: ProcessId::from("parent-lifetime-process"),
             argv: argv.into_iter().map(str::to_string).collect(),
             cwd: cwd.as_str().parse()?,
+            shell_snapshot: None,
             env_policy: Some(codex_exec_server::ExecEnvPolicy {
                 inherit: codex_protocol::config_types::ShellEnvironmentPolicyInherit::All,
                 ignore_default_excludes: false,

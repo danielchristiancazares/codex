@@ -9,7 +9,6 @@ use crate::sqlite_metrics;
 use anyhow::Context;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -362,8 +361,8 @@ pub async fn list_threads_db(
     cwd_filters: Option<&[PathBuf]>,
     relation_filter: Option<codex_state::ThreadRelationFilter>,
     archived: bool,
-    section: NullableField<&str>,
-    project_id: NullableField<&str>,
+    section: Option<Option<&str>>,
+    project_id: Option<Option<&str>>,
     search_term: Option<&str>,
 ) -> Option<codex_state::ThreadsPage> {
     let ctx = context?;

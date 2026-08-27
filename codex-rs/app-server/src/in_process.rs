@@ -87,6 +87,7 @@ use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
 use codex_protocol::protocol::SessionSource;
 pub use codex_rollout::StateDbHandle;
@@ -143,6 +144,8 @@ pub struct InProcessStartArgs {
     pub cloud_config_bundle: CloudConfigBundleLoader,
     /// Loader used to fetch typed thread config sources before a thread starts.
     pub thread_config_loader: Arc<dyn ThreadConfigLoader>,
+    /// Feedback sink used by app-server/core telemetry and logs.
+    pub feedback: CodexFeedback,
     /// SQLite tracing layer used to persist runtime logs.
     pub log_db: Option<LogDbLayer>,
     /// Process-wide SQLite state handle shared with embedded app-server consumers.
@@ -473,6 +476,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 config: args.config,
                 config_manager,
                 environment_manager: args.environment_manager,
+                feedback: args.feedback,
                 log_db: args.log_db,
                 state_db: args.state_db,
                 config_warnings: args.config_warnings,
@@ -723,6 +727,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                                 match send_error {
                                     mpsc::error::TrySendError::Full(_) => {
                                         warn!("dropping in-process server notification (queue full)");
+                                        continue;
                                     }
                                     mpsc::error::TrySendError::Closed(_) => {
                                         break;
@@ -832,6 +837,7 @@ mod tests {
             strict_config: false,
             cloud_config_bundle: CloudConfigBundleLoader::default(),
             thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            feedback: CodexFeedback::new(),
             log_db: None,
             state_db: Some(state_db),
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),

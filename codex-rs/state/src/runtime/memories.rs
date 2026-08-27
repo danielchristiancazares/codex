@@ -10,7 +10,6 @@ use crate::model::Stage1StartupClaimParams;
 use crate::model::ThreadRow;
 use chrono::DateTime;
 use chrono::Duration;
-use codex_protocol::NullableField;
 use sqlx::Executor;
 use sqlx::QueryBuilder;
 use sqlx::Sqlite;
@@ -223,8 +222,8 @@ FROM threads
                 allowed_sources,
                 model_providers: None,
                 cwd_filters: None,
-                section: NullableField::Omitted,
-                project_id: NullableField::Omitted,
+                section: None,
+                project_id: None,
                 anchor: None,
                 sort_key: SortKey::UpdatedAt,
                 sort_direction: SortDirection::Desc,

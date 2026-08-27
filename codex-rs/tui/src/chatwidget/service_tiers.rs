@@ -108,7 +108,7 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ codex_protocol::NullableField::Omitted,
+                /*effort*/ None,
                 /*summary*/ None,
                 service_tier,
                 /*collaboration_mode*/ None,

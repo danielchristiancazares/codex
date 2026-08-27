@@ -9,7 +9,6 @@ use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_login::CodexAuth;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
@@ -136,7 +135,7 @@ async fn staged_metadata_is_persisted_on_first_turn() -> Result<()> {
         .stage_pending_thread_metadata(
             thread_id,
             ThreadMetadataPatch {
-                name: NullableField::Value("staged-name".to_string()),
+                name: Some(Some("staged-name".to_string())),
                 model_provider: Some("staged-provider".to_string()),
                 ..Default::default()
             },
@@ -418,6 +417,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                     session_id: thread_id.into(),
                     id: thread_id,
                     forked_from_id: None,
+                    forked_from_ordinal_exclusive: None,
                     parent_thread_id: None,
                     timestamp: "2026-01-27T12:00:00Z".to_string(),
                     cwd: codex_home.to_path_buf(),
@@ -815,8 +815,8 @@ async fn tool_call_logs_include_thread_id() -> Result<()> {
     let server = start_mock_server().await;
     let call_id = "call-1";
     let args = json!({
-        "command": "echo hello",
-        "timeout_ms": 1_000,
+        "cmd": "echo hello",
+        "yield_time_ms": 1_000,
         "login": false,
     });
     let args_json = serde_json::to_string(&args)?;
@@ -825,7 +825,7 @@ async fn tool_call_logs_include_thread_id() -> Result<()> {
         vec![
             responses::sse(vec![
                 ev_response_created("resp-1"),
-                ev_function_call(call_id, "shell_command", &args_json),
+                ev_function_call(call_id, "exec_command", &args_json),
                 ev_completed("resp-1"),
             ]),
             responses::sse(vec![ev_completed("resp-2")]),
@@ -851,7 +851,7 @@ async fn tool_call_logs_include_thread_id() -> Result<()> {
     tracing::dispatcher::with_default(&dispatch, || {
         let span = tracing::info_span!("test_log_span", thread_id = %expected_thread_id);
         let _entered = span.enter();
-        tracing::info!("ToolCall: shell_command {{\"command\":\"echo hello\"}}");
+        tracing::info!("ToolCall: exec_command {{\"cmd\":\"echo hello\"}}");
     });
     log_db_layer.flush().await;
 

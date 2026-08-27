@@ -15,6 +15,10 @@ use codex_mcp::host_owned_codex_apps_enabled;
 use codex_mcp::tool_is_model_visible;
 use codex_protocol::mcp::ClientMcpExtensions;
 
+#[cfg(test)]
+#[path = "installed_tests.rs"]
+mod tests;
+
 const CONNECTOR_RUNTIME_REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 const APPS_INSTALLED_SUBMIT_ID: &str = "app-installed";
 const APPS_INSTALLED_RESPONSE_BYTES_METRIC: &str = "codex.apps.installed.response_bytes";
@@ -93,7 +97,7 @@ impl AppsRequestProcessor {
                         codex_apps_tools_cache_key: cache_key.clone(),
                         client_mcp_extensions: ClientMcpExtensions::default(),
                         auth: auth.clone(),
-                        codex_apps_auth_manager,
+                        auth_manager: codex_apps_auth_manager,
                         elicitation_reviewer: None,
                         elicitation_lifecycle: None,
                     })

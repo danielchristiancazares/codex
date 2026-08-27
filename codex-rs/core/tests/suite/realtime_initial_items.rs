@@ -1,6 +1,5 @@
 use anyhow::Result;
 use codex_config::config_toml::RealtimeWsVersion;
-use codex_protocol::NullableField;
 use codex_protocol::protocol::CodexResponseHandoffMode;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ConversationTextParams;
@@ -225,7 +224,7 @@ fn start_params(version: RealtimeConversationVersion) -> ConversationStartParams
         ],
         realtime_start_instructions: None,
         realtime_end_instructions: None,
-        prompt: NullableField::Value("backend prompt".to_string()),
+        prompt: Some(Some("backend prompt".to_string())),
         realtime_session_id: None,
         transport: None,
         version: Some(version),

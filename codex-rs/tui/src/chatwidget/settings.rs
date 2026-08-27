@@ -146,7 +146,7 @@ impl ChatWidget {
             && mask.mode == Some(ModeKind::Plan)
         {
             if let Some(effort) = effort {
-                mask.reasoning_effort = NullableField::Value(effort);
+                mask.reasoning_effort = Some(Some(effort));
             } else if let Some(plan_mask) =
                 collaboration_modes::plan_mask(self.model_catalog.as_ref())
             {
@@ -163,11 +163,8 @@ impl ChatWidget {
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             /*model*/ None,
-            match effort.clone() {
-                Some(effort) => NullableField::Value(effort),
-                None => NullableField::Null,
-            },
-            /*developer_instructions*/ NullableField::Omitted,
+            Some(effort.clone()),
+            /*developer_instructions*/ None,
         );
         if self.collaboration_modes_enabled()
             && let Some(mask) = self.active_collaboration_mask.as_mut()
@@ -175,10 +172,7 @@ impl ChatWidget {
         {
             // Generic "global default" updates should not mutate the active Plan mask.
             // Plan reasoning is controlled by the Plan preset and Plan-only override updates.
-            mask.reasoning_effort = match effort {
-                Some(effort) => NullableField::Value(effort),
-                None => NullableField::Null,
-            };
+            mask.reasoning_effort = Some(effort);
         }
         self.refresh_model_dependent_surfaces();
     }
@@ -274,8 +268,8 @@ impl ChatWidget {
     pub(crate) fn set_model(&mut self, model: &str) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(model.to_string()),
-            /*effort*/ NullableField::Omitted,
-            /*developer_instructions*/ NullableField::Omitted,
+            /*effort*/ None,
+            /*developer_instructions*/ None,
         );
         if self.collaboration_modes_enabled()
             && let Some(mask) = self.active_collaboration_mask.as_mut()
@@ -398,48 +392,6 @@ impl ChatWidget {
         true
     }
 
-    /// Returns the dismissal scope that applies to the currently visible draft.
-    fn plan_mode_nudge_scope(&self) -> PlanModeNudgeScope {
-        self.thread_id
-            .map_or(PlanModeNudgeScope::NewThread, PlanModeNudgeScope::Thread)
-    }
-
-    /// Returns whether the current draft should replace the normal footer with the Plan-mode nudge.
-    ///
-    /// `ChatWidget` owns this policy because it can combine lexical draft matching with mode
-    /// availability, interaction state, and thread-scoped dismissal. `ChatComposer` only renders
-    /// the resulting visibility bit. Keeping slash and shell drafts out here avoids advertising a
-    /// mode switch while the user is intentionally composing another local command.
-    pub(super) fn should_show_plan_mode_nudge(&self) -> bool {
-        let text = self.bottom_pane.composer_text();
-        let trimmed = text.trim_start();
-        self.collaboration_modes_enabled()
-            && collaboration_modes::plan_mask(self.model_catalog.as_ref()).is_some()
-            && self.active_mode_kind() != ModeKind::Plan
-            && self.bottom_pane.composer_input_enabled()
-            && !self.bottom_pane.is_task_running()
-            && self.bottom_pane.no_modal_or_popup_active()
-            && !trimmed.starts_with('/')
-            && !trimmed.starts_with('!')
-            && contains_plan_keyword(&text)
-            && !self
-                .dismissed_plan_mode_nudge_scopes
-                .contains(&self.plan_mode_nudge_scope())
-    }
-
-    /// Synchronizes the footer presentation with the current Plan-mode nudge policy.
-    pub(super) fn refresh_plan_mode_nudge(&mut self) {
-        self.bottom_pane
-            .set_plan_mode_nudge_visible(self.should_show_plan_mode_nudge());
-    }
-
-    /// Hides the nudge for the current thread scope until the user changes conversation context.
-    pub(super) fn dismiss_plan_mode_nudge(&mut self) {
-        self.dismissed_plan_mode_nudge_scopes
-            .insert(self.plan_mode_nudge_scope());
-        self.refresh_plan_mode_nudge();
-    }
-
     pub(super) fn initial_collaboration_mask(
         _config: &Config,
         model_catalog: &ModelCatalog,
@@ -464,15 +416,10 @@ impl ChatWidget {
             return self.current_collaboration_mode.reasoning_effort();
         }
         let current_effort = self.current_collaboration_mode.reasoning_effort();
-        match self
-            .active_collaboration_mask
+        self.active_collaboration_mask
             .as_ref()
-            .map(|mask| mask.reasoning_effort.as_ref())
-        {
-            Some(NullableField::Value(effort)) => Some(effort.clone()),
-            Some(NullableField::Null) => None,
-            Some(NullableField::Omitted) | None => current_effort,
-        }
+            .and_then(|mask| mask.reasoning_effort.clone())
+            .unwrap_or(current_effort)
     }
 
     pub(crate) fn effective_collaboration_mode(&self) -> CollaborationMode {
@@ -594,17 +541,10 @@ impl ChatWidget {
             name: mode_kind.display_name().to_string(),
             mode: Some(mode_kind),
             model: Some(settings.model.clone()),
-            reasoning_effort: match settings.reasoning_effort.clone() {
-                Some(effort) => NullableField::Value(effort),
-                None => NullableField::Null,
-            },
-            developer_instructions: match settings.developer_instructions {
-                Some(instructions) => NullableField::Value(instructions),
-                None => NullableField::Null,
-            },
+            reasoning_effort: Some(settings.reasoning_effort.clone()),
+            developer_instructions: Some(settings.developer_instructions),
         });
         self.update_collaboration_mode_indicator();
-        self.refresh_plan_mode_nudge();
         self.refresh_model_dependent_surfaces();
     }
 
@@ -650,7 +590,7 @@ impl ChatWidget {
         self.bottom_pane.set_goal_status_indicator(goal_indicator);
     }
 
-    pub(super) fn refresh_goal_status_indicator_for_time_tick(&mut self) {
+    pub(crate) fn refresh_goal_status_indicator_for_time_tick(&mut self) {
         if self.collaboration_mode_indicator().is_some() {
             return;
         }
@@ -724,15 +664,10 @@ impl ChatWidget {
         if mask.mode == Some(ModeKind::Plan)
             && let Some(effort) = self.config.plan_mode_reasoning_effort.clone()
         {
-            mask.reasoning_effort = NullableField::Value(effort);
-        }
-        if mask.mode == Some(ModeKind::Plan) {
-            self.dismissed_plan_mode_nudge_scopes
-                .insert(self.plan_mode_nudge_scope());
+            mask.reasoning_effort = Some(Some(effort));
         }
         self.active_collaboration_mask = Some(mask);
         self.update_collaboration_mode_indicator();
-        self.refresh_plan_mode_nudge();
         self.refresh_model_dependent_surfaces();
         let next_mode = self.active_mode_kind();
         let next_model = self.current_model();
@@ -771,7 +706,7 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ NullableField::Omitted,
+                /*effort*/ None,
                 /*summary*/ None,
                 /*service_tier*/ ServiceTier::Default,
                 Some(self.effective_collaboration_mode()),

@@ -31,6 +31,7 @@ use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
+use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
@@ -265,7 +266,12 @@ async fn orchestrator_skill_can_read_referenced_resource_without_an_executor() -
 
     let developer_messages = first_request.message_input_texts("developer");
     let catalog_line =
-        format!("- {SKILL_NAME}: {SKILL_DESCRIPTION} (orchestrator package: {SKILL_RESOURCE_URI})");
+        format!("- {SKILL_NAME}: {SKILL_DESCRIPTION} (orchestrator package: o0/deploy)");
+    assert!(
+        developer_messages
+            .iter()
+            .any(|text| text.contains("- `o0` = `skill://plugin_demo`"))
+    );
     assert_eq!(
         1,
         developer_messages
@@ -651,6 +657,7 @@ async fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),

@@ -13,7 +13,6 @@ use chrono::DateTime;
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
 use codex_model_provider_info::WireApi;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ApprovalsReviewer;
@@ -151,7 +150,7 @@ pub(crate) fn new_status_output(
     now: DateTime<Local>,
     model_name: &str,
     collaboration_mode: Option<&str>,
-    reasoning_effort_override: NullableField<ReasoningEffort>,
+    reasoning_effort_override: Option<Option<ReasoningEffort>>,
 ) -> CompositeHistoryCell {
     let snapshots = rate_limits.map(std::slice::from_ref).unwrap_or_default();
     new_status_output_with_rate_limits(
@@ -187,7 +186,7 @@ pub(crate) fn new_status_output_with_rate_limits(
     now: DateTime<Local>,
     model_name: &str,
     collaboration_mode: Option<&str>,
-    reasoning_effort_override: NullableField<ReasoningEffort>,
+    reasoning_effort_override: Option<Option<ReasoningEffort>>,
     refreshing_rate_limits: bool,
 ) -> CompositeHistoryCell {
     new_status_output_with_rate_limits_handle(
@@ -228,7 +227,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     now: DateTime<Local>,
     model_name: &str,
     collaboration_mode: Option<&str>,
-    reasoning_effort_override: NullableField<ReasoningEffort>,
+    reasoning_effort_override: Option<Option<ReasoningEffort>>,
     agents_summary: String,
     refreshing_rate_limits: bool,
 ) -> (CompositeHistoryCell, StatusHistoryHandle) {
@@ -276,7 +275,7 @@ impl StatusHistoryCell {
         now: DateTime<Local>,
         model_name: &str,
         collaboration_mode: Option<&str>,
-        reasoning_effort_override: NullableField<ReasoningEffort>,
+        reasoning_effort_override: Option<Option<ReasoningEffort>>,
         agents_summary: String,
         refreshing_rate_limits: bool,
     ) -> (Self, StatusHistoryHandle) {
@@ -301,12 +300,8 @@ impl StatusHistoryCell {
             ),
         ];
         if config.model_provider.wire_api == WireApi::Responses {
-            let reasoning_effort = match reasoning_effort_override {
-                NullableField::Omitted => config.model_reasoning_effort.clone(),
-                NullableField::Null => None,
-                NullableField::Value(effort) => Some(effort),
-            };
-            let effort_value = reasoning_effort
+            let effort_value = reasoning_effort_override
+                .unwrap_or_else(|| config.model_reasoning_effort.clone())
                 .map(|effort| effort.to_string())
                 .unwrap_or_else(|| "none".to_string());
             config_entries.push(("reasoning effort", effort_value));

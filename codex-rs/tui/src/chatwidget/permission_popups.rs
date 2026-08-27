@@ -180,7 +180,7 @@ impl ChatWidget {
         };
 
         let mut items = vec![SelectionItem {
-            name: "Command".to_string(),
+            name: "Action".to_string(),
             description: Some("Rationale".to_string()),
             is_disabled: true,
             search_value: Some(String::new()),
@@ -261,7 +261,7 @@ impl ChatWidget {
                 Some(active_permission_profile.clone()),
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
-                /*effort*/ NullableField::Omitted,
+                /*effort*/ None,
                 /*summary*/ None,
                 /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,

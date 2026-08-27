@@ -2,10 +2,12 @@ use super::Session;
 use codex_features::AcceleratedRoutingGrant;
 use codex_features::FastModeRoutingPolicy;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::WarningEvent;
+use codex_protocol::service_tier::resolve_request_service_tier;
 
 /// Resolution of configured service-tier routing at session startup.
 ///
@@ -49,6 +51,18 @@ pub(super) fn resolve_initial_service_tier(
                 resolve_advertised_flex_routing(grant, advertised_service_tiers)
             }
         },
+    }
+}
+
+pub(super) fn get_service_tier(
+    configured_service_tier: ServiceTier,
+    fast_mode_enabled: bool,
+    model_info: &ModelInfo,
+) -> ServiceTier {
+    if fast_mode_enabled {
+        resolve_request_service_tier(&model_info.service_tiers, configured_service_tier)
+    } else {
+        ServiceTier::Default
     }
 }
 

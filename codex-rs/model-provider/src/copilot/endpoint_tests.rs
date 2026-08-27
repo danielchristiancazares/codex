@@ -313,6 +313,7 @@ async fn models_request_does_not_follow_redirects() {
     let redirect_target = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&redirect_target)
         .await;

@@ -30,12 +30,14 @@ fn spawn_startup_thread_start(
     let request_handle = app_server.request_handle();
     let thread_params_mode = app_server.thread_params_mode();
     let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
+    let thread_tool_transport = app_server.thread_tool_transport();
     tokio::spawn(async move {
         let result = crate::app_server_session::start_thread_with_request_handle(
             request_handle,
             config,
             thread_params_mode,
             remote_cwd_override,
+            thread_tool_transport,
         )
         .await
         .map_err(|err| format!("{err:#}"));
@@ -67,6 +69,17 @@ impl App {
                     .any(|event| matches!(event, ThreadBufferedEvent::Request(_))))
     }
 
+    /// Wait until visible and queued startup decisions cannot consume a delayed OSC response.
+    #[cfg(any(windows, test))]
+    pub(super) fn ready_for_terminal_color_probe(&self, has_pending_app_events: bool) -> bool {
+        !has_pending_app_events
+            && !self.chat_widget.has_active_view()
+            && !self.windows_sandbox.startup_world_writable_scan_pending
+            && !self.startup_pending_protected_request
+            && !self.has_queued_startup_protected_request()
+            && !self.chat_widget.has_pending_protected_request()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn run(
         tui: &mut tui::Tui,
@@ -80,6 +93,7 @@ impl App {
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
         session_selection: SessionSelection,
+        feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
         should_prompt_windows_sandbox_nux_at_startup: bool,
         app_server_target: AppServerTarget,
@@ -179,7 +193,24 @@ impl App {
         if let Some(updated_model) = config.model.clone() {
             model = updated_model;
         }
+        let dynamic_tool_status_updates = tokio::sync::broadcast::channel(/*capacity*/ 64).0;
+        if matches!(&app_server_target, AppServerTarget::LocalDaemon { .. })
+            && !crate::uses_remote_workspace_or_environment(
+                &app_server_target,
+                environment_manager.as_ref(),
+            )
+            && let Err(error) = app_server
+                .start_dynamic_tool_mcp(
+                    config.clone(),
+                    app_event_tx.clone(),
+                    dynamic_tool_status_updates.clone(),
+                )
+                .await
+        {
+            tracing::warn!(%error, "TUI task delegation is unavailable without its MCP server");
+        }
         let mut model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
+        let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
         let has_codex_backend_auth = matches!(auth_mode, Some(TelemetryAuthMode::Chatgpt));
@@ -282,6 +313,7 @@ impl App {
                     has_chatgpt_account,
                     has_codex_backend_auth,
                     model_catalog: model_catalog.clone(),
+                    feedback: feedback.clone(),
                     is_first_run,
                     status_account_display: status_account_display.clone(),
                     runtime_model_provider_base_url: runtime_model_provider_base_url.clone(),
@@ -383,6 +415,7 @@ impl App {
                     has_chatgpt_account,
                     has_codex_backend_auth,
                     model_catalog: model_catalog.clone(),
+                    feedback: feedback.clone(),
                     is_first_run,
                     status_account_display: status_account_display.clone(),
                     runtime_model_provider_base_url: runtime_model_provider_base_url.clone(),
@@ -461,6 +494,7 @@ impl App {
                     has_chatgpt_account,
                     has_codex_backend_auth,
                     model_catalog: model_catalog.clone(),
+                    feedback: feedback.clone(),
                     is_first_run,
                     status_account_display: status_account_display.clone(),
                     runtime_model_provider_base_url: runtime_model_provider_base_url.clone(),
@@ -528,12 +562,15 @@ See the Codex keymap documentation for supported actions and examples."
             skill_load_warnings: SkillLoadWarningState::default(),
             backtrack: BacktrackState::default(),
             backtrack_render_pending: false,
+            feedback: feedback.clone(),
+            feedback_audience,
             environment_manager,
             app_server_target,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
             thread_event_channels: HashMap::new(),
+            temporary_structured_requests: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
             agents_overview: Default::default(),
@@ -546,6 +583,8 @@ See the Codex keymap documentation for supported actions and examples."
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            dynamic_tool_status_updates,
+            dynamic_tool_tasks: HashMap::new(),
             pending_startup_thread_start,
             startup_protected_input_boundary: true,
             startup_pending_protected_request: false,
@@ -553,7 +592,11 @@ See the Codex keymap documentation for supported actions and examples."
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
             pending_provider_switch: None,
+            recap: recap::RecapState::default(),
         };
+        if !tui.is_terminal_focused() {
+            app.recap.note_focus_lost(Instant::now());
+        }
         if start_in_agents_overview {
             app.open_agents_overview(&app_server);
         }
@@ -564,6 +607,8 @@ See the Codex keymap documentation for supported actions and examples."
         let initial_session_started_at = Instant::now();
         if let Some(started) = initial_started_thread {
             let thread_id = started.session.thread_id;
+            app.chat_widget
+                .set_task_mentions_enabled(started.task_tools_available);
             if started.blocks_direct_input {
                 app.mark_primary_thread_parent_owned(thread_id);
             }
@@ -607,6 +652,7 @@ See the Codex keymap documentation for supported actions and examples."
                     .hide_world_writable_warning
                     .unwrap_or(false);
             if should_check {
+                app.windows_sandbox.startup_world_writable_scan_pending = true;
                 let cwd = app.config.cwd.clone();
                 let workspace_roots = app.config.effective_workspace_roots();
                 let env_map: std::collections::HashMap<String, String> = std::env::vars().collect();
@@ -618,7 +664,9 @@ See the Codex keymap documentation for supported actions and examples."
                     env_map,
                     logs_base_dir,
                     startup_permission_profile,
+                    app.session_telemetry.clone(),
                     tx,
+                    /*startup_scan*/ true,
                 );
             }
         }
@@ -646,6 +694,14 @@ See the Codex keymap documentation for supported actions and examples."
         if app_event_rx.is_empty() && !app.has_queued_startup_protected_request() {
             app.chat_widget
                 .restore_startup_draft_when_ready(&mut pending_startup_draft);
+        }
+
+        #[cfg(windows)]
+        let mut terminal_color_probe_pending = true;
+        #[cfg(windows)]
+        if app.ready_for_terminal_color_probe(!app_event_rx.is_empty()) {
+            tui.probe_default_colors_after_protected_startup();
+            terminal_color_probe_pending = false;
         }
 
         let event_stream_started_at = Instant::now();
@@ -802,6 +858,18 @@ See the Codex keymap documentation for supported actions and examples."
                         }
                         AppRunControl::Continue
                     }
+                    () = async {
+                        match app.chat_widget.terminal_title_next_refresh {
+                            Some(deadline) => {
+                                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                            }
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        app.chat_widget.refresh_goal_status_indicator_for_time_tick();
+                        app.chat_widget.refresh_terminal_title();
+                        AppRunControl::Continue
+                    }
                 };
                 if App::should_stop_waiting_for_initial_session(
                     waiting_for_initial_session_configured,
@@ -824,6 +892,13 @@ See the Codex keymap documentation for supported actions and examples."
                         if app_event_rx.is_empty() && !app.has_queued_startup_protected_request() {
                             app.chat_widget
                                 .restore_startup_draft_when_ready(&mut pending_startup_draft);
+                        }
+                        #[cfg(windows)]
+                        if terminal_color_probe_pending
+                            && app.ready_for_terminal_color_probe(!app_event_rx.is_empty())
+                        {
+                            tui.probe_default_colors_after_protected_startup();
+                            terminal_color_probe_pending = false;
                         }
                     }
                     AppRunControl::Exit(reason) => break Ok(reason),
@@ -851,18 +926,6 @@ See the Codex keymap documentation for supported actions and examples."
                 return Err(err);
             }
         };
-        let thread_id = app.chat_widget.thread_id().or(app.primary_thread_id);
-        let resume_hint = resume_hint_for_resumable_thread(
-            thread_id,
-            app.chat_widget.thread_name(),
-            app.chat_widget.rollout_path().as_deref(),
-        );
-        Ok(AppExitInfo {
-            token_usage: app.token_usage(),
-            thread_id,
-            resume_hint,
-            update_action: app.pending_update_action,
-            exit_reason,
-        })
+        Ok(app.exit_info(exit_reason))
     }
 }

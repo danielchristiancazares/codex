@@ -13,9 +13,15 @@ mod mcp_startup;
 mod model_catalog;
 #[path = "tests/model_selection.rs"]
 mod model_selection_tests;
+#[path = "tests/patch_approval_tests.rs"]
+mod patch_approval_tests;
+#[path = "tests/permission_shortcuts_tests.rs"]
+mod permission_shortcuts_tests;
 mod plugin_catalog;
 mod provider_switch;
 mod rate_limits;
+#[path = "tests/recap_generation_tests.rs"]
+mod recap_generation;
 mod safety_buffering;
 #[path = "tests/session_lifecycle_requests.rs"]
 mod session_lifecycle_requests;
@@ -107,7 +113,6 @@ use codex_history::RolloutItem;
 use codex_models_manager::test_support::construct_model_info_offline_for_tests;
 use codex_models_manager::test_support::get_model_offline_for_tests;
 use codex_otel::SessionTelemetry;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
@@ -258,6 +263,7 @@ async fn handle_mcp_inventory_result_respects_origin_thread() {
     app.handle_mcp_inventory_result(
         Ok(vec![McpServerStatus {
             name: "docs".to_string(),
+            runtime_status: None,
             plugin_id: None,
             server_info: None,
             tools: HashMap::new(),
@@ -559,6 +565,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         has_chatgpt_account: false,
         has_codex_backend_auth: false,
         model_catalog: app.model_catalog.clone(),
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: false,
         status_account_display: None,
         runtime_model_provider_base_url: None,
@@ -1007,8 +1014,8 @@ async fn replay_thread_snapshot_restores_draft_and_queued_input() {
             name: "Default".to_string(),
             mode: None,
             model: None,
-            reasoning_effort: NullableField::Omitted,
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: None,
+            developer_instructions: None,
         },
     );
     let expected_input_state = app
@@ -1084,8 +1091,8 @@ async fn replay_thread_snapshot_restores_the_matching_safety_buffer_prompt() {
         name: "Default".to_string(),
         mode: None,
         model: None,
-        reasoning_effort: NullableField::Omitted,
-        developer_instructions: NullableField::Omitted,
+        reasoning_effort: None,
+        developer_instructions: None,
     };
     app.chat_widget
         .submit_user_message_with_mode("buffered prompt A".to_string(), default_mode.clone());
@@ -1507,8 +1514,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-restored".to_string()),
-            reasoning_effort: NullableField::Value(ReasoningEffortConfig::High),
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: Some(Some(ReasoningEffortConfig::High)),
+            developer_instructions: None,
         });
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());
@@ -1528,8 +1535,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
             name: "Default".to_string(),
             mode: Some(ModeKind::Default),
             model: Some("gpt-replacement".to_string()),
-            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Low),
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: Some(Some(ReasoningEffortConfig::Low)),
+            developer_instructions: None,
         });
     while new_op_rx.try_recv().is_ok() {}
 
@@ -1591,8 +1598,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-restored".to_string()),
-            reasoning_effort: NullableField::Value(ReasoningEffortConfig::High),
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: Some(Some(ReasoningEffortConfig::High)),
+            developer_instructions: None,
         });
     let input_state = app
         .chat_widget
@@ -1609,8 +1616,8 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
             name: "Default".to_string(),
             mode: Some(ModeKind::Default),
             model: Some("gpt-replacement".to_string()),
-            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Low),
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: Some(Some(ReasoningEffortConfig::Low)),
+            developer_instructions: None,
         });
 
     app.replay_thread_snapshot(
@@ -2821,7 +2828,7 @@ default_permissions = "locked-down"
             active_permission_profile: app.config.permissions.active_permission_profile(),
             windows_sandbox_level: None,
             model: None,
-            effort: NullableField::Omitted,
+            effort: None,
             summary: None,
             service_tier: ServiceTier::Default,
             collaboration_mode: None,
@@ -2915,7 +2922,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
-            effort: NullableField::Omitted,
+            effort: None,
             summary: None,
             service_tier: ServiceTier::Default,
             collaboration_mode: None,
@@ -3010,7 +3017,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
-            effort: NullableField::Omitted,
+            effort: None,
             summary: None,
             service_tier: ServiceTier::Default,
             collaboration_mode: None,
@@ -3091,7 +3098,7 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
-            effort: NullableField::Omitted,
+            effort: None,
             summary: None,
             service_tier: ServiceTier::Default,
             collaboration_mode: None,
@@ -3151,7 +3158,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
-            effort: NullableField::Omitted,
+            effort: None,
             summary: None,
             service_tier: ServiceTier::Default,
             collaboration_mode: None,
@@ -4795,6 +4802,7 @@ async fn primary_thread_ignores_child_mcp_startup_notifications() {
             session: test_thread_session(child_thread_id, test_path_buf("/tmp/child")),
             turns: Vec::new(),
             blocks_direct_input: false,
+            task_tools_available: false,
         },
         &mut child_snapshot,
     )
@@ -5049,7 +5057,7 @@ async fn discard_side_thread_keeps_local_state_when_server_close_fails() -> Resu
 
 #[tokio::test]
 async fn background_side_cleanup_removes_local_state_and_ignores_late_events() -> Result<()> {
-    let mut app = make_test_app().await;
+    let (mut app, mut events, _ops) = make_test_app_with_channels().await;
     let mut app_server =
         crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
     let parent_thread_id = ThreadId::new();
@@ -5065,9 +5073,21 @@ async fn background_side_cleanup_removes_local_state_and_ignores_late_events() -
         Some("side".to_string()),
         /*is_closed*/ false,
     );
+    app.dynamic_tool_tasks.insert(
+        AppServerRequestId::Integer(123),
+        (
+            side_thread_id.to_string(),
+            tokio::spawn(std::future::pending::<()>()),
+        ),
+    );
     app.discard_side_thread_in_background(&mut app_server, side_thread_id)
         .await;
 
+    assert_matches!(
+        events.try_recv(),
+        Ok(AppEvent::DynamicToolCallCompleted { response, .. }) if !response.success
+    );
+    assert!(app.dynamic_tool_tasks.is_empty());
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
     assert!(!app.side_threads.contains_key(&side_thread_id));
     assert!(!app.thread_event_channels.contains_key(&side_thread_id));
@@ -5420,12 +5440,15 @@ async fn make_test_app() -> App {
         skill_load_warnings: SkillLoadWarningState::default(),
         backtrack: BacktrackState::default(),
         backtrack_render_pending: false,
+        feedback: codex_feedback::CodexFeedback::new(),
+        feedback_audience: FeedbackAudience::External,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         app_server_target: crate::AppServerTarget::Embedded,
         pending_update_action: None,
         pending_shutdown_exit_thread_id: None,
         windows_sandbox: WindowsSandboxState::default(),
         thread_event_channels: HashMap::new(),
+        temporary_structured_requests: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
         agent_navigation: AgentNavigationState::default(),
         agents_overview: Default::default(),
@@ -5438,6 +5461,8 @@ async fn make_test_app() -> App {
         primary_session_configured: None,
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
+        dynamic_tool_status_updates: tokio::sync::broadcast::channel(/*capacity*/ 64).0,
+        dynamic_tool_tasks: HashMap::new(),
         pending_startup_thread_start: false,
         startup_protected_input_boundary: false,
         startup_pending_protected_request: false,
@@ -5445,6 +5470,7 @@ async fn make_test_app() -> App {
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
         pending_provider_switch: None,
+        recap: recap::RecapState::default(),
     }
 }
 
@@ -5496,12 +5522,15 @@ async fn make_test_app_with_channels() -> (
             skill_load_warnings: SkillLoadWarningState::default(),
             backtrack: BacktrackState::default(),
             backtrack_render_pending: false,
+            feedback: codex_feedback::CodexFeedback::new(),
+            feedback_audience: FeedbackAudience::External,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             app_server_target: crate::AppServerTarget::Embedded,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
             thread_event_channels: HashMap::new(),
+            temporary_structured_requests: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
             agents_overview: Default::default(),
@@ -5514,6 +5543,8 @@ async fn make_test_app_with_channels() -> (
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            dynamic_tool_status_updates: tokio::sync::broadcast::channel(/*capacity*/ 64).0,
+            dynamic_tool_tasks: HashMap::new(),
             pending_startup_thread_start: false,
             startup_protected_input_boundary: false,
             startup_pending_protected_request: false,
@@ -5521,6 +5552,7 @@ async fn make_test_app_with_channels() -> (
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
             pending_provider_switch: None,
+            recap: recap::RecapState::default(),
         },
         rx,
         op_rx,
@@ -5851,6 +5883,77 @@ async fn resize_reflow_wraps_transcript_early_when_pet_is_enabled() {
         with_pet.lines.len() > without_pet.lines.len(),
         "expected pet-enabled transcript reflow to wrap earlier"
     );
+}
+
+#[tokio::test]
+async fn copy_picker_opening_preserves_terminal_scrollback_without_reflow() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let response = "Existing response\n\n```rust\nkeep_scrollback();\n```";
+    app.chat_widget.handle_server_notification(
+        ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+            thread_id: String::new(),
+            turn_id: "turn-1".to_string(),
+            completed_at_ms: 0,
+            item: serde_json::from_value(serde_json::json!({
+                "type": "agentMessage",
+                "id": "message-1",
+                "text": response,
+            }))
+            .expect("valid completed agent message"),
+        }),
+        /*replay_kind*/ None,
+    );
+    while app_event_rx.try_recv().is_ok() {}
+
+    app.transcript_cells = vec![
+        plain_line_cell("Older terminal scrollback"),
+        Arc::new(AgentMarkdownCell::new(
+            response.to_string(),
+            Path::new("/tmp"),
+        )),
+    ];
+    app.deferred_history_lines = vec![Line::from("Buffered scrollback").into()];
+    app.has_emitted_history_lines = true;
+    app.scrollback_has_older_history = true;
+    app.transcript_reflow.note_width(/*width*/ 80);
+    let before = app
+        .render_transcript_lines_for_reflow(/*width*/ 80)
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+
+    app.chat_widget.apply_external_edit("/copy".to_string());
+    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 80).contains("Whole response"));
+    app.chat_widget
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 80).contains("Whole response"));
+    assert_eq!(
+        app.render_transcript_lines_for_reflow(/*width*/ 80)
+            .lines
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
+        before
+    );
+    assert_eq!(app.transcript_cells.len(), 2);
+    assert_eq!(app.deferred_history_lines.len(), 1);
+    assert!(app.has_emitted_history_lines);
+    assert!(app.scrollback_has_older_history);
+    assert!(!app.transcript_reflow.has_pending_reflow());
+    while let Ok(event) = app_event_rx.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                AppEvent::ClearUi { .. }
+                    | AppEvent::ClearUiAndSubmitUserMessage { .. }
+                    | AppEvent::InsertHistoryCell(_)
+                    | AppEvent::ConsolidateAgentMessage { .. }
+            ),
+            "opening a picker must not modify terminal scrollback: {event:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -6226,6 +6329,7 @@ fn exec_approval_request(
     ServerRequest::CommandExecutionRequestApproval {
         request_id: AppServerRequestId::Integer(1),
         params: CommandExecutionRequestApprovalParams {
+            kind: Default::default(),
             thread_id: thread_id.to_string(),
             turn_id: turn_id.to_string(),
             item_id: item_id.to_string(),
@@ -6303,6 +6407,7 @@ fn test_session_telemetry(config: &Config, model: &str) -> SessionTelemetry {
 #[test]
 fn active_turn_not_steerable_turn_error_extracts_structured_server_error() {
     let turn_error = AppServerTurnError {
+        misalignment: None,
         message: "cannot steer a review turn".to_string(),
         codex_error_info: Some(AppServerCodexErrorInfo::ActiveTurnNotSteerable {
             turn_kind: AppServerNonSteerableTurnKind::Review,
@@ -7385,6 +7490,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         has_chatgpt_account: app.chat_widget.has_chatgpt_account(),
         has_codex_backend_auth: app.chat_widget.has_codex_backend_auth(),
         model_catalog: app.model_catalog.clone(),
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: false,
         status_account_display: app.chat_widget.status_account_display().cloned(),
         runtime_model_provider_base_url: app
@@ -7489,6 +7595,7 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
             session: resumed_session.clone(),
             turns: resumed_turns.clone(),
             blocks_direct_input: true,
+            task_tools_available: false,
         },
         &mut snapshot,
     )
@@ -7508,6 +7615,13 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
     let store_snapshot = store.snapshot();
     assert_eq!(store_snapshot.session, Some(resumed_session));
     assert_eq!(store_snapshot.turns, snapshot.turns);
+    assert_eq!(
+        store.recap_progress(),
+        recap::RecapProgress {
+            completed_turns: 1,
+            last_recapped_turn_count: None,
+        }
+    );
 }
 
 #[tokio::test]
@@ -7706,7 +7820,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             )),
             /*windows_sandbox_level*/ None,
             Some("gpt-5.4".to_string()),
-            NullableField::Value(ReasoningEffortConfig::High),
+            Some(Some(ReasoningEffortConfig::High)),
             /*summary*/ None,
             service_tier,
             Some(collaboration_mode.clone()),
@@ -7921,8 +8035,8 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
                         name: "Plan".to_string(),
                         mode: Some(ModeKind::Plan),
                         model: Some(model_name.clone()),
-                        reasoning_effort: NullableField::Value(effort.clone()),
-                        developer_instructions: NullableField::Omitted,
+                        reasoning_effort: Some(Some(effort.clone())),
+                        developer_instructions: None,
                     });
                 app.handle_event(
                     &mut tui,
@@ -8118,8 +8232,8 @@ async fn thread_setting_update_params_sync_model_and_default_reasoning() {
             name: "Plan".to_string(),
             mode: Some(ModeKind::Plan),
             model: Some("gpt-plan".to_string()),
-            reasoning_effort: NullableField::Value(ReasoningEffortConfig::Medium),
-            developer_instructions: NullableField::Omitted,
+            reasoning_effort: Some(Some(ReasoningEffortConfig::Medium)),
+            developer_instructions: None,
         });
     app.on_update_reasoning_effort(Some(ReasoningEffortConfig::High));
 

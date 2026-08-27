@@ -1,6 +1,5 @@
 use crate::JsonSchema;
 use crate::TS;
-use codex_protocol::NullableField;
 use codex_protocol::config_types::CollaborationModeMask as CoreCollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -32,10 +31,7 @@ impl From<CoreCollaborationModeMask> for CollaborationModeMask {
             name: value.name,
             mode: value.mode,
             model: value.model,
-            reasoning_effort: match value.reasoning_effort {
-                NullableField::Omitted | NullableField::Null => None,
-                NullableField::Value(effort) => Some(effort),
-            },
+            reasoning_effort: value.reasoning_effort.flatten(),
         }
     }
 }

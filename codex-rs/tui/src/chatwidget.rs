@@ -58,7 +58,7 @@ use crate::git_action_directives::parse_assistant_markdown;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::mention_codec::LinkedMention;
-use crate::mention_codec::encode_history_mentions;
+use crate::mention_codec::encode_history_mentions_at_elements;
 use crate::model_catalog::ModelCatalog;
 use crate::multi_agents;
 use crate::multi_agents::AgentMetadata;
@@ -133,7 +133,6 @@ use codex_git_utils::recent_commits;
 use codex_otel::RuntimeMetricsSummary;
 use codex_otel::SessionTelemetry;
 use codex_plugin::PluginCapabilitySummary;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::GuardianAssessmentAction;
@@ -172,7 +171,6 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::text::Text;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
@@ -392,6 +390,7 @@ mod notifications;
 mod provider_popup;
 use self::notifications::Notification;
 mod permission_popups;
+mod permission_shortcuts;
 mod permissions_menu;
 pub(crate) use self::permissions_menu::auto_review_available;
 pub(crate) use self::permissions_menu::cyber_model_approval_reviewer;
@@ -404,6 +403,7 @@ use self::rate_limits::RateLimitWarningState;
 use self::rate_limits::app_server_rate_limit_error_kind;
 pub(crate) use self::rate_limits::fallback_limit_label;
 use self::rate_limits::is_app_server_cyber_policy_error;
+mod recap;
 mod reset_credits;
 pub(crate) use self::rate_limits::limit_label_for_window;
 mod reasoning_shortcuts;
@@ -516,6 +516,7 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) has_chatgpt_account: bool,
     pub(crate) has_codex_backend_auth: bool,
     pub(crate) model_catalog: Arc<ModelCatalog>,
+    pub(crate) feedback: codex_feedback::CodexFeedback,
     pub(crate) is_first_run: bool,
     pub(crate) status_account_display: Option<StatusAccountDisplay>,
     pub(crate) runtime_model_provider_base_url: Option<String>,
@@ -566,6 +567,7 @@ pub(crate) struct ChatWidget {
     has_chatgpt_account: bool,
     has_codex_backend_auth: bool,
     model_catalog: Arc<ModelCatalog>,
+    feedback: codex_feedback::CodexFeedback,
     session_telemetry: SessionTelemetry,
     session_header: SessionHeader,
     initial_user_message: Option<UserMessage>,
@@ -668,12 +670,8 @@ pub(crate) struct ChatWidget {
     #[cfg(test)]
     pet_image_support_override: Option<crate::pets::PetImageSupport>,
     thread_id: Option<ThreadId>,
-    /// Nudge dismissals that should survive draft edits within the current thread scope.
-    ///
-    /// The nudge is only a discovery aid, so once a user dismisses it or enters Plan mode we keep it
-    /// hidden for that thread instead of resurfacing it on every matching draft.
-    dismissed_plan_mode_nudge_scopes: HashSet<PlanModeNudgeScope>,
     thread_name: Option<String>,
+    pending_automatic_thread_names: HashSet<String>,
     thread_rename_block_message: Option<String>,
     active_side_conversation: bool,
     blocks_direct_input: bool,
@@ -698,6 +696,7 @@ pub(crate) struct ChatWidget {
     safety_buffering_prompt: Option<UserMessage>,
     /// Main chat-surface bindings resolved from `tui.keymap.chat`.
     chat_keymap: ChatKeymap,
+    permission_shortcut_pending: bool,
     /// Keybinding to show for popping the most-recently queued message back
     /// into the composer. This may differ from the first configured binding
     /// when the default set includes a terminal-specific fallback.
@@ -733,16 +732,11 @@ pub(crate) struct ChatWidget {
     pub(crate) last_terminal_title: Option<String>,
     // Last visible "action required" state observed by the terminal-title renderer.
     last_terminal_title_requires_action: bool,
-    // Original terminal-title config captured when the setup UI opens.
-    //
-    // The outer `Option` tracks whether a setup session is active (`Some`)
-    // or not (`None`). The inner `Option<Vec<String>>` mirrors the shape
-    // of `config.tui_terminal_title` (which is `None` when using defaults).
-    // On cancel or persist-failure the inner value is restored to config;
-    // on confirm the outer is set to `None` to end the session.
     terminal_title_setup_snapshot: status_controls::TerminalTitleSetupSnapshot,
     // Baseline instant used to animate spinner-prefixed title statuses.
     terminal_title_animation_origin: Instant,
+    // The foreground loop refreshes the title at this deadline without drawing a frame.
+    pub(crate) terminal_title_next_refresh: Option<Instant>,
     // Cached project-root display name keyed by cwd for status/title rendering.
     status_line_project_root_name_cache: Option<CachedProjectRootName>,
     // Cached git branch name for the status line (None if unknown).
@@ -833,29 +827,10 @@ enum SessionConfiguredDisplay {
     SideConversation,
 }
 
-/// Scope used to keep Plan-mode nudge dismissal local to one conversation context.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum PlanModeNudgeScope {
-    /// Drafts entered before the server has assigned a thread id.
-    NewThread,
-    /// Drafts associated with one configured thread.
-    Thread(ThreadId),
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum TurnAbortReason {
     Interrupted,
     BudgetLimited,
-}
-
-/// Returns whether `text` contains the standalone word `plan`.
-///
-/// This intentionally mirrors the App suggestion heuristic instead of trying to infer broader
-/// planning intent from substrings such as `planning`. Slash and shell drafts still match here so
-/// callers can keep lexical matching separate from presentation policy.
-fn contains_plan_keyword(text: &str) -> bool {
-    text.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
-        .any(|word| word.eq_ignore_ascii_case("plan"))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -888,6 +863,7 @@ fn exec_approval_request_from_params(
         .and_then(|cwd| cwd.to_inferred_abs_path())
         .unwrap_or_else(|| fallback_cwd.clone());
     ExecApprovalRequestEvent {
+        kind: params.kind,
         call_id: params.item_id,
         command: params
             .command
@@ -989,11 +965,27 @@ impl ChatWidget {
         }
     }
 
-    /// Record or update the raw markdown for the current agent turn.
-    fn record_agent_markdown(&mut self, message: &str) {
-        if !message.is_empty() {
-            self.transcript.record_agent_markdown(message.to_string());
-        }
+    pub(crate) fn open_feedback_note(
+        &mut self,
+        category: crate::app_event::FeedbackCategory,
+        include_logs: bool,
+    ) {
+        self.show_feedback_note(category, include_logs);
+    }
+
+    fn show_feedback_note(
+        &mut self,
+        category: crate::app_event::FeedbackCategory,
+        include_logs: bool,
+    ) {
+        let view = crate::bottom_pane::FeedbackNoteView::new(
+            category,
+            self.turn_lifecycle.last_turn_id.clone(),
+            self.app_event_tx.clone(),
+            include_logs,
+        );
+        self.bottom_pane.show_view(Box::new(view));
+        self.request_redraw();
     }
 
     pub(crate) fn open_app_link_view(&mut self, params: crate::bottom_pane::AppLinkViewParams) {
@@ -1003,6 +995,27 @@ impl ChatWidget {
             self.bottom_pane.list_keymap(),
         );
         self.bottom_pane.show_view(Box::new(view));
+        self.request_redraw();
+    }
+
+    pub(crate) fn open_feedback_consent(&mut self, category: crate::app_event::FeedbackCategory) {
+        let snapshot = self.feedback.snapshot(self.thread_id);
+        #[cfg(target_os = "windows")]
+        let include_windows_sandbox_log =
+            codex_windows_sandbox::current_log_file_path_for_codex_home(&self.config.codex_home)
+                .is_file();
+        #[cfg(not(target_os = "windows"))]
+        let include_windows_sandbox_log = false;
+        let params = crate::bottom_pane::feedback_upload_consent_params(
+            self.app_event_tx.clone(),
+            category,
+            self.current_rollout_path.clone(),
+            self.thread_id
+                .map(|thread_id| format!("auto-review-rollout-{thread_id}.jsonl")),
+            include_windows_sandbox_log,
+            snapshot.feedback_diagnostics(),
+        );
+        self.bottom_pane.show_selection_view(params);
         self.request_redraw();
     }
 
@@ -1184,7 +1197,6 @@ impl ChatWidget {
         if let Some(pet) = self.ambient_pet.as_ref() {
             pet.schedule_next_frame();
         }
-        self.refresh_plan_mode_nudge();
         self.refresh_goal_status_indicator_for_time_tick();
         if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
             self.refresh_terminal_title();

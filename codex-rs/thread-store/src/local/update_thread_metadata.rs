@@ -2,7 +2,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use chrono::Utc;
-use codex_protocol::NullableField;
 use codex_protocol::SanitizedGitUrl;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::GitInfo;
@@ -49,7 +48,7 @@ pub(super) async fn update_thread_metadata(
         merged_patch.merge(patch);
         patch = merged_patch;
     }
-    if patch.project_id.is_present() && store.state_db().await.is_none() {
+    if patch.project_id.is_some() && store.state_db().await.is_none() {
         return Err(ThreadStoreError::Unsupported {
             operation: "projects",
         });
@@ -71,7 +70,7 @@ pub(super) async fn update_thread_metadata(
         .is_some_and(|patch| patch.memory_mode.is_some() || patch.git_info.is_some());
     let requires_rollout_compat =
         staged_requires_rollout_compat || requires_rollout_compatibility_update(&patch);
-    let has_explicit_metadata = patch.name.is_present() || requires_rollout_compat;
+    let has_explicit_metadata = patch.name.is_some() || requires_rollout_compat;
     let history_mode = if has_explicit_metadata {
         match live_writer::live_writer_parts(store, thread_id).await {
             Ok((_recorder, _rollout_id, history_mode)) => Some(history_mode),
@@ -129,29 +128,22 @@ pub(super) async fn update_thread_metadata(
     if paginated {
         // Paginated metadata lives in SQLite. Keep the name index update, then stop before the
         // legacy SessionMeta compatibility path below.
-        match &patch.name {
-            NullableField::Omitted => {}
-            NullableField::Null => {
-                if let Err(err) =
-                    append_thread_name(store.config.codex_home.as_path(), thread_id, "").await
-                {
-                    warn!("failed to index paginated thread name for {thread_id}: {err}");
-                }
-            }
-            NullableField::Value(name) => {
-                if let Err(err) =
-                    append_thread_name(store.config.codex_home.as_path(), thread_id, name).await
-                {
-                    warn!("failed to index paginated thread name for {thread_id}: {err}");
-                }
-            }
+        if let Some(name) = patch.name.as_ref()
+            && let Err(err) = append_thread_name(
+                store.config.codex_home.as_path(),
+                thread_id,
+                name.as_deref().unwrap_or_default(),
+            )
+            .await
+        {
+            warn!("failed to index paginated thread name for {thread_id}: {err}");
         }
         if pending_patch.is_some() {
             remove_pending_thread_metadata(store, thread_id, &mut pending_metadata).await;
         }
         return Ok(updated);
     }
-    let needs_rollout_compat = requires_rollout_compat || patch.name.is_present();
+    let needs_rollout_compat = requires_rollout_compat || patch.name.is_some();
     if !needs_rollout_compat {
         if pending_patch.is_some() {
             remove_pending_thread_metadata(store, thread_id, &mut pending_metadata).await;
@@ -190,22 +182,16 @@ pub(super) async fn update_thread_metadata(
     )
     .await;
 
-    match name {
-        NullableField::Omitted => {}
-        NullableField::Null => {
-            append_thread_name(store.config.codex_home.as_path(), thread_id, "")
-                .await
-                .map_err(|err| ThreadStoreError::Internal {
-                    message: format!("failed to index thread name: {err}"),
-                })?;
-        }
-        NullableField::Value(name) => {
-            append_thread_name(store.config.codex_home.as_path(), thread_id, &name)
-                .await
-                .map_err(|err| ThreadStoreError::Internal {
-                    message: format!("failed to index thread name: {err}"),
-                })?;
-        }
+    if let Some(name) = name {
+        append_thread_name(
+            store.config.codex_home.as_path(),
+            thread_id,
+            &name.unwrap_or_default(),
+        )
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!("failed to index thread name: {err}"),
+        })?;
     }
 
     let resolved_git_info = match git_info {
@@ -334,7 +320,7 @@ async fn apply_metadata_update(
                         message: format!("failed to read thread metadata for {thread_id}: {err}"),
                     })?;
             let project_id = if existing.is_none()
-                && let NullableField::Value(project_id) = patch.project_id.as_ref()
+                && let Some(Some(project_id)) = patch.project_id.as_ref()
                 && state_db
                     .get_project(project_id)
                     .await
@@ -345,7 +331,7 @@ async fn apply_metadata_update(
                     })?
                     .is_none()
             {
-                NullableField::Null
+                Some(None)
             } else {
                 patch.project_id.clone()
             };
@@ -404,12 +390,8 @@ async fn apply_metadata_update(
             if let Some(model) = patch.model {
                 metadata.model = Some(model);
             }
-            match patch.reasoning_effort {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.reasoning_effort = None,
-                NullableField::Value(reasoning_effort) => {
-                    metadata.reasoning_effort = Some(reasoning_effort);
-                }
+            if let Some(reasoning_effort) = patch.reasoning_effort {
+                metadata.reasoning_effort = reasoning_effort;
             }
             if let Some(created_at) = patch.created_at {
                 metadata.created_at = created_at;
@@ -425,33 +407,17 @@ async fn apply_metadata_update(
             if let Some(source) = patch.source {
                 metadata.source = enum_to_string(&source);
             }
-            match patch.thread_source {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.thread_source = None,
-                NullableField::Value(thread_source) => {
-                    metadata.thread_source = Some(thread_source);
-                }
+            if let Some(thread_source) = patch.thread_source {
+                metadata.thread_source = thread_source;
             }
-            match patch.agent_nickname {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.agent_nickname = None,
-                NullableField::Value(agent_nickname) => {
-                    metadata.agent_nickname = Some(agent_nickname);
-                }
+            if let Some(agent_nickname) = patch.agent_nickname {
+                metadata.agent_nickname = agent_nickname;
             }
-            match patch.agent_role {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.agent_role = None,
-                NullableField::Value(agent_role) => {
-                    metadata.agent_role = Some(agent_role);
-                }
+            if let Some(agent_role) = patch.agent_role {
+                metadata.agent_role = agent_role;
             }
-            match patch.agent_path {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.agent_path = None,
-                NullableField::Value(agent_path) => {
-                    metadata.agent_path = Some(agent_path);
-                }
+            if let Some(agent_path) = patch.agent_path {
+                metadata.agent_path = agent_path;
             }
             if let Some(cwd) = patch.cwd {
                 metadata.cwd = normalize_cwd(cwd);
@@ -482,12 +448,8 @@ async fn apply_metadata_update(
                 metadata.git_branch = branch;
                 metadata.git_origin_url = origin_url;
             }
-            match &project_id {
-                NullableField::Omitted => {}
-                NullableField::Null => metadata.project_id = None,
-                NullableField::Value(project_id) => {
-                    metadata.project_id = Some(project_id.clone());
-                }
+            if let Some(project_id) = project_id.as_ref() {
+                metadata.project_id = project_id.clone();
             }
             let upsert_result = state_db.upsert_thread(&metadata).await;
             if existing.is_none()
@@ -505,14 +467,11 @@ async fn apply_metadata_update(
                     message: format!("failed to update thread metadata for {thread_id}: {err}"),
                 })?;
             }
-            if existing.is_some() && project_id.is_present() {
-                let requested_project_id = match &project_id {
-                    NullableField::Null => None,
-                    NullableField::Value(project_id) => Some(project_id.as_str()),
-                    NullableField::Omitted => unreachable!("checked field presence"),
-                };
-                let previous_project = state_db
-                    .set_thread_project(&thread_id.to_string(), requested_project_id)
+            if existing.is_some()
+                && let Some(project_id) = project_id.as_ref()
+            {
+                let outcome = state_db
+                    .set_thread_project(&thread_id.to_string(), project_id.as_deref())
                     .await
                     .map_err(|err| {
                         let message = err.to_string();
@@ -526,37 +485,34 @@ async fn apply_metadata_update(
                             }
                         }
                     })?;
-                if previous_project == ThreadProjectAssignmentOutcome::ThreadMissing {
-                    return Err(ThreadStoreError::Internal {
-                        message: format!(
-                            "thread metadata unavailable before project update: {thread_id}"
-                        ),
-                    });
+                match outcome {
+                    ThreadProjectAssignmentOutcome::Updated => {}
+                    ThreadProjectAssignmentOutcome::ThreadMissing => {
+                        return Err(ThreadStoreError::Internal {
+                            message: format!(
+                                "thread metadata unavailable before project update: {thread_id}"
+                            ),
+                        });
+                    }
                 }
             }
-            if patch.name.is_present() {
+            if let Some(name) = patch.name.as_ref() {
                 let history_mode = history_mode.ok_or_else(|| ThreadStoreError::Internal {
                     message: format!(
                         "thread history mode unavailable before name update: {thread_id}"
                     ),
                 })?;
-                let updated = match (history_mode, patch.name.as_ref()) {
-                    (ThreadHistoryMode::Legacy, NullableField::Null) => {
-                        state_db.update_thread_title(thread_id, "").await
+                let updated = match history_mode {
+                    ThreadHistoryMode::Legacy => {
+                        state_db
+                            .update_thread_title(thread_id, name.as_deref().unwrap_or_default())
+                            .await
                     }
-                    (ThreadHistoryMode::Legacy, NullableField::Value(name)) => {
-                        state_db.update_thread_title(thread_id, name).await
+                    ThreadHistoryMode::Paginated => {
+                        state_db
+                            .update_thread_name(thread_id, name.as_deref())
+                            .await
                     }
-                    (ThreadHistoryMode::Paginated, NullableField::Null) => {
-                        state_db.update_thread_name(thread_id, None).await
-                    }
-                    (ThreadHistoryMode::Paginated, NullableField::Value(name)) => {
-                        state_db.update_thread_name(thread_id, Some(name)).await
-                    }
-                    (
-                        ThreadHistoryMode::Legacy | ThreadHistoryMode::Paginated,
-                        NullableField::Omitted,
-                    ) => unreachable!("checked field presence"),
                 }
                 .map_err(|err| ThreadStoreError::Internal {
                     message: format!("failed to set thread name: {err}"),
@@ -639,22 +595,10 @@ async fn metadata_for_missing_sqlite_row(
     );
     builder.model_provider = patch.model_provider.clone();
     builder.history_mode = canonical_history_mode(store, thread_id, rollout_path).await?;
-    builder.thread_source = match &patch.thread_source {
-        NullableField::Value(thread_source) => Some(thread_source.clone()),
-        NullableField::Omitted | NullableField::Null => None,
-    };
-    builder.agent_nickname = match &patch.agent_nickname {
-        NullableField::Value(agent_nickname) => Some(agent_nickname.clone()),
-        NullableField::Omitted | NullableField::Null => None,
-    };
-    builder.agent_role = match &patch.agent_role {
-        NullableField::Value(agent_role) => Some(agent_role.clone()),
-        NullableField::Omitted | NullableField::Null => None,
-    };
-    builder.agent_path = match &patch.agent_path {
-        NullableField::Value(agent_path) => Some(agent_path.clone()),
-        NullableField::Omitted | NullableField::Null => None,
-    };
+    builder.thread_source = patch.thread_source.clone().flatten();
+    builder.agent_nickname = patch.agent_nickname.clone().flatten();
+    builder.agent_role = patch.agent_role.clone().flatten();
+    builder.agent_path = patch.agent_path.clone().flatten();
     builder.cwd = patch.cwd.clone().map(normalize_cwd).unwrap_or_default();
     builder.cli_version = patch.cli_version.clone();
     let mut metadata = builder.build(store.config.default_model_provider_id.as_str());
@@ -718,8 +662,7 @@ fn sqlite_write_failure_should_block(patch: &ThreadMetadataPatch) -> bool {
     // look broken. Explicit git-only updates still require SQLite because partial git patches need
     // the existing SQLite value to preserve unspecified fields. Project updates always require
     // SQLite because assignment only exists in the state database.
-    patch.project_id.is_present()
-        || (patch.git_info.is_some() && !has_observed_metadata_facts(patch))
+    patch.project_id.is_some() || (patch.git_info.is_some() && !has_observed_metadata_facts(patch))
 }
 
 fn sqlite_write_error_is_best_effort(err: &ThreadStoreError) -> bool {
@@ -732,13 +675,13 @@ fn has_observed_metadata_facts(patch: &ThreadMetadataPatch) -> bool {
         || patch.title.is_some()
         || patch.model_provider.is_some()
         || patch.model.is_some()
-        || patch.reasoning_effort.is_present()
+        || patch.reasoning_effort.is_some()
         || patch.created_at.is_some()
         || patch.source.is_some()
-        || patch.thread_source.is_present()
-        || patch.agent_nickname.is_present()
-        || patch.agent_role.is_present()
-        || patch.agent_path.is_present()
+        || patch.thread_source.is_some()
+        || patch.agent_nickname.is_some()
+        || patch.agent_role.is_some()
+        || patch.agent_path.is_some()
         || patch.cwd.is_some()
         || patch.cli_version.is_some()
         || patch.approval_mode.is_some()
@@ -767,9 +710,12 @@ async fn apply_thread_git_info_patch(
     let updated = state_db
         .update_thread_git_info(
             thread_id,
-            git_info.sha.as_deref(),
-            git_info.branch.as_deref(),
-            git_info.origin_url.as_ref(),
+            git_info.sha.as_ref().map(|sha| sha.as_deref()),
+            git_info.branch.as_ref().map(|branch| branch.as_deref()),
+            git_info
+                .origin_url
+                .as_ref()
+                .map(|origin_url| origin_url.as_ref()),
         )
         .await
         .map_err(|err| ThreadStoreError::Internal {
@@ -799,18 +745,9 @@ async fn apply_thread_git_info(
     let updated = state_db
         .update_thread_git_info(
             thread_id,
-            match sha.as_deref() {
-                Some(sha) => NullableField::Value(sha),
-                None => NullableField::Null,
-            },
-            match branch.as_deref() {
-                Some(branch) => NullableField::Value(branch),
-                None => NullableField::Null,
-            },
-            match origin_url.as_ref() {
-                Some(origin_url) => NullableField::Value(origin_url),
-                None => NullableField::Null,
-            },
+            Some(sha.as_deref()),
+            Some(branch.as_deref()),
+            Some(origin_url.as_ref()),
         )
         .await
         .map_err(|err| ThreadStoreError::Internal {
@@ -837,21 +774,9 @@ fn resolve_git_info_patch(
         ),
         None => (None, None, None),
     };
-    let sha = match git_info.sha {
-        NullableField::Omitted => existing_sha,
-        NullableField::Null => None,
-        NullableField::Value(sha) => Some(sha),
-    };
-    let branch = match git_info.branch {
-        NullableField::Omitted => existing_branch,
-        NullableField::Null => None,
-        NullableField::Value(branch) => Some(branch),
-    };
-    let origin_url = match git_info.origin_url {
-        NullableField::Omitted => existing_origin_url,
-        NullableField::Null => None,
-        NullableField::Value(origin_url) => Some(origin_url),
-    };
+    let sha = git_info.sha.unwrap_or(existing_sha);
+    let branch = git_info.branch.unwrap_or(existing_branch);
+    let origin_url = git_info.origin_url.unwrap_or(existing_origin_url);
     (sha, branch, origin_url)
 }
 
@@ -973,7 +898,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("A sharper name".to_string()),
+                    name: Some(Some("A sharper name".to_string())),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1066,8 +991,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: NullableField::Value(codex_state::PINNED_THREAD_SECTION_ID.to_string()),
-                project_id: NullableField::Omitted,
+                section: Some(Some(codex_state::PINNED_THREAD_SECTION_ID.to_string())),
+                project_id: None,
                 archived: false,
                 search_term: None,
                 relation_filter: None,
@@ -1163,7 +1088,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Canonical paginated name".to_string()),
+                    name: Some(Some("Canonical paginated name".to_string())),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1210,7 +1135,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Updated SQLite name".to_string()),
+                    name: Some(Some("Updated SQLite name".to_string())),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1224,7 +1149,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Unpersistable name".to_string()),
+                    name: Some(Some("Unpersistable name".to_string())),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1327,8 +1252,8 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        sha: NullableField::Null,
-                        branch: NullableField::Value("feature".to_string()),
+                        sha: Some(None),
+                        branch: Some(Some("feature".to_string())),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -1417,7 +1342,7 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        branch: NullableField::Value("feature".to_string()),
+                        branch: Some(Some("feature".to_string())),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -1515,12 +1440,12 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        sha: NullableField::Value("abc123".to_string()),
-                        branch: NullableField::Value("main".to_string()),
-                        origin_url: NullableField::Value(
+                        sha: Some(Some("abc123".to_string())),
+                        branch: Some(Some("main".to_string())),
+                        origin_url: Some(Some(
                             SanitizedGitUrl::try_from("https://github.com/openai/codex")
                                 .expect("valid git remote URL"),
-                        ),
+                        )),
                     }),
                     ..Default::default()
                 },
@@ -1562,7 +1487,7 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     permission_profile: Some(PermissionProfile::Disabled),
-                    reasoning_effort: NullableField::Value(ReasoningEffort::Ultra),
+                    reasoning_effort: Some(Some(ReasoningEffort::Ultra)),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1576,7 +1501,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    reasoning_effort: NullableField::Null,
+                    reasoning_effort: Some(None),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -1619,12 +1544,12 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        sha: NullableField::Value("abc123".to_string()),
-                        branch: NullableField::Value("main".to_string()),
-                        origin_url: NullableField::Value(
+                        sha: Some(Some("abc123".to_string())),
+                        branch: Some(Some("main".to_string())),
+                        origin_url: Some(Some(
                             SanitizedGitUrl::try_from("https://github.com/openai/codex")
                                 .expect("valid git remote URL"),
-                        ),
+                        )),
                     }),
                     ..Default::default()
                 },
@@ -1638,7 +1563,7 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        branch: NullableField::Value("feature".to_string()),
+                        branch: Some(Some("feature".to_string())),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -1682,12 +1607,12 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        sha: NullableField::Value("abc123".to_string()),
-                        branch: NullableField::Value("main".to_string()),
-                        origin_url: NullableField::Value(
+                        sha: Some(Some("abc123".to_string())),
+                        branch: Some(Some("main".to_string())),
+                        origin_url: Some(Some(
                             SanitizedGitUrl::try_from("https://github.com/openai/codex")
                                 .expect("valid git remote URL"),
-                        ),
+                        )),
                     }),
                     ..Default::default()
                 },
@@ -1701,9 +1626,9 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        sha: NullableField::Null,
-                        branch: NullableField::Null,
-                        origin_url: NullableField::Null,
+                        sha: Some(None),
+                        branch: Some(None),
+                        origin_url: Some(None),
                     }),
                     ..Default::default()
                 },
@@ -1784,7 +1709,7 @@ mod tests {
                 thread_id,
                 patch: ThreadMetadataPatch {
                     git_info: Some(GitInfoPatch {
-                        branch: NullableField::Value("feature".to_string()),
+                        branch: Some(Some("feature".to_string())),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -1889,10 +1814,10 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Combined metadata".to_string()),
+                    name: Some(Some("Combined metadata".to_string())),
                     memory_mode: Some(ThreadMemoryMode::Disabled),
                     git_info: Some(GitInfoPatch {
-                        branch: NullableField::Value("combined".to_string()),
+                        branch: Some(Some("combined".to_string())),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -1926,7 +1851,7 @@ mod tests {
     #[test]
     fn sqlite_failures_are_best_effort_for_legacy_rollout_compat_updates() {
         assert!(!sqlite_write_failure_should_block(&ThreadMetadataPatch {
-            name: NullableField::Value("User chosen name".to_string()),
+            name: Some(Some("User chosen name".to_string())),
             ..Default::default()
         }));
         assert!(!sqlite_write_failure_should_block(&ThreadMetadataPatch {
@@ -1944,7 +1869,7 @@ mod tests {
         assert!(!sqlite_write_failure_should_block(&ThreadMetadataPatch {
             preview: Some("Observed preview".to_string()),
             git_info: Some(GitInfoPatch {
-                branch: NullableField::Value("main".to_string()),
+                branch: Some(Some("main".to_string())),
                 ..Default::default()
             }),
             memory_mode: Some(ThreadMemoryMode::Enabled),
@@ -1956,7 +1881,7 @@ mod tests {
     fn sqlite_failures_still_block_for_explicit_git_only_updates() {
         assert!(sqlite_write_failure_should_block(&ThreadMetadataPatch {
             git_info: Some(GitInfoPatch {
-                branch: NullableField::Value("main".to_string()),
+                branch: Some(Some("main".to_string())),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1982,7 +1907,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("User chosen name".to_string()),
+                    name: Some(Some("User chosen name".to_string())),
                     ..Default::default()
                 },
                 include_archived: false,
@@ -2240,8 +2165,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: Some(Vec::new()),
                 cwd_filters: Some(vec![workspace]),
-                section: NullableField::Omitted,
-                project_id: NullableField::Omitted,
+                section: None,
+                project_id: None,
                 archived: false,
                 search_term: None,
                 relation_filter: None,
@@ -2301,7 +2226,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Archived title".to_string()),
+                    name: Some(Some("Archived title".to_string())),
                     ..Default::default()
                 },
                 include_archived: true,
@@ -2366,7 +2291,7 @@ mod tests {
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    name: NullableField::Value("Live archived title".to_string()),
+                    name: Some(Some("Live archived title".to_string())),
                     ..Default::default()
                 },
                 include_archived: true,

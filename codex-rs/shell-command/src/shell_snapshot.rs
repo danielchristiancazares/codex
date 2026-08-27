@@ -5,6 +5,7 @@ use crate::shell_detect::ShellType;
 mod tests;
 
 const EXCLUDED_EXPORT_VARS: &[&str] = &["PWD", "OLDPWD"];
+const EXPORT_CAPTURE_MARKER: &str = "# Capture exported variables";
 
 /// Returns the shell-native script used to capture restorable shell state.
 ///
@@ -18,6 +19,16 @@ pub fn snapshot_script(shell_type: ShellType) -> Option<String> {
         ShellType::PowerShell => Some(powershell_snapshot_script().to_string()),
         ShellType::Cmd => None,
     }
+}
+
+/// Captures shell state and a separate NUL-delimited exported environment.
+///
+/// Keeping exports outside the restorable script lets executors apply their
+/// environment policy after shell profiles have run.
+pub fn snapshot_state_and_environment_script(shell_type: ShellType) -> Option<String> {
+    let script = snapshot_script(shell_type)?;
+    let (state, _) = script.split_once(EXPORT_CAPTURE_MARKER)?;
+    Some(format!("{state}printf '\\0'\n/usr/bin/env -0\n"))
 }
 
 fn excluded_exports_regex() -> String {
@@ -38,40 +49,39 @@ print 'unalias -a 2>/dev/null || true'
 print '# Functions'
 functions
 print ''
-setopts=("${(@f)$(setopt)}")
-print "# setopts ${#setopts}"
-for option in "${setopts[@]}"; do
-  print "setopt $option"
-done
+setopt_count=$(setopt | wc -l | tr -d ' ')
+print "# setopts $setopt_count"
+setopt | sed 's/^/setopt /'
 print ''
-alias_lines=("${(@f)$(alias -L)}")
-print "# aliases ${#alias_lines}"
-if (( ${#alias_lines} )); then
-  print -r -- "${(F)alias_lines}"
-fi
+alias_count=$(alias -L | wc -l | tr -d ' ')
+print "# aliases $alias_count"
+alias -L
 print ''
-export_lines=()
-for line in "${(@f)$(export -p)}"; do
-  name=${line#export }
-  if [[ $name =~ '^-[A-Za-z]*r[A-Za-z]* ' ]]; then
-    continue
-  fi
-  if [[ $name =~ '^-[A-Za-z]*T[A-Za-z]* ' ]]; then
-    name=${name#* }
-    name=${name%% *}
-  else
-    name=${name%%=*}
-  fi
-  if [[ $name =~ '^(EXCLUDED_EXPORTS)$' ]]; then
-    continue
-  fi
-  if [[ $name =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]]; then
-    export_lines+=("$line")
-  fi
-done
-print "# exports ${#export_lines}"
-if (( ${#export_lines} )); then
-  print -r -- "${(F)export_lines}"
+# Capture exported variables
+export_lines=$(export -p | awk '
+/^(export|declare -x|typeset -x) / {
+  line=$0
+  name=line
+  sub(/^(export|declare -x|typeset -x) /, "", name)
+  if (name ~ /^-[A-Za-z]*r[A-Za-z]* /) {
+    next
+  }
+  if (name ~ /^-[A-Za-z]*T[A-Za-z]* /) {
+    sub(/^-[A-Za-z]*T[A-Za-z]* /, "", name)
+    sub(/ [A-Za-z_][A-Za-z0-9_]*=.*/, "", name)
+  }
+  sub(/=.*/, "", name)
+  if (name ~ /^(EXCLUDED_EXPORTS)$/) {
+    next
+  }
+  if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+    print line
+  }
+}')
+export_count=$(printf '%s\n' "$export_lines" | sed '/^$/d' | wc -l | tr -d ' ')
+print "# exports $export_count"
+if [[ -n "$export_lines" ]]; then
+  print -r -- "$export_lines"
 fi
 "##;
     script.replace("EXCLUDED_EXPORTS", &excluded)
@@ -99,6 +109,7 @@ alias_count=$(alias -p | wc -l | tr -d ' ')
 echo "# aliases $alias_count"
 alias -p
 echo ''
+# Capture exported variables
 export_lines=$(
   while IFS= read -r name; do
     if [[ "$name" =~ ^(EXCLUDED_EXPORTS)$ ]]; then
@@ -153,6 +164,7 @@ if alias >/dev/null 2>&1; then
 else
   echo '# aliases 0'
 fi
+# Capture exported variables
 if export -p >/dev/null 2>&1; then
   export_lines=$(export -p | awk '
 /^(export|declare -x|typeset -x) / {

@@ -35,8 +35,11 @@ use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadHistoryMode;
+use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadReadParams;
+use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadSortKey;
@@ -73,8 +76,10 @@ use codex_core::find_thread_meta_by_name_str;
 use codex_core::format_exec_policy_error_with_source;
 use codex_core::path_utils;
 use codex_core::read_session_meta_line;
+use codex_feedback::CodexFeedback;
 use codex_git_utils::get_git_repo_root;
 use codex_history::RolloutItem;
+use codex_history::RolloutLine;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::default_client::set_default_originator;
 use codex_login::enforce_login_restrictions;
@@ -83,7 +88,6 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_otel::set_parent_from_context;
 use codex_otel::traceparent_context_from_env;
-use codex_protocol::NullableField;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
@@ -220,6 +224,7 @@ struct ExecRunArgs {
     prompt: Option<String>,
     skip_git_repo_check: bool,
     stderr_with_ansi: bool,
+    thread_source: ThreadSource,
 }
 
 fn exec_root_span() -> tracing::Span {
@@ -248,6 +253,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         command,
         strict_config,
         shared,
+        thread_source,
         skip_git_repo_check,
         ephemeral,
         ignore_user_config,
@@ -539,6 +545,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         loader_overrides: run_loader_overrides,
         strict_config,
         cloud_config_bundle: run_cloud_config_bundle,
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: state_db.clone(),
         environment_manager: std::sync::Arc::new(environment_manager),
@@ -569,6 +576,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         prompt,
         skip_git_repo_check,
         stderr_with_ansi,
+        thread_source: thread_source.map(Into::into).unwrap_or(ThreadSource::User),
     })
     .instrument(exec_span)
     .await
@@ -667,6 +675,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         prompt,
         skip_git_repo_check,
         stderr_with_ansi,
+        thread_source,
     } = args;
 
     let mut event_processor: Box<dyn EventProcessor> = match json_mode {
@@ -832,7 +841,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     .map_err(anyhow::Error::msg)?;
             (session_configured.thread_id, session_configured)
         } else {
-            let response = start_thread(&client, &mut request_ids, &config)
+            let response = start_thread(&client, &mut request_ids, &config, &thread_source)
                 .await
                 .map_err(anyhow::Error::msg)?;
             let session_configured =
@@ -876,7 +885,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     permissions,
                     config: thread_config_overrides_from_config(&config),
                     ephemeral: config.ephemeral,
-                    thread_source: Some(ThreadSource::User),
+                    thread_source: Some(thread_source.clone()),
                     exclude_turns: true,
                     defer_goal_continuation: !config.ephemeral,
                     ..ThreadForkParams::default()
@@ -907,7 +916,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
         (session_configured.thread_id, session_configured)
     } else {
-        let response = start_thread(&client, &mut request_ids, &config)
+        let response = start_thread(&client, &mut request_ids, &config, &thread_source)
             .await
             .map_err(anyhow::Error::msg)?;
         let session_configured = session_configured_from_thread_start_response(&response, &config)
@@ -965,8 +974,10 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     request_id: request_ids.next(),
                     params: TurnStartParams {
                         thread_id: primary_thread_id_for_span.clone(),
+                        turn_trigger: None,
                         client_user_message_id: None,
                         input: items.into_iter().map(Into::into).collect(),
+                        tool_output: None,
                         responsesapi_client_metadata: None,
                         additional_context: None,
                         environments: None,
@@ -977,13 +988,15 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         sandbox_policy: None,
                         permissions: None,
                         model: None,
-                        service_tier: session_configured.service_tier,
+                        service_tier: None,
+                        service_tier_for_turn: None,
                         effort: default_effort,
                         summary: None,
                         personality: None,
                         output_schema,
                         collaboration_mode: None,
                         multi_agent_mode: None,
+                        cyber_access_program: None,
                     },
                 },
                 "turn/start",
@@ -1064,7 +1077,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 handle_server_request(&client, *request, &mut error_seen).await;
             }
             InProcessServerEvent::ServerNotification(notification) => {
-                let notification = *notification;
+                let mut notification = *notification;
                 if let ServerNotification::Error(payload) = &notification {
                     if payload.thread_id == primary_thread_id_for_requests
                         && payload.turn_id == task_id
@@ -1089,6 +1102,14 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     &primary_thread_id_for_requests,
                     &task_id,
                 ) {
+                    maybe_backfill_turn_completed_items(
+                        config.ephemeral,
+                        &client,
+                        &mut request_ids,
+                        &mut notification,
+                    )
+                    .await;
+
                     match event_processor.process_server_notification(notification) {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
@@ -1129,8 +1150,9 @@ async fn start_thread(
     client: &InProcessAppServerClient,
     request_ids: &mut RequestIdSequencer,
     config: &Config,
+    thread_source: &ThreadSource,
 ) -> Result<ThreadStartResponse, String> {
-    let mut params = thread_start_params_from_config(config);
+    let mut params = thread_start_params_from_config(config, thread_source);
     loop {
         match client
             .request_typed(ClientRequest::ThreadStart {
@@ -1153,7 +1175,10 @@ async fn start_thread(
     }
 }
 
-fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
+fn thread_start_params_from_config(
+    config: &Config,
+    thread_source: &ThreadSource,
+) -> ThreadStartParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
@@ -1174,7 +1199,7 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         config: thread_config_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
         history_mode: (!config.ephemeral).then_some(ThreadHistoryMode::Paginated),
-        thread_source: Some(ThreadSource::User),
+        thread_source: Some(thread_source.clone()),
         ..ThreadStartParams::default()
     }
 }
@@ -1445,6 +1470,73 @@ fn should_process_notification(
     }
 }
 
+async fn maybe_backfill_turn_completed_items(
+    thread_ephemeral: bool,
+    client: &InProcessAppServerClient,
+    request_ids: &mut RequestIdSequencer,
+    notification: &mut ServerNotification,
+) {
+    // In-process delivery may drop non-terminal item notifications under backpressure while still
+    // guaranteeing `turn/completed`. Because app-server currently emits that completion with an
+    // empty `turn.items`, exec does one last `thread/read` here so human/json output can recover
+    // the final message and reconcile any still-running items before shutdown.
+    if !should_backfill_turn_completed_items(thread_ephemeral, notification) {
+        return;
+    }
+
+    let ServerNotification::TurnCompleted(payload) = notification else {
+        return;
+    };
+
+    let response = send_request_with_response::<ThreadReadResponse>(
+        client,
+        ClientRequest::ThreadRead {
+            request_id: request_ids.next(),
+            params: ThreadReadParams {
+                thread_id: payload.thread_id.clone(),
+                include_turns: true,
+            },
+        },
+        "thread/read",
+    )
+    .await;
+
+    match response {
+        Ok(response) => {
+            if let Some(items) = turn_items_for_thread(&response.thread, &payload.turn.id) {
+                payload.turn.items = items;
+            }
+        }
+        Err(err) => {
+            warn!("thread/read failed while backfilling turn items for turn completion: {err}");
+        }
+    }
+}
+
+/// Returns true only when `exec` can safely recover missing turn items from
+/// rollout-backed thread history.
+fn should_backfill_turn_completed_items(
+    thread_ephemeral: bool,
+    notification: &ServerNotification,
+) -> bool {
+    let ServerNotification::TurnCompleted(payload) = notification else {
+        return false;
+    };
+
+    !thread_ephemeral && payload.turn.items_view != codex_app_server_protocol::TurnItemsView::Full
+}
+
+fn turn_items_for_thread(
+    thread: &AppServerThread,
+    turn_id: &str,
+) -> Option<Vec<AppServerThreadItem>> {
+    thread
+        .turns
+        .iter()
+        .find(|turn| turn.id == turn_id)
+        .map(|turn| turn.items.clone())
+}
+
 fn all_thread_source_kinds() -> Vec<ThreadSourceKind> {
     vec![
         ThreadSourceKind::Cli,
@@ -1476,7 +1568,7 @@ async fn parse_latest_turn_context_cwd(path: &Path) -> Option<PathBuf> {
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(rollout_line) = codex_rollout::decode_rollout_line_slice(trimmed.as_bytes()) else {
+        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
             continue;
         };
         if let RolloutItem::TurnContext(item) = rollout_line.item {
@@ -1514,8 +1606,8 @@ async fn resolve_resume_thread_id(
                         model_providers: model_providers.clone(),
                         source_kinds: Some(all_thread_source_kinds()),
                         archived: Some(false),
-                        section_id: NullableField::Omitted,
-                        project_id: NullableField::Omitted,
+                        section_id: None,
+                        project_id: None,
                         parent_thread_id: None,
                         ancestor_thread_id: None,
                         cwd: None,
@@ -1599,8 +1691,8 @@ async fn resolve_resume_thread_id(
                     model_providers: model_providers.clone(),
                     source_kinds: Some(all_thread_source_kinds()),
                     archived: Some(false),
-                    section_id: NullableField::Omitted,
-                    project_id: NullableField::Omitted,
+                    section_id: None,
+                    project_id: None,
                     parent_thread_id: None,
                     ancestor_thread_id: None,
                     cwd: None,

@@ -8,7 +8,6 @@ use app_test_support::to_response;
 use codex_app_server_protocol::GitInfo;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadListParams;
@@ -91,8 +90,8 @@ async fn thread_section_move_pins_before_first_turn() -> Result<()> {
         model_providers: None,
         source_kinds: None,
         archived: None,
-        section_id: NullableField::Value(PINNED_THREAD_SECTION_ID.to_string()),
-        project_id: NullableField::Omitted,
+        section_id: Some(Some(PINNED_THREAD_SECTION_ID.to_string())),
+        project_id: None,
         cwd: None,
         use_state_db_only: true,
         search_term: None,
@@ -129,7 +128,7 @@ async fn thread_section_move_pins_before_first_turn() -> Result<()> {
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(move_id)).await??;
     let list_id = mcp
         .send_thread_list_request(ThreadListParams {
-            section_id: NullableField::Omitted,
+            section_id: None,
             ..list_params
         })
         .await?;
@@ -267,8 +266,8 @@ async fn thread_section_move_pins_and_unpins_with_filtered_recency_pagination() 
         model_providers: None,
         source_kinds: None,
         archived: None,
-        section_id: NullableField::Value(PINNED_THREAD_SECTION_ID.to_string()),
-        project_id: NullableField::Omitted,
+        section_id: Some(Some(PINNED_THREAD_SECTION_ID.to_string())),
+        project_id: None,
         cwd: None,
         use_state_db_only: false,
         search_term: None,
@@ -334,7 +333,7 @@ async fn thread_section_move_pins_and_unpins_with_filtered_recency_pagination() 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
             limit: Some(10),
-            section_id: NullableField::Null,
+            section_id: Some(None),
             ..list_params
         })
         .await?;
@@ -458,8 +457,8 @@ async fn thread_sections_preserve_server_owned_manual_order_across_moves_and_res
         model_providers: None,
         source_kinds: None,
         archived: None,
-        section_id: NullableField::Value(PINNED_THREAD_SECTION_ID.to_string()),
-        project_id: NullableField::Omitted,
+        section_id: Some(Some(PINNED_THREAD_SECTION_ID.to_string())),
+        project_id: None,
         cwd: None,
         use_state_db_only: false,
         search_term: None,
@@ -585,9 +584,9 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
             thread_id: thread.id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Value("feature/sidebar-pr".to_string()),
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: Some(Some("feature/sidebar-pr".to_string())),
+                origin_url: None,
             }),
         })
         .await?;
@@ -687,11 +686,11 @@ async fn thread_metadata_update_sanitizes_git_origin_before_persisting() -> Resu
             thread_id: thread.id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Omitted,
-                origin_url: NullableField::Value(
+                sha: None,
+                branch: None,
+                origin_url: Some(Some(
                     "https://alice:synthetic-git-secret@example.invalid/org/repo.git".to_string(),
-                ),
+                )),
             }),
         })
         .await?;
@@ -768,9 +767,9 @@ async fn thread_metadata_update_rejects_empty_git_info_patch() -> Result<()> {
             thread_id: thread.id,
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Omitted,
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: None,
+                origin_url: None,
             }),
         })
         .await?;
@@ -819,9 +818,9 @@ async fn thread_metadata_update_rejects_ephemeral_thread() -> Result<()> {
             thread_id: thread.id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Value("feature/ephemeral".to_string()),
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: Some(Some("feature/ephemeral".to_string())),
+                origin_url: None,
             }),
         })
         .await?;
@@ -894,9 +893,9 @@ async fn thread_metadata_update_repairs_missing_sqlite_row_for_stored_thread() -
             thread_id: thread_id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Value("feature/stored-thread".to_string()),
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: Some(Some("feature/stored-thread".to_string())),
+                origin_url: None,
             }),
         })
         .await?;
@@ -979,9 +978,9 @@ async fn thread_metadata_update_repairs_loaded_thread_without_resetting_summary(
             thread_id: thread_id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Value("feature/loaded-thread".to_string()),
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: Some(Some("feature/loaded-thread".to_string())),
+                origin_url: None,
             }),
         })
         .await?;
@@ -1047,9 +1046,9 @@ async fn thread_metadata_update_repairs_missing_sqlite_row_for_archived_thread()
             thread_id: thread_id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Omitted,
-                branch: NullableField::Value("feature/archived-thread".to_string()),
-                origin_url: NullableField::Omitted,
+                sha: None,
+                branch: Some(Some("feature/archived-thread".to_string())),
+                origin_url: None,
             }),
         })
         .await?;
@@ -1111,9 +1110,9 @@ async fn thread_metadata_update_can_clear_stored_git_fields() -> Result<()> {
             thread_id: thread_id.clone(),
             project_id: None,
             git_info: Some(ThreadMetadataGitInfoUpdateParams {
-                sha: NullableField::Null,
-                branch: NullableField::Null,
-                origin_url: NullableField::Null,
+                sha: Some(None),
+                branch: Some(None),
+                origin_url: Some(None),
             }),
         })
         .await?;

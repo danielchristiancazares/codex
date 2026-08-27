@@ -7,7 +7,6 @@ use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Timelike;
 use chrono::Utc;
-use codex_protocol::NullableField;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
@@ -84,8 +83,8 @@ async fn list_threads_db_rejects_mismatched_sqlite_config_without_cleanup() -> a
         /*cwd_filters*/ None,
         /*relation_filter*/ None,
         /*archived*/ false,
-        /*section*/ NullableField::Omitted,
-        /*project_id*/ NullableField::Omitted,
+        /*section*/ None,
+        /*project_id*/ None,
         /*search_term*/ None,
     )
     .await;
@@ -329,6 +328,7 @@ fn write_rollout_with_user_message(
                     session_id: thread_id.into(),
                     id: thread_id,
                     forked_from_id: None,
+                    forked_from_ordinal_exclusive: None,
                     parent_thread_id: None,
                     timestamp: "2026-06-01T14:26:25Z".to_string(),
                     cwd: home.to_path_buf(),

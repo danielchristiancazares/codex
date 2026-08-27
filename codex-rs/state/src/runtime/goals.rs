@@ -1,6 +1,5 @@
 use super::*;
 use crate::model::ThreadGoalRow;
-use codex_protocol::NullableField;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -21,7 +20,7 @@ impl GoalStore {
 pub struct GoalUpdate {
     pub objective: Option<String>,
     pub status: Option<crate::ThreadGoalStatus>,
-    pub token_budget: NullableField<i64>,
+    pub token_budget: Option<Option<i64>>,
     pub expected_goal_id: Option<String>,
 }
 
@@ -284,12 +283,7 @@ RETURNING
         let expected_goal_id = expected_goal_id.as_deref();
         let now_ms = datetime_to_epoch_millis(Utc::now());
         let result = match (status, token_budget) {
-            (Some(status), token_budget @ (NullableField::Null | NullableField::Value(_))) => {
-                let token_budget = match token_budget {
-                    NullableField::Null => None,
-                    NullableField::Value(token_budget) => Some(token_budget),
-                    NullableField::Omitted => unreachable!("matched a budget update"),
-                };
+            (Some(status), Some(token_budget)) => {
                 sqlx::query(
                     r#"
 UPDATE thread_goals
@@ -324,7 +318,7 @@ WHERE thread_id = ?
                 .execute(self.pool.as_ref())
                 .await?
             }
-            (Some(status), NullableField::Omitted) => {
+            (Some(status), None) => {
                 sqlx::query(
                     r#"
 UPDATE thread_goals
@@ -355,12 +349,7 @@ WHERE thread_id = ?
                 .execute(self.pool.as_ref())
                 .await?
             }
-            (None, token_budget @ (NullableField::Null | NullableField::Value(_))) => {
-                let token_budget = match token_budget {
-                    NullableField::Null => None,
-                    NullableField::Value(token_budget) => Some(token_budget),
-                    NullableField::Omitted => unreachable!("matched a budget update"),
-                };
+            (None, Some(token_budget)) => {
                 sqlx::query(
                     r#"
 UPDATE thread_goals
@@ -388,7 +377,7 @@ WHERE thread_id = ?
                 .execute(self.pool.as_ref())
                 .await?
             }
-            (None, NullableField::Omitted) => {
+            (None, None) => {
                 if let Some(objective) = objective {
                     sqlx::query(
                         r#"
@@ -708,7 +697,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
-                    token_budget: NullableField::Value(200_000),
+                    token_budget: Some(Some(200_000)),
                     expected_goal_id: None,
                 },
             )
@@ -886,7 +875,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: Some(original.goal_id),
                 },
             )
@@ -910,7 +899,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: Some(replacement.goal_id),
                 },
             )
@@ -1007,7 +996,7 @@ mod tests {
                 GoalUpdate {
                     objective: Some("draft the report clearly".to_string()),
                     status: Some(crate::ThreadGoalStatus::Paused),
-                    token_budget: NullableField::Value(200),
+                    token_budget: Some(Some(200)),
                     expected_goal_id: Some(accounted.goal_id.clone()),
                 },
             )
@@ -1045,7 +1034,7 @@ mod tests {
             GoalUpdate {
                 objective: None,
                 status: Some(crate::ThreadGoalStatus::Paused),
-                token_budget: NullableField::Omitted,
+                token_budget: None,
                 expected_goal_id: None,
             },
         );
@@ -1054,7 +1043,7 @@ mod tests {
             GoalUpdate {
                 objective: None,
                 status: None,
-                token_budget: NullableField::Value(200_000),
+                token_budget: Some(Some(200_000)),
                 expected_goal_id: None,
             },
         );
@@ -1108,7 +1097,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )
@@ -1319,7 +1308,7 @@ mod tests {
                 crate::GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )
@@ -1379,7 +1368,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: None,
-                    token_budget: NullableField::Value(40),
+                    token_budget: Some(Some(40)),
                     expected_goal_id: None,
                 },
             )
@@ -1426,7 +1415,7 @@ mod tests {
                 GoalUpdate {
                     objective: Some("stay within budget, with clearer wording".to_string()),
                     status: Some(crate::ThreadGoalStatus::Active),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )
@@ -1477,7 +1466,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )
@@ -1527,7 +1516,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Blocked),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )
@@ -1617,7 +1606,7 @@ mod tests {
                 GoalUpdate {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
-                    token_budget: NullableField::Omitted,
+                    token_budget: None,
                     expected_goal_id: None,
                 },
             )

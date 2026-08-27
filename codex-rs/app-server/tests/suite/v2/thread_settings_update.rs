@@ -390,7 +390,7 @@ async fn start_text_turn(
                 text: "hello".to_string(),
                 text_elements: Vec::new(),
             }],
-            service_tier,
+            service_tier: Some(Some(service_tier)),
             ..Default::default()
         })
         .await?;

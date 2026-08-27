@@ -11,7 +11,6 @@ use codex_app_server_protocol::AskForApproval as AppServerAskForApproval;
 use codex_app_server_protocol::ThreadSettings;
 use codex_app_server_protocol::ThreadSettingsUpdateParams;
 use codex_config::types::ApprovalsReviewer;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -158,6 +157,8 @@ impl App {
             approvals_reviewer,
             permission_profile: _,
             active_permission_profile,
+            // TODO(anp): Support Windows sandbox updates through environment configuration;
+            // thread/settings/update cannot currently represent this override.
             windows_sandbox_level: _,
             model,
             effort,
@@ -179,12 +180,9 @@ impl App {
                 .as_ref()
                 .map(|profile| profile.id.clone()),
             model: model.clone(),
-            effort: match effort {
-                NullableField::Value(effort) => Some(effort.clone()),
-                NullableField::Omitted | NullableField::Null => None,
-            },
+            effort: effort.clone().unwrap_or_default(),
             summary: *summary,
-            service_tier: service_tier.clone(),
+            service_tier: *service_tier,
             collaboration_mode: collaboration_mode.clone(),
             personality: *personality,
             ..ThreadSettingsUpdateParams::default()

@@ -1,4 +1,3 @@
-use super::NullableField;
 use crate::JsonSchema;
 use crate::TS;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -53,18 +52,28 @@ pub struct ProcessSpawnParams {
     ///
     /// When omitted, the server default applies. Set to `null` to disable the
     /// cap.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[ts(type = "number | null")]
     #[ts(optional = nullable)]
-    pub output_bytes_cap: NullableField<usize>,
+    pub output_bytes_cap: Option<Option<usize>>,
     /// Optional timeout in milliseconds.
     ///
     /// When omitted, the server default applies. Set to `null` to disable the
     /// timeout.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[ts(type = "number | null")]
     #[ts(optional = nullable)]
-    pub timeout_ms: NullableField<i64>,
+    pub timeout_ms: Option<Option<i64>>,
     /// Optional environment overrides merged into the app-server process
     /// environment.
     ///

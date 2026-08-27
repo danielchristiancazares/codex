@@ -11,12 +11,6 @@ pub struct CommandToolOptions {
     pub exec_permission_approvals_enabled: bool,
 }
 
-#[derive(Clone, Copy)]
-enum ExecOutputArtifactSchema {
-    Omit,
-    Include,
-}
-
 #[cfg(test)]
 pub fn create_exec_command_tool(options: CommandToolOptions) -> ToolSpec {
     create_exec_command_tool_with_environment_id(
@@ -29,33 +23,6 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
     include_environment_id: bool,
     include_shell_parameter: bool,
 ) -> ToolSpec {
-    create_exec_command_tool_with_artifact_schema(
-        options,
-        include_environment_id,
-        include_shell_parameter,
-        ExecOutputArtifactSchema::Omit,
-    )
-}
-
-pub(crate) fn create_exec_command_tool_with_artifacts(
-    options: CommandToolOptions,
-    include_environment_id: bool,
-    include_shell_parameter: bool,
-) -> ToolSpec {
-    create_exec_command_tool_with_artifact_schema(
-        options,
-        include_environment_id,
-        include_shell_parameter,
-        ExecOutputArtifactSchema::Include,
-    )
-}
-
-fn create_exec_command_tool_with_artifact_schema(
-    options: CommandToolOptions,
-    include_environment_id: bool,
-    include_shell_parameter: bool,
-    artifact_schema: ExecOutputArtifactSchema,
-) -> ToolSpec {
     let yield_time_ms_description = if cfg!(windows) {
         "Maximum time to wait before returning a session ID for a still-running command. Commands that finish sooner return immediately. For ordinary commands, omit this parameter to use the 10000 ms default. Effective range on Windows is 10000-30000 ms."
     } else {
@@ -64,18 +31,7 @@ fn create_exec_command_tool_with_artifact_schema(
     let mut properties = BTreeMap::from([
         (
             "cmd".to_string(),
-            JsonSchema::string(Some(
-                "Shell command to execute. Provide exactly one of `cmd` or `argv`.".to_string(),
-            )),
-        ),
-        (
-            "argv".to_string(),
-            JsonSchema::array(
-                JsonSchema::string(/*description*/ None),
-                Some(
-                    "Direct program and argument vector. Provide exactly one of `cmd` or `argv`; `shell` and `login` apply only to `cmd`.".to_string(),
-                ),
-            ),
+            JsonSchema::string(Some("Shell command to execute.".to_string())),
         ),
         (
             "workdir".to_string(),
@@ -136,28 +92,25 @@ fn create_exec_command_tool_with_artifact_schema(
         name: "exec_command".to_string(),
         description: if cfg!(windows) {
             format!(
-                "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.\n\n{}",
+                "Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\n{}",
                 windows_shell_guidance()
             )
         } else {
-            "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.".to_string()
+            "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
+                .to_string()
         },
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
-        output_schema: Some(unified_exec_output_schema_with_artifacts(artifact_schema)),
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["cmd".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: Some(unified_exec_output_schema()),
     })
 }
 
 pub fn create_write_stdin_tool() -> ToolSpec {
-    create_write_stdin_tool_with_schema(ExecOutputArtifactSchema::Omit)
-}
-
-pub(crate) fn create_write_stdin_tool_with_artifacts() -> ToolSpec {
-    create_write_stdin_tool_with_schema(ExecOutputArtifactSchema::Include)
-}
-
-fn create_write_stdin_tool_with_schema(artifact_schema: ExecOutputArtifactSchema) -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "session_id".to_string(),
@@ -197,77 +150,7 @@ fn create_write_stdin_tool_with_schema(artifact_schema: ExecOutputArtifactSchema
             Some(vec!["session_id".to_string()]),
             Some(false.into()),
         ),
-        output_schema: Some(unified_exec_output_schema_with_artifacts(artifact_schema)),
-    })
-}
-
-pub fn create_shell_command_tool(options: CommandToolOptions) -> ToolSpec {
-    let mut properties = BTreeMap::from([
-        (
-            "command".to_string(),
-            JsonSchema::string(Some(
-                "Shell script to run in the user's default shell.".to_string(),
-            )),
-        ),
-        (
-            "workdir".to_string(),
-            JsonSchema::string(Some(
-                "Working directory for the command. Defaults to the turn cwd.".to_string(),
-            )),
-        ),
-        (
-            "timeout_ms".to_string(),
-            JsonSchema::number(Some(
-                "Maximum command runtime. Defaults to 10000 ms.".to_string(),
-            )),
-        ),
-    ]);
-    if options.allow_login_shell {
-        properties.insert(
-            "login".to_string(),
-            JsonSchema::boolean(Some(
-                "True runs with login shell semantics; false disables them. Defaults to true."
-                    .to_string(),
-            )),
-        );
-    }
-    properties.extend(create_approval_parameters(
-        options.exec_permission_approvals_enabled,
-    ));
-
-    let description = if cfg!(windows) {
-        format!(
-            r#"Runs a Powershell command (Windows) and returns its output.
-
-Examples of valid command strings:
-
-- ls -a (show hidden): "Get-ChildItem -Force"
-- recursive find by name: "Get-ChildItem -Recurse -Filter *.py"
-- recursive grep: "Get-ChildItem -Path C:\\myrepo -Recurse | Select-String -Pattern 'TODO' -CaseSensitive"
-- ps aux | grep python: "Get-Process | Where-Object {{ $_.ProcessName -like '*python*' }}"
-- setting an env var: "$env:FOO='bar'; echo $env:FOO"
-- running an inline Python script: "@'\\nprint('Hello, world!')\\n'@ | python -"
-
-{}"#,
-            windows_shell_guidance()
-        )
-    } else {
-        r#"Runs a shell command and returns its output.
-- Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
-            .to_string()
-    };
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "shell_command".to_string(),
-        description,
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(
-            properties,
-            Some(vec!["command".to_string()]),
-            Some(false.into()),
-        ),
-        output_schema: None,
+        output_schema: Some(unified_exec_output_schema()),
     })
 }
 
@@ -308,13 +191,8 @@ pub fn request_permissions_tool_description() -> String {
         .to_string()
 }
 
-#[cfg(test)]
 fn unified_exec_output_schema() -> Value {
-    unified_exec_output_schema_with_artifacts(ExecOutputArtifactSchema::Omit)
-}
-
-fn unified_exec_output_schema_with_artifacts(artifact_schema: ExecOutputArtifactSchema) -> Value {
-    let mut schema = json!({
+    json!({
         "type": "object",
         "properties": {
             "chunk_id": {
@@ -340,32 +218,11 @@ fn unified_exec_output_schema_with_artifacts(artifact_schema: ExecOutputArtifact
             "output": {
                 "type": "string",
                 "description": "Command output text, possibly truncated."
-            },
-            "artifacts": {
-                "type": "object",
-                "description": "Descriptors for retained, sanitized stdout and stderr.",
-                "additionalProperties": true
-            },
-            "presented_output_bytes": {
-                "type": "number",
-                "description": "Bytes of command output presented to the model."
-            },
-            "preview_sha256": {
-                "type": "string",
-                "description": "Stable SHA-256 digest of the presented output."
             }
         },
         "required": ["wall_time_seconds", "output"],
         "additionalProperties": false
-    });
-    if matches!(artifact_schema, ExecOutputArtifactSchema::Omit)
-        && let Some(properties) = schema["properties"].as_object_mut()
-    {
-        properties.remove("artifacts");
-        properties.remove("presented_output_bytes");
-        properties.remove("preview_sha256");
-    }
-    schema
+    })
 }
 
 fn create_approval_parameters(

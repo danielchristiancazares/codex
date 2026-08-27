@@ -47,7 +47,6 @@ use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadUnarchiveParams;
 use codex_app_server_protocol::ThreadUnarchiveResponse;
 use codex_config::types::SessionPickerViewMode;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_utils_path as path_utils;
 use color_eyre::eyre::Result;
@@ -577,7 +576,7 @@ async fn run_session_picker_with_loader(
                     TuiEvent::Paste(pasted) => {
                         state.handle_paste(pasted);
                     }
-                    TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) => {
+                    TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                         let list_width = list_viewport_width(screen_size.width);
                         let list_height =
                             usize::from(screen_size.height.saturating_sub(PICKER_CHROME_HEIGHT));
@@ -588,6 +587,7 @@ async fn run_session_picker_with_loader(
                             state.open_pending_transcript_if_ready();
                         }
                     }
+                    TuiEvent::FocusLost => {}
                 }
             }
             Some(event) = background_events.next() => {
@@ -1995,8 +1995,8 @@ fn thread_list_params(
         },
         source_kinds: Some(crate::resume_source_kinds(include_non_interactive)),
         archived: Some(status == SessionStatus::Archived),
-        section_id: NullableField::Omitted,
-        project_id: NullableField::Omitted,
+        section_id: None,
+        project_id: None,
         parent_thread_id: None,
         ancestor_thread_id: None,
         cwd: cwd_filter.map(|cwd| ThreadListCwdFilter::One(cwd.to_string_lossy().into_owned())),

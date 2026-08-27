@@ -6,6 +6,7 @@ use codex_core::StartIfIdleSubmission;
 use codex_core::TurnInput;
 use codex_core::TurnInputRequest;
 use codex_core::TurnInputSubmission;
+use codex_core::TurnStartOptions;
 use codex_core::config::CurrentTimeReminderConfig;
 use codex_extension_items::ExtensionItem;
 use codex_extension_items::sleep::SleepItem;
@@ -28,6 +29,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
+use codex_protocol::turn_input::CyberAccessProgram;
 use codex_protocol::user_input::UserInput;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
@@ -112,6 +114,44 @@ async fn idle_response_items_include_pending_mailbox_in_first_request() -> anyho
                     })
             })
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn standalone_tool_output_starts_instruction_turn() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![ev_response_created("turn"), ev_completed("turn")]),
+    )
+    .await;
+    let test = test_codex().build_with_auto_env(&server).await?;
+
+    let expected_output = json!({
+        "type": "function_call_output",
+        "name": "send_message_to_thread",
+        "namespace": "codex_app",
+        "output": "delegated work",
+    });
+    let output = serde_json::from_value(expected_output.clone())?;
+
+    let submission = test
+        .codex
+        .start_or_steer_turn(TurnInputRequest::new(TurnInput::ResponseItem(output)))
+        .await?;
+    let TurnInputSubmission::Started { turn_id } = submission else {
+        panic!("standalone output should start a turn");
+    };
+    wait_for_turn_complete(test.codex.as_ref()).await;
+
+    let request = response.single_request();
+    responses::assert_root_turn(&request.body_json(), Some(&turn_id))?;
+    let output = &request.inputs_of_type("function_call_output")[0];
+    assert_eq!(output["name"], expected_output["name"]);
+    assert_eq!(output["namespace"], expected_output["namespace"]);
+    assert_eq!(output["output"], expected_output["output"]);
+    assert!(output.get("call_id").is_none());
 
     Ok(())
 }
@@ -343,6 +383,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
                 text.to_string(),
                 /*trigger_turn*/ false,
             ),
+            start_options: Default::default(),
         })
         .await
         .expect("submit queue-only agent mail");
@@ -457,26 +498,55 @@ impl codex_extension_api::ThreadLifecycleContributor<codex_core::config::Config>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn queue_only_agent_mail_wakes_sleeping_root_and_persists_message() {
+async fn queue_only_agent_mail_wakes_sleeping_root_with_previous_turn_context() {
     const CHILD_MESSAGE: &str = "worker completed";
 
-    let (server, _completions) =
-        start_streaming_sse_server(vec![response_completed_chunks("resp-1")]).await;
+    let server = responses::start_mock_server().await;
+    let requests = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse_completed("resp-initial"),
+            responses::sse_completed("resp-wake"),
+        ],
+    )
+    .await;
     let mut extensions =
         codex_extension_api::ExtensionRegistryBuilder::<codex_core::config::Config>::new();
     extensions.thread_lifecycle_contributor(Arc::new(SleepingRootExtension));
     let codex = test_codex()
         .with_model("gpt-5.4")
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_extensions(Arc::new(extensions.build()))
-        .build_with_streaming_server(&server)
+        .build_with_auto_env(&server)
         .await
         .expect("build Codex test session")
         .codex;
 
+    codex
+        .start_or_steer_turn(
+            TurnInputRequest::user_input(vec![UserInput::Text {
+                text: "wait for the worker".to_string(),
+                text_elements: Vec::new(),
+            }])
+            .on_start(TurnStartOptions {
+                cyber_access_program: Some(CyberAccessProgram::Standard),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("start initial turn");
+    wait_for_turn_complete(&codex).await;
     enqueue_queue_only_agent_mail(&codex, CHILD_MESSAGE).await;
     wait_for_turn_complete(&codex).await;
 
-    assert_eq!(server.requests().await.len(), 1);
+    assert_eq!(
+        requests
+            .requests()
+            .iter()
+            .map(|request| request.body_json()["access_programs"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!({"cyber": "standard"}); 2],
+    );
     let history = codex
         .load_history(/*include_archived*/ true)
         .await
@@ -1199,6 +1269,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                         PENDING_MESSAGE.to_string(),
                         /*trigger_turn*/ true,
                     ),
+                    start_options: Default::default(),
                 })
                 .await?;
             codex.submit(Op::RealtimeConversationListVoices).await?;
@@ -1480,9 +1551,9 @@ async fn steered_user_input_waits_when_tool_output_triggers_compact_before_next_
         "printf '%04000d' 0"
     };
     let large_output_args = json!({
-        "command": large_output_command,
+        "cmd": large_output_command,
         "login": false,
-        "timeout_ms": 2000,
+        "yield_time_ms": 2000,
     })
     .to_string();
 
@@ -1490,7 +1561,7 @@ async fn steered_user_input_waits_when_tool_output_triggers_compact_before_next_
         chunk(ev_response_created("resp-1")),
         chunk(ev_function_call(
             "call-1",
-            "shell_command",
+            "exec_command",
             &large_output_args,
         )),
         gated_chunk(

@@ -1,11 +1,12 @@
 pub(crate) mod config;
 mod events;
 pub(crate) mod metrics;
-#[path = "provider_noop.rs"]
 pub(crate) mod provider;
 pub(crate) mod trace_context;
 
+mod otlp;
 mod targets;
+mod tool_result;
 
 use crate::metrics::Result as MetricsResult;
 use codex_protocol::auth::AuthMode;
@@ -56,7 +57,9 @@ pub enum TelemetryAuthMode {
 impl From<AuthMode> for TelemetryAuthMode {
     fn from(mode: AuthMode) -> Self {
         match mode {
-            AuthMode::ApiKey | AuthMode::BedrockApiKey => Self::ApiKey,
+            AuthMode::ApiKey | AuthMode::BedrockApiKey | AuthMode::BedrockAccessKeys => {
+                Self::ApiKey
+            }
             AuthMode::Chatgpt
             | AuthMode::ChatgptAuthTokens
             | AuthMode::Headers
@@ -79,7 +82,3 @@ pub fn start_global_timer(name: &str, tags: &[(&str, &str)]) -> MetricsResult<Ti
 pub fn global_statsig_metrics_settings() -> Option<StatsigMetricsSettings> {
     crate::metrics::global_statsig_settings()
 }
-
-#[cfg(test)]
-#[path = "noop_tests.rs"]
-mod tests;

@@ -5,10 +5,15 @@ use crate::codex_thread::CodexThread;
 use crate::config::PermissionProfileSnapshot;
 use crate::context::ContextualUserFragment;
 use crate::context::CurrentTimeReminder;
+use crate::context::DeveloperInstructions;
+use crate::context::ManagedDeveloperInstructions;
 use crate::context::MultiAgentModeInstructions;
 use crate::context::MultiAgentRoleInstructions;
+use crate::context::world_state::PersistentModeState;
 use crate::session::multi_agents::resolve_usage_hints;
 use crate::tools::handlers::multi_agents_common::build_agent_resume_config;
+use codex_context_fragments::set_annotated_content;
+use codex_context_fragments::to_annotated_content;
 use codex_extension_api::ExtensionDataInit;
 use codex_protocol::intersect_effective_permission_profiles;
 use codex_protocol::protocol::EnvironmentConfigState;
@@ -63,13 +68,16 @@ fn keep_forked_rollout_item(item: &RolloutItem, preserve_reference_context_item:
                 "assistant" => *phase == Some(MessagePhase::FinalAnswer),
                 _ => false,
             },
+            ResponseItem::FunctionCallOutput { call_id: None, .. } => true,
             ResponseItem::AdditionalTools { .. }
             | ResponseItem::AgentMessage { .. }
             | ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }
             | ResponseItem::ToolSearchCall { .. }
-            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::FunctionCallOutput {
+                call_id: Some(_), ..
+            }
             | ResponseItem::CustomToolCall { .. }
             | ResponseItem::CustomToolCallOutput { .. }
             | ResponseItem::ToolSearchOutput { .. }
@@ -80,7 +88,8 @@ fn keep_forked_rollout_item(item: &RolloutItem, preserve_reference_context_item:
             | ResponseItem::ContextCompaction { .. }
             | ResponseItem::Other => false,
         },
-        RolloutItem::InterAgentCommunication(_)
+        RolloutItem::RealtimeItem(_)
+        | RolloutItem::InterAgentCommunication(_)
         | RolloutItem::InterAgentCommunicationMetadata { .. }
         | RolloutItem::SecurityRiskScore(_) => false,
         // Full-history forks preserve the cached prompt prefix and can keep diffing
@@ -92,15 +101,15 @@ fn keep_forked_rollout_item(item: &RolloutItem, preserve_reference_context_item:
 }
 
 fn retain_forked_developer_message(item: &mut ResponseItem, usage_hint_texts: &[String]) -> bool {
-    let ResponseItem::Message { role, content, .. } = item else {
-        return true;
-    };
-    if role != "developer" {
+    if !matches!(item, ResponseItem::Message { role, .. } if role == "developer") {
         return true;
     }
 
+    let Some(mut content) = to_annotated_content(item) else {
+        return false;
+    };
     content.retain(|content_item| {
-        let ContentItem::InputText { text } = content_item else {
+        let ContentItem::InputText { text } = content_item.content() else {
             return true;
         };
 
@@ -111,7 +120,7 @@ fn retain_forked_developer_message(item: &mut ResponseItem, usage_hint_texts: &[
                 .iter()
                 .any(|usage_hint_text| usage_hint_text == text))
     });
-    !content.is_empty()
+    !content.is_empty() && set_annotated_content(item, content).is_some()
 }
 
 async fn load_agent_model_context(
@@ -447,10 +456,10 @@ impl AgentControl {
                     let owner_environment = parent_environments
                         .turn_environments()
                         .find(|environment| {
-                            environment.selection.environment_id == *environment_id
-                                && environment.cwd() == &selection.cwd
-                                && environment.workspace_roots()
-                                    == selection.workspace_roots.as_slice()
+                            let parent_selection = &environment.selection;
+                            parent_selection.environment_id == selection.environment_id
+                                && parent_selection.cwd == selection.cwd
+                                && parent_selection.workspace_roots == selection.workspace_roots
                         })
                         .ok_or_else(|| {
                             invalid_environment("no longer matches a ready parent environment")
@@ -485,8 +494,8 @@ impl AgentControl {
                     let cwd = selection.cwd.to_abs_path().map_err(|_| {
                         invalid_environment("working directory is not a local absolute path")
                     })?;
-                    let roots = selection
-                        .workspace_roots
+                    let roots = owner_environment
+                        .workspace_roots()
                         .iter()
                         .map(PathUri::to_abs_path)
                         .collect::<Result<Vec<_>, _>>()
@@ -734,15 +743,16 @@ impl AgentControl {
         )
         .await;
 
+        let start_options = TurnStartOptions {
+            parent_turn_id: options.parent_turn_id,
+            root_turn_id: options.root_turn_id,
+            cyber_access_program: options.cyber_access_program,
+            ..Default::default()
+        };
         match initial_input {
             SpawnInitialInput::UserInput(input) => {
-                self.send_input(
-                    new_thread.thread_id,
-                    input,
-                    options.parent_turn_id,
-                    options.root_turn_id,
-                )
-                .await?;
+                self.send_input(new_thread.thread_id, input, start_options)
+                    .await?;
             }
             SpawnInitialInput::InterAgentCommunication(communication, context) => {
                 self.send_inter_agent_communication_after_capacity_check(
@@ -750,8 +760,7 @@ impl AgentControl {
                     &state,
                     communication,
                     context,
-                    options.parent_turn_id,
-                    options.root_turn_id,
+                    start_options,
                 )
                 .await?;
             }
@@ -912,14 +921,30 @@ impl AgentControl {
                 return false;
             }
 
-            if let Some(parent_developer_instructions) = parent_developer_instructions.as_ref()
-                && let Some(subagent_developer_instructions) =
-                    subagent_developer_instructions.as_ref()
-                && let ResponseItem::Message { role, content, .. } = response_item
-                && role == "developer"
-            {
+            if matches!(response_item, ResponseItem::Message { role, .. } if role == "developer") {
+                let Some(mut content) = to_annotated_content(response_item) else {
+                    return false;
+                };
                 content.retain_mut(|content_item| {
-                    let ContentItem::InputText { text } = content_item else {
+                    let ContentItem::InputText { text } = content_item.content_mut() else {
+                        return true;
+                    };
+                    if ManagedDeveloperInstructions::matches_text(text)
+                        || PersistentModeState::matches_text(text)
+                    {
+                        // If the child will rebuild its initial context, drop the inherited
+                        // instructions; startup will add the current requirements and effort
+                        // instructions once.
+                        return preserve_reference_context_item;
+                    }
+                    let (
+                        Some(parent_developer_instructions),
+                        Some(subagent_developer_instructions),
+                    ) = (
+                        parent_developer_instructions.as_ref(),
+                        subagent_developer_instructions.as_ref(),
+                    )
+                    else {
                         return true;
                     };
                     // TODO(anp) track better message fragment provenance in rollouts.
@@ -936,7 +961,8 @@ impl AgentControl {
                     *text = text.replace(parent_developer_instructions, replacement);
                     !text.is_empty()
                 });
-                return !content.is_empty();
+                return !content.is_empty()
+                    && set_annotated_content(response_item, content).is_some();
             }
 
             true
@@ -980,6 +1006,7 @@ impl AgentControl {
                     }
                     true
                 }
+                RolloutItem::RealtimeItem(_) => false,
                 RolloutItem::EventMsg(_)
                 | RolloutItem::SessionMeta(_)
                 | RolloutItem::TurnContext(_)
@@ -1000,11 +1027,10 @@ impl AgentControl {
                 .reference_context_item()
                 .await
                 .is_some()
-            && let Some(developer_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    subagent_developer_instructions.clone(),
-                ])
         {
+            let developer_message = ContextualUserFragment::into(DeveloperInstructions::new(
+                subagent_developer_instructions,
+            ));
             forked_rollout_items.push(RolloutItem::ResponseItem(developer_message.into()));
         }
         if preserve_reference_context_item

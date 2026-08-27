@@ -54,7 +54,7 @@ impl ChatWidget {
                         /*active_permission_profile*/ None,
                         /*windows_sandbox_level*/ None,
                         /*model*/ None,
-                        /*effort*/ NullableField::Omitted,
+                        /*effort*/ None,
                         /*summary*/ None,
                         /*service_tier*/ ServiceTier::Default,
                         /*collaboration_mode*/ None,

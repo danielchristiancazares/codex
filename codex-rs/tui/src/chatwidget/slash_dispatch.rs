@@ -164,6 +164,18 @@ impl ChatWidget {
         }
 
         match cmd {
+            SlashCommand::Feedback => {
+                if !self.config.feedback_enabled {
+                    let params = crate::bottom_pane::feedback_disabled_params();
+                    self.bottom_pane.show_selection_view(params);
+                    self.request_redraw();
+                    return;
+                }
+                let params =
+                    crate::bottom_pane::feedback_selection_params(self.app_event_tx.clone());
+                self.bottom_pane.show_selection_view(params);
+                self.request_redraw();
+            }
             SlashCommand::New => {
                 self.app_event_tx.send(AppEvent::NewSession { name: None });
             }
@@ -259,6 +271,16 @@ impl ChatWidget {
                 }
                 self.input_queue.user_turn_pending_start = true;
                 self.app_event_tx.compact();
+            }
+            SlashCommand::Recap => {
+                let Some(thread_id) = self.thread_id else {
+                    self.add_error_message(
+                        "Session is still starting; try /recap again in a moment.".to_string(),
+                    );
+                    return;
+                };
+                self.app_event_tx
+                    .send(AppEvent::GenerateRecap { thread_id });
             }
             SlashCommand::Review => {
                 self.open_review_popup();
@@ -393,7 +415,7 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::Logout);
             }
             SlashCommand::Copy => {
-                self.copy_last_agent_markdown();
+                self.show_copy_picker();
             }
             SlashCommand::Export => {
                 self.show_transcript_export_popup();
@@ -1130,12 +1152,14 @@ impl ChatWidget {
             | SlashCommand::Diff
             | SlashCommand::App
             | SlashCommand::Rename
+            | SlashCommand::Recap
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Cd => match self.thread_id {
                 Some(thread_id) if self.can_change_working_directory(thread_id) => QueueDrain::Stop,
                 _ => QueueDrain::Continue,
             },
-            SlashCommand::Export
+            SlashCommand::Feedback
+            | SlashCommand::Export
             | SlashCommand::New
             | SlashCommand::Archive
             | SlashCommand::Delete

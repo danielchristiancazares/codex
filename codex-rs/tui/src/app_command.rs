@@ -9,7 +9,6 @@ use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_config::types::ApprovalsReviewer;
-use codex_protocol::NullableField;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
@@ -53,7 +52,7 @@ pub(crate) enum AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         windows_sandbox_level: Option<WindowsSandboxLevel>,
         model: Option<String>,
-        effort: NullableField<ReasoningEffortConfig>,
+        effort: Option<Option<ReasoningEffortConfig>>,
         summary: Option<ReasoningSummaryConfig>,
         service_tier: ServiceTier,
         collaboration_mode: Option<CollaborationMode>,
@@ -152,7 +151,7 @@ impl AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         windows_sandbox_level: Option<WindowsSandboxLevel>,
         model: Option<String>,
-        effort: NullableField<ReasoningEffortConfig>,
+        effort: Option<Option<ReasoningEffortConfig>>,
         summary: Option<ReasoningSummaryConfig>,
         service_tier: ServiceTier,
         collaboration_mode: Option<CollaborationMode>,

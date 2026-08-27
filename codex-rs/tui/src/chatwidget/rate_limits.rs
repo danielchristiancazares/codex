@@ -380,7 +380,7 @@ impl ChatWidget {
                 /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 Some(switch_model_for_events.clone()),
-                NullableField::Value(default_effort.clone()),
+                Some(Some(default_effort.clone())),
                 /*summary*/ None,
                 /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,

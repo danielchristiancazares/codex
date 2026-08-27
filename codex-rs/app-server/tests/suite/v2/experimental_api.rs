@@ -11,19 +11,18 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::MockExperimentalMethodParams;
-use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadMemoryMode;
 use codex_app_server_protocol::ThreadMemoryModeSetParams;
 use codex_app_server_protocol::ThreadRealtimeStartParams;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
-use codex_app_server_protocol::ThreadSettingsUpdateParams;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_protocol::protocol::RealtimeOutputModality;
 use pretty_assertions::assert_eq;
 use std::time::Duration;
 use tempfile::TempDir;
+use test_case::test_case;
 use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -106,7 +105,7 @@ async fn realtime_conversation_start_requires_experimental_api_capability() -> R
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("hello".to_string()),
+            prompt: Some(Some("hello".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -162,8 +161,10 @@ async fn thread_memory_mode_set_requires_experimental_api_capability() -> Result
     Ok(())
 }
 
+#[test_case("thread/settings/update"; "future settings")]
+#[test_case("turn/settings/update"; "turn settings")]
 #[tokio::test]
-async fn thread_settings_update_requires_experimental_api_capability() -> Result<()> {
+async fn settings_update_requires_experimental_api_capability(method: &str) -> Result<()> {
     let codex_home = TempDir::new()?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -187,18 +188,17 @@ async fn thread_settings_update_requires_experimental_api_capability() -> Result
         anyhow::bail!("expected initialize response, got {init:?}");
     };
 
-    let request_id = mcp
-        .send_thread_settings_update_request(ThreadSettingsUpdateParams {
-            thread_id: "thr_123".to_string(),
-            ..Default::default()
-        })
-        .await?;
+    let mut params = serde_json::json!({"threadId": "thr_123"});
+    if method == "turn/settings/update" {
+        params["turnId"] = serde_json::json!("turn_123");
+    }
+    let request_id = mcp.send_request(method, Some(params)).await?;
     let error = timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
     )
     .await??;
-    assert_experimental_capability_error(error, "thread/settings/update");
+    assert_experimental_capability_error(error, method);
     Ok(())
 }
 
@@ -243,7 +243,7 @@ async fn realtime_webrtc_start_requires_experimental_api_capability() -> Result<
             initial_items: None,
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("hello".to_string()),
+            prompt: Some(Some("hello".to_string())),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),

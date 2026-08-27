@@ -329,14 +329,16 @@ impl ChatWidget {
             )
         } else if let Some(plan_mask) = collaboration_modes::plan_mask(self.model_catalog.as_ref())
         {
-            match plan_mask.reasoning_effort.as_ref() {
-                NullableField::Value(plan_effort) => format!(
+            match plan_mask
+                .reasoning_effort
+                .as_ref()
+                .and_then(|effort| effort.as_ref())
+            {
+                Some(plan_effort) => format!(
                     "built-in Plan default ({})",
                     Self::reasoning_effort_sentence_label(plan_effort)
                 ),
-                NullableField::Omitted | NullableField::Null => {
-                    "built-in Plan default (no reasoning)".to_string()
-                }
+                None => "built-in Plan default (no reasoning)".to_string(),
             }
         } else {
             "built-in Plan default".to_string()
@@ -675,6 +677,7 @@ impl ChatWidget {
             ReasoningEffortConfig::XHigh => "Extra high".to_string(),
             ReasoningEffortConfig::Max => "Max".to_string(),
             ReasoningEffortConfig::Ultra => "Ultra".to_string(),
+            ReasoningEffortConfig::Persistent => "Persistent".to_string(),
             ReasoningEffortConfig::Custom(value) => value.clone(),
         }
     }

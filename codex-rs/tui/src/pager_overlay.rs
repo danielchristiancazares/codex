@@ -927,7 +927,7 @@ impl TranscriptOverlay {
                 }
                 other => self.view.handle_key_event(tui, other),
             },
-            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) => {
+            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                 tui.draw(u16::MAX, |frame| {
                     self.render(frame.area(), frame.buffer);
                 })?;
@@ -1001,7 +1001,7 @@ impl StaticOverlay {
                 }
                 other => self.view.handle_key_event(tui, other),
             },
-            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) => {
+            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                 tui.draw(u16::MAX, |frame| {
                     self.render(frame.area(), frame.buffer);
                 })?;

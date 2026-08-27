@@ -1,3 +1,4 @@
+use codex_config::test_support::CloudConfigBundleFixture;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::ModelClient;
 use codex_core::NewThread;
@@ -18,6 +19,7 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_login::default_client::originator;
+use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::built_in_model_providers;
@@ -72,6 +74,7 @@ use core_test_support::responses::mount_sse_once_match;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_failed;
+use core_test_support::responses::start_mock_server;
 use core_test_support::responses::strip_metadata_from_json;
 use core_test_support::responses::strip_response_item_ids_from_json;
 use core_test_support::responses_metadata as test_responses_metadata;
@@ -382,8 +385,9 @@ async fn sends_audio_urls_to_responses() {
         .unwrap();
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
-    let user_message = response_mock
-        .single_request()
+    let request = response_mock.single_request();
+    assert!(request.has_content_kinds(&["user.audio"]));
+    let user_message = request
         .input()
         .into_iter()
         .rev()
@@ -426,8 +430,9 @@ async fn sends_local_audio_to_responses() -> anyhow::Result<()> {
         .await?;
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
-    let user_message = response_mock
-        .single_request()
+    let request = response_mock.single_request();
+    assert!(request.has_content_kinds(&["user.text", "user.audio", "user.text"]));
+    let user_message = request
         .input()
         .into_iter()
         .rev()
@@ -734,13 +739,6 @@ impl ProviderAuthCommandFixture {
             token_file_contents.push('\n');
         }
         std::fs::write(&tokens_file, token_file_contents)?;
-        #[cfg(windows)]
-        for (index, token) in tokens.iter().enumerate() {
-            std::fs::write(
-                tempdir.path().join(format!("token-{index:08}.txt")),
-                token.as_bytes(),
-            )?;
-        }
 
         #[cfg(unix)]
         let (command, args) = {
@@ -775,12 +773,13 @@ mv tokens.next tokens.txt
 setlocal EnableExtensions DisableDelayedExpansion
 if exist fail-until-401 exit /b 1
 
-for /f "delims=" %%F in ('dir /b /a-d /on "token-*.txt" 2^>nul') do (
-    type "%%F"
-    del "%%F"
-    exit /b 0
-)
-exit /b 1
+set "first_line="
+<tokens.txt set /p first_line=
+if not defined first_line exit /b 1
+
+echo(%first_line%
+more +1 tokens.txt > tokens.next
+move /y tokens.next tokens.txt >nul
 "#,
             )?;
             (
@@ -1218,7 +1217,9 @@ async fn resume_replays_image_tool_outputs_with_detail() {
             ordinal: None,
             item: rollout_response_item(ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: function_call_id.to_string(),
+                call_id: Some(function_call_id.to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_content_items(vec![
                     FunctionCallOutputContentItem::InputImage {
                         image_url: image_url.to_string(),
@@ -1438,27 +1439,66 @@ async fn provider_auth_command_recovers_after_initial_resolution_failure() {
         .and(|request: &wiremock::Request| !request.headers.contains_key("authorization"))
         .respond_with(move |_request: &wiremock::Request| {
             std::fs::remove_file(&failure_marker).unwrap();
-            ResponseTemplate::new(/*s*/ 401).set_body_string("unauthorized")
+            ResponseTemplate::new(401).set_body_string("unauthorized")
         })
-        .expect(/*r*/ 1)
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .and(header("authorization", "Bearer recovered-token"))
         .respond_with(
-            ResponseTemplate::new(/*s*/ 200)
+            ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
                 .set_body_raw(
                     sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
                     "text/event-stream",
                 ),
         )
-        .expect(/*r*/ 1)
+        .expect(1)
         .mount(&server)
         .await;
 
     send_provider_auth_request(&server, auth_fixture.auth()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn amazon_bedrock_proxy_uses_command_auth_and_custom_headers() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    let response = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let auth_fixture = ProviderAuthCommandFixture::new(&["command-token"]).unwrap();
+    let mut provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove(AMAZON_BEDROCK_PROVIDER_ID)
+        .expect("Amazon Bedrock provider should be built in");
+    provider.base_url = Some(format!("{}/v1", server.uri()));
+    provider.auth = Some(auth_fixture.auth());
+    provider.aws = None;
+    provider
+        .http_headers
+        .get_or_insert_default()
+        .insert("x-some-header".to_string(), "foo".into());
+
+    send_request_with_provider(provider).await;
+
+    let request = response.single_request();
+    assert_eq!(request.path(), "/v1/responses");
+    assert_eq!(
+        request.header("authorization"),
+        Some("Bearer command-token".to_string())
+    );
+    assert_eq!(request.header("x-amz-date"), None);
+    assert_eq!(request.header("x-some-header"), Some("foo".to_string()));
+    assert_eq!(
+        request.header("x-amzn-mantle-client-agent"),
+        Some("codex".to_string())
+    );
+    assert_eq!(request.body_json()["store"], false);
 }
 
 /// Issues one streamed Responses request through a provider configured with command-backed auth.
@@ -1526,6 +1566,7 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
         SessionSource::Exec,
         "test_originator".to_string(),
         config.model_verbosity,
+        config.features.enabled(Feature::ContentItemKinds),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -2901,6 +2942,48 @@ async fn includes_developer_instructions_message_in_request() {
     );
 }
 
+#[tokio::test]
+async fn includes_managed_developer_instructions_once_per_request() -> anyhow::Result<()> {
+    const CLIENT_INSTRUCTIONS: &str = "client developer instructions";
+    const MANAGED_INSTRUCTIONS: &str = "managed requirements instructions";
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex()
+        .with_cloud_config_bundle(
+            CloudConfigBundleFixture::loader_with_enterprise_requirement(format!(
+                "additional_developer_instructions = {MANAGED_INSTRUCTIONS:?}"
+            )),
+        )
+        .with_config(|config| {
+            config.developer_instructions = Some(CLIENT_INSTRUCTIONS.to_string());
+        });
+    let test = builder.build_with_auto_env(&server).await?;
+    let managed_message = format!(
+        "<managed_developer_instructions>\n{MANAGED_INSTRUCTIONS}\n</managed_developer_instructions>"
+    );
+
+    for (response_id, prompt) in [("resp-1", "first turn"), ("resp-2", "second turn")] {
+        let response = mount_sse_once(&server, sse(vec![ev_completed(response_id)])).await;
+        test.submit_text_turn(prompt).await?;
+
+        let developer_messages = response.single_request().message_input_texts("developer");
+        assert!(
+            developer_messages
+                .iter()
+                .any(|message| message.contains(CLIENT_INSTRUCTIONS))
+        );
+        assert_eq!(
+            developer_messages
+                .iter()
+                .filter(|message| message.contains("<managed_developer_instructions>"))
+                .collect::<Vec<_>>(),
+            vec![&managed_message]
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids() {
     skip_if_no_network!();
@@ -2969,6 +3052,7 @@ async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids(
         SessionSource::Exec,
         "test_originator".to_string(),
         config.model_verbosity,
+        config.features.enabled(Feature::ContentItemKinds),
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
@@ -3020,7 +3104,9 @@ async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids(
     });
     prompt.input.push(ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "function-call-id".into(),
+        call_id: Some("function-call-id".into()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_text("ok".into()),
         internal_chat_message_metadata_passthrough: None,
     });

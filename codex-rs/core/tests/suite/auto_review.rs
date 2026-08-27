@@ -65,7 +65,7 @@ use wiremock::matchers::path;
 struct ApprovedReviewContributor;
 
 impl ApprovalReviewContributor for ApprovedReviewContributor {
-    fn contribute<'a>(
+    fn fast_decision<'a>(
         &'a self,
         _session_store: &'a ExtensionData,
         _thread_store: &'a ExtensionData,
@@ -83,7 +83,7 @@ impl ApprovalReviewContributor for ApprovedReviewContributor {
 struct EscalationApprovingReviewContributor;
 
 impl ApprovalReviewContributor for EscalationApprovingReviewContributor {
-    fn contribute<'a>(
+    fn fast_decision<'a>(
         &'a self,
         _session_store: &'a ExtensionData,
         _thread_store: &'a ExtensionData,
@@ -95,12 +95,6 @@ impl ApprovalReviewContributor for EscalationApprovingReviewContributor {
             Some(ReviewDecision::Approved)
         })
     }
-}
-
-#[derive(Clone, Copy)]
-enum EscalatedCommandTool {
-    ShellCommand,
-    ExecCommand,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -183,46 +177,29 @@ async fn approval_review_contributor_skips_existing_guardian_model_call() -> Res
     Ok(())
 }
 
-#[test_case(EscalatedCommandTool::ShellCommand; "shell_command")]
-#[test_case(EscalatedCommandTool::ExecCommand; "exec_command")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn require_escalated_bypasses_extension_approval_and_runs_guardian(
-    tool: EscalatedCommandTool,
-) -> Result<()> {
+async fn require_escalated_bypasses_extension_approval_and_runs_guardian() -> Result<()> {
     skip_if_no_network!(Ok(()));
-    skip_if_wine_exec!(
-        Ok(()),
-        "escalated command review requires host-native paths"
-    );
+    skip_if_wine_exec!(Ok(()), "exec_command requires host-native paths");
 
     let server = MockServer::start().await;
+    let call_id = "require-escalated-command";
     let justification = "run outside the sandbox after a blocked attempt";
-    let (call_id, tool_name, arguments) = match tool {
-        EscalatedCommandTool::ShellCommand => (
-            "require-escalated-shell-command",
-            "shell_command",
-            json!({
-                "command": "pwd",
-                "sandbox_permissions": "require_escalated",
-                "justification": justification,
-            }),
-        ),
-        EscalatedCommandTool::ExecCommand => (
-            "require-escalated-exec-command",
-            "exec_command",
-            json!({
-                "cmd": "pwd",
-                "sandbox_permissions": "require_escalated",
-                "justification": justification,
-            }),
-        ),
-    };
     let responses = mount_sse_sequence(
         &server,
         vec![
             sse(vec![
                 ev_response_created("resp-parent-1"),
-                ev_function_call(call_id, tool_name, &arguments.to_string()),
+                ev_function_call(
+                    call_id,
+                    "exec_command",
+                    &json!({
+                        "cmd": "pwd",
+                        "sandbox_permissions": "require_escalated",
+                        "justification": justification,
+                    })
+                    .to_string(),
+                ),
                 ev_completed("resp-parent-1"),
             ]),
             sse(vec![
@@ -251,9 +228,6 @@ async fn require_escalated_bypasses_extension_approval_and_runs_guardian(
     let mut extensions = ExtensionRegistryBuilder::new();
     extensions.approval_review_contributor(Arc::new(EscalationApprovingReviewContributor));
     let mut builder = test_codex()
-        .with_model_info_override("gpt-5.4", |model| {
-            model.shell_type = ConfigShellToolType::ShellCommand;
-        })
         .with_extensions(Arc::new(extensions.build()))
         .with_config(|config| {
             config.approvals_reviewer = ApprovalsReviewer::AutoReview;
@@ -293,7 +267,7 @@ async fn require_escalated_bypasses_extension_approval_and_runs_guardian(
     assert!(
         responses
             .function_call_output_text(call_id)
-            .context("expected escalated command output")?
+            .context("expected exec_command output")?
             .contains("not authorized")
     );
 
@@ -625,6 +599,7 @@ async fn remote_model_override_uses_catalog_model_for_strict_auto_review() -> Re
         guardian_request.body_json()["model"].as_str(),
         Some(review_model)
     );
+    assert_eq!(guardian_request.path(), "/v1/responses");
 
     timeout(Duration::from_secs(10), codex.shutdown_and_wait()).await??;
 
@@ -641,7 +616,7 @@ fn remote_model_with_auto_review_override(slug: &str, review_model: &str) -> Mod
             effort: ReasoningEffort::Medium,
             description: ReasoningEffort::Medium.to_string(),
         }],
-        shell_type: ConfigShellToolType::ShellCommand,
+        shell_type: ConfigShellToolType::UnifiedExec,
         visibility: ModelVisibility::List,
         supported_in_api: true,
         input_modalities: default_input_modalities(),

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use chrono::SecondsFormat;
-use codex_protocol::NullableField;
 use codex_protocol::RolloutId;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
@@ -104,6 +103,7 @@ pub enum RolloutRecorderParams {
         /// thread ID stable while creating a new immutable rollout file.
         rollout_id_override: Option<RolloutId>,
         forked_from_id: Option<ThreadId>,
+        forked_from_ordinal_exclusive: Option<u64>,
         parent_thread_id: Option<ThreadId>,
         source: Box<SessionSource>,
         thread_source: Option<ThreadSource>,
@@ -200,6 +200,7 @@ impl RolloutRecorderParams {
             conversation_id,
             rollout_id_override: None,
             forked_from_id,
+            forked_from_ordinal_exclusive: None,
             parent_thread_id,
             source: Box::new(source),
             thread_source,
@@ -280,6 +281,18 @@ impl RolloutRecorderParams {
         } = &mut self
         {
             *base = history_base;
+        }
+        self
+    }
+
+    /// Set the logical fork boundary independently of the physical history base.
+    pub fn with_forked_from_ordinal_exclusive(mut self, cutoff: Option<u64>) -> Self {
+        if let Self::Create {
+            forked_from_ordinal_exclusive,
+            ..
+        } = &mut self
+        {
+            *forked_from_ordinal_exclusive = cutoff;
         }
         self
     }
@@ -496,8 +509,8 @@ impl RolloutRecorder {
                 cwd_filters,
                 /*relation_filter*/ None,
                 archived,
-                /*section*/ NullableField::Omitted,
-                /*project_id*/ NullableField::Omitted,
+                /*section*/ None,
+                /*project_id*/ None,
                 search_term,
             )
             .await
@@ -607,8 +620,8 @@ impl RolloutRecorder {
             cwd_filters,
             /*relation_filter*/ None,
             archived,
-            /*section*/ NullableField::Omitted,
-            /*project_id*/ NullableField::Omitted,
+            /*section*/ None,
+            /*project_id*/ None,
             search_term,
         )
         .await;
@@ -638,8 +651,8 @@ impl RolloutRecorder {
                     cwd_filters,
                     /*relation_filter*/ None,
                     archived,
-                    /*section*/ NullableField::Omitted,
-                    /*project_id*/ NullableField::Omitted,
+                    /*section*/ None,
+                    /*project_id*/ None,
                     search_term,
                 )
                 .await
@@ -680,8 +693,8 @@ impl RolloutRecorder {
                         cwd_filters,
                         /*relation_filter*/ None,
                         archived,
-                        /*section*/ NullableField::Omitted,
-                        /*project_id*/ NullableField::Omitted,
+                        /*section*/ None,
+                        /*project_id*/ None,
                         search_term,
                     )
                     .await
@@ -761,8 +774,8 @@ impl RolloutRecorder {
                     cwd_filter.as_ref().map(std::slice::from_ref),
                     /*relation_filter*/ None,
                     /*archived*/ false,
-                    /*section*/ NullableField::Omitted,
-                    /*project_id*/ NullableField::Omitted,
+                    /*section*/ None,
+                    /*project_id*/ None,
                     /*search_term*/ None,
                 )
                 .await
@@ -831,6 +844,7 @@ impl RolloutRecorder {
                 conversation_id,
                 rollout_id_override,
                 forked_from_id,
+                forked_from_ordinal_exclusive,
                 parent_thread_id,
                 source,
                 thread_source,
@@ -861,6 +875,8 @@ impl RolloutRecorder {
                     session_id,
                     id: conversation_id,
                     forked_from_id,
+                    forked_from_ordinal_exclusive: forked_from_ordinal_exclusive
+                        .filter(|_| forked_from_id.is_some()),
                     parent_thread_id,
                     timestamp,
                     cwd: cwd.clone(),
@@ -2075,6 +2091,7 @@ async fn resume_candidate_matches_cwd(
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::Compacted(_)
             | RolloutItem::WorldState(_)
+            | RolloutItem::RealtimeItem(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::EventMsg(_) => None,
         })

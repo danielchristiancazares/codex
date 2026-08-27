@@ -532,6 +532,7 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         has_chatgpt_account: false,
         has_codex_backend_auth: false,
         model_catalog: test_model_catalog(&cfg),
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: true,
         status_account_display: None,
         runtime_model_provider_base_url: None,
@@ -2673,6 +2674,7 @@ async fn status_widget_and_approval_modal_snapshot() {
 
     // Now show an approval modal (e.g. exec approval).
     let ev = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-approve-exec".into(),
         approval_id: Some("call-approve-exec".into()),
         turn_id: "turn-approve-exec".into(),
@@ -2853,6 +2855,21 @@ async fn status_line_invalid_items_warn_once() {
     assert!(
         cells.is_empty(),
         "expected invalid status line warning to emit only once"
+    );
+}
+
+#[tokio::test]
+async fn status_line_hostname_renders_current_machine_hostname() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.config.tui_status_line = Some(vec!["hostname".to_string()]);
+
+    chat.refresh_status_line();
+
+    assert_eq!(status_line_text(&chat), codex_config::os_host_name());
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "hostname should be accepted as a status line item"
     );
 }
 
@@ -3968,8 +3985,8 @@ async fn status_line_and_terminal_title_reasoning_render_only_effort() {
     chat.refresh_status_line();
     chat.refresh_terminal_title();
 
-    assert_eq!(status_line_text(&chat), Some("XHigh".to_string()));
-    assert_eq!(chat.last_terminal_title, Some("XHigh".to_string()));
+    assert_eq!(status_line_text(&chat), Some("xhigh".to_string()));
+    assert_eq!(chat.last_terminal_title, Some("xhigh".to_string()));
 }
 
 #[tokio::test]

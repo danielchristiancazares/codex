@@ -34,13 +34,13 @@ use codex_core::config::ConfigBuilder;
 use codex_core::find_archived_thread_path_by_id_str;
 use codex_core::find_thread_path_by_id_str;
 use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_state::PINNED_THREAD_SECTION_ID;
 use codex_state::PINNED_THREAD_SECTION_NAME;
-use codex_thread_store::ClearableField;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::ThreadMetadataPatch;
@@ -273,7 +273,7 @@ async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: ClearableField::Value("named pathless thread".to_string()),
+                name: Some(Some("named pathless thread".to_string())),
                 ..Default::default()
             },
             include_archived: true,
@@ -295,6 +295,7 @@ async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),

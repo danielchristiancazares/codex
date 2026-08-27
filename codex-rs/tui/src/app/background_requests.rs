@@ -584,6 +584,116 @@ impl App {
         });
     }
 
+    pub(super) fn submit_feedback(
+        &mut self,
+        app_server: &AppServerSession,
+        category: FeedbackCategory,
+        reason: Option<String>,
+        turn_id: Option<String>,
+        include_logs: bool,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        let origin_thread_id = self.chat_widget.thread_id();
+        let rollout_path = if include_logs {
+            self.chat_widget.rollout_path()
+        } else {
+            None
+        };
+        let params = build_feedback_upload_params(
+            origin_thread_id,
+            rollout_path,
+            category,
+            reason,
+            turn_id,
+            include_logs,
+        );
+        tokio::spawn(async move {
+            let result = fetch_feedback_upload(request_handle, params)
+                .await
+                .map(|response| response.thread_id)
+                .map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::FeedbackSubmitted {
+                origin_thread_id,
+                category,
+                include_logs,
+                result,
+            });
+        });
+    }
+
+    pub(super) fn handle_feedback_thread_event(&mut self, event: FeedbackThreadEvent) {
+        match event.result {
+            Ok(thread_id) => {
+                self.chat_widget
+                    .add_to_history(crate::bottom_pane::feedback_success_cell(
+                        event.category,
+                        event.include_logs,
+                        &thread_id,
+                        event.feedback_audience,
+                    ))
+            }
+            Err(err) => self
+                .chat_widget
+                .add_to_history(history_cell::new_error_event(format!(
+                    "Failed to upload feedback: {err}"
+                ))),
+        }
+    }
+
+    pub(super) async fn enqueue_thread_feedback_event(
+        &mut self,
+        thread_id: ThreadId,
+        event: FeedbackThreadEvent,
+    ) {
+        let (sender, store) = {
+            let channel = self.ensure_thread_channel(thread_id);
+            (channel.sender.clone(), Arc::clone(&channel.store))
+        };
+
+        let should_send = {
+            let mut guard = store.lock().await;
+            guard.push_buffered_event(ThreadBufferedEvent::FeedbackSubmission(event.clone()));
+            guard.active
+        };
+
+        if should_send {
+            match sender.try_send(ThreadBufferedEvent::FeedbackSubmission(event)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    tokio::spawn(async move {
+                        if let Err(err) = sender.send(event).await {
+                            tracing::warn!("thread {thread_id} event channel closed: {err}");
+                        }
+                    });
+                }
+                Err(TrySendError::Closed(_)) => {
+                    tracing::warn!("thread {thread_id} event channel closed");
+                }
+            }
+        }
+    }
+
+    pub(super) async fn handle_feedback_submitted(
+        &mut self,
+        origin_thread_id: Option<ThreadId>,
+        category: FeedbackCategory,
+        include_logs: bool,
+        result: Result<String, String>,
+    ) {
+        let event = FeedbackThreadEvent {
+            category,
+            include_logs,
+            feedback_audience: self.feedback_audience,
+            result,
+        };
+        if let Some(thread_id) = origin_thread_id {
+            self.enqueue_thread_feedback_event(thread_id, event).await;
+        } else {
+            self.handle_feedback_thread_event(event);
+        }
+    }
+
     /// Process the completed MCP inventory fetch: clear the loading spinner, then
     /// render either the full tool/resource listing or an error into chat history.
     ///
@@ -1141,6 +1251,41 @@ pub(super) async fn write_hook_enabled(
         .wrap_err("config/batchWrite failed while updating hook enablement in TUI")
 }
 
+pub(super) fn build_feedback_upload_params(
+    origin_thread_id: Option<ThreadId>,
+    rollout_path: Option<PathBuf>,
+    category: FeedbackCategory,
+    reason: Option<String>,
+    turn_id: Option<String>,
+    include_logs: bool,
+) -> FeedbackUploadParams {
+    let extra_log_files = if include_logs {
+        rollout_path.map(|rollout_path| vec![rollout_path])
+    } else {
+        None
+    };
+    let tags = turn_id.map(|turn_id| BTreeMap::from([(String::from("turn_id"), turn_id)]));
+    FeedbackUploadParams {
+        classification: crate::bottom_pane::feedback_classification(category).to_string(),
+        reason,
+        thread_id: origin_thread_id.map(|thread_id| thread_id.to_string()),
+        include_logs,
+        extra_log_files,
+        tags,
+    }
+}
+
+pub(super) async fn fetch_feedback_upload(
+    request_handle: AppServerRequestHandle,
+    params: FeedbackUploadParams,
+) -> Result<FeedbackUploadResponse> {
+    let request_id = RequestId::String(format!("feedback-upload-{}", Uuid::new_v4()));
+    request_handle
+        .request_typed(ClientRequest::FeedbackUpload { request_id, params })
+        .await
+        .wrap_err("feedback/upload failed in TUI")
+}
+
 /// Convert flat `McpServerStatus` responses into the per-server maps used by the
 /// in-process MCP subsystem (tools keyed as `mcp__{server}__{tool}`, plus
 /// per-server resource/template/auth maps). Test-only because the TUI
@@ -1412,6 +1557,7 @@ mod tests {
         let statuses = vec![
             McpServerStatus {
                 name: "docs".to_string(),
+                runtime_status: None,
                 plugin_id: None,
                 server_info: None,
                 tools: HashMap::from([(
@@ -1433,6 +1579,7 @@ mod tests {
             },
             McpServerStatus {
                 name: "disabled".to_string(),
+                runtime_status: None,
                 plugin_id: None,
                 server_info: None,
                 tools: HashMap::new(),

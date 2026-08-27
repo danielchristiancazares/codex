@@ -1,6 +1,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use chrono::Utc;
+use codex_config::config_toml::RealtimeWsMode;
 use codex_config::config_toml::RealtimeWsVersion;
 use codex_core::TurnInputRequest;
 use codex_core::test_support::auth_manager_from_auth;
@@ -8,7 +9,6 @@ use codex_history::InitialHistory;
 use codex_history::RolloutItem;
 use codex_login::CodexAuth;
 use codex_login::OPENAI_API_KEY_ENV_VAR;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::models::ContentItem;
@@ -55,6 +55,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use test_case::test_case;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
@@ -310,7 +311,7 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -463,7 +464,7 @@ async fn conversation_start_defaults_to_v2_and_gpt_realtime_1_5() -> Result<()> 
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -509,7 +510,91 @@ async fn conversation_start_defaults_to_v2_and_gpt_realtime_1_5() -> Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn conversation_webrtc_frameless_chatgpt_sends_codex_headers_to_backend() -> Result<()> {
+async fn conversation_existing_call_attaches_without_creating_another_call() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let realtime_server = start_websocket_server(vec![vec![vec![]]]).await;
+    let realtime_ws_base_url = realtime_server.uri().to_string();
+    let mut builder = test_codex().with_config(move |config| {
+        config.experimental_realtime_ws_backend_prompt = Some("backend prompt".to_string());
+        config.experimental_realtime_ws_base_url = Some(realtime_ws_base_url);
+        config.realtime.session_type = RealtimeWsMode::Transcription;
+    });
+    let test = builder.build_with_auto_env(&server).await?;
+
+    test.codex
+        .submit(Op::RealtimeConversationStart(ConversationStartParams {
+            client_managed_handoffs: false,
+            delegation_ack_filler: None,
+            flush_transcript_tail_on_session_end: false,
+            codex_responses_as_items: false,
+            codex_response_item_prefix: None,
+            codex_response_handoff_mode:
+                codex_protocol::protocol::CodexResponseHandoffMode::Thinking,
+            codex_response_handoff_channel_prefixes: None,
+            model: None,
+            output_modality: RealtimeOutputModality::Audio,
+            include_startup_context: false,
+            initial_items: Vec::new(),
+            realtime_start_instructions: None,
+            realtime_end_instructions: None,
+            prompt: None,
+            realtime_session_id: None,
+            transport: Some(ConversationStartTransport::ExistingCall {
+                call_id: "rtc_existing".to_string(),
+            }),
+            version: Some(RealtimeConversationVersion::V3),
+            voice: None,
+        }))
+        .await?;
+
+    let started = wait_for_event_match(&test.codex, |msg| match msg {
+        EventMsg::RealtimeConversationStarted(started) => Some(Ok(started.clone())),
+        EventMsg::Error(err) => Some(Err(err.clone())),
+        _ => None,
+    })
+    .await
+    .expect("existing call sideband attachment failed");
+    assert_eq!(
+        (started.version, started.realtime_session_id),
+        (RealtimeConversationVersion::V3, None)
+    );
+
+    let handshake = realtime_server.single_handshake();
+    assert_eq!(handshake.uri(), "/v1/live/rtc_existing");
+    assert_eq!(
+        handshake.header("authorization").as_deref(),
+        Some("Bearer dummy")
+    );
+    assert_eq!(handshake.header("x-session-id"), None);
+    assert!(
+        server
+            .received_requests()
+            .await
+            .context("mock server should record requests")?
+            .iter()
+            .all(|request| !request.url.path().ends_with("/realtime/calls")),
+        "attaching to an existing call must not create another realtime call"
+    );
+
+    test.codex.submit(Op::RealtimeConversationClose).await?;
+    let _closed = wait_for_event_match(&test.codex, |msg| match msg {
+        EventMsg::RealtimeConversationClosed(closed) => Some(closed.clone()),
+        _ => None,
+    })
+    .await;
+    realtime_server.shutdown().await;
+    Ok(())
+}
+
+#[test_case(None, "gpt-live-1-codex"; "default model")]
+#[test_case(Some("session-override-model"), "session-override-model"; "explicit model")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn conversation_webrtc_frameless_chatgpt_sends_codex_headers_to_backend(
+    model: Option<&str>,
+    expected_model: &str,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -539,7 +624,7 @@ async fn conversation_webrtc_frameless_chatgpt_sends_codex_headers_to_backend() 
             config.experimental_realtime_ws_backend_prompt = Some("backend prompt".to_string());
             config.experimental_realtime_ws_base_url = Some(realtime_ws_base_url);
         });
-    let test = builder.build(&server).await?;
+    let test = builder.build_with_auto_env(&server).await?;
 
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {
@@ -551,13 +636,13 @@ async fn conversation_webrtc_frameless_chatgpt_sends_codex_headers_to_backend() 
             codex_response_handoff_mode:
                 codex_protocol::protocol::CodexResponseHandoffMode::Thinking,
             codex_response_handoff_channel_prefixes: None,
-            model: Some("session-override-model".to_string()),
+            model: model.map(str::to_string),
             output_modality: RealtimeOutputModality::Audio,
             include_startup_context: false,
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -610,10 +695,12 @@ async fn conversation_webrtc_frameless_chatgpt_sends_codex_headers_to_backend() 
         json!({
             "sdp": body["sdp"],
             "delegation": body["session"]["delegation"]["type"],
+            "model": body["session"]["model"],
         }),
         json!({
             "sdp": "v=offer\r\n",
             "delegation": "client",
+            "model": expected_model,
         })
     );
 
@@ -684,7 +771,7 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -824,10 +911,22 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
     Ok(())
 }
 
+#[test_case(
+    ConversationStartTransport::Webrtc { sdp: "v=offer\r\n".to_string() };
+    "core-created webrtc"
+)]
+#[test_case(
+    ConversationStartTransport::ExistingCall { call_id: "rtc_reconnect".to_string() };
+    "client-created existing call"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn conversation_webrtc_live_reconnects_sideband_after_unclean_disconnect() -> Result<()> {
+async fn conversation_webrtc_live_reconnects_sideband_after_unclean_disconnect(
+    transport: ConversationStartTransport,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
+    let attaches_existing_call =
+        matches!(&transport, ConversationStartTransport::ExistingCall { .. });
     let server = start_mock_server().await;
     Mock::given(method("POST"))
         .and(path("/v1/live"))
@@ -980,7 +1079,7 @@ async fn conversation_webrtc_live_reconnects_sideband_after_unclean_disconnect()
         config.experimental_realtime_ws_base_url = Some(realtime_ws_base_url);
         config.realtime.version = RealtimeWsVersion::V3;
     });
-    let test = builder.build(&server).await?;
+    let test = builder.build_with_auto_env(&server).await?;
 
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {
@@ -994,15 +1093,17 @@ async fn conversation_webrtc_live_reconnects_sideband_after_unclean_disconnect()
             codex_response_handoff_channel_prefixes: None,
             model: None,
             output_modality: RealtimeOutputModality::Audio,
-            include_startup_context: true,
+            include_startup_context: !attaches_existing_call,
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
-            realtime_session_id: None,
-            transport: Some(ConversationStartTransport::Webrtc {
-                sdp: "v=offer\r\n".to_string(),
-            }),
+            prompt: if attaches_existing_call {
+                None
+            } else {
+                Some(Some("backend prompt".to_string()))
+            },
+            realtime_session_id: attaches_existing_call.then(|| "sess_client_owned".to_string()),
+            transport: Some(transport),
             version: Some(RealtimeConversationVersion::V3),
             voice: None,
         }))
@@ -1148,7 +1249,7 @@ async fn conversation_webrtc_start_uses_avas_query() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1253,7 +1354,7 @@ async fn conversation_webrtc_default_v1_ignores_configured_v2_voice() -> Result<
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1320,7 +1421,7 @@ async fn conversation_webrtc_default_v1_rejects_explicit_v2_voice() -> Result<()
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1397,7 +1498,7 @@ async fn conversation_webrtc_start_uses_configured_call_base_url_for_avas() -> R
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1511,7 +1612,7 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1618,7 +1719,7 @@ async fn conversation_webrtc_sideband_connect_failure_closes_with_error() -> Res
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ConversationStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
@@ -1718,7 +1819,7 @@ async fn conversation_start_uses_openai_env_key_fallback_with_chatgpt_auth() -> 
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1816,7 +1917,7 @@ async fn assert_transport_close_tail_flush(
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1939,7 +2040,7 @@ async fn conversation_start_preflight_failure_emits_realtime_error_only() -> Res
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -1997,7 +2098,7 @@ async fn conversation_start_connect_failure_emits_realtime_error_only() -> Resul
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2103,7 +2204,7 @@ async fn conversation_second_start_replaces_runtime() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("old".to_string()),
+            prompt: Some(Some("old".to_string())),
             realtime_session_id: Some("conv_old".to_string()),
             transport: None,
             version: None,
@@ -2140,7 +2241,7 @@ async fn conversation_second_start_replaces_runtime() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("new".to_string()),
+            prompt: Some(Some("new".to_string())),
             realtime_session_id: Some("conv_new".to_string()),
             transport: None,
             version: None,
@@ -2248,7 +2349,7 @@ async fn conversation_uses_experimental_realtime_ws_base_url_override() -> Resul
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2324,7 +2425,7 @@ async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Omitted,
+            prompt: None,
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2389,8 +2490,8 @@ async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Resu
     );
 
     for (prompt, expected_session_id) in [
-        (NullableField::Null, "sess_null"),
-        (NullableField::Value(String::new()), "sess_empty"),
+        (Some(None), "sess_null"),
+        (Some(Some(String::new())), "sess_empty"),
     ] {
         test.codex
             .submit(Op::RealtimeConversationStart(ConversationStartParams {
@@ -2485,7 +2586,7 @@ async fn conversation_uses_explicit_start_voice() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2554,7 +2655,7 @@ async fn conversation_uses_configured_realtime_voice() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2611,7 +2712,7 @@ async fn conversation_rejects_voice_for_wrong_realtime_version() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2669,7 +2770,7 @@ async fn conversation_uses_experimental_realtime_ws_backend_prompt_override() ->
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("prompt from op".to_string()),
+            prompt: Some(Some("prompt from op".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2753,7 +2854,7 @@ async fn conversation_uses_experimental_realtime_ws_startup_context_override() -
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("prompt from op".to_string()),
+            prompt: Some(Some("prompt from op".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2831,7 +2932,7 @@ async fn conversation_disables_realtime_startup_context_with_empty_override() ->
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("prompt from op".to_string()),
+            prompt: Some(Some("prompt from op".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -2902,7 +3003,7 @@ async fn conversation_start_injects_startup_context_from_thread_history() -> Res
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3029,7 +3130,7 @@ async fn conversation_startup_context_current_thread_selects_many_turns_by_budge
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3148,7 +3249,7 @@ async fn conversation_startup_context_falls_back_to_workspace_map() -> Result<()
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3219,7 +3320,7 @@ async fn conversation_startup_context_is_truncated_and_sent_once_per_start() -> 
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3311,7 +3412,7 @@ async fn conversation_user_text_turn_is_not_sent_to_realtime() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3413,7 +3514,7 @@ async fn realtime_v2_noop_tool_call_returns_empty_function_output_without_respon
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3523,7 +3624,7 @@ async fn conversation_mirrors_assistant_message_text_to_realtime_handoff() -> Re
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3700,7 +3801,7 @@ async fn conversation_flushes_assistant_deltas_every_200ms_for_v3_handoff() -> R
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -3873,7 +3974,7 @@ async fn conversation_handoff_persists_across_item_done_until_turn_complete() ->
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4036,7 +4137,7 @@ async fn inbound_handoff_request_starts_turn() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4083,6 +4184,13 @@ async fn inbound_handoff_request_starts_turn() -> Result<()> {
     .await;
 
     let request = response_mock.single_request();
+    let turn_metadata: Value = serde_json::from_str(
+        request
+            .header("x-codex-turn-metadata")
+            .as_deref()
+            .context("realtime-routed turn should include turn metadata")?,
+    )?;
+    assert_eq!(turn_metadata["turn_trigger"].as_str(), Some("realtime"));
     let user_texts = request.message_input_texts("user");
     assert!(user_texts.iter().any(|text| text
         == "<realtime_delegation>\n  <input>text from realtime</input>\n  <transcript_delta>user: text from realtime</transcript_delta>\n</realtime_delegation>"));
@@ -4157,7 +4265,7 @@ async fn inbound_handoff_request_uses_active_transcript() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4271,7 +4379,7 @@ async fn inbound_handoff_request_sends_transcript_delta_after_each_handoff() -> 
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4404,7 +4512,7 @@ async fn conversation_close_routes_only_remaining_transcript_tail_once() -> Resu
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4498,7 +4606,7 @@ async fn inbound_conversation_item_does_not_start_turn_and_still_forwards_audio(
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4632,7 +4740,7 @@ async fn delegated_turn_user_role_echo_does_not_redelegate_and_still_forwards_au
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4796,7 +4904,7 @@ async fn inbound_handoff_request_does_not_block_realtime_event_forwarding() -> R
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -4949,7 +5057,7 @@ async fn inbound_handoff_request_steers_active_turn() -> Result<()> {
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,
@@ -5107,7 +5215,7 @@ async fn inbound_handoff_request_starts_turn_and_does_not_block_realtime_audio()
             initial_items: Vec::new(),
             realtime_start_instructions: None,
             realtime_end_instructions: None,
-            prompt: NullableField::Value("backend prompt".to_string()),
+            prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
             version: None,

@@ -7,6 +7,7 @@ use super::thread_input::ensure_direct_input_allowed;
 use super::*;
 use crate::error_code::method_not_found;
 use codex_app_server_protocol::SelectedCapabilityRoot;
+use codex_app_server_protocol::ThreadHistoryMode as ApiThreadHistoryMode;
 use codex_app_server_protocol::ThreadRevertParams;
 use codex_app_server_protocol::ThreadRevertResponse;
 use codex_app_server_protocol::ThreadRevertedNotification;
@@ -29,6 +30,8 @@ pub(super) const THREAD_LIST_MAX_LIMIT: usize = 100;
 const CODEX_TUI_CLIENT_NAME: &str = "codex-tui";
 const THREAD_ROLLBACK_DEPRECATION_SUMMARY: &str =
     "thread/rollback is deprecated and will be removed soon";
+const PAGINATED_FULL_HISTORY_DEPRECATION_SUMMARY: &str = "Full-history hydration is deprecated for paginated threads; use `excludeTurns: true`, then page with `thread/turns/list` and `thread/items/list`.";
+const PAGINATED_THREAD_READ_DEPRECATION_SUMMARY: &str = "Full-history hydration is deprecated for paginated threads; omit `includeTurns` or set it to `false`, then page with `thread/turns/list` and `thread/items/list`.";
 
 async fn stage_pending_project_metadata(
     thread_manager: &ThreadManager,
@@ -44,7 +47,7 @@ async fn stage_pending_project_metadata(
         .stage_pending_thread_metadata(
             thread_id,
             StoreThreadMetadataPatch {
-                project_id: NullableField::Value(project_id.to_string()),
+                project_id: Some(Some(project_id.to_string())),
                 ..Default::default()
             },
         )
@@ -75,7 +78,7 @@ struct ThreadListFilters {
     model_providers: Option<Vec<String>>,
     source_kinds: Option<Vec<ThreadSourceKind>>,
     archived: bool,
-    section_id: NullableField<String>,
+    section_id: Option<Option<String>>,
     project_id: StoreClearableField<String>,
     cwd_filters: Option<Vec<PathBuf>>,
     search_term: Option<String>,
@@ -787,20 +790,23 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<&str>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         if app_server_client_name != Some(CODEX_TUI_CLIENT_NAME) {
-            self.send_thread_rollback_deprecation_notice(request_id.connection_id)
-                .await;
+            self.send_deprecation_notice(
+                request_id.connection_id,
+                THREAD_ROLLBACK_DEPRECATION_SUMMARY,
+            )
+            .await;
         }
         self.thread_rollback_inner(request_id, params)
             .await
             .map(|()| None)
     }
 
-    async fn send_thread_rollback_deprecation_notice(&self, connection_id: ConnectionId) {
+    async fn send_deprecation_notice(&self, connection_id: ConnectionId, summary: &str) {
         self.outgoing
             .send_server_notification_to_connections(
                 &[connection_id],
                 ServerNotification::DeprecationNotice(DeprecationNoticeNotification {
-                    summary: THREAD_ROLLBACK_DEPRECATION_SUMMARY.to_string(),
+                    summary: summary.to_string(),
                     details: None,
                 }),
             )
@@ -845,11 +851,24 @@ impl ThreadRequestProcessor {
 
     pub(crate) async fn thread_read(
         &self,
+        request_id: &ConnectionRequestId,
         params: ThreadReadParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_read_response_inner(params)
-            .await
-            .map(|response| Some(response.into()))
+        let include_turns = params.include_turns;
+        let response = self.thread_read_response_inner(params).await?;
+        if include_turns
+            && matches!(
+                response.thread.history_mode,
+                ApiThreadHistoryMode::Paginated
+            )
+        {
+            self.send_deprecation_notice(
+                request_id.connection_id,
+                PAGINATED_THREAD_READ_DEPRECATION_SUMMARY,
+            )
+            .await;
+        }
+        Ok(Some(response.into()))
     }
 
     pub(crate) async fn thread_turns_list(
@@ -868,6 +887,35 @@ impl ThreadRequestProcessor {
         self.thread_items_list_response_inner(params)
             .await
             .map(|response| Some(response.into()))
+    }
+
+    pub(crate) async fn thread_timeline_list(
+        &self,
+        params: ThreadTimelineListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|error| invalid_request(format!("invalid thread id: {error}")))?;
+        let page = self
+            .thread_store
+            .list_timeline(StoreListTimelineParams {
+                thread_id,
+                cursor: params.cursor,
+                page_size: params
+                    .limit
+                    .map(|limit| limit as usize)
+                    .unwrap_or(THREAD_ITEMS_DEFAULT_LIMIT)
+                    .clamp(1, THREAD_ITEMS_MAX_LIMIT),
+            })
+            .await
+            .map_err(paginated_history_list_error)?;
+        Ok(Some(
+            ThreadTimelineListResponse {
+                data: page.items,
+                next_cursor: page.next_cursor,
+                active_realtime_session_at_page_start: page.active_realtime_session_at_page_start,
+            }
+            .into(),
+        ))
     }
 
     pub(crate) async fn thread_shell_command(
@@ -1369,6 +1417,10 @@ impl ThreadRequestProcessor {
                 DynamicToolSpec::Namespace(namespace) => namespace.tools.len(),
             })
             .sum();
+        let history_mode = history_mode.or_else(|| {
+            (!config.ephemeral && thread_store.supports_paginated_history_lists())
+                .then_some(ThreadHistoryMode::Paginated)
+        });
         let mut thread_extension_init = ExtensionDataInit::new();
         if !selected_capability_roots.is_empty() {
             thread_extension_init.insert(selected_capability_roots);
@@ -1736,7 +1788,7 @@ impl ThreadRequestProcessor {
             .update_thread_metadata(
                 thread_id,
                 StoreThreadMetadataPatch {
-                    name: NullableField::Value(name.clone()),
+                    name: Some(Some(name.clone())),
                     ..Default::default()
                 },
                 /*include_archived*/ false,
@@ -1845,20 +1897,20 @@ impl ThreadRequestProcessor {
                      branch,
                      origin_url,
                  }| {
-                    if sha.is_omitted() && branch.is_omitted() && origin_url.is_omitted() {
+                    if sha.is_none() && branch.is_none() && origin_url.is_none() {
                         return Err(invalid_request("gitInfo must include at least one field"));
                     }
 
                     let origin_url =
                         Self::normalize_thread_metadata_git_field(origin_url, "gitInfo.originUrl")?;
                     let origin_url = match origin_url {
-                        NullableField::Value(origin_url) => {
-                            NullableField::Value(SanitizedGitUrl::try_from(origin_url).map_err(
+                        Some(Some(origin_url)) => {
+                            Some(Some(SanitizedGitUrl::try_from(origin_url).map_err(
                                 |_| invalid_request("gitInfo.originUrl must be a valid Git remote"),
-                            )?)
+                            )?))
                         }
-                        NullableField::Null => NullableField::Null,
-                        NullableField::Omitted => NullableField::Omitted,
+                        Some(None) => Some(None),
+                        None => None,
                     };
 
                     Ok(StoreGitInfoPatch {
@@ -1875,40 +1927,37 @@ impl ThreadRequestProcessor {
 
         let project_update: StoreClearableField<String> = if let Some(project_id) = project_id {
             if project_id.is_empty() {
-                NullableField::Null
+                Some(None)
             } else {
-                NullableField::Value(project_id)
+                Some(Some(project_id))
             }
         } else {
-            NullableField::Omitted
+            None
         };
         let updated_thread = {
             let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
-            let previous_project_id = if project_update.is_present() {
-                match self
-                    .thread_store
-                    .read_thread(StoreReadThreadParams {
-                        thread_id: thread_uuid,
-                        include_archived: true,
-                        include_history: false,
-                    })
-                    .await
-                    .map_err(|err| match err {
-                        ThreadStoreError::ThreadNotFound { .. } => {
-                            invalid_request(format!("thread not found: {thread_id}"))
-                        }
-                        ThreadStoreError::Unsupported { operation } => {
-                            unsupported_thread_store_operation(operation)
-                        }
-                        err => internal_error(format!("failed to read thread metadata: {err}")),
-                    })?
-                    .project_id
-                {
-                    Some(project_id) => NullableField::Value(project_id),
-                    None => NullableField::Null,
-                }
+            let previous_project_id = if project_update.is_some() {
+                Some(
+                    self.thread_store
+                        .read_thread(StoreReadThreadParams {
+                            thread_id: thread_uuid,
+                            include_archived: true,
+                            include_history: false,
+                        })
+                        .await
+                        .map_err(|err| match err {
+                            ThreadStoreError::ThreadNotFound { .. } => {
+                                invalid_request(format!("thread not found: {thread_id}"))
+                            }
+                            ThreadStoreError::Unsupported { operation } => {
+                                unsupported_thread_store_operation(operation)
+                            }
+                            err => internal_error(format!("failed to read thread metadata: {err}")),
+                        })?
+                        .project_id,
+                )
             } else {
-                NullableField::Omitted
+                None
             };
             let patch = StoreThreadMetadataPatch {
                 git_info,
@@ -1920,17 +1969,14 @@ impl ThreadRequestProcessor {
                 .update_thread_metadata(thread_uuid, patch, /*include_archived*/ true)
                 .await
                 .map_err(|err| core_thread_write_error("update thread metadata", err))?;
-            if project_update.is_present() && previous_project_id != project_update {
-                let project_id = match project_update {
-                    NullableField::Null => None,
-                    NullableField::Value(project_id) => Some(project_id),
-                    NullableField::Omitted => unreachable!("checked field presence"),
-                };
+            if let Some(project_id) = project_update.as_ref()
+                && previous_project_id.as_ref() != Some(project_id)
+            {
                 self.outgoing
                     .send_server_notification(ServerNotification::ThreadProjectUpdated(
                         ThreadProjectUpdatedNotification {
                             thread_id: thread_id.clone(),
-                            project_id,
+                            project_id: project_id.clone(),
                         },
                     ))
                     .await;
@@ -1957,19 +2003,19 @@ impl ThreadRequestProcessor {
     }
 
     fn normalize_thread_metadata_git_field(
-        value: NullableField<String>,
+        value: Option<Option<String>>,
         name: &str,
-    ) -> Result<NullableField<String>, JSONRPCErrorError> {
+    ) -> Result<Option<Option<String>>, JSONRPCErrorError> {
         match value {
-            NullableField::Value(value) => {
+            Some(Some(value)) => {
                 let value = value.trim().to_string();
                 if value.is_empty() {
                     return Err(invalid_request(format!("{name} must not be empty")));
                 }
-                Ok(NullableField::Value(value))
+                Ok(Some(Some(value)))
             }
-            NullableField::Null => Ok(NullableField::Null),
-            NullableField::Omitted => Ok(NullableField::Omitted),
+            Some(None) => Ok(Some(None)),
+            None => Ok(None),
         }
     }
 
@@ -2450,10 +2496,10 @@ impl ThreadRequestProcessor {
             parent_thread_id,
             ancestor_thread_id,
         } = params;
-        if project_id.is_present() && !self.thread_store.supports_projects() {
+        if project_id.is_some() && !self.thread_store.supports_projects() {
             return Err(unsupported_thread_store_operation("projects"));
         }
-        if let NullableField::Value(project_id) = project_id.as_ref() {
+        if let Some(Some(project_id)) = project_id.as_ref() {
             if project_id.is_empty() {
                 return Err(invalid_params("projectId must not be empty"));
             }
@@ -3622,6 +3668,13 @@ impl ThreadRequestProcessor {
             matches!(thread.history_mode, ThreadHistoryMode::Paginated).then_some(thread.thread_id)
         });
         let paginated_resume = paginated_thread_id.is_some();
+        if paginated_resume && include_turns {
+            self.send_deprecation_notice(
+                request_id.connection_id,
+                PAGINATED_FULL_HISTORY_DEPRECATION_SUMMARY,
+            )
+            .await;
+        }
 
         // Parent-owned V2 children must resume through their owner, not caller configuration.
         if let InitialHistory::Resumed(resumed_history) = &thread_history
@@ -4131,6 +4184,13 @@ impl ThreadRequestProcessor {
             let redact_resume_payloads =
                 should_redact_thread_resume_payloads(app_server_client_name.as_deref());
             let include_turns = !params.exclude_turns;
+            if paginated_resume && include_turns {
+                self.send_deprecation_notice(
+                    request_id.connection_id,
+                    PAGINATED_FULL_HISTORY_DEPRECATION_SUMMARY,
+                )
+                .await;
+            }
             let needs_history =
                 !paginated_resume && (include_turns || params.initial_turns_page.is_some());
             if needs_history {
@@ -4647,6 +4707,13 @@ impl ThreadRequestProcessor {
                 "ephemeral paginated thread/fork requires `excludeTurns: true`",
             ));
         }
+        if paginated_source && include_turns {
+            self.send_deprecation_notice(
+                request_id.connection_id,
+                PAGINATED_FULL_HISTORY_DEPRECATION_SUMMARY,
+            )
+            .await;
+        }
         let source_thread_id = source_thread.thread_id;
         let source_thread_name = source_thread
             .name
@@ -4929,7 +4996,7 @@ impl ThreadRequestProcessor {
                 .update_thread_metadata(
                     thread_id,
                     StoreThreadMetadataPatch {
-                        name: NullableField::Value(name),
+                        name: Some(Some(name)),
                         ..Default::default()
                     },
                     /*include_archived*/ true,
@@ -5602,6 +5669,7 @@ fn stored_turn_to_api_turn(
         StoredTurnStatus::InProgress => TurnStatus::InProgress,
     };
     let error = turn.error.map(|error| TurnError {
+        misalignment: None,
         message: error.message,
         codex_error_info: error.codex_error_info,
         additional_details: error.additional_details,

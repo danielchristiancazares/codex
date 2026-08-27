@@ -92,7 +92,6 @@ fn env_overlay_for_exec_server_keeps_runtime_changes_only() {
         ])
     );
 }
-
 #[test]
 fn exec_env_policy_excludes_non_inheritable_and_runtime_variables() {
     let policy = ShellEnvironmentPolicy {
@@ -184,6 +183,7 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
                 ),
             ]),
         }),
+        exec_server_shell_snapshot: None,
         network: None,
         network_environment_id: None,
         expiration: crate::exec::ExecExpiration::DefaultTimeout,
@@ -230,6 +230,18 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
             ("CODEX_NETWORK_PROXY_ACTIVE".to_string(), "1".to_string(),),
         ])
     );
+    request.exec_server_shell_snapshot = Some(codex_exec_server::ShellSnapshotRequest {
+        scope_id: "attachment-1".to_string(),
+        shell: codex_exec_server::ShellInfo {
+            name: "bash".to_string(),
+            path: "/bin/bash".to_string(),
+        },
+    });
+    let mut snapshot_env = params.env;
+    snapshot_env.remove("PATH");
+    assert_eq!(params_for_request(&request).env, snapshot_env);
+    request.exec_server_shell_snapshot = None;
+
     request.exec_server_sandbox = Some(
         codex_exec_server::FileSystemSandboxContext::from_permission_profile(permission_profile),
     );
@@ -291,7 +303,6 @@ async fn output_collection_stays_bounded_across_repeated_drains() {
     let cancellation_token = CancellationToken::new();
     let output = OutputHandles {
         output_buffer: Arc::clone(&output_buffer),
-        artifact_capture: None,
         output_notify: Arc::clone(&output_notify),
         output_closed: Arc::clone(&output_closed),
         output_closed_notify: Arc::clone(&output_closed_notify),
@@ -349,7 +360,6 @@ async fn output_collection_preserves_omissions_from_drained_buffer() {
     cancellation_token.cancel();
     let output = OutputHandles {
         output_buffer,
-        artifact_capture: None,
         output_notify,
         output_closed,
         output_closed_notify,
@@ -403,7 +413,6 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
             "-lc".to_string(),
             "echo before".to_string(),
         ],
-        command_mode: crate::unified_exec::ExecCommandMode::Shell,
         shell_type: crate::shell::ShellType::Sh,
         hook_command: "echo before".to_string(),
         process_id: 123,
@@ -442,7 +451,6 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         "PRE_DENIAL_MARKER".to_string(),
         "Network access denied".to_string(),
         Duration::from_millis(7),
-        /*artifact_capture*/ None,
     )
     .await;
 
@@ -580,6 +588,8 @@ async fn pruning_does_not_evict_live_process_while_exited_process_is_finalizing(
                 initial_exec_command_active: Arc::new(AtomicBool::new(false)),
                 hook_command: format!("command-{process_id}"),
                 tty: false,
+                environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+                escalated: false,
                 network_approval: None,
                 session: std::sync::Weak::new(),
                 last_used: if is_exited {

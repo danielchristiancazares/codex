@@ -2,8 +2,6 @@ pub(crate) mod apply_patch;
 pub(crate) mod apply_patch_spec;
 mod current_time;
 mod dynamic;
-mod exec_output_query;
-mod exec_output_query_spec;
 pub(crate) mod extension_tools;
 mod get_context_remaining;
 pub(crate) mod get_context_remaining_spec;
@@ -26,7 +24,6 @@ pub(crate) mod request_plugin_install_spec;
 mod request_user_input;
 pub(crate) mod request_user_input_spec;
 mod send_user_message_async;
-mod shell;
 pub(crate) mod shell_spec;
 mod sleep;
 mod test_sync;
@@ -60,7 +57,6 @@ use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use current_time::CurrentTimeHandler;
 pub use dynamic::DynamicToolHandler;
-pub use exec_output_query::ExecOutputQueryHandler;
 pub use get_context_remaining::GetContextRemainingHandler;
 pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use mcp::McpHandler;
@@ -73,8 +69,6 @@ pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub use send_user_message_async::SendUserMessageAsyncHandler;
-pub use shell::ShellCommandHandler;
-pub(crate) use shell::ShellCommandHandlerOptions;
 pub use sleep::SleepHandler;
 pub use test_sync::TestSyncHandler;
 pub(crate) use tool_search::ToolSearchHandlerCache;
@@ -157,18 +151,6 @@ where
 {
     let _guard = AbsolutePathBufGuard::new(base_path);
     parse_arguments(arguments)
-}
-
-fn resolve_workdir_base_path(
-    arguments: &str,
-    default_cwd: &AbsolutePathBuf,
-) -> Result<AbsolutePathBuf, FunctionCallError> {
-    let arguments: Value = parse_arguments(arguments)?;
-    Ok(arguments
-        .get("workdir")
-        .and_then(Value::as_str)
-        .filter(|workdir| !workdir.is_empty())
-        .map_or_else(|| default_cwd.clone(), |workdir| default_cwd.join(workdir)))
 }
 
 fn resolve_tool_environment<'a>(

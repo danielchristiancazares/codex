@@ -1,18 +1,20 @@
 use super::ActivePermissionProfile;
 use super::ApprovalsReviewer;
 use super::AskForApproval;
-use super::NullableField;
 use super::SandboxMode;
 use super::SandboxPolicy;
 use super::Thread;
 use super::ThreadHistoryMode;
 use super::ThreadItem;
+use super::ThreadRealtimeItem;
 use super::ThreadSection;
 use super::ThreadSectionAppearance;
 use super::ThreadSource;
 use super::Turn;
 use super::TurnEnvironmentParams;
+use super::TurnError;
 use super::TurnItemsView;
+use super::TurnStatus;
 use super::UserInput;
 use super::shared::v2_enum_from_core;
 use crate::JsonSchema;
@@ -380,8 +382,9 @@ pub struct ThreadResumeParams {
     pub personality: Option<Personality>,
     /// When true, return only thread metadata and live-resume state without
     /// populating `thread.turns`. This is useful when the client plans to call
-    /// `thread/turns/list` immediately after resuming.
-    #[experimental("thread/resume.excludeTurns")]
+    /// `thread/turns/list` immediately after resuming. Full-history hydration
+    /// is deprecated for paginated threads; use this with `thread/turns/list`
+    /// and `thread/items/list` instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
     /// When present, include a `thread/turns/list` page in the resume response
@@ -435,14 +438,12 @@ pub struct ThreadResumeResponse {
     ///
     /// Pass this as `cursor` to `thread/turns/list` with
     /// `sortDirection: "desc"`. The first page includes the turn identified by the cursor.
-    #[experimental("thread/resume.turnsBackwardsCursor")]
     #[serde(default)]
     pub turns_backwards_cursor: Option<String>,
     /// Opaque cursor for hydrating paginated items backwards.
     ///
     /// Pass this as `cursor` to `thread/items/list` with
     /// `sortDirection: "desc"`. The first page includes the item identified by the cursor.
-    #[experimental("thread/resume.itemsBackwardsCursor")]
     #[serde(default)]
     pub items_backwards_cursor: Option<String>,
 }
@@ -567,8 +568,9 @@ pub struct ThreadForkParams {
     pub thread_source: Option<ThreadSource>,
     /// When true, return only thread metadata and live fork state without
     /// populating `thread.turns`. This is useful when the client plans to call
-    /// `thread/turns/list` immediately after forking.
-    #[experimental("thread/fork.excludeTurns")]
+    /// `thread/turns/list` immediately after forking. Full-history hydration
+    /// is deprecated for paginated threads; use this with `thread/turns/list`
+    /// and `thread/items/list` instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
     /// When true, carry the source thread's current goal into the fork without
@@ -802,9 +804,14 @@ pub struct ThreadGoalSetParams {
     pub objective: Option<String>,
     #[ts(optional = nullable)]
     pub status: Option<ThreadGoalStatus>,
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[ts(optional = nullable, type = "number | null")]
-    pub token_budget: NullableField<i64>,
+    pub token_budget: Option<Option<i64>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -972,19 +979,34 @@ pub struct ThreadMetadataUpdateParams {
 pub struct ThreadMetadataGitInfoUpdateParams {
     /// Omit to leave the stored commit unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[ts(optional = nullable, type = "string | null")]
-    pub sha: NullableField<String>,
+    pub sha: Option<Option<String>>,
     /// Omit to leave the stored branch unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[ts(optional = nullable, type = "string | null")]
-    pub branch: NullableField<String>,
+    pub branch: Option<Option<String>>,
     /// Omit to leave the stored origin URL unchanged, set to `null` to clear it,
     /// or provide a non-empty string to replace it.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[ts(optional = nullable, type = "string | null")]
-    pub origin_url: NullableField<String>,
+    pub origin_url: Option<Option<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -1283,10 +1305,15 @@ pub struct ThreadSectionUpdateParams {
     /// The updated user-visible name of the section.
     pub name: String,
     /// Omit to preserve appearance, use `null` to clear it, or provide a replacement.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[schemars(with = "Option<ThreadSectionAppearance>")]
     #[ts(optional = nullable, as = "Option<ThreadSectionAppearance>")]
-    pub appearance: NullableField<ThreadSectionAppearance>,
+    pub appearance: Option<Option<ThreadSectionAppearance>>,
 }
 
 /// The independently persisted section after its name is updated.
@@ -1342,15 +1369,25 @@ pub struct ThreadListParams {
     pub archived: Option<bool>,
     /// Omit to include every section, set to `null` for unsectioned threads,
     /// or provide a section ID to return only threads in that section.
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[ts(optional = nullable, type = "string | null")]
-    pub section_id: NullableField<String>,
+    pub section_id: Option<Option<String>>,
     /// Omit to include every project, set to null for unassigned threads,
     /// or provide a project ID to return only threads in that project.
     #[experimental("thread/list.projectId")]
-    #[serde(default, skip_serializing_if = "NullableField::is_omitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
+    )]
     #[ts(optional = nullable, type = "string | null")]
-    pub project_id: NullableField<String>,
+    pub project_id: Option<Option<String>>,
     /// Optional cwd filter or filters; when set, only threads whose session cwd
     /// exactly matches one of these paths are returned.
     #[ts(optional = nullable, type = "string | Array<string> | null")]
@@ -1596,6 +1633,9 @@ pub enum ThreadActiveFlag {
 pub struct ThreadReadParams {
     pub thread_id: String,
     /// When true, include turns and their items from rollout history.
+    /// Full-history hydration is deprecated for paginated threads; prefer a
+    /// metadata-only read and page with `thread/turns/list` and
+    /// `thread/items/list`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_turns: bool,
 }
@@ -1696,6 +1736,75 @@ pub struct ThreadItemsListResponse {
     pub backwards_cursor: Option<String>,
 }
 
+/// EXPERIMENTAL - list ordinary and realtime thread history in rollout order.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadTimelineListParams {
+    pub thread_id: String,
+    #[ts(optional = nullable)]
+    pub cursor: Option<String>,
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+}
+
+/// EXPERIMENTAL - one item or turn boundary in canonical rollout order.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(tag = "type", rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadTimelineEntry {
+    Item {
+        #[ts(type = "number")]
+        position: u64,
+        #[schemars(rename = "turnId")]
+        #[serde(rename = "turnId")]
+        #[ts(rename = "turnId")]
+        turn_id: String,
+        item: Box<ThreadItem>,
+    },
+    Realtime {
+        #[ts(type = "number")]
+        position: u64,
+        item: ThreadRealtimeItem,
+    },
+    TurnStarted {
+        #[ts(type = "number")]
+        position: u64,
+        #[ts(rename = "turnId")]
+        turn_id: String,
+        #[ts(rename = "startedAt", type = "number | null")]
+        started_at: Option<i64>,
+    },
+    TurnCompleted {
+        #[ts(type = "number")]
+        position: u64,
+        #[ts(rename = "turnId")]
+        turn_id: String,
+        status: TurnStatus,
+        error: Option<TurnError>,
+        #[ts(rename = "startedAt", type = "number | null")]
+        started_at: Option<i64>,
+        #[ts(rename = "completedAt", type = "number | null")]
+        completed_at: Option<i64>,
+        #[ts(rename = "durationMs", type = "number | null")]
+        duration_ms: Option<i64>,
+    },
+}
+
+/// EXPERIMENTAL - a bounded timeline page with its resolved opening voice state.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadTimelineListResponse {
+    pub data: Vec<ThreadTimelineEntry>,
+    pub next_cursor: Option<String>,
+    pub active_realtime_session_at_page_start: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -1715,6 +1824,23 @@ pub struct RawResponseCompletedNotification {
     pub turn_id: String,
     pub response_id: String,
     pub usage: Option<TokenUsageBreakdown>,
+    pub usage_metadata: Option<ResponseUsageMetadata>,
+}
+
+/// Usage metadata reported for one upstream response.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ResponseUsageMetadata {
+    pub amount: Option<String>,
+}
+
+impl From<codex_protocol::ResponseUsageMetadata> for ResponseUsageMetadata {
+    fn from(value: codex_protocol::ResponseUsageMetadata) -> Self {
+        Self {
+            amount: value.amount,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

@@ -190,6 +190,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
             session_id: thread_id.into(),
             id: thread_id,
             forked_from_id: None,
+            forked_from_ordinal_exclusive: None,
             parent_thread_id: None,
             timestamp: "2026-01-27T12:34:56Z".to_string(),
             cwd: home.path().to_path_buf(),
@@ -447,6 +448,8 @@ async fn load_rollout_items_preserves_security_risk_scores() -> std::io::Result<
             ("action_risk".to_string(), 0.76),
             ("data_exfiltration".to_string(), 0.31),
         ]),
+        call_id: Some("call-1".to_owned()),
+        action: Some(serde_json::json!({"path": "README.md", "tool": "read_file"})),
         sampled_at: None,
     };
     let security_risk_item = RolloutItem::SecurityRiskScore(security_risk.clone());
@@ -728,7 +731,7 @@ async fn referenced_paginated_rollout_starts_at_history_cutoff_and_resumes() -> 
         &config,
         RolloutRecorderParams::new(
             ThreadId::new(),
-            /*forked_from_id*/ None,
+            Some(history_base.thread_id),
             /*parent_thread_id*/ None,
             SessionSource::Exec,
             /*thread_source*/ None,
@@ -737,12 +740,19 @@ async fn referenced_paginated_rollout_starts_at_history_cutoff_and_resumes() -> 
             Vec::new(),
         )
         .with_history_mode(ThreadHistoryMode::Paginated)
-        .with_history_base(Some(history_base)),
+        .with_history_base(Some(history_base))
+        .with_forked_from_ordinal_exclusive(Some(history_base.end_ordinal_exclusive)),
     )
     .await?;
     let rollout_path = recorder.rollout_path().to_path_buf();
     recorder.persist().await?;
     recorder.shutdown().await?;
+
+    let meta = crate::read_session_meta_line(&rollout_path).await?.meta;
+    assert_eq!(
+        meta.forked_from_ordinal_exclusive,
+        Some(history_base.end_ordinal_exclusive)
+    );
 
     let resumed =
         RolloutRecorder::new(&config, RolloutRecorderParams::resume(rollout_path.clone())).await?;
@@ -1775,6 +1785,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             multi_agent_version: None,
             multi_agent_mode: None,
             realtime_active: None,
+            cyber_access_program: None,
             effort: None,
             summary: codex_protocol::config_types::ReasoningSummary::Auto,
         }),

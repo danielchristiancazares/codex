@@ -1119,7 +1119,7 @@ async fn goal_service_sets_gets_and_clears_thread_goal() -> anyhow::Result<()> {
                 thread_id,
                 objective: GoalObjectiveUpdate::Set(" ship goal API ownership "),
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(123)),
+                token_budget: GoalTokenBudgetUpdate::Set(123),
                 max_goal_token_budget: None,
             },
         )
@@ -1177,7 +1177,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(101)),
+                token_budget: GoalTokenBudgetUpdate::Set(101),
                 max_goal_token_budget: Some(100),
             },
         )
@@ -1203,7 +1203,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(99)),
+                token_budget: GoalTokenBudgetUpdate::Set(99),
                 max_goal_token_budget: Some(100),
             },
         )
@@ -1217,7 +1217,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(None),
+                token_budget: GoalTokenBudgetUpdate::ResetToMaximum,
                 max_goal_token_budget: Some(100),
             },
         )
@@ -1229,7 +1229,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
 async fn installed_tools(
     runtime: Arc<codex_state::StateRuntime>,
     thread_id: ThreadId,
-) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
+) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
     installed_tools_with_start(
         runtime,
         thread_id,
@@ -1244,7 +1244,7 @@ async fn installed_tools_with_start(
     thread_id: ThreadId,
     session_source: SessionSource,
     persistent_thread_state_available: bool,
-) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
+) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
     let mut builder = ExtensionRegistryBuilder::<()>::new();
     let goal_service = Arc::new(GoalService::new());
     install_with_backend(
@@ -1284,7 +1284,7 @@ async fn installed_tools_with_start(
         .collect()
 }
 
-fn tool_names(tools: &[Arc<dyn ToolExecutor<ToolCall>>]) -> Vec<String> {
+fn tool_names(tools: &[Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>]) -> Vec<String> {
     tools.iter().map(|tool| tool.tool_name().name).collect()
 }
 
@@ -1343,7 +1343,7 @@ impl GoalExtensionHarness {
         })
     }
 
-    fn tools(&self) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
+    fn tools(&self) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
         self.registry
             .tool_contributors()
             .iter()
@@ -1470,16 +1470,16 @@ impl GoalExtensionHarness {
 }
 
 fn tool_by_name<'a>(
-    tools: &'a [Arc<dyn ToolExecutor<ToolCall>>],
+    tools: &'a [Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>],
     name: &str,
-) -> &'a Arc<dyn ToolExecutor<ToolCall>> {
+) -> &'a Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>> {
     tools
         .iter()
         .find(|tool| tool.tool_name().namespace.is_none() && tool.tool_name().name == name)
         .expect("requested goal tool should exist")
 }
 
-fn tool_call(tool_name: &str, call_id: &str, arguments: serde_json::Value) -> ToolCall {
+fn tool_call(tool_name: &str, call_id: &str, arguments: serde_json::Value) -> ToolCall<'static> {
     ToolCall {
         turn_id: "turn-1".to_string(),
         call_id: call_id.to_string(),

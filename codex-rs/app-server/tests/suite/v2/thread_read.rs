@@ -11,11 +11,11 @@ use codex_app_server::in_process;
 use codex_app_server::in_process::InProcessStartArgs;
 use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::DeprecationNoticeNotification;
 use codex_app_server_protocol::InitializeCapabilities;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::NullableField;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
@@ -54,6 +54,7 @@ use codex_config::LoaderOverrides;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -72,7 +73,6 @@ use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_rollout::RolloutItem;
 use codex_thread_store::AppendThreadItemsParams;
-use codex_thread_store::ClearableField;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
@@ -210,6 +210,10 @@ async fn thread_read_can_include_turns() -> Result<()> {
         other => panic!("expected user message item, got {other:?}"),
     }
     assert_eq!(thread.status, ThreadStatus::NotLoaded);
+    assert!(
+        !mcp.pending_notification_methods()
+            .contains(&"deprecationNotice".to_string())
+    );
 
     Ok(())
 }
@@ -245,6 +249,31 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
     assert_eq!(thread.history_mode, ThreadHistoryMode::Paginated);
     assert!(thread.turns.is_empty());
+    assert!(
+        !mcp.pending_notification_methods()
+            .contains(&"deprecationNotice".to_string())
+    );
+
+    let full_read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: conversation_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let notice: DeprecationNoticeNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_notification("deprecationNotice"),
+    )
+    .await??;
+    assert_eq!(
+        notice,
+        DeprecationNoticeNotification {
+            summary: "Full-history hydration is deprecated for paginated threads; omit `includeTurns` or set it to `false`, then page with `thread/turns/list` and `thread/items/list`.".to_string(),
+            details: None,
+        }
+    );
+    let _: ThreadReadResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(full_read_id)).await??;
 
     let list_id = mcp
         .send_thread_list_request(ThreadListParams {
@@ -255,8 +284,8 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: NullableField::Omitted,
-            project_id: NullableField::Omitted,
+            section_id: None,
+            project_id: None,
             cwd: None,
             use_state_db_only: false,
             search_term: None,
@@ -733,6 +762,7 @@ async fn thread_turns_list_reads_store_history_without_rollout_path() -> Result<
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
@@ -802,6 +832,7 @@ async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_pa
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
@@ -909,6 +940,7 @@ async fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> 
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
@@ -941,8 +973,8 @@ async fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> 
                 model_providers: Some(Vec::new()),
                 source_kinds: None,
                 archived: None,
-                section_id: NullableField::Omitted,
-                project_id: NullableField::Omitted,
+                section_id: None,
+                project_id: None,
                 cwd: None,
                 use_state_db_only: false,
                 search_term: None,
@@ -1321,8 +1353,8 @@ async fn paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
             model_providers: Some(vec!["mock_provider".to_string()]),
             source_kinds: None,
             archived: None,
-            section_id: NullableField::Omitted,
-            project_id: NullableField::Omitted,
+            section_id: None,
+            project_id: None,
             cwd: None,
             use_state_db_only: true,
             search_term: None,
@@ -1412,6 +1444,7 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
     let start_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            history_mode: Some(ThreadHistoryMode::Legacy),
             ..Default::default()
         })
         .await?;
@@ -2273,7 +2306,7 @@ async fn seed_pathless_store_thread(
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: ClearableField::Value("named pathless thread".to_string()),
+                name: Some(Some("named pathless thread".to_string())),
                 ..Default::default()
             },
             include_archived: true,

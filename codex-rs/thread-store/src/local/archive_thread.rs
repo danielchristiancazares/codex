@@ -8,8 +8,6 @@ use crate::ArchiveThreadsParams;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 use chrono::Utc;
-#[cfg(test)]
-use codex_protocol::NullableField;
 use codex_rollout::RolloutReferenceIndex;
 use tracing::warn;
 
@@ -289,8 +287,8 @@ mod tests {
                 allowed_sources: Vec::new(),
                 model_providers: None,
                 cwd_filters: None,
-                section: NullableField::Omitted,
-                project_id: NullableField::Omitted,
+                section: None,
+                project_id: None,
                 archived: true,
                 search_term: None,
                 relation_filter: None,

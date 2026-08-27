@@ -44,6 +44,7 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
         has_chatgpt_account: false,
         has_codex_backend_auth: false,
         model_catalog: test_model_catalog(&cfg),
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: true,
         status_account_display: None,
         runtime_model_provider_base_url: None,
@@ -3380,6 +3381,12 @@ async fn model_reasoning_selection_popup_snapshot() {
         .push(ReasoningEffortPreset {
             effort: ReasoningEffortConfig::Ultra,
             description: "Ultra reasoning".to_string(),
+        });
+    preset
+        .supported_reasoning_efforts
+        .push(ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Persistent,
+            description: "Continue working until put to sleep".to_string(),
         });
     chat.open_reasoning_popup(preset);
 

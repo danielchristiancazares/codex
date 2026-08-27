@@ -193,6 +193,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
         has_chatgpt_account,
         has_codex_backend_auth,
         model_catalog,
+        feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: true,
         status_account_display: None,
         runtime_model_provider_base_url: None,
@@ -414,6 +415,7 @@ pub(super) fn handle_error(
     chat.handle_server_notification(
         ServerNotification::Error(ErrorNotification {
             error: AppServerTurnError {
+                misalignment: None,
                 message: message.into(),
                 codex_error_info,
                 additional_details: None,
@@ -447,6 +449,7 @@ pub(super) fn handle_stream_error_with_replay(
     chat.handle_server_notification(
         ServerNotification::Error(ErrorNotification {
             error: AppServerTurnError {
+                misalignment: None,
                 message: message.into(),
                 codex_error_info: None,
                 additional_details,
@@ -714,6 +717,7 @@ pub(super) fn handle_image_generation_end(
                 transparent_background: None,
                 failure: None,
                 saved_path,
+                imagegen_request_id: None,
             }),
         }),
         /*replay_kind*/ None,

@@ -4,7 +4,6 @@
 use codex_arg0::Arg0DispatchPaths;
 use codex_code_mode::CodeModeSessionProvider;
 use codex_code_mode::GrpcCodeModeSessionProvider;
-use codex_code_mode::WebSocketCodeModeSessionProvider;
 use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
 use codex_core::config::Config;
@@ -63,6 +62,7 @@ use codex_core::config::find_codex_home;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_features::Feature;
+use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 use codex_rollout::state_db as rollout_state_db;
 use codex_state::log_db;
@@ -120,6 +120,8 @@ mod models;
 mod models_refresh_worker;
 mod otel_reloader;
 mod outgoing_message;
+mod realtime_event_handling;
+mod realtime_history;
 mod request_processors;
 mod request_serialization;
 mod server_request_error;
@@ -549,20 +551,6 @@ pub async fn run_main_with_transport_options(
     let code_mode_session_provider: Option<Arc<dyn CodeModeSessionProvider>> =
         match &runtime_options.code_mode_host_transport {
             CodeModeHostTransport::Local => None,
-            CodeModeHostTransport::WebSocket(url) => {
-                if !config.features.enabled(Feature::CodeModeHost) {
-                    return Err(std::io::Error::new(
-                        ErrorKind::InvalidInput,
-                        "remote code-mode host requires the code_mode_host feature to be enabled",
-                    ));
-                }
-                Some(Arc::new(
-                    WebSocketCodeModeSessionProvider::with_http_client_factory(
-                        url.to_string(),
-                        config.http_client_factory(),
-                    ),
-                ))
-            }
             CodeModeHostTransport::Grpc(url) => {
                 if !config.features.enabled(Feature::CodeModeHost) {
                     return Err(std::io::Error::new(
@@ -659,6 +647,8 @@ pub async fn run_main_with_transport_options(
         });
     }
 
+    let feedback = CodexFeedback::new();
+
     // Install a simple subscriber so `tracing` output is visible. Users can
     // control the log level with `RUST_LOG` and switch to JSON logs with
     // `LOG_FORMAT=json`.
@@ -676,6 +666,8 @@ pub async fn run_main_with_transport_options(
             .boxed(),
     };
 
+    let feedback_layer = feedback.logger_layer();
+    let feedback_metadata_layer = feedback.metadata_layer();
     let log_db = state_db.clone().map(log_db::start);
     let log_db_layer = log_db
         .clone()
@@ -683,6 +675,8 @@ pub async fn run_main_with_transport_options(
     let (otel_layers, otel_logger_reload_handle) = otel_reloader::layers(otel.as_ref());
     let _ = tracing_subscriber::registry()
         .with(stderr_fmt)
+        .with(feedback_layer)
+        .with(feedback_metadata_layer)
         .with(log_db_layer)
         .with(otel_layers)
         .try_init();
@@ -908,6 +902,7 @@ pub async fn run_main_with_transport_options(
             config: Arc::new(config),
             config_manager,
             environment_manager,
+            feedback: feedback.clone(),
             log_db,
             state_db: state_db.clone(),
             config_warnings,
@@ -1168,11 +1163,11 @@ pub async fn run_main_with_transport_options(
             };
 
             if !shutdown_state.forced() {
-                futures::future::join_all(
-                    connections
-                        .values()
-                        .map(|connection_state| connection_state.session.rpc_gate.shutdown()),
-                )
+                futures::future::join_all(connections.iter().map(
+                    |(&connection_id, connection_state)| {
+                        processor.connection_closed(connection_id, &connection_state.session)
+                    },
+                ))
                 .await;
                 connection_cleanup_tasks.drain().await;
                 processor.drain_background_tasks().await;

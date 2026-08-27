@@ -11,7 +11,6 @@ use codex_extension_items::ExtensionItem;
 use codex_extension_items::image_generation::ImageGenerationFailure;
 use codex_extension_items::image_generation::ImageGenerationItem;
 use codex_protocol::AgentPath;
-use codex_protocol::NullableField;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::items::ReasoningItem;
@@ -442,6 +441,7 @@ async fn migration_preserves_image_generation_failure_metadata() {
             resets_at: Some(1_786_150_800),
         }),
         saved_path: None,
+        imagegen_request_id: None,
     };
     let image_completion =
         RolloutItem::EventMsg(EventMsg::ImageGenerationEnd(ImageGenerationEndEvent {
@@ -730,6 +730,10 @@ async fn migration_rolls_back_response_and_inter_agent_user_boundaries() {
         SessionSource::Cli,
         vec![
             rollout_response_item(input_response_message("user", "keep first boundary")),
+            rollout_response_item(input_response_message(
+                "developer",
+                "<managed_developer_instructions>context only</managed_developer_instructions>",
+            )),
             rollout_response_item(input_response_message(
                 "developer",
                 "<permissions instructions>context only</permissions instructions>",
@@ -1449,6 +1453,7 @@ async fn migration_compacts_subagent_prefix_and_does_not_project_it() {
                 multi_agent_version: None,
                 multi_agent_mode: None,
                 realtime_active: None,
+                cyber_access_program: None,
                 effort: None,
                 summary: ReasoningSummary::Auto,
             }),
@@ -1838,7 +1843,7 @@ async fn migration_preserves_legacy_displayed_thread_names() {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id: title_thread_id,
             patch: ThreadMetadataPatch {
-                name: NullableField::Value("renamed title".to_string()),
+                name: Some(Some("renamed title".to_string())),
                 ..Default::default()
             },
             include_archived: false,
@@ -1866,8 +1871,8 @@ async fn migration_preserves_legacy_displayed_thread_names() {
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,
-            section: NullableField::Omitted,
-            project_id: NullableField::Omitted,
+            section: None,
+            project_id: None,
             archived: false,
             search_term: None,
             relation_filter: None,
@@ -1905,7 +1910,7 @@ async fn migration_repairs_a_missing_paginated_name_when_rerun() {
         .update_thread_metadata(UpdateThreadMetadataParams {
             thread_id,
             patch: ThreadMetadataPatch {
-                name: NullableField::Value("renamed title".to_string()),
+                name: Some(Some("renamed title".to_string())),
                 ..Default::default()
             },
             include_archived: false,

@@ -1,6 +1,7 @@
 use super::*;
 use crate::ServerNotification;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
+use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::items::AgentMessageContent;
@@ -38,6 +39,7 @@ use codex_protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandbox
 use codex_protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
 use codex_protocol::protocol::AgentStatus as CoreAgentStatus;
 use codex_protocol::protocol::AskForApproval as CoreAskForApproval;
+use codex_protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use codex_protocol::protocol::ConversationTextRole;
 use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
@@ -169,6 +171,7 @@ fn thread_sources_round_trip_as_scalar_labels() {
     for (source, label) in [
         (ThreadSource::User, "user"),
         (ThreadSource::Subagent, "subagent"),
+        (ThreadSource::GuardianReview, "guardian_review"),
         (
             ThreadSource::Feature("automation".to_string()),
             "automation",
@@ -247,7 +250,6 @@ fn thread_turns_list_params_accepts_items_view() {
 fn thread_resume_params_accept_turns_page_bootstrap() {
     let params = serde_json::from_value::<ThreadResumeParams>(json!({
         "threadId": "thr_123",
-        "serviceTier": "default",
         "initialTurnsPage": {
             "limit": 25,
             "sortDirection": "asc",
@@ -491,8 +493,8 @@ fn thread_list_params_accepts_section_id_filter() {
         .expect("section ID filter should deserialize");
 
         assert_eq!(
-            params.section_id,
-            NullableField::Value(section_id.to_string())
+            params.section_id.as_ref().map(|section| section.as_deref()),
+            Some(Some(section_id))
         );
         assert_eq!(
             serde_json::to_value(&params)
@@ -506,7 +508,7 @@ fn thread_list_params_accepts_section_id_filter() {
         "sectionId": null,
     }))
     .expect("unsectioned thread filter should deserialize");
-    assert_eq!(params.section_id, NullableField::Null);
+    assert_eq!(params.section_id, Some(None));
     assert_eq!(
         serde_json::to_value(&params)
             .expect("unsectioned thread filter should serialize")
@@ -516,7 +518,7 @@ fn thread_list_params_accepts_section_id_filter() {
 
     let params = serde_json::from_value::<ThreadListParams>(json!({}))
         .expect("omitted section ID filter should deserialize");
-    assert_eq!(params.section_id, NullableField::Omitted);
+    assert_eq!(params.section_id, None);
     assert!(
         serde_json::to_value(&params)
             .expect("omitted section ID filter should serialize")
@@ -577,13 +579,10 @@ fn thread_section_list_params_and_response_round_trip() {
 #[test]
 fn thread_section_updates_distinguish_omitted_and_cleared_appearance() {
     for (value, appearance) in [
-        (
-            json!({ "sectionId": "section", "name": "Work" }),
-            NullableField::Omitted,
-        ),
+        (json!({ "sectionId": "section", "name": "Work" }), None),
         (
             json!({ "sectionId": "section", "name": "Work", "appearance": null }),
-            NullableField::Null,
+            Some(None),
         ),
     ] {
         let params = serde_json::from_value::<ThreadSectionUpdateParams>(value)
@@ -1081,7 +1080,6 @@ fn permissions_request_approval_response_accepts_strict_auto_review() {
 #[test]
 fn permission_profile_selection_uses_id_string() {
     let start: ThreadStartParams = serde_json::from_value(json!({
-        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/start params deserialize");
@@ -1093,7 +1091,6 @@ fn permission_profile_selection_uses_id_string() {
     let turn: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "input": [],
-        "serviceTier": "default",
         "permissions": "dev",
     }))
     .expect("turn/start params deserialize");
@@ -1108,7 +1105,6 @@ fn permission_profile_selection_uses_id_string() {
 
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/resume params deserialize");
@@ -1119,7 +1115,6 @@ fn permission_profile_selection_uses_id_string() {
 
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     }))
     .expect("thread/fork params deserialize");
@@ -1133,7 +1128,6 @@ fn permission_profile_selection_uses_id_string() {
 fn thread_path_params_deserialize_empty_path_as_none() {
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "path": "",
     }))
     .expect("thread/resume params deserialize");
@@ -1141,7 +1135,6 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "path": "",
     }))
     .expect("thread/fork params deserialize");
@@ -1149,7 +1142,6 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 
     let resume_with_path: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "path": "/tmp/resume-thread.jsonl",
     }))
     .expect("thread/resume params deserialize");
@@ -1163,7 +1155,6 @@ fn thread_path_params_deserialize_empty_path_as_none() {
 fn thread_fork_last_turn_id_round_trips() {
     let params: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
-        "serviceTier": "default",
         "lastTurnId": "turn-2",
     }))
     .expect("thread/fork params deserialize");
@@ -1454,8 +1445,8 @@ fn process_spawn_params_round_trips_without_sandbox_policy() {
         tty: false,
         stream_stdin: false,
         stream_stdout_stderr: false,
-        output_bytes_cap: NullableField::Omitted,
-        timeout_ms: NullableField::Omitted,
+        output_bytes_cap: None,
+        timeout_ms: None,
         env: None,
         size: None,
     };
@@ -1492,8 +1483,8 @@ fn process_spawn_params_distinguish_omitted_null_and_value_limits() {
         tty: false,
         stream_stdin: false,
         stream_stdout_stderr: false,
-        output_bytes_cap: NullableField::Omitted,
-        timeout_ms: NullableField::Omitted,
+        output_bytes_cap: None,
+        timeout_ms: None,
         env: None,
         size: None,
     };
@@ -1512,8 +1503,8 @@ fn process_spawn_params_distinguish_omitted_null_and_value_limits() {
     assert_eq!(
         decoded,
         ProcessSpawnParams {
-            output_bytes_cap: NullableField::Null,
-            timeout_ms: NullableField::Null,
+            output_bytes_cap: Some(None),
+            timeout_ms: Some(None),
             ..expected_omitted.clone()
         }
     );
@@ -1529,8 +1520,8 @@ fn process_spawn_params_distinguish_omitted_null_and_value_limits() {
     assert_eq!(
         decoded,
         ProcessSpawnParams {
-            output_bytes_cap: NullableField::Value(123),
-            timeout_ms: NullableField::Value(456),
+            output_bytes_cap: Some(Some(123)),
+            timeout_ms: Some(Some(456)),
             ..expected_omitted
         }
     );
@@ -2033,6 +2024,8 @@ fn config_granular_approval_policy_is_marked_experimental() {
         service_tier: ServiceTier::Default,
         analytics: None,
         apps: None,
+        browser_use: None,
+        computer_use: None,
         desktop: None,
         additional: HashMap::new(),
     });
@@ -2066,6 +2059,8 @@ fn config_approvals_reviewer_is_marked_experimental() {
         service_tier: ServiceTier::Default,
         analytics: None,
         apps: None,
+        browser_use: None,
+        computer_use: None,
         desktop: None,
         additional: HashMap::new(),
     });
@@ -2079,6 +2074,7 @@ fn config_requirements_granular_allowed_approval_policy_is_marked_experimental()
         crate::experimental_api::ExperimentalApi::experimental_reason(&ConfigRequirements {
             cli_auth_credentials_store: None,
             chatgpt_base_url: None,
+            additional_developer_instructions: None,
             allowed_approval_policies: Some(vec![AskForApproval::Granular {
                 sandbox_approval: true,
                 rules: true,
@@ -2093,10 +2089,12 @@ fn config_requirements_granular_allowed_approval_policy_is_marked_experimental()
             default_permissions: None,
             allowed_web_search_modes: None,
             allow_managed_hooks_only: None,
+            allow_browser_and_computer_use: None,
             allow_appshots: None,
             allow_remote_control: None,
             computer_use: None,
             browser_use: None,
+            in_app_browser: None,
             feature_requirements: None,
             hooks: None,
             enforce_residency: None,
@@ -2536,6 +2534,7 @@ fn mcp_server_status_serializes_absent_server_info_as_null() {
     let response = ListMcpServerStatusResponse {
         data: vec![McpServerStatus {
             name: "not-ready".to_string(),
+            runtime_status: None,
             plugin_id: None,
             server_info: None,
             tools: HashMap::new(),
@@ -2551,6 +2550,7 @@ fn mcp_server_status_serializes_absent_server_info_as_null() {
         json!({
             "data": [{
                 "name": "not-ready",
+                "runtimeStatus": null,
                 "pluginId": null,
                 "serverInfo": null,
                 "tools": {},
@@ -2560,6 +2560,33 @@ fn mcp_server_status_serializes_absent_server_info_as_null() {
             }],
             "nextCursor": null,
         })
+    );
+}
+
+#[test]
+fn mcp_server_status_accepts_older_inventory_without_runtime_status() {
+    let status: McpServerStatus = serde_json::from_value(json!({
+        "name": "older-server",
+        "pluginId": null,
+        "serverInfo": null,
+        "tools": {},
+        "resources": [],
+        "resourceTemplates": [],
+        "authStatus": "unknown",
+    }))
+    .expect("older app-server inventory should deserialize");
+    assert_eq!(
+        status,
+        McpServerStatus {
+            name: "older-server".to_string(),
+            runtime_status: None,
+            plugin_id: None,
+            server_info: None,
+            tools: HashMap::new(),
+            resources: Vec::new(),
+            resource_templates: Vec::new(),
+            auth_status: McpAuthStatus::Unknown,
+        }
     );
 }
 
@@ -2623,6 +2650,7 @@ fn mcp_server_status_serializes_absent_server_info_metadata_as_null() {
     let response = ListMcpServerStatusResponse {
         data: vec![McpServerStatus {
             name: "initialized".to_string(),
+            runtime_status: None,
             plugin_id: Some("lookup@test".to_string()),
             server_info: Some(McpServerInfo {
                 name: "lookup-server".to_string(),
@@ -2645,6 +2673,7 @@ fn mcp_server_status_serializes_absent_server_info_metadata_as_null() {
         json!({
             "data": [{
                 "name": "initialized",
+                "runtimeStatus": null,
                 "pluginId": "lookup@test",
                 "serverInfo": {
                     "name": "lookup-server",
@@ -2806,6 +2835,46 @@ fn guardian_approval_review_action_round_trips_command_shape() {
         serde_json::to_value(&action).expect("serialize guardian review action"),
         value
     );
+}
+
+#[test]
+fn guardian_stdin_review_action_round_trips_native_and_foreign_paths() {
+    for (cwd_uri, cwd_native) in [
+        ("file:///home/alice/repo", "/home/alice/repo"),
+        (
+            "file:///C:/Users/Alice%20Smith/repo",
+            r"C:\Users\Alice Smith\repo",
+        ),
+        ("file://server/share/repo", r"\\server\share\repo"),
+    ] {
+        let core_action = CoreGuardianAssessmentAction::WriteStdin {
+            approval_id: "stdin-approval".into(),
+            process_id: "42".into(),
+            stdin: "yes\n".into(),
+            cwd: PathUri::parse(cwd_uri).expect("valid cwd URI"),
+        };
+        let action = GuardianApprovalReviewAction::from(core_action.clone());
+        let value = json!({
+            "type": "writeStdin",
+            "approvalId": "stdin-approval",
+            "processId": "42",
+            "stdin": "yes\n",
+            "cwd": cwd_native,
+        });
+
+        assert_eq!(
+            serde_json::to_value(&action).expect("serialize stdin review action"),
+            value,
+        );
+        let deserialized: GuardianApprovalReviewAction =
+            serde_json::from_value(value).expect("deserialize stdin review action");
+        assert_eq!(deserialized, action);
+        assert_eq!(
+            CoreGuardianAssessmentAction::try_from(deserialized)
+                .expect("convert stdin review action"),
+            core_action,
+        );
+    }
 }
 
 #[test]
@@ -3185,7 +3254,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
 
     let sub_agent_activity_item = TurnItem::SubAgentActivity(SubAgentActivityItem {
         id: "activity-1".to_string(),
-        kind: CoreSubAgentActivityKind::Interrupted,
+        kind: CoreSubAgentActivityKind::Completed,
         agent_thread_id: receiver_thread_id,
         agent_path: codex_protocol::AgentPath::root()
             .join("worker")
@@ -3196,7 +3265,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         ThreadItem::from(sub_agent_activity_item),
         ThreadItem::SubAgentActivity {
             id: "activity-1".to_string(),
-            kind: SubAgentActivityKind::Interrupted,
+            kind: SubAgentActivityKind::Completed,
             agent_thread_id: receiver_thread_id.to_string(),
             agent_path: "/root/worker".to_string(),
         }
@@ -4421,11 +4490,19 @@ fn codex_error_info_serializes_http_status_code_in_camel_case() {
 }
 
 #[test]
-fn codex_error_info_serializes_cyber_policy_in_camel_case() {
-    assert_eq!(
-        serde_json::to_value(CodexErrorInfo::CyberPolicy).unwrap(),
-        json!("cyberPolicy")
-    );
+fn core_error_info_converts_to_camel_case() {
+    for (core, expected) in [
+        (CoreCodexErrorInfo::CyberPolicy, json!("cyberPolicy")),
+        (
+            CoreCodexErrorInfo::RateLimitExceeded,
+            json!("rateLimitExceeded"),
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(CodexErrorInfo::from(core)).unwrap(),
+            expected
+        );
+    }
 }
 
 #[test]
@@ -4610,11 +4687,86 @@ fn thread_recency_sort_key_serializes_as_snake_case() {
 }
 
 #[test]
+fn turn_start_params_preserve_explicit_null_service_tier() {
+    let params: TurnStartParams = serde_json::from_value(json!({
+        "threadId": "thread_123",
+        "input": [],
+        "serviceTier": null
+    }))
+    .expect("params should deserialize");
+    assert_eq!(params.service_tier, Some(None));
+
+    let serialized = serde_json::to_value(&params).expect("params should serialize");
+    assert_eq!(
+        serialized.get("serviceTier"),
+        Some(&serde_json::Value::Null)
+    );
+
+    let without_override = TurnStartParams {
+        thread_id: "thread_123".to_string(),
+        client_user_message_id: None,
+        input: vec![],
+        turn_trigger: None,
+        tool_output: None,
+        responsesapi_client_metadata: None,
+        additional_context: None,
+        environments: None,
+        cwd: None,
+        runtime_workspace_roots: None,
+        approval_policy: None,
+        approvals_reviewer: None,
+        sandbox_policy: None,
+        permissions: None,
+        model: None,
+        service_tier: None,
+        service_tier_for_turn: None,
+        effort: None,
+        summary: None,
+        output_schema: None,
+        collaboration_mode: None,
+        multi_agent_mode: None,
+        personality: None,
+        cyber_access_program: None,
+    };
+    let serialized_without_override =
+        serde_json::to_value(&without_override).expect("params should serialize");
+    assert_eq!(serialized_without_override.get("serviceTier"), None);
+}
+
+#[test]
+fn turn_start_cyber_access_program_uses_separate_wire_formats() {
+    for (app_server_value, core_value) in [
+        ("standard", "standard"),
+        ("daybreakBlue", "daybreak_blue"),
+        ("daybreakRed", "daybreak_red"),
+    ] {
+        let params: TurnStartParams = serde_json::from_value(json!({
+            "threadId": "thread_123",
+            "input": [],
+            "cyberAccessProgram": app_server_value,
+        }))
+        .expect("params should deserialize");
+        let core_program: codex_protocol::turn_input::CyberAccessProgram = params
+            .cyber_access_program
+            .expect("explicit program")
+            .into();
+
+        assert_eq!(
+            serde_json::to_value(params).expect("params should serialize")["cyberAccessProgram"],
+            app_server_value,
+        );
+        assert_eq!(
+            serde_json::to_value(core_program).expect("core program should serialize"),
+            json!(core_value),
+        );
+    }
+}
+
+#[test]
 fn turn_start_params_round_trip_multi_agent_mode() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
-        "serviceTier": "default",
         "multiAgentMode": "proactive"
     }))
     .expect("params should deserialize");
@@ -4636,7 +4788,6 @@ fn turn_start_params_round_trip_multi_agent_mode() {
 #[test]
 fn thread_start_params_round_trip_multi_agent_mode() {
     let params: ThreadStartParams = serde_json::from_value(json!({
-        "serviceTier": "default",
         "multiAgentMode": "proactive"
     }))
     .expect("params should deserialize");
@@ -4736,7 +4887,6 @@ fn turn_start_params_round_trip_environments() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
-        "serviceTier": "default",
         "environments": [
             {
                 "environmentId": "local",
@@ -4778,7 +4928,6 @@ fn turn_start_params_preserve_empty_environments() {
     let params: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
-        "serviceTier": "default",
         "environments": [],
     }))
     .expect("params should deserialize");
@@ -4798,14 +4947,12 @@ fn turn_start_params_treat_null_or_omitted_environments_as_default() {
     let null_environments: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
-        "serviceTier": "default",
         "environments": null,
     }))
     .expect("params should deserialize");
     let omitted_environments: TurnStartParams = serde_json::from_value(json!({
         "threadId": "thread_123",
         "input": [],
-        "serviceTier": "default",
     }))
     .expect("params should deserialize");
 

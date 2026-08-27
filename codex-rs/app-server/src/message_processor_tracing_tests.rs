@@ -28,8 +28,8 @@ use codex_config::LoaderOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use opentelemetry::global;
@@ -259,6 +259,7 @@ async fn build_test_processor(
         config,
         config_manager,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+        feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,
         config_warnings: Vec::new(),
@@ -662,6 +663,8 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                         text: "hello".to_string(),
                         text_elements: Vec::new(),
                     }],
+                    turn_trigger: None,
+                    tool_output: None,
                     responsesapi_client_metadata: None,
                     additional_context: None,
                     cwd: None,
@@ -671,13 +674,15 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                     permissions: None,
                     approvals_reviewer: None,
                     model: None,
-                    service_tier: ServiceTier::Default,
+                    service_tier: None,
+                    service_tier_for_turn: None,
                     effort: None,
                     summary: None,
                     personality: None,
                     output_schema: None,
                     collaboration_mode: None,
                     multi_agent_mode: None,
+                    cyber_access_program: None,
                 },
             },
             Some(remote_trace),
