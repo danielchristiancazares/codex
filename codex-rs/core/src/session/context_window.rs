@@ -1,5 +1,6 @@
 use super::session::Session;
 use super::turn_context::TurnContext;
+use crate::config::Config;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::openai_models::ModelInfo;
 
@@ -26,11 +27,29 @@ pub(crate) async fn context_window_token_status(
     turn_context: &TurnContext,
     model_info: &ModelInfo,
 ) -> ContextWindowTokenStatus {
+    context_window_token_status_with_config(sess, turn_context.config.as_ref(), model_info).await
+}
+
+pub(crate) async fn context_window_token_status_for_model(
+    sess: &Session,
+    config: &Config,
+    model_info: &ModelInfo,
+) -> ContextWindowTokenStatus {
+    let mut config = config.clone();
+    super::token_budget::apply_model_defaults(&mut config, model_info);
+    context_window_token_status_with_config(sess, &config, model_info).await
+}
+
+async fn context_window_token_status_with_config(
+    sess: &Session,
+    config: &Config,
+    model_info: &ModelInfo,
+) -> ContextWindowTokenStatus {
     let active_context_tokens = sess.get_model_visible_token_usage(model_info).await;
 
     // Count either the full active context or only the tokens added after the initial prefix.
     let (auto_compact_scope_tokens, auto_compact_scope_limit, auto_compact_window_prefill_tokens) =
-        match turn_context.config.model_auto_compact_token_limit_scope {
+        match config.model_auto_compact_token_limit_scope {
             AutoCompactTokenLimitScope::Total => (
                 active_context_tokens,
                 model_info.auto_compact_token_limit(),
@@ -40,8 +59,7 @@ pub(crate) async fn context_window_token_status(
                 let window = sess.auto_compact_window_snapshot().await;
                 let baseline = window.prefill_input_tokens.unwrap_or(active_context_tokens);
 
-                let scope_limit = turn_context
-                    .config
+                let scope_limit = config
                     .model_auto_compact_token_limit
                     .or_else(|| model_info.auto_compact_token_limit());
                 (
@@ -65,8 +83,7 @@ pub(crate) async fn context_window_token_status(
     .min();
 
     // Only reserve the fallback buffer when there is a fallback prompt to use it.
-    let auto_compact_fallback_buffer_tokens = turn_context
-        .config
+    let auto_compact_fallback_buffer_tokens = config
         .token_budget
         .as_ref()
         .map_or(0, crate::config::TokenBudgetConfig::fallback_buffer_tokens);
