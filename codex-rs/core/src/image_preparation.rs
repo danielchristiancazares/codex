@@ -39,6 +39,7 @@ const UNIFIED_IMAGE_LIMITS: PromptImageResizeLimits = PromptImageResizeLimits {
     max_dimension: 6000,
     max_patches: 10_000,
 };
+const MAX_FUNCTION_OUTPUT_IMAGE_PATCHES: usize = 10_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ImagePreparationMode {
@@ -58,6 +59,12 @@ pub(crate) fn unified_image_budget_enabled(
 struct ImageOrigin<'a> {
     message_role: Option<&'a str>,
     item_id: Option<&'a str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ImagePatchLimit {
+    PerImage,
+    Shared(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,7 +203,14 @@ fn prepare_message_content(
     for item in items {
         if let ContentItem::InputImage { image_url, detail } = item.content_mut() {
             image_number += 1;
-            match prepare_image(image_url, detail, origin, metadata, mode) {
+            match prepare_image(
+                image_url,
+                detail,
+                origin,
+                metadata,
+                mode,
+                ImagePatchLimit::PerImage,
+            ) {
                 Ok(Some(resize)) if resize_notice_mode == ImageResizeNoticeMode::Enabled => {
                     resized_images.push(ResizedImage {
                         image_number,
@@ -222,7 +236,7 @@ fn prepare_message_content(
 }
 
 fn prepare_tool_output_content(
-    items: &mut [FunctionCallOutputContentItem],
+    items: &mut Vec<FunctionCallOutputContentItem>,
     origin: ImageOrigin<'_>,
     resize_notice_mode: ImageResizeNoticeMode,
     metadata: &mut Vec<ImagePreparationMetadata>,
@@ -234,10 +248,25 @@ fn prepare_tool_output_content(
         .count();
     let mut image_number = 0;
     let mut resized_images = Vec::new();
-    for item in items {
-        if let FunctionCallOutputContentItem::InputImage { image_url, detail } = item {
+    let mut remaining_patches = MAX_FUNCTION_OUTPUT_IMAGE_PATCHES;
+    let mut omitted_images = 0usize;
+    let mut prepared_items = Vec::with_capacity(items.len());
+    for mut item in std::mem::take(items) {
+        if let FunctionCallOutputContentItem::InputImage { image_url, detail } = &mut item {
             image_number += 1;
-            match prepare_image(image_url, detail, origin, metadata, mode) {
+            if remaining_patches == 0 {
+                omitted_images += 1;
+                continue;
+            }
+            let metadata_len = metadata.len();
+            match prepare_image(
+                image_url,
+                detail,
+                origin,
+                metadata,
+                mode,
+                ImagePatchLimit::Shared(remaining_patches),
+            ) {
                 Ok(Some(resize)) if resize_notice_mode == ImageResizeNoticeMode::Enabled => {
                     resized_images.push(ResizedImage {
                         image_number,
@@ -251,13 +280,26 @@ fn prepare_tool_output_content(
                 Ok(_) => {}
                 Err(error) => {
                     warn!(%error, "failed to prepare tool output image");
-                    *item = FunctionCallOutputContentItem::InputText {
+                    item = FunctionCallOutputContentItem::InputText {
                         text: error.placeholder().to_string(),
                     };
                 }
             }
+            if let Some(prepared) = metadata.get(metadata_len) {
+                let patches = (prepared.prepared_width as usize)
+                    .div_ceil(32)
+                    .saturating_mul((prepared.prepared_height as usize).div_ceil(32));
+                remaining_patches = remaining_patches.saturating_sub(patches);
+            }
         }
+        prepared_items.push(item);
     }
+    if omitted_images > 0 {
+        prepared_items.push(FunctionCallOutputContentItem::InputText {
+            text: format!("[omitted {omitted_images} images after the shared patch budget]"),
+        });
+    }
+    *items = prepared_items;
     resized_images
 }
 
@@ -279,6 +321,7 @@ fn prepare_image(
     origin: ImageOrigin<'_>,
     metadata: &mut Vec<ImagePreparationMetadata>,
     mode: ImagePreparationMode,
+    patch_limit: ImagePatchLimit,
 ) -> Result<Option<PreparedImageResize>, ImagePreparationError> {
     if is_remote_image_url(image_url) {
         return Err(ImagePreparationError::RemoteUrlUnsupported);
@@ -287,7 +330,7 @@ fn prepare_image(
         return Ok(None);
     }
 
-    let (effective_detail, limits) = match mode {
+    let (effective_detail, mut limits) = match mode {
         ImagePreparationMode::UnifiedBudget => (ImageDetailSetting::Original, UNIFIED_IMAGE_LIMITS),
         ImagePreparationMode::DetailBased => match detail {
             None | Some(ImageDetail::Auto | ImageDetail::High) => {
@@ -297,6 +340,9 @@ fn prepare_image(
             Some(ImageDetail::Low) => return Err(ImagePreparationError::UnsupportedLowDetail),
         },
     };
+    if let ImagePatchLimit::Shared(max_patches) = patch_limit {
+        limits.max_patches = limits.max_patches.min(max_patches);
+    }
     let image = load_data_url_for_prompt(image_url, PromptImageMode::ResizeWithLimits(limits))?;
     metadata.push(ImagePreparationMetadata {
         message_role: origin.message_role.map(str::to_string),

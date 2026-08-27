@@ -735,10 +735,25 @@ async fn run_websocket_response_stream(
                 }
 
                 let event = match serde_json::from_str::<ResponsesStreamEvent>(&text) {
-                    Ok(event) => event,
+                    Ok(mut event) => {
+                        event.raw = Some(crate::sse::responses::bounded_response_protocol_payload(
+                            text.as_str(),
+                        ));
+                        event
+                    }
                     Err(err) => {
-                        debug!("failed to parse websocket event: {err}, data: {text}");
-                        continue;
+                        debug!(
+                            error_category = ?err.classify(),
+                            error_line = err.line(),
+                            error_column = err.column(),
+                            payload_bytes = text.len(),
+                            "failed to parse websocket event"
+                        );
+                        return Err(crate::sse::responses::response_protocol_api_error(
+                            "invalid_json",
+                            Some(text.as_str()),
+                            &err.to_string(),
+                        ));
                     }
                 };
                 emit_responses_websocket_timing_event(

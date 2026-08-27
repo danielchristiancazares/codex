@@ -1166,6 +1166,7 @@ async fn serve_environment_with_agents_md(
     send_environment_info(&mut websocket).await;
 
     let mut agents_md_reads = 0;
+    let mut agents_md_handle = None;
     loop {
         let request = tokio::select! {
             request = read_exec_server_json(&mut websocket) => request,
@@ -1204,6 +1205,38 @@ async fn serve_environment_with_agents_md(
                 "id": request["id"],
                 "error": { "code": -32004, "message": "not found" }
             }),
+            Some("fs/open") if is_agents_md => {
+                agents_md_reads += 1;
+                let handle_id = request["params"]["handleId"]
+                    .as_str()
+                    .expect("file read handle")
+                    .to_string();
+                agents_md_handle = Some(handle_id.clone());
+                json!({
+                    "id": request["id"],
+                    "result": { "handleId": handle_id }
+                })
+            }
+            Some("fs/readBlock")
+                if request["params"]["handleId"].as_str() == agents_md_handle.as_deref() =>
+            {
+                json!({
+                    "id": request["id"],
+                    "result": {
+                        "chunk": BASE64_STANDARD.encode(contents),
+                        "eof": true,
+                    }
+                })
+            }
+            Some("fs/close")
+                if request["params"]["handleId"].as_str() == agents_md_handle.as_deref() =>
+            {
+                agents_md_handle = None;
+                json!({
+                    "id": request["id"],
+                    "result": {}
+                })
+            }
             Some("fs/readFile") if is_agents_md => {
                 agents_md_reads += 1;
                 json!({

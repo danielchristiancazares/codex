@@ -14,6 +14,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use tokio::time::Duration;
 use tokio::time::sleep;
 use tokio::time::timeout;
@@ -129,5 +130,61 @@ async fn websocket_reconnects_until_the_provider_recovers() -> Result<()> {
 
     server.shutdown().await;
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn incomplete_response_is_terminal_with_unbounded_websocket_retries() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_websocket_server(vec![
+        vec![
+            vec![ev_response_created("warmup"), ev_completed("warmup")],
+            vec![
+                ev_response_created("resp-incomplete"),
+                json!({
+                    "type": "response.incomplete",
+                    "response": {
+                        "id": "resp-incomplete",
+                        "incomplete_details": { "reason": "max_output_tokens" },
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": null,
+                            "output_tokens": 5,
+                            "output_tokens_details": null,
+                            "total_tokens": 15
+                        }
+                    }
+                }),
+            ],
+        ],
+        vec![vec![
+            ev_response_created("retry-trap"),
+            ev_completed("retry-trap"),
+        ]],
+    ])
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.model_provider.stream_max_retries = 0.into();
+    });
+    let test = builder.build_with_websocket_server(&server).await?;
+
+    test.codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "reach the output limit".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+
+    let error = wait_for_event(&test.codex, |event| matches!(event, EventMsg::Error(_))).await;
+    assert!(matches!(
+        error,
+        EventMsg::Error(error)
+            if error.message == "incomplete response returned, reason: max_output_tokens"
+    ));
+    assert_eq!(server.handshakes().len(), 1);
+    assert_eq!(server.single_connection().len(), 2);
+
+    server.shutdown().await;
     Ok(())
 }

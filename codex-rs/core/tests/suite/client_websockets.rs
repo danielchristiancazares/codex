@@ -200,6 +200,58 @@ async fn responses_websocket_preserves_credit_usage_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_preserves_terminal_incomplete_error() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-incomplete"),
+        json!({
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp-incomplete",
+                "incomplete_details": { "reason": "max_output_tokens" },
+                "usage": null
+            }
+        }),
+    ]]])
+    .await;
+    let harness = websocket_harness_for_codex_backend(&server).await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = turn_metadata(&harness, /*turn_id*/ None);
+    let mut stream = client_session
+        .stream(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            ServiceTier::Default,
+            &responses_metadata,
+            &InferenceTraceContext::disabled(),
+        )
+        .await
+        .expect("websocket stream");
+
+    assert!(matches!(
+        stream.next().await,
+        Some(Ok(ResponseEvent::Created))
+    ));
+    let error = stream
+        .next()
+        .await
+        .expect("terminal event")
+        .expect_err("incomplete response should fail");
+    assert!(matches!(
+        error.details(),
+        codex_protocol::error::CodexErrorDetails::IncompleteResponse { reason, .. }
+            if reason == "max_output_tokens"
+    ));
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn responses_websocket_streams_request() {
     skip_if_no_network!();
 
@@ -637,6 +689,57 @@ async fn responses_websocket_request_prewarm_reuses_connection() {
         Some("sequential_cutoff")
     );
 
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_prewarm_requires_completed_and_resets_state() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-incomplete")]],
+        vec![vec![
+            ev_response_created("warm-complete"),
+            ev_completed("warm-complete"),
+        ]],
+    ])
+    .await;
+    let harness = websocket_harness_with_options(&server, /*runtime_metrics_enabled*/ true).await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = prewarm_metadata(&harness, /*turn_id*/ None);
+
+    let error = client_session
+        .prewarm_websocket(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ ServiceTier::Default,
+            &responses_metadata,
+        )
+        .await
+        .expect_err("premature EOF should fail prewarm");
+    assert_eq!(
+        error.to_string(),
+        "stream disconnected before completion: websocket closed by server before response.completed"
+    );
+
+    client_session
+        .prewarm_websocket(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ ServiceTier::Default,
+            &responses_metadata,
+        )
+        .await
+        .expect("second prewarm should use a fresh connection");
+
+    assert_eq!(server.handshakes().len(), 2);
     server.shutdown().await;
 }
 

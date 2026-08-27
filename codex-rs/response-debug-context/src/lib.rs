@@ -19,10 +19,7 @@ pub struct ResponseDebugContext {
 pub fn extract_response_debug_context(transport: &TransportError) -> ResponseDebugContext {
     let mut context = ResponseDebugContext::default();
 
-    let TransportError::Http {
-        headers, body: _, ..
-    } = transport
-    else {
+    let TransportError::Http { headers, .. } = transport else {
         return context;
     };
 
@@ -76,6 +73,10 @@ pub fn telemetry_api_error_message(error: &ApiError) -> String {
         ApiError::Transport(transport) => telemetry_transport_error_message(transport),
         ApiError::Api { status, .. } => format!("api error {}", status.as_u16()),
         ApiError::Stream(err) => err.to_string(),
+        ApiError::IncompleteResponse { reason, .. } => {
+            format!("incomplete response: {reason}")
+        }
+        ApiError::ResponseProtocol { .. } => "response protocol error".to_string(),
         ApiError::ContextWindowExceeded => "context window exceeded".to_string(),
         ApiError::QuotaExceeded => "quota exceeded".to_string(),
         ApiError::UsageNotIncluded => "usage not included".to_string(),

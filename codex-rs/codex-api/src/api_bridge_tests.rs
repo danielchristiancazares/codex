@@ -52,6 +52,37 @@ fn map_api_error_preserves_retry_delay() {
 }
 
 #[test]
+fn terminal_response_errors_are_not_retryable_and_hide_raw_protocol_payloads() {
+    let protocol_error = map_api_error(ApiError::ResponseProtocol {
+        message: "response.completed: missing id".to_string(),
+        raw_event: Some("private model output".to_string()),
+    });
+    assert_eq!(
+        (protocol_error.to_string(), protocol_error.is_retryable()),
+        (
+            "response protocol error: response.completed: missing id".to_string(),
+            false,
+        )
+    );
+
+    let incomplete_error = map_api_error(ApiError::IncompleteResponse {
+        reason: "max_output_tokens".to_string(),
+        response_id: Some("resp-1".to_string()),
+        token_usage: None,
+    });
+    assert_eq!(
+        (
+            incomplete_error.to_string(),
+            incomplete_error.is_retryable()
+        ),
+        (
+            "incomplete response returned, reason: max_output_tokens".to_string(),
+            false,
+        )
+    );
+}
+
+#[test]
 fn map_api_error_maps_server_overloaded_from_503_body() {
     let body = serde_json::json!({
         "error": {

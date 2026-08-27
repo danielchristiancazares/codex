@@ -41,7 +41,6 @@ use crate::tools::router::ToolCallSource;
 use crate::unified_exec::resolve_max_tokens;
 use codex_protocol::openai_models::ToolMode;
 use codex_tools::ToolName;
-use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text_content_items_with_policy;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
@@ -340,7 +339,11 @@ fn truncate_code_mode_result(
         return truncated_items;
     }
 
-    truncate_function_output_items_with_policy(&items, policy, estimate_audio_token_count)
+    truncate_function_output_items_with_policy(
+        &items,
+        policy,
+        crate::context_manager::estimate_function_output_content_item_tokens,
+    )
 }
 
 // Submit synchronously so the recorder sees the call before the cell's dispatch gate closes.
@@ -509,11 +512,6 @@ mod tests {
             audio_url: format!("data:audio/wav;base64,{}", "A".repeat(100)),
         }];
 
-        assert_eq!(
-            truncate_code_mode_result(items, Some(5)),
-            vec![FunctionCallOutputContentItem::InputText {
-                text: "[omitted 1 audio items ...]".to_string(),
-            }]
-        );
+        assert_eq!(truncate_code_mode_result(items, Some(5)), Vec::new());
     }
 }

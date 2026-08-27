@@ -125,7 +125,7 @@ fn truncates_across_multiple_under_limit_texts_and_reports_omitted() {
     let output =
         truncate_function_output_items_with_policy(&items, TruncationPolicy::Tokens(limit), |_| 0);
 
-    assert_eq!(output.len(), 5);
+    assert_eq!(output.len(), 4);
 
     let first_text = match &output[0] {
         FunctionCallOutputContentItem::InputText { text } => text,
@@ -155,12 +155,6 @@ fn truncates_across_multiple_under_limit_texts_and_reports_omitted() {
         fourth_text.contains("tokens truncated"),
         "expected marker in truncated snippet: {fourth_text}"
     );
-
-    let summary_text = match &output[4] {
-        FunctionCallOutputContentItem::InputText { text } => text,
-        other => panic!("unexpected summary item: {other:?}"),
-    };
-    assert!(summary_text.contains("omitted 2 text items"));
 }
 
 #[test]
@@ -194,10 +188,11 @@ fn truncate_function_output_items_with_policy_discards_empty_text() {
         },
     ];
     items.extend(content.clone());
+    let expected = content[..3].to_vec();
     for policy in [TruncationPolicy::Bytes(16), TruncationPolicy::Tokens(4)] {
         assert_eq!(
             truncate_function_output_items_with_policy(&items, policy, |_| 1),
-            content
+            expected
         );
     }
 }
@@ -343,17 +338,70 @@ fn truncate_function_output_items_with_policy_omits_audio_over_budget() {
 
     assert_eq!(
         output,
+        vec![FunctionCallOutputContentItem::InputText {
+            text: "a…6 chars truncated…h".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn mixed_multimodal_output_obeys_one_budget_and_image_limits() {
+    let mut items = (0..6)
+        .map(|index| FunctionCallOutputContentItem::InputImage {
+            image_url: format!("data:image/png;base64,{index}"),
+            detail: Some(DEFAULT_IMAGE_DETAIL),
+        })
+        .collect::<Vec<_>>();
+    items.extend([
+        FunctionCallOutputContentItem::InputAudio {
+            audio_url: "audio".to_string(),
+        },
+        FunctionCallOutputContentItem::EncryptedContent {
+            encrypted_content: "encrypted".to_string(),
+        },
+        FunctionCallOutputContentItem::InputText {
+            text: "tail".to_string(),
+        },
+    ]);
+
+    let output =
+        truncate_function_output_items_with_policy(&items, TruncationPolicy::Tokens(24), |_| 2);
+
+    assert_eq!(
+        output,
         vec![
+            items[0].clone(),
+            items[1].clone(),
+            items[2].clone(),
+            items[3].clone(),
+            items[6].clone(),
+            items[7].clone(),
+            items[8].clone(),
             FunctionCallOutputContentItem::InputText {
-                text: "a…6 chars truncated…h".to_string(),
-            },
-            FunctionCallOutputContentItem::EncryptedContent {
-                encrypted_content: "enc_opaque".to_string(),
-            },
-            FunctionCallOutputContentItem::InputText {
-                text: "[omitted 1 audio items ...]".to_string(),
+                text: "[omitted 2 image items ...]".to_string(),
             },
         ]
+    );
+}
+
+#[test]
+fn zero_budget_omits_every_modality() {
+    let items = vec![
+        FunctionCallOutputContentItem::InputImage {
+            image_url: "image".to_string(),
+            detail: Some(DEFAULT_IMAGE_DETAIL),
+        },
+        FunctionCallOutputContentItem::InputAudio {
+            audio_url: "audio".to_string(),
+        },
+        FunctionCallOutputContentItem::EncryptedContent {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    assert_eq!(
+        truncate_function_output_items_with_policy(&items, TruncationPolicy::Tokens(0), |_| 1,),
+        Vec::new()
     );
 }
 

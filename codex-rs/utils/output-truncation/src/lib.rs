@@ -9,6 +9,11 @@ use codex_utils_string::truncate_middle_with_token_budget;
 
 pub use codex_protocol::protocol::TruncationPolicy;
 
+/// Maximum image items retained in one model-visible function output.
+pub const MAX_FUNCTION_OUTPUT_IMAGES: usize = 4;
+/// Maximum aggregate encoded image bytes retained in one model-visible function output.
+pub const MAX_FUNCTION_OUTPUT_IMAGE_ENCODED_BYTES: usize = 8 * 1024 * 1024;
+
 pub fn formatted_truncate_text(content: &str, policy: TruncationPolicy) -> String {
     if content.len() <= policy.byte_budget() {
         return content.to_string();
@@ -89,15 +94,23 @@ pub fn formatted_truncate_text_content_items_with_policy(
 pub fn truncate_function_output_items_with_policy(
     items: &[FunctionCallOutputContentItem],
     policy: TruncationPolicy,
-    estimate_audio_token_count: impl Fn(&str) -> usize,
+    estimate_non_text_token_count: impl Fn(&FunctionCallOutputContentItem) -> usize,
 ) -> Vec<FunctionCallOutputContentItem> {
+    if policy.byte_budget() == 0 {
+        return Vec::new();
+    }
+
     let mut out: Vec<FunctionCallOutputContentItem> = Vec::with_capacity(items.len());
     let mut remaining_budget = match policy {
         TruncationPolicy::Bytes(_) => policy.byte_budget(),
         TruncationPolicy::Tokens(_) => policy.token_budget(),
     };
     let mut omitted_text_items = 0usize;
+    let mut omitted_image_items = 0usize;
     let mut omitted_audio_items = 0usize;
+    let mut omitted_encrypted_items = 0usize;
+    let mut retained_image_items = 0usize;
+    let mut retained_image_bytes = 0usize;
 
     for item in items {
         match item {
@@ -134,13 +147,30 @@ pub fn truncate_function_output_items_with_policy(
                 }
             }
             FunctionCallOutputContentItem::InputImage { image_url, detail } => {
-                out.push(FunctionCallOutputContentItem::InputImage {
-                    image_url: image_url.clone(),
-                    detail: *detail,
-                });
+                let token_cost = estimate_non_text_token_count(item);
+                let cost = match policy {
+                    TruncationPolicy::Bytes(_) => approx_bytes_for_tokens(token_cost),
+                    TruncationPolicy::Tokens(_) => token_cost,
+                };
+                let encoded_bytes = image_url.len();
+                if retained_image_items < MAX_FUNCTION_OUTPUT_IMAGES
+                    && retained_image_bytes.saturating_add(encoded_bytes)
+                        <= MAX_FUNCTION_OUTPUT_IMAGE_ENCODED_BYTES
+                    && cost <= remaining_budget
+                {
+                    out.push(FunctionCallOutputContentItem::InputImage {
+                        image_url: image_url.clone(),
+                        detail: *detail,
+                    });
+                    retained_image_items += 1;
+                    retained_image_bytes = retained_image_bytes.saturating_add(encoded_bytes);
+                    remaining_budget = remaining_budget.saturating_sub(cost);
+                } else {
+                    omitted_image_items += 1;
+                }
             }
             FunctionCallOutputContentItem::InputAudio { audio_url } => {
-                let token_cost = estimate_audio_token_count(audio_url);
+                let token_cost = estimate_non_text_token_count(item);
                 let cost = match policy {
                     TruncationPolicy::Bytes(_) => approx_bytes_for_tokens(token_cost),
                     TruncationPolicy::Tokens(_) => token_cost,
@@ -154,23 +184,41 @@ pub fn truncate_function_output_items_with_policy(
                     omitted_audio_items += 1;
                 }
             }
-            FunctionCallOutputContentItem::EncryptedContent { encrypted_content } => {
-                out.push(FunctionCallOutputContentItem::EncryptedContent {
-                    encrypted_content: encrypted_content.clone(),
-                });
+            FunctionCallOutputContentItem::EncryptedContent { .. } => {
+                let token_cost = estimate_non_text_token_count(item);
+                let cost = match policy {
+                    TruncationPolicy::Bytes(_) => approx_bytes_for_tokens(token_cost),
+                    TruncationPolicy::Tokens(_) => token_cost,
+                };
+                if cost <= remaining_budget {
+                    out.push(item.clone());
+                    remaining_budget = remaining_budget.saturating_sub(cost);
+                } else {
+                    omitted_encrypted_items += 1;
+                }
             }
         }
     }
 
-    if omitted_text_items > 0 {
-        out.push(FunctionCallOutputContentItem::InputText {
-            text: format!("[omitted {omitted_text_items} text items ...]"),
-        });
-    }
-    if omitted_audio_items > 0 {
-        out.push(FunctionCallOutputContentItem::InputText {
-            text: format!("[omitted {omitted_audio_items} audio items ...]"),
-        });
+    let omitted = [
+        (omitted_text_items, "text"),
+        (omitted_image_items, "image"),
+        (omitted_audio_items, "audio"),
+        (omitted_encrypted_items, "encrypted"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, modality)| format!("{count} {modality}"))
+    .collect::<Vec<_>>();
+    if !omitted.is_empty() {
+        let marker = format!("[omitted {} items ...]", omitted.join(", "));
+        let marker_cost = match policy {
+            TruncationPolicy::Bytes(_) => marker.len(),
+            TruncationPolicy::Tokens(_) => approx_token_count(&marker),
+        };
+        if marker_cost <= remaining_budget {
+            out.push(FunctionCallOutputContentItem::InputText { text: marker });
+        }
     }
 
     out

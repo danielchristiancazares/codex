@@ -1430,6 +1430,15 @@ async fn run_sampling_request(
                     }
                     return Err(err);
                 }
+                CodexErrorDetails::IncompleteResponse { token_usage, .. } => {
+                    let token_usage = token_usage.clone();
+                    if let Some(token_usage) = token_usage.as_ref() {
+                        let _ = sess
+                            .update_token_usage_info(&turn_context, Some(token_usage))
+                            .await;
+                    }
+                    return Err(err);
+                }
                 _ => err,
             },
         };
@@ -1446,7 +1455,6 @@ async fn run_sampling_request(
             &mut retry_state,
             max_retries,
             err,
-            client_session,
             &sess,
             &turn_context,
             ResponsesStreamRequest::Sampling,
@@ -2231,7 +2239,7 @@ async fn try_run_sampling_request(
             &step_context.session_telemetry,
             step_context.settings.reasoning_effort().cloned(),
             step_context.settings.reasoning_summary,
-            step_context.settings.service_tier.clone(),
+            step_context.settings.service_tier,
             responses_metadata,
             &inference_trace,
         )
@@ -2589,10 +2597,15 @@ async fn try_run_sampling_request(
                     }),
                 )
                 .await;
-                let budget_result = sess
-                    .record_token_usage_info(&turn_context, token_usage.as_ref())
-                    .await;
-                should_emit_token_count = true;
+                let budget_result = if token_usage.is_some() {
+                    should_emit_token_count = true;
+                    sess.record_token_usage_info(&turn_context, token_usage.as_ref())
+                        .await
+                } else {
+                    sess.recompute_token_usage(&turn_context).await;
+                    should_emit_token_count = false;
+                    Ok(())
+                };
                 should_emit_turn_diff = true;
                 if let Err(err) = budget_result {
                     break Err(err);

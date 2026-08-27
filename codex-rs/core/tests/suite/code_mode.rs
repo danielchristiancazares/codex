@@ -3951,7 +3951,7 @@ image({{
     let request = second_mock.single_request();
     let items = custom_tool_output_items(&request, "call-1");
     assert_eq!(items.len(), 6, "unexpected code-mode output: {items:?}");
-    for item in &items[1..] {
+    for item in &items[1..5] {
         assert_eq!(item["type"], "input_image");
         assert_eq!(item["detail"], "original");
         let image_url = item["image_url"]
@@ -3963,6 +3963,13 @@ image({{
         let image = image::load_from_memory(&BASE64_STANDARD.decode(payload)?)?;
         assert_eq!(image.dimensions(), (2304, 864));
     }
+    assert_eq!(
+        items[5],
+        serde_json::json!({
+            "type": "input_text",
+            "text": "[omitted 1 image items ...]",
+        })
+    );
 
     let body = request.body_json();
     let exec_description = body["tools"]

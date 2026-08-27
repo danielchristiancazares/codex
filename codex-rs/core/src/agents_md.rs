@@ -23,8 +23,8 @@ use codex_config::default_project_root_markers;
 use codex_config::merge_toml_values;
 use codex_config::project_root_markers_from_config;
 use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::FILE_READ_CHUNK_SIZE;
 use codex_exec_server::GetMetadataOptions;
-use codex_exec_server::ReadFileOptions;
 use codex_extension_api::Instructions;
 use codex_file_system::FileSystemSandboxContext;
 use codex_file_system::FindUpErrorPolicy;
@@ -138,22 +138,35 @@ async fn read_agents_md(
     let mut remaining: u64 = max_total as u64;
     let mut loaded = LoadedAgentsMd::default();
 
-    for p in paths {
+    'paths: for p in paths {
         if remaining == 0 {
             break;
         }
 
-        let mut data = match fs.read_file(&p, ReadFileOptions::default(), sandbox).await {
-            Ok(data) => data,
+        let mut stream = match fs.read_file_stream(&p, sandbox).await {
+            Ok(stream) => stream,
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
             Err(err) => return Err(err),
         };
-        let size = data.len() as u64;
-        if size > remaining {
-            data.truncate(remaining as usize);
+        let max_len = usize::try_from(remaining).unwrap_or(usize::MAX);
+        let mut data = Vec::with_capacity(max_len.min(FILE_READ_CHUNK_SIZE));
+        let mut truncated = false;
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue 'paths,
+                Err(err) => return Err(err),
+            };
+            let available = max_len.saturating_sub(data.len());
+            let retained = chunk.len().min(available);
+            data.extend_from_slice(&chunk[..retained]);
+            if retained < chunk.len() {
+                truncated = true;
+                break;
+            }
         }
 
-        if size > remaining {
+        if truncated {
             tracing::warn!(
                 path = %p,
                 remaining_bytes = remaining,

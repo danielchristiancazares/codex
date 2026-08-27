@@ -13,7 +13,7 @@ impl SubagentNotification {
     pub(crate) fn new(agent_reference: impl Into<String>, status: AgentStatus) -> Self {
         Self {
             agent_reference: agent_reference.into(),
-            status,
+            status: crate::session_prefix::bounded_completion_status(&status),
         }
     }
 }

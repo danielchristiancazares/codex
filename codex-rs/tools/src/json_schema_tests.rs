@@ -7,6 +7,23 @@ use super::parse_tool_input_schema_without_compaction;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 
+#[test]
+fn integer_bounds_serialize_as_json_schema_keywords() {
+    assert_eq!(
+        serde_json::to_value(
+            JsonSchema::integer(Some("bounded".to_string()))
+                .with_integer_bounds(/*minimum*/ 1, /*maximum*/ 32,)
+        )
+        .unwrap(),
+        serde_json::json!({
+            "type": "integer",
+            "description": "bounded",
+            "minimum": 1,
+            "maximum": 32
+        })
+    );
+}
+
 // Tests in this section exercise normalization transforms that mutate badly
 // formed JSON for consumption by the Responses API.
 

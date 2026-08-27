@@ -3533,6 +3533,7 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
         ev_response_created("resp_incomplete"),
         ev_message_item_added("msg_incomplete", "partial content"),
         ev_output_text_delta("continued chunk"),
+        ev_assistant_message("msg_incomplete", "partial contentcontinued chunk"),
         json!({
             "type": "response.incomplete",
             "response": {
@@ -3542,6 +3543,18 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
                 "error": null,
                 "incomplete_details": {
                     "reason": "content_filter"
+                },
+                "usage": {
+                    "input_tokens": 12,
+                    "input_tokens_details": {
+                        "cached_tokens": 3,
+                        "cache_write_tokens": 2
+                    },
+                    "output_tokens": 5,
+                    "output_tokens_details": {
+                        "reasoning_tokens": 1
+                    },
+                    "total_tokens": 17
                 }
             }
         }),
@@ -3551,7 +3564,7 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
 
     let TestCodex { codex, .. } = test_codex()
         .with_config(|config| {
-            config.model_provider.stream_max_retries = Some(0);
+            config.model_provider.stream_max_retries = Some(5);
         })
         .build(&server)
         .await?;
@@ -3562,13 +3575,34 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
         }]))
         .await?;
 
+    let token_event = wait_for_event(
+        &codex,
+        |event| matches!(event, EventMsg::TokenCount(payload) if payload.info.is_some()),
+    )
+    .await;
+    let EventMsg::TokenCount(token_payload) = token_event else {
+        unreachable!();
+    };
+    assert_eq!(
+        token_payload.info.expect("token usage").last_token_usage,
+        codex_protocol::protocol::TokenUsage {
+            input_tokens: 12,
+            cached_input_tokens: 3,
+            cache_write_input_tokens: 2,
+            output_tokens: 5,
+            reasoning_output_tokens: 1,
+            total_tokens: 17,
+            codex_rollout_budget_units: None,
+        }
+    );
+
     let error_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     assert!(
         matches!(
             error_event,
             EventMsg::Error(ref err)
                 if err.message
-                    == "stream disconnected before completion: Incomplete response returned, reason: content_filter"
+                    == "incomplete response returned, reason: content_filter"
         ),
         "expected incomplete content filter error; got {error_event:?}"
     );
@@ -3576,6 +3610,123 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
     assert_eq!(responses_mock.requests().len(), 1);
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_without_usage_recomputes_context_accounting() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+    let responses_mock = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-no-usage"),
+            ev_assistant_message("msg-no-usage", "account this response"),
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp-no-usage",
+                    "usage": null
+                }
+            }),
+        ]),
+    )
+    .await;
+    let TestCodex { codex, .. } = test_codex().build(&server).await?;
+
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "complete without usage".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+
+    let token_event = wait_for_event(
+        &codex,
+        |event| matches!(event, EventMsg::TokenCount(payload) if payload.info.is_some()),
+    )
+    .await;
+    let EventMsg::TokenCount(payload) = token_event else {
+        unreachable!();
+    };
+    let info = payload.info.expect("estimated token usage");
+    let estimated_total_tokens = info.last_token_usage.total_tokens;
+    assert!(estimated_total_tokens > 0);
+    assert_eq!(
+        info.last_token_usage,
+        codex_protocol::protocol::TokenUsage {
+            total_tokens: estimated_total_tokens,
+            ..Default::default()
+        }
+    );
+    assert_eq!(responses_mock.requests().len(), 1);
+
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_completed_is_terminal_and_preserves_completed_output() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+    let responses_mock = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-malformed"),
+            ev_assistant_message("msg-malformed", "retained output"),
+            json!({
+                "type": "response.completed",
+                "response": { "usage": null }
+            }),
+        ]),
+    )
+    .await;
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(|config| config.model_provider.stream_max_retries = Some(5))
+        .build(&server)
+        .await?;
+
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "malformed terminal event".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+
+    let raw_item = wait_for_event(&codex, |event| {
+        matches!(
+            event,
+            EventMsg::RawResponseItem(raw)
+                if matches!(
+                    &raw.item,
+                    ResponseItem::Message { role, content, .. }
+                        if role == "assistant"
+                            && content == &vec![ContentItem::OutputText {
+                                text: "retained output".to_string(),
+                            }]
+                )
+        )
+    })
+    .await;
+    assert!(matches!(
+        raw_item,
+        EventMsg::RawResponseItem(raw)
+            if matches!(
+                &raw.item,
+                ResponseItem::Message { role, content, .. }
+                    if role == "assistant"
+                        && content == &vec![ContentItem::OutputText {
+                            text: "retained output".to_string(),
+                        }]
+            )
+    ));
+    let error = wait_for_event(&codex, |event| matches!(event, EventMsg::Error(_))).await;
+    assert!(
+        matches!(error, EventMsg::Error(error) if error.message.starts_with("response protocol error: response.completed:"))
+    );
+    assert_eq!(responses_mock.requests().len(), 1);
+
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
     Ok(())
 }
 

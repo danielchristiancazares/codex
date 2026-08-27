@@ -45,9 +45,13 @@ use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::task::Poll;
 use tempfile::TempDir;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
+use tokio_util::bytes::Bytes;
 
 #[derive(Clone, Copy)]
 enum InjectedFailure {
@@ -56,6 +60,7 @@ enum InjectedFailure {
     MetadataBlockedByFilenamePrefix(&'static str),
     MetadataPending,
     Read(io::ErrorKind),
+    ReadChunks,
 }
 
 struct FailingFileSystem {
@@ -68,6 +73,8 @@ struct MetadataCallCounts {
     paths: Mutex<Vec<PathUri>>,
     started: Notify,
     release: Semaphore,
+    legacy_read_calls: AtomicUsize,
+    stream_polls: AtomicUsize,
 }
 
 impl Default for MetadataCallCounts {
@@ -76,6 +83,8 @@ impl Default for MetadataCallCounts {
             paths: Mutex::new(Vec::new()),
             started: Notify::new(),
             release: Semaphore::new(0),
+            legacy_read_calls: AtomicUsize::new(0),
+            stream_polls: AtomicUsize::new(0),
         }
     }
 }
@@ -95,12 +104,39 @@ impl FailingFileSystem {
         options: ReadFileOptions,
         sandbox: Option<&FileSystemSandboxContext>,
     ) -> io::Result<Vec<u8>> {
+        self.metadata_calls
+            .legacy_read_calls
+            .fetch_add(1, Ordering::Relaxed);
         if path.to_abs_path()? == self.path
             && let InjectedFailure::Read(kind) = self.failure
         {
             return Err(io::Error::new(kind, "injected read failure"));
         }
         LOCAL_FS.read_file(path, options, sandbox).await
+    }
+
+    async fn read_file_stream(
+        &self,
+        path: &PathUri,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> io::Result<FileSystemReadStream> {
+        if path.to_abs_path()? == self.path
+            && let InjectedFailure::Read(kind) = self.failure
+        {
+            return Err(io::Error::new(kind, "injected read failure"));
+        }
+        if path.to_abs_path()? == self.path && matches!(self.failure, InjectedFailure::ReadChunks) {
+            let metadata_calls = Arc::clone(&self.metadata_calls);
+            let mut chunks =
+                [Bytes::from_static(b"abcdef"), Bytes::from_static(b"trap")].into_iter();
+            return Ok(FileSystemReadStream::new(futures::stream::poll_fn(
+                move |_| {
+                    metadata_calls.stream_polls.fetch_add(1, Ordering::Relaxed);
+                    Poll::Ready(chunks.next().map(Ok))
+                },
+            )));
+        }
+        LOCAL_FS.read_file_stream(path, sandbox).await
     }
 
     async fn write_file(
@@ -169,7 +205,8 @@ impl FailingFileSystem {
             | InjectedFailure::MetadataBlocked
             | InjectedFailure::MetadataBlockedByFilenamePrefix(_)
             | InjectedFailure::MetadataPending
-            | InjectedFailure::Read(_) => LOCAL_FS.get_metadata(path, options, sandbox).await,
+            | InjectedFailure::Read(_)
+            | InjectedFailure::ReadChunks => LOCAL_FS.get_metadata(path, options, sandbox).await,
         }
     }
 
@@ -221,15 +258,10 @@ impl ExecutorFileSystem for FailingFileSystem {
 
     fn read_file_stream<'a>(
         &'a self,
-        _path: &'a PathUri,
-        _sandbox: Option<&'a FileSystemSandboxContext>,
+        path: &'a PathUri,
+        sandbox: Option<&'a FileSystemSandboxContext>,
     ) -> ExecutorFileSystemFuture<'a, FileSystemReadStream> {
-        Box::pin(async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "failing filesystem does not support streaming reads",
-            ))
-        })
+        Box::pin(FailingFileSystem::read_file_stream(self, path, sandbox))
     }
 
     fn write_file<'a>(
@@ -761,6 +793,36 @@ async fn read_agents_md_propagates_read_errors() {
     .expect_err("read error");
 
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+}
+
+#[tokio::test]
+async fn project_doc_budget_stops_stream_at_the_crossing_chunk() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::write(tmp.path().join("AGENTS.md"), "discovery placeholder").unwrap();
+    let config = make_config(&tmp, /*limit*/ 3, /*instructions*/ None).await;
+    let metadata_calls = Arc::new(MetadataCallCounts::default());
+    let fs = FailingFileSystem {
+        path: config.cwd.join("AGENTS.md"),
+        failure: InjectedFailure::ReadChunks,
+        metadata_calls: Arc::clone(&metadata_calls),
+    };
+    let cwd = config.cwd.clone();
+
+    let loaded = read_agents_md(
+        &config.config,
+        &fs,
+        "local",
+        &PathUri::from_abs_path(&cwd),
+        config.project_doc_max_bytes,
+        /*sandbox*/ None,
+    )
+    .await
+    .expect("streamed project instructions")
+    .expect("project instructions");
+
+    assert_eq!(loaded.text(), "abc");
+    assert_eq!(metadata_calls.legacy_read_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(metadata_calls.stream_polls.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

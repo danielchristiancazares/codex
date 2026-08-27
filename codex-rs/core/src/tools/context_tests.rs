@@ -194,7 +194,7 @@ fn mcp_tool_output_response_item_preserves_content_items() {
         tool_input: json!({}),
         wall_time: std::time::Duration::from_millis(500),
         original_image_detail_supported: false,
-        truncation_policy: TruncationPolicy::Bytes(1024),
+        truncation_policy: TruncationPolicy::Bytes(8 * 1024),
     };
 
     let response = output.to_response_item(

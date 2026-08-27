@@ -1,11 +1,13 @@
 use codex_tools::JsonSchema;
+use codex_tools::TOOL_SEARCH_MAX_RESULTS;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolSearchSourceInfo;
 use codex_tools::ToolSpec;
 use codex_utils_string::take_bytes_at_char_boundary;
 use std::collections::BTreeMap;
 
-const MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES: usize = 512 * 1024;
+const MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES: usize = 16 * 1024;
+const TOOL_SEARCH_SOURCE_TRUNCATION_MARKER: &str = "\n… source listing truncated …";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToolSearchSourceListing {
@@ -25,9 +27,13 @@ pub(crate) fn create_tool_search_tool(
         ),
         (
             "limit".to_string(),
-            JsonSchema::number(Some(format!(
+            JsonSchema::integer(Some(format!(
                 "Maximum number of tools to return. Defaults to {default_limit}."
-            ))),
+            )))
+            .with_integer_bounds(
+                /*minimum*/ 1,
+                /*maximum*/ TOOL_SEARCH_MAX_RESULTS as i64,
+            ),
         ),
     ]);
 
@@ -48,20 +54,38 @@ pub(crate) fn create_tool_search_tool(
             let source_descriptions = if source_descriptions.is_empty() {
                 "None currently enabled.".to_string()
             } else {
+                let full_len =
+                    source_descriptions.iter().enumerate().fold(
+                        0usize,
+                        |total, (index, (name, description))| {
+                            total
+                                .saturating_add(usize::from(index > 0))
+                                .saturating_add(2)
+                                .saturating_add(name.len())
+                                .saturating_add(description.as_ref().map_or(0, |description| {
+                                    2usize.saturating_add(description.len())
+                                }))
+                        },
+                    );
+                let was_truncated = full_len > MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES;
+                let marker_len = if was_truncated {
+                    TOOL_SEARCH_SOURCE_TRUNCATION_MARKER.len()
+                } else {
+                    0
+                };
+                let content_limit =
+                    MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES.saturating_sub(marker_len);
                 let reserved_name_bytes = source_descriptions.keys().fold(
                     source_descriptions.len().saturating_sub(1),
                     |reserved, name| reserved.saturating_add(2).saturating_add(name.len()),
                 );
-                let mut description_budget =
-                    MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES.saturating_sub(reserved_name_bytes);
+                let mut description_budget = content_limit.saturating_sub(reserved_name_bytes);
                 let mut rendered = String::new();
                 for (name, description) in source_descriptions {
                     let separator_bytes = usize::from(!rendered.is_empty());
                     let required = separator_bytes.saturating_add(2).saturating_add(name.len());
-                    if required
-                        > MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES.saturating_sub(rendered.len())
-                    {
-                        continue;
+                    if required > content_limit.saturating_sub(rendered.len()) {
+                        break;
                     }
 
                     if !rendered.is_empty() {
@@ -80,6 +104,9 @@ pub(crate) fn create_tool_search_tool(
                         rendered.push_str(bounded_description);
                         description_budget -= bounded_description.len();
                     }
+                }
+                if was_truncated {
+                    rendered.push_str(TOOL_SEARCH_SOURCE_TRUNCATION_MARKER);
                 }
                 rendered
             };
@@ -142,10 +169,11 @@ mod tests {
                 parameters: JsonSchema::object(BTreeMap::from([
                         (
                             "limit".to_string(),
-                            JsonSchema::number(Some(
+                            JsonSchema::integer(Some(
                                     "Maximum number of tools to return. Defaults to 8."
                                         .to_string(),
-                                ),),
+                                ),)
+                                .with_integer_bounds(/*minimum*/ 1, /*maximum*/ 32),
                         ),
                         (
                             "query".to_string(),
@@ -199,9 +227,10 @@ mod tests {
             .expect("tool search should retain its discovery instructions");
         assert!(source_descriptions.len() <= MAX_TOOL_SEARCH_SOURCE_DESCRIPTION_BYTES);
         assert!(source_descriptions.starts_with("- source-00: 🦀"));
-        assert!(source_descriptions.contains(&long_description));
+        assert!(source_descriptions.contains("… source listing truncated …"));
         let advertised_names = source_descriptions
             .lines()
+            .filter(|line| line.starts_with("- "))
             .map(|line| {
                 let source = line
                     .strip_prefix("- ")

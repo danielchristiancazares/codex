@@ -32,6 +32,7 @@ const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
+const RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES: usize = 2 * 1024;
 
 pub fn spawn_response_stream(
     stream_response: StreamResponse,
@@ -125,6 +126,19 @@ struct ResponseCompleted {
 }
 
 #[derive(Debug, Deserialize)]
+struct ResponseIncomplete {
+    id: Option<String>,
+    #[serde(default)]
+    usage: Option<ResponseCompletedUsage>,
+    incomplete_details: Option<ResponseIncompleteDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseIncompleteDetails {
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ResponseCompletedUsage {
     input_tokens: i64,
     input_tokens_details: Option<ResponseCompletedInputTokensDetails>,
@@ -181,6 +195,8 @@ pub struct ResponsesStreamEvent {
     content_index: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_present_value")]
     safety_buffering: Option<Value>,
+    #[serde(skip)]
+    pub(crate) raw: Option<String>,
 }
 
 fn deserialize_present_value<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
@@ -350,165 +366,280 @@ impl ResponsesEventError {
     }
 }
 
+pub(crate) fn bounded_response_protocol_payload(raw: &str) -> String {
+    const TRUNCATION_MARKER: &str = "…";
+
+    if raw.len() <= RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES {
+        return raw.to_string();
+    }
+    let mut end = RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES - TRUNCATION_MARKER.len();
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{TRUNCATION_MARKER}", &raw[..end])
+}
+
+pub(crate) fn response_protocol_api_error(kind: &str, raw: Option<&str>, detail: &str) -> ApiError {
+    ApiError::ResponseProtocol {
+        message: format!("{kind}: {detail}"),
+        raw_event: raw.map(bounded_response_protocol_payload),
+    }
+}
+
+fn response_protocol_event_error(
+    kind: &str,
+    raw: Option<&str>,
+    detail: &str,
+) -> ResponsesEventError {
+    ResponsesEventError::Api(response_protocol_api_error(kind, raw, detail))
+}
+
 pub fn process_responses_event(
     event: ResponsesStreamEvent,
 ) -> std::result::Result<Option<ResponseEvent>, ResponsesEventError> {
+    let event_kind = event.kind.clone();
+    let event_raw = event.raw;
     match event.kind.as_str() {
         "response.output_item.done" => {
-            if let Some(item_val) = event.item {
-                if let Ok(item) = serde_json::from_value::<ResponseItem>(item_val) {
-                    return Ok(Some(ResponseEvent::OutputItemDone(item)));
-                }
-                debug!("failed to parse ResponseItem from output_item.done");
-            }
+            let Some(item_val) = event.item else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing item",
+                ));
+            };
+            let item = serde_json::from_value::<ResponseItem>(item_val).map_err(|err| {
+                response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    &format!("invalid item: {err}"),
+                )
+            })?;
+            return Ok(Some(ResponseEvent::OutputItemDone(item)));
         }
         "response.output_text.delta" => {
-            if let Some(delta) = event.delta {
-                return Ok(Some(ResponseEvent::OutputTextDelta(delta)));
-            }
+            let Some(delta) = event.delta else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing delta",
+                ));
+            };
+            return Ok(Some(ResponseEvent::OutputTextDelta(delta)));
         }
         "response.custom_tool_call_input.delta" => {
-            if let (Some(delta), Some(item_id)) =
-                (event.delta, event.item_id.clone().or(event.call_id.clone()))
-            {
-                return Ok(Some(ResponseEvent::ToolCallInputDelta {
-                    item_id,
-                    call_id: event.call_id,
-                    delta,
-                }));
-            }
+            let Some(delta) = event.delta else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing delta",
+                ));
+            };
+            let Some(item_id) = event.item_id.or_else(|| event.call_id.clone()) else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing item_id and call_id",
+                ));
+            };
+            return Ok(Some(ResponseEvent::ToolCallInputDelta {
+                item_id,
+                call_id: event.call_id,
+                delta,
+            }));
         }
         "response.reasoning_summary_text.delta" => {
-            if let (Some(delta), Some(summary_index)) = (event.delta, event.summary_index) {
-                return Ok(Some(ResponseEvent::ReasoningSummaryDelta {
-                    delta,
-                    summary_index,
-                }));
-            }
+            let (Some(delta), Some(summary_index)) = (event.delta, event.summary_index) else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing delta or summary_index",
+                ));
+            };
+            return Ok(Some(ResponseEvent::ReasoningSummaryDelta {
+                delta,
+                summary_index,
+            }));
         }
         "response.reasoning_summary_text.done" => {
-            if let (Some(item_id), Some(text), Some(summary_index)) =
+            let (Some(item_id), Some(text), Some(summary_index)) =
                 (event.item_id, event.text, event.summary_index)
-            {
-                return Ok(Some(ResponseEvent::ReasoningSummaryDone {
-                    item_id,
-                    text,
-                    summary_index,
-                }));
-            }
+            else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing item_id, text, or summary_index",
+                ));
+            };
+            return Ok(Some(ResponseEvent::ReasoningSummaryDone {
+                item_id,
+                text,
+                summary_index,
+            }));
         }
         "response.reasoning_text.delta" => {
-            if let (Some(delta), Some(content_index)) = (event.delta, event.content_index) {
-                return Ok(Some(ResponseEvent::ReasoningContentDelta {
-                    delta,
-                    content_index,
-                }));
-            }
+            let (Some(delta), Some(content_index)) = (event.delta, event.content_index) else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing delta or content_index",
+                ));
+            };
+            return Ok(Some(ResponseEvent::ReasoningContentDelta {
+                delta,
+                content_index,
+            }));
         }
         "response.created" => {
-            if event.response.is_some() {
-                return Ok(Some(ResponseEvent::Created {}));
+            if event.response.is_none() {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing response",
+                ));
             }
+            return Ok(Some(ResponseEvent::Created {}));
         }
         "response.failed" => {
-            if let Some(resp_val) = event.response {
-                let mut response_error = ApiError::Stream("response.failed event received".into());
-                if let Some(error) = resp_val.get("error")
-                    && let Ok(error) = serde_json::from_value::<Error>(error.clone())
-                {
-                    if is_context_window_error(&error) {
-                        response_error = ApiError::ContextWindowExceeded;
-                    } else if is_quota_exceeded_error(&error) {
-                        response_error = ApiError::QuotaExceeded;
-                    } else if is_usage_not_included(&error) {
-                        response_error = ApiError::UsageNotIncluded;
-                    } else if is_cyber_policy_error(&error) {
-                        let message = cyber_policy_message(error.message);
-                        response_error = ApiError::CyberPolicy { message };
-                    } else if error.code.as_deref() == Some("misalignment_policy_violation") {
-                        let message = error
-                            .message
-                            .filter(|message| !message.trim().is_empty())
-                            .unwrap_or_else(|| {
-                                "This request was blocked due to a misalignment policy violation."
-                                    .to_string()
-                            });
-                        response_error = ApiError::MisalignmentPolicyViolation {
-                            message,
-                            misalignment: error.misalignment.and_then(|details| {
-                                serde_json::from_value::<MisalignmentErrorDetails>(details).ok()
-                            }),
-                        };
-                    } else if matches!(error.code.as_deref(), Some("invalid_prompt" | "bio_policy"))
-                    {
-                        let message = error
-                            .message
-                            .unwrap_or_else(|| "Invalid request.".to_string());
-                        response_error = ApiError::InvalidRequest { message };
-                    } else if is_server_overloaded_error(&error) {
-                        response_error = ApiError::ServerOverloaded;
-                    } else {
-                        let delay = try_parse_retry_after(&error);
-                        let message = error.message.unwrap_or_default();
-                        response_error = match error.code.as_deref() {
-                            Some("rate_limit_exceeded") => {
-                                ApiError::RateLimitExceeded { message, delay }
-                            }
-                            _ => ApiError::Retryable { message, delay },
-                        };
-                    }
+            let Some(resp_val) = event.response else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing response",
+                ));
+            };
+            let Some(error_val) = resp_val.get("error") else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing response.error",
+                ));
+            };
+            let error = serde_json::from_value::<Error>(error_val.clone()).map_err(|err| {
+                response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    &format!("invalid response.error: {err}"),
+                )
+            })?;
+            let response_error = if is_context_window_error(&error) {
+                ApiError::ContextWindowExceeded
+            } else if is_quota_exceeded_error(&error) {
+                ApiError::QuotaExceeded
+            } else if is_usage_not_included(&error) {
+                ApiError::UsageNotIncluded
+            } else if is_cyber_policy_error(&error) {
+                ApiError::CyberPolicy {
+                    message: cyber_policy_message(error.message),
                 }
-                return Err(ResponsesEventError::Api(response_error));
-            }
-
-            return Err(ResponsesEventError::Api(ApiError::Stream(
-                "response.failed event received".into(),
-            )));
+            } else if error.code.as_deref() == Some("misalignment_policy_violation") {
+                let message = error
+                    .message
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        "This request was blocked due to a misalignment policy violation."
+                            .to_string()
+                    });
+                ApiError::MisalignmentPolicyViolation {
+                    message,
+                    misalignment: error.misalignment.and_then(|details| {
+                        serde_json::from_value::<MisalignmentErrorDetails>(details).ok()
+                    }),
+                }
+            } else if matches!(error.code.as_deref(), Some("invalid_prompt" | "bio_policy")) {
+                ApiError::InvalidRequest {
+                    message: error
+                        .message
+                        .unwrap_or_else(|| "Invalid request.".to_string()),
+                }
+            } else if is_server_overloaded_error(&error) {
+                ApiError::ServerOverloaded
+            } else {
+                let delay = try_parse_retry_after(&error);
+                let message = error.message.unwrap_or_default();
+                match error.code.as_deref() {
+                    Some("rate_limit_exceeded") => ApiError::RateLimitExceeded { message, delay },
+                    _ => ApiError::Retryable { message, delay },
+                }
+            };
+            return Err(ResponsesEventError::Api(response_error));
         }
         "response.incomplete" => {
-            let reason = event.response.as_ref().and_then(|response| {
-                response
-                    .get("incomplete_details")
-                    .and_then(|details| details.get("reason"))
-                    .and_then(Value::as_str)
-            });
-            let reason = reason.unwrap_or("unknown");
-            let message = format!("Incomplete response returned, reason: {reason}");
-            return Err(ResponsesEventError::Api(ApiError::Stream(message)));
+            let Some(resp_val) = event.response else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing response",
+                ));
+            };
+            let response =
+                serde_json::from_value::<ResponseIncomplete>(resp_val).map_err(|err| {
+                    response_protocol_event_error(
+                        &event_kind,
+                        event_raw.as_deref(),
+                        &format!("invalid response: {err}"),
+                    )
+                })?;
+            let reason = response
+                .incomplete_details
+                .and_then(|details| details.reason)
+                .unwrap_or_else(|| "unknown".to_string());
+            return Err(ResponsesEventError::Api(ApiError::IncompleteResponse {
+                reason,
+                response_id: response.id,
+                token_usage: response.usage.map(Into::into),
+            }));
         }
         "response.completed" => {
-            if let Some(resp_val) = event.response {
-                match serde_json::from_value::<ResponseCompleted>(resp_val) {
-                    Ok(resp) => {
-                        return Ok(Some(ResponseEvent::Completed {
-                            response_id: resp.id,
-                            token_usage: resp.usage.map(Into::into),
-                            usage_metadata: resp.usage_metadata,
-                            end_turn: resp.end_turn,
-                        }));
-                    }
-                    Err(err) => {
-                        let error = format!("failed to parse ResponseCompleted: {err}");
-                        debug!("{error}");
-                        return Err(ResponsesEventError::Api(ApiError::Stream(error)));
-                    }
-                }
-            }
+            let Some(resp_val) = event.response else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing response",
+                ));
+            };
+            let resp = serde_json::from_value::<ResponseCompleted>(resp_val).map_err(|err| {
+                response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    &format!("invalid response: {err}"),
+                )
+            })?;
+            return Ok(Some(ResponseEvent::Completed {
+                response_id: resp.id,
+                token_usage: resp.usage.map(Into::into),
+                usage_metadata: resp.usage_metadata,
+                end_turn: resp.end_turn,
+            }));
         }
         "response.output_item.added" => {
-            if let Some(item_val) = event.item {
-                if let Ok(item) = serde_json::from_value::<ResponseItem>(item_val) {
-                    return Ok(Some(ResponseEvent::OutputItemAdded(item)));
-                }
-                debug!("failed to parse ResponseItem from output_item.added");
-            }
+            let Some(item_val) = event.item else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing item",
+                ));
+            };
+            let item = serde_json::from_value::<ResponseItem>(item_val).map_err(|err| {
+                response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    &format!("invalid item: {err}"),
+                )
+            })?;
+            return Ok(Some(ResponseEvent::OutputItemAdded(item)));
         }
         "response.reasoning_summary_part.added" => {
-            if let Some(summary_index) = event.summary_index {
-                return Ok(Some(ResponseEvent::ReasoningSummaryPartAdded {
-                    summary_index,
-                }));
-            }
+            let Some(summary_index) = event.summary_index else {
+                return Err(response_protocol_event_error(
+                    &event_kind,
+                    event_raw.as_deref(),
+                    "missing summary_index",
+                ));
+            };
+            return Ok(Some(ResponseEvent::ReasoningSummaryPartAdded {
+                summary_index,
+            }));
         }
         "codex.response.metadata"
         | "response.content_part.added"
@@ -595,8 +726,11 @@ async fn process_sse_with_treatment(
 
         trace!("SSE event: {}", &sse.data);
 
-        let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
-            Ok(event) => event,
+        let event = match serde_json::from_str::<ResponsesStreamEvent>(&sse.data) {
+            Ok(mut event) => {
+                event.raw = Some(bounded_response_protocol_payload(&sse.data));
+                event
+            }
             Err(e) => {
                 debug!(
                     error_category = ?e.classify(),
@@ -605,7 +739,14 @@ async fn process_sse_with_treatment(
                     payload_bytes = sse.data.len(),
                     "Failed to parse SSE event"
                 );
-                continue;
+                let _ = tx_event
+                    .send(Err(response_protocol_api_error(
+                        "invalid_json",
+                        Some(&sse.data),
+                        &e.to_string(),
+                    )))
+                    .await;
+                return;
             }
         };
         let model_verifications = event.model_verifications();
@@ -661,7 +802,15 @@ async fn process_sse_with_treatment(
             }
             Ok(None) => {}
             Err(error) => {
-                response_error = Some(error.into_api_error());
+                let error = error.into_api_error();
+                if matches!(
+                    error,
+                    ApiError::IncompleteResponse { .. } | ApiError::ResponseProtocol { .. }
+                ) {
+                    let _ = tx_event.send(Err(error)).await;
+                    return;
+                }
+                response_error = Some(error);
             }
         };
     }
@@ -1998,6 +2147,110 @@ mod tests {
             serde_json::from_value(event).expect("expected event to deserialize");
 
         assert_eq!(event.model_verifications(), None);
+    }
+
+    #[tokio::test]
+    async fn incomplete_response_is_terminal_and_preserves_usage() {
+        let event = json!({
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp-incomplete",
+                "incomplete_details": { "reason": "max_output_tokens" },
+                "usage": {
+                    "input_tokens": 10,
+                    "input_tokens_details": {
+                        "cached_tokens": 3,
+                        "cache_write_tokens": 2
+                    },
+                    "output_tokens": 7,
+                    "output_tokens_details": { "reasoning_tokens": 4 },
+                    "total_tokens": 17
+                }
+            }
+        });
+        let body = format!("data: {event}\n\n");
+        let events = collect_events(&[body.as_bytes()]).await;
+        let [
+            Err(ApiError::IncompleteResponse {
+                reason,
+                response_id,
+                token_usage,
+            }),
+        ] = events.as_slice()
+        else {
+            panic!("expected one terminal incomplete error, got {events:?}");
+        };
+
+        assert_eq!(reason, "max_output_tokens");
+        assert_eq!(response_id.as_deref(), Some("resp-incomplete"));
+        assert_eq!(
+            token_usage,
+            &Some(TokenUsage {
+                input_tokens: 10,
+                cached_input_tokens: 3,
+                cache_write_input_tokens: 2,
+                output_tokens: 7,
+                reasoning_output_tokens: 4,
+                total_tokens: 17,
+                codex_rollout_budget_units: None,
+            })
+        );
+    }
+
+    #[test]
+    fn known_model_visible_events_require_their_fields() {
+        let cases = [
+            json!({"type": "response.output_item.done"}),
+            json!({"type": "response.output_text.delta"}),
+            json!({"type": "response.custom_tool_call_input.delta", "delta": "{"}),
+            json!({"type": "response.reasoning_summary_text.delta", "delta": "x"}),
+            json!({"type": "response.reasoning_summary_text.done", "text": "x"}),
+            json!({"type": "response.reasoning_text.delta", "delta": "x"}),
+            json!({"type": "response.created"}),
+            json!({"type": "response.failed", "response": {}}),
+            json!({"type": "response.completed"}),
+            json!({"type": "response.output_item.added"}),
+            json!({"type": "response.reasoning_summary_part.added"}),
+        ];
+
+        for value in cases {
+            let kind = value["type"].as_str().expect("event type").to_string();
+            let mut event: ResponsesStreamEvent =
+                serde_json::from_value(value).expect("event should deserialize");
+            event.raw = Some("x".repeat(RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES * 2));
+            let Err(ResponsesEventError::Api(ApiError::ResponseProtocol { message, raw_event })) =
+                process_responses_event(event)
+            else {
+                panic!("{kind} should return a protocol error");
+            };
+            assert!(message.starts_with(&kind), "{message}");
+            assert!(
+                raw_event
+                    .as_ref()
+                    .is_some_and(|raw| raw.len() <= RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_a_terminal_protocol_error() {
+        let raw = format!("{{\"type\":\"response.completed\",{}", "x".repeat(4096));
+        let body = format!("data: {raw}\n\n");
+        let events = collect_events(&[body.as_bytes()]).await;
+        let [
+            Err(ApiError::ResponseProtocol {
+                message: _,
+                raw_event,
+            }),
+        ] = events.as_slice()
+        else {
+            panic!("expected one protocol error, got {events:?}");
+        };
+        assert!(
+            raw_event
+                .as_ref()
+                .is_some_and(|raw| raw.len() <= RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES)
+        );
     }
 
     #[test]

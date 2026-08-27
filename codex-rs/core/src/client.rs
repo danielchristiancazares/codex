@@ -27,8 +27,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
@@ -224,7 +222,6 @@ struct ModelClientState {
     concurrent_reasoning_summaries_enabled: bool,
     include_attestation: bool,
     attestation_provider: Option<Arc<dyn AttestationProvider>>,
-    disable_websockets: AtomicBool,
     agent_identity_session_fallback: AgentIdentitySessionFallback,
     cached_websocket_session: StdMutex<WebsocketSession>,
 }
@@ -414,11 +411,6 @@ impl WebsocketSession {
     }
 }
 
-enum WebsocketStreamOutcome {
-    Stream(ResponseStream),
-    FallbackToHttp,
-}
-
 /// Result of opening a WebRTC Realtime call.
 ///
 /// The SDP answer goes back to the client. The call id and auth headers stay on the server so the
@@ -488,7 +480,6 @@ impl ModelClient {
                 concurrent_reasoning_summaries_enabled,
                 include_attestation,
                 attestation_provider,
-                disable_websockets: AtomicBool::new(false),
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
             }),
@@ -557,27 +548,6 @@ impl ModelClient {
             .cached_websocket_session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = websocket_session;
-    }
-
-    pub(crate) fn force_http_fallback(
-        &self,
-        session_telemetry: &SessionTelemetry,
-        _model_info: &ModelInfo,
-    ) -> bool {
-        let websocket_enabled = self.responses_websocket_enabled();
-        let activated =
-            websocket_enabled && !self.state.disable_websockets.swap(true, Ordering::Relaxed);
-        if activated {
-            warn!("falling back to HTTP");
-            session_telemetry.counter(
-                "codex.transport.fallback_to_http",
-                /*inc*/ 1,
-                &[("from_wire_api", "responses_websocket")],
-            );
-        }
-
-        self.store_cached_websocket_session(WebsocketSession::default());
-        activated
     }
 
     /// Compacts the current conversation history using the Compact endpoint.
@@ -1025,15 +995,9 @@ impl ModelClient {
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
     ///
-    /// WebSocket use is controlled by provider capability and session-scoped fallback state.
+    /// WebSocket use is controlled by provider capability.
     pub fn responses_websocket_enabled(&self) -> bool {
-        if !self.state.provider.info().supports_websockets
-            || self.state.disable_websockets.load(Ordering::Relaxed)
-        {
-            return false;
-        }
-
-        true
+        self.state.provider.info().supports_websockets
     }
 
     /// Returns auth + provider configuration resolved from the current session auth state.
@@ -1634,7 +1598,7 @@ impl ModelClientSession {
                 model_info,
                 effort.clone(),
                 summary,
-                service_tier.clone(),
+                service_tier,
                 responses_metadata,
             )?;
             if endpoint == ResponsesEndpoint::Guardian {
@@ -1749,7 +1713,7 @@ impl ModelClientSession {
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
-    ) -> Result<WebsocketStreamOutcome> {
+    ) -> Result<ResponseStream> {
         let provider = Arc::clone(&self.client.state.provider);
         let auth_manager = provider.auth_manager();
 
@@ -1778,7 +1742,7 @@ impl ModelClientSession {
                 model_info,
                 effort.clone(),
                 summary,
-                service_tier.clone(),
+                service_tier,
                 responses_metadata,
             )?;
             if endpoint == ResponsesEndpoint::Guardian {
@@ -1824,11 +1788,6 @@ impl ModelClientSession {
                 .await
             {
                 Ok(_) => {}
-                Err(ApiError::Transport(TransportError::Http { status, .. }))
-                    if status == StatusCode::UPGRADE_REQUIRED =>
-                {
-                    return Ok(WebsocketStreamOutcome::FallbackToHttp);
-                }
                 Err(ApiError::Transport(unauthorized_transport))
                     if provider.is_recoverable_auth_error(&unauthorized_transport) =>
                 {
@@ -1934,7 +1893,7 @@ impl ModelClientSession {
                 Arc::clone(&self.client.state.provider),
             );
             self.websocket_session.last_response_rx = Some(last_request_rx);
-            return Ok(WebsocketStreamOutcome::Stream(stream));
+            return Ok(stream);
         }
     }
 
@@ -2007,20 +1966,30 @@ impl ModelClientSession {
             )
             .await
         {
-            Ok(WebsocketStreamOutcome::Stream(mut stream)) => {
+            Ok(mut stream) => {
                 // Wait for the v2 warmup request to complete before sending the first turn request.
+                let mut completed = false;
                 while let Some(event) = stream.next().await {
                     match event {
-                        Ok(ResponseEvent::Completed { .. }) => break,
-                        Err(err) => return Err(err),
+                        Ok(ResponseEvent::Completed { .. }) => {
+                            completed = true;
+                            break;
+                        }
+                        Err(err) => {
+                            self.reset_websocket_session();
+                            return Err(err);
+                        }
                         _ => {}
                     }
                 }
-                Ok(())
-            }
-            Ok(WebsocketStreamOutcome::FallbackToHttp) => {
-                self.try_switch_fallback_transport(session_telemetry, model_info);
-                Ok(())
+                if completed {
+                    Ok(())
+                } else {
+                    self.reset_websocket_session();
+                    Err(CodexErr::Stream(
+                        "websocket prewarm closed before response.completed".to_string(),
+                    ))
+                }
             }
             Err(err) => Err(err),
         }
@@ -2031,10 +2000,9 @@ impl ModelClientSession {
     ///
     /// The caller is responsible for passing per-turn settings explicitly (model selection,
     /// reasoning settings, telemetry context, and turn metadata). This method will prefer the
-    /// Responses WebSocket transport when the provider supports it and it remains healthy, and will
-    /// fall back to the HTTP Responses API transport otherwise. The trace context may be enabled or
-    /// disabled, but is always explicit so transport paths do not need separate trace/no-trace
-    /// branches.
+    /// Responses WebSocket transport when the provider supports it and use the HTTP Responses API
+    /// transport otherwise. The trace context may be enabled or disabled, but is always explicit
+    /// so transport paths do not need separate trace/no-trace branches.
     pub async fn stream(
         &mut self,
         prompt: &Prompt,
@@ -2051,7 +2019,7 @@ impl ModelClientSession {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
                     let request_trace = current_span_w3c_trace_context();
-                    match self
+                    return self
                         .stream_responses_websocket(
                             prompt,
                             model_info,
@@ -2064,13 +2032,7 @@ impl ModelClientSession {
                             request_trace,
                             inference_trace,
                         )
-                        .await?
-                    {
-                        WebsocketStreamOutcome::Stream(stream) => return Ok(stream),
-                        WebsocketStreamOutcome::FallbackToHttp => {
-                            self.try_switch_fallback_transport(session_telemetry, model_info);
-                        }
-                    }
+                        .await;
                 }
 
                 self.stream_responses_api(
@@ -2086,24 +2048,6 @@ impl ModelClientSession {
                 .await
             }
         }
-    }
-
-    /// Permanently disables WebSockets for this Codex session and resets WebSocket state.
-    ///
-    /// This is used after exhausting the provider retry budget, to force subsequent requests onto
-    /// the HTTP transport.
-    ///
-    /// Returns `true` if this call activated fallback, or `false` if fallback was already active.
-    pub(crate) fn try_switch_fallback_transport(
-        &mut self,
-        session_telemetry: &SessionTelemetry,
-        model_info: &ModelInfo,
-    ) -> bool {
-        let activated = self
-            .client
-            .force_http_fallback(session_telemetry, model_info);
-        self.websocket_session = WebsocketSession::default();
-        activated
     }
 }
 

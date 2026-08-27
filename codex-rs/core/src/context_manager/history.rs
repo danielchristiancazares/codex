@@ -422,7 +422,10 @@ impl ContextManager {
             .items
             .iter()
             .rposition(|envelope| is_model_generated_item(&envelope.item))
-            .map_or(self.items.len(), |index| index.saturating_add(1));
+            .map_or_else(
+                || self.token_info.as_ref().map_or(0, |_| self.items.len()),
+                |index| index.saturating_add(1),
+            );
         self.items[start..].iter().map(|envelope| &envelope.item)
     }
 
@@ -504,6 +507,21 @@ impl ContextManager {
                 output: truncate_function_output_payload(output, policy_with_serialization_budget),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
+            ResponseItem::ToolSearchOutput {
+                id,
+                call_id,
+                status,
+                execution,
+                tools,
+                internal_chat_message_metadata_passthrough: metadata,
+            } => ResponseItem::ToolSearchOutput {
+                id: id.clone(),
+                call_id: call_id.clone(),
+                status: status.clone(),
+                execution: execution.clone(),
+                tools: codex_tools::bound_tool_search_output(tools.clone()),
+                internal_chat_message_metadata_passthrough: metadata.clone(),
+            },
             ResponseItem::AdditionalTools { .. }
             | ResponseItem::Message { .. }
             | ResponseItem::AgentMessage { .. }
@@ -511,7 +529,6 @@ impl ContextManager {
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }
             | ResponseItem::ToolSearchCall { .. }
-            | ResponseItem::ToolSearchOutput { .. }
             | ResponseItem::WebSearchCall { .. }
             | ResponseItem::ImageGenerationCall { .. }
             | ResponseItem::CustomToolCall { .. }
@@ -578,9 +595,13 @@ pub(crate) fn truncate_function_output_payload(
         FunctionCallOutputBody::Text(content) => {
             FunctionCallOutputBody::Text(truncate_text(content, policy))
         }
-        FunctionCallOutputBody::ContentItems(items) => FunctionCallOutputBody::ContentItems(
-            truncate_function_output_items_with_policy(items, policy, estimate_audio_token_count),
-        ),
+        FunctionCallOutputBody::ContentItems(items) => {
+            FunctionCallOutputBody::ContentItems(truncate_function_output_items_with_policy(
+                items,
+                policy,
+                estimate_function_output_content_item_tokens,
+            ))
+        }
     };
 
     FunctionCallOutputPayload {
@@ -624,6 +645,29 @@ fn estimate_reasoning_length(encoded_len: usize) -> usize {
 
 fn estimate_encrypted_function_output_length(encoded_len: usize) -> usize {
     encoded_len.saturating_mul(9).div_ceil(16)
+}
+
+pub(crate) fn estimate_function_output_content_item_tokens(
+    item: &FunctionCallOutputContentItem,
+) -> usize {
+    let tokens = match item {
+        FunctionCallOutputContentItem::InputText { .. } => 0,
+        FunctionCallOutputContentItem::InputImage { image_url, detail } => {
+            approx_tokens_from_byte_count_i64(estimate_image_bytes(image_url, *detail))
+        }
+        FunctionCallOutputContentItem::InputAudio { audio_url } => {
+            return estimate_audio_token_count(audio_url);
+        }
+        FunctionCallOutputContentItem::EncryptedContent { encrypted_content } => {
+            approx_tokens_from_byte_count_i64(
+                i64::try_from(estimate_encrypted_function_output_length(
+                    encrypted_content.len(),
+                ))
+                .unwrap_or(i64::MAX),
+            )
+        }
+    };
+    usize::try_from(tokens).unwrap_or(usize::MAX)
 }
 
 /// Returns the same coarse, model-visible token estimate used for full history estimates.
@@ -671,6 +715,17 @@ fn estimate_response_item_model_visible_bytes(item: &ResponseItem) -> i64 {
             encrypted_content: Some(content),
             ..
         } => i64::try_from(estimate_reasoning_length(content.len())).unwrap_or(i64::MAX),
+        ResponseItem::ImageGenerationCall { result, .. } => {
+            let raw = serialized_json_bytes(item)
+                .map(|len| i64::try_from(len).unwrap_or(i64::MAX))
+                .unwrap_or_default();
+            raw.saturating_sub(i64::try_from(result.len()).unwrap_or(i64::MAX))
+                .saturating_add(if result.is_empty() {
+                    0
+                } else {
+                    RESIZED_IMAGE_BYTES_ESTIMATE
+                })
+        }
         item => {
             let raw = serialized_json_bytes(item)
                 .map(|len| i64::try_from(len).unwrap_or(i64::MAX))

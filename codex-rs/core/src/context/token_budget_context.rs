@@ -7,7 +7,11 @@ use codex_protocol::protocol::CONTEXT_WINDOW_CLOSE_TAG;
 use codex_protocol::protocol::CONTEXT_WINDOW_GUIDANCE_CLOSE_TAG;
 use codex_protocol::protocol::CONTEXT_WINDOW_GUIDANCE_OPEN_TAG;
 use codex_protocol::protocol::CONTEXT_WINDOW_OPEN_TAG;
+use codex_utils_string::take_bytes_at_char_boundary;
 use uuid::Uuid;
+
+const CONTEXT_WINDOW_HINT_MAX_BYTES: usize = 4 * 1024;
+const CONTEXT_WINDOW_HINT_TRUNCATION_MARKER: &str = "\n… context-window hints truncated …";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TokenBudgetContext {
@@ -26,6 +30,17 @@ impl TokenBudgetContext {
         window_id: Uuid,
         thread_hint: Option<String>,
     ) -> Self {
+        let thread_hint = thread_hint.map(|thread_hint| {
+            if thread_hint.len() <= CONTEXT_WINDOW_HINT_MAX_BYTES {
+                return thread_hint;
+            }
+            let retained_bytes = CONTEXT_WINDOW_HINT_MAX_BYTES
+                .saturating_sub(CONTEXT_WINDOW_HINT_TRUNCATION_MARKER.len());
+            format!(
+                "{}{CONTEXT_WINDOW_HINT_TRUNCATION_MARKER}",
+                take_bytes_at_char_boundary(&thread_hint, retained_bytes)
+            )
+        });
         Self {
             agent_path,
             first_window_id,
@@ -35,6 +50,10 @@ impl TokenBudgetContext {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "token_budget_context_tests.rs"]
+mod tests;
 
 impl ContextualUserFragment for TokenBudgetContext {
     fn content_kind(&self) -> ContentItemKind {

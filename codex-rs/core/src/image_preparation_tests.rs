@@ -206,6 +206,63 @@ fn preparation_reports_tool_output_item_id() {
 }
 
 #[test]
+fn tool_output_images_share_one_patch_budget() {
+    let images = (0..5)
+        .map(|_| {
+            let (image_url, _) = png_data_url(/*width*/ 1600, /*height*/ 1600);
+            FunctionCallOutputContentItem::InputImage {
+                image_url,
+                detail: Some(ImageDetail::High),
+            }
+        })
+        .collect();
+    let mut items = vec![ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: Some("call-images".to_string()),
+        name: None,
+        namespace: None,
+        output: FunctionCallOutputPayload::from_content_items(images),
+        internal_chat_message_metadata_passthrough: None,
+    }];
+
+    let metadata = prepare_response_items(
+        &mut items,
+        ImagePreparationMode::DetailBased,
+        ImageResizeNoticeMode::Disabled,
+    );
+
+    let ResponseItem::FunctionCallOutput { output, .. } = &items[0] else {
+        panic!("expected function call output");
+    };
+    let content = output.content_items().expect("tool output content items");
+    assert_eq!(metadata.len(), 4);
+    assert_eq!(
+        content
+            .iter()
+            .filter(|item| matches!(item, FunctionCallOutputContentItem::InputImage { .. }))
+            .count(),
+        4
+    );
+    assert_eq!(
+        content.last(),
+        Some(&FunctionCallOutputContentItem::InputText {
+            text: "[omitted 1 images after the shared patch budget]".to_string(),
+        })
+    );
+    assert_eq!(
+        metadata
+            .iter()
+            .map(|image| {
+                (image.prepared_width as usize)
+                    .div_ceil(32)
+                    .saturating_mul((image.prepared_height as usize).div_ceil(32))
+            })
+            .sum::<usize>(),
+        MAX_FUNCTION_OUTPUT_IMAGE_PATCHES
+    );
+}
+
+#[test]
 fn resize_notices_preserve_original_image_positions_and_skip_failed_images() {
     let (large_image_url, _) = png_data_url(/*width*/ 2048, /*height*/ 2048);
     let (small_image_url, _) = png_data_url(/*width*/ 64, /*height*/ 32);

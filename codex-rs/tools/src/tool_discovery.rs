@@ -1,12 +1,76 @@
 use codex_connectors::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 
 const TUI_CLIENT_NAME: &str = "codex-tui";
 pub const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
 pub const TOOL_SEARCH_DEFAULT_LIMIT: usize = 8;
+/// Maximum number of leaf definitions returned by one deferred-tool search.
+pub const TOOL_SEARCH_MAX_RESULTS: usize = 32;
+/// Maximum serialized size of the `tools` array returned by deferred-tool search.
+pub const TOOL_SEARCH_MAX_OUTPUT_BYTES: usize = 32 * 1024;
 pub const LIST_AVAILABLE_PLUGINS_TO_INSTALL_TOOL_NAME: &str = "list_available_plugins_to_install";
 pub const REQUEST_PLUGIN_INSTALL_TOOL_NAME: &str = "request_plugin_install";
+
+/// Retains whole deferred-tool definitions within the shared count and byte ceilings.
+pub fn bound_tool_search_output(tools: Vec<Value>) -> Vec<Value> {
+    let mut retained = Vec::new();
+    let mut leaf_count = 0usize;
+
+    for tool in tools {
+        if leaf_count >= TOOL_SEARCH_MAX_RESULTS {
+            break;
+        }
+        let namespace_tools = tool
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|tool_type| *tool_type == "namespace")
+            .and_then(|_| tool.get("tools"))
+            .and_then(Value::as_array);
+        let Some(namespace_tools) = namespace_tools else {
+            let mut candidate = retained.clone();
+            candidate.push(tool);
+            if serde_json::to_vec(&candidate)
+                .is_ok_and(|serialized| serialized.len() <= TOOL_SEARCH_MAX_OUTPUT_BYTES)
+            {
+                retained = candidate;
+                leaf_count += 1;
+                continue;
+            }
+            break;
+        };
+
+        let Some(mut namespace) = tool.as_object().cloned() else {
+            continue;
+        };
+        namespace.insert("tools".to_string(), Value::Array(Vec::new()));
+        let mut bounded_tools = Vec::new();
+        for namespace_tool in namespace_tools {
+            if leaf_count >= TOOL_SEARCH_MAX_RESULTS {
+                break;
+            }
+            bounded_tools.push(namespace_tool.clone());
+            namespace.insert("tools".to_string(), Value::Array(bounded_tools.clone()));
+            let mut candidate = retained.clone();
+            candidate.push(Value::Object(namespace.clone()));
+            if serde_json::to_vec(&candidate)
+                .is_ok_and(|serialized| serialized.len() <= TOOL_SEARCH_MAX_OUTPUT_BYTES)
+            {
+                leaf_count += 1;
+            } else {
+                bounded_tools.pop();
+                break;
+            }
+        }
+        if !bounded_tools.is_empty() {
+            namespace.insert("tools".to_string(), Value::Array(bounded_tools));
+            retained.push(Value::Object(namespace));
+        }
+    }
+
+    retained
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolSearchSourceInfo {

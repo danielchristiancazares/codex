@@ -51,6 +51,10 @@ pub struct JsonSchema {
     #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<JsonValue>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<JsonSchema>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<BTreeMap<String, JsonSchema>>,
@@ -126,6 +130,13 @@ impl JsonSchema {
 
     pub fn integer(description: Option<String>) -> Self {
         Self::typed(JsonSchemaPrimitiveType::Integer, description)
+    }
+
+    /// Adds inclusive integer bounds to a built-in schema.
+    pub fn with_integer_bounds(mut self, minimum: i64, maximum: i64) -> Self {
+        self.minimum = Some(JsonValue::from(minimum));
+        self.maximum = Some(JsonValue::from(maximum));
+        self
     }
 
     pub fn null(description: Option<String>) -> Self {
@@ -538,6 +549,11 @@ fn sanitize_json_schema(value: &mut JsonValue) {
 
             write_schema_types(map, &schema_types);
             ensure_default_children_for_schema_types(map, &schema_types);
+            // Preserve the established lowering for externally supplied schemas: numeric bounds
+            // participate in type inference and are then omitted from the limited representation.
+            // Built-in schemas can opt in explicitly through `with_integer_bounds`.
+            map.remove("minimum");
+            map.remove("maximum");
         }
         _ => {}
     }

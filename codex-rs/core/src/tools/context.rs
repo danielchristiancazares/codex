@@ -182,16 +182,7 @@ pub struct ToolSearchOutput {
 
 impl ToolOutput for ToolSearchOutput {
     fn log_output(&self) -> String {
-        let tools = self
-            .tools
-            .iter()
-            .map(|tool| {
-                serde_json::to_value(tool).unwrap_or_else(|err| {
-                    JsonValue::String(format!("failed to serialize tool_search output: {err}"))
-                })
-            })
-            .collect();
-        JsonValue::Array(tools).to_string()
+        JsonValue::Array(self.bounded_tools()).to_string()
     }
 
     fn success_for_logging(&self) -> bool {
@@ -203,8 +194,15 @@ impl ToolOutput for ToolSearchOutput {
             call_id: call_id.to_string(),
             status: "completed".to_string(),
             execution: "client".to_string(),
-            tools: self
-                .tools
+            tools: self.bounded_tools(),
+        }
+    }
+}
+
+impl ToolSearchOutput {
+    fn bounded_tools(&self) -> Vec<JsonValue> {
+        codex_tools::bound_tool_search_output(
+            self.tools
                 .iter()
                 .map(|tool| {
                     serde_json::to_value(tool).unwrap_or_else(|err| {
@@ -212,7 +210,7 @@ impl ToolOutput for ToolSearchOutput {
                     })
                 })
                 .collect(),
-        }
+        )
     }
 }
 

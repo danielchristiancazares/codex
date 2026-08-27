@@ -386,7 +386,7 @@ async fn run_remote_compaction_request_v2(
                 &turn_context.session_telemetry,
                 turn_context.reasoning_effort().cloned(),
                 turn_context.reasoning_summary(),
-                turn_context.config.service_tier.clone(),
+                turn_context.config.service_tier,
                 responses_metadata,
                 &InferenceTraceContext::disabled(),
             )
@@ -404,7 +404,6 @@ async fn run_remote_compaction_request_v2(
                     &mut retry_state,
                     max_retries,
                     err,
-                    client_session,
                     sess,
                     turn_context,
                     ResponsesStreamRequest::RemoteCompactionV2,

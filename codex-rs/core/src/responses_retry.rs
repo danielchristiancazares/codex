@@ -1,8 +1,7 @@
-//! Shared retry and transport fallback decisions for Responses requests.
+//! Shared retry decisions for Responses requests.
 
 use std::time::Duration;
 
-use crate::client::ModelClientSession;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
@@ -10,8 +9,6 @@ use codex_client::RetryOperation;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::WarningEvent;
 use tracing::warn;
 
 const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -45,7 +42,6 @@ pub(crate) async fn handle_retryable_response_stream_error(
     retry_state: &mut ResponsesStreamRetryState,
     max_retries: u64,
     err: CodexErr,
-    client_session: &mut ModelClientSession,
     sess: &Session,
     turn_context: &TurnContext,
     request: ResponsesStreamRequest,
@@ -82,20 +78,36 @@ pub(crate) async fn handle_retryable_response_stream_error(
         return Ok(());
     }
 
-    if retry_state.retries >= max_retries
-        && client_session.try_switch_fallback_transport(
-            &turn_context.session_telemetry,
-            turn_context.model_info(),
-        )
-    {
-        sess.send_event(
-            turn_context,
-            EventMsg::Warning(WarningEvent {
-                message: format!("Falling back from WebSockets to HTTPS transport. {err:#}"),
-            }),
-        )
-        .await;
-        retry_state.retries = 0;
+    if sess.services.model_client.responses_websocket_enabled() {
+        retry_state.retries = retry_state.retries.saturating_add(1);
+        let retry_count = retry_state.retries;
+        let delay = err
+            .retry_delay()
+            .unwrap_or_else(|| backoff(retry_count).min(MAX_CONNECTION_RETRY_DELAY));
+        match request {
+            ResponsesStreamRequest::Sampling => {
+                warn!(
+                    turn_id = %turn_context.sub_id,
+                    retries = retry_count,
+                    sampling_error = %err,
+                    "websocket stream disconnected - retrying sampling request in {delay:?}"
+                );
+            }
+            ResponsesStreamRequest::RemoteCompactionV2 => {
+                warn!(
+                    turn_id = %turn_context.sub_id,
+                    retries = retry_count,
+                    compact_error = %err,
+                    "websocket remote compaction stream failed; retrying request in {delay:?}"
+                );
+            }
+        }
+        if retry_count > 1 || cfg!(debug_assertions) {
+            sess.notify_stream_error(turn_context, format!("Reconnecting... {retry_count}"), err)
+                .await;
+        }
+        codex_client::record_retry!(retry_count, delay, operation);
+        tokio::time::sleep(delay).await;
         return Ok(());
     }
 

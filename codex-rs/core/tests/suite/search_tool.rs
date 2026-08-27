@@ -189,7 +189,12 @@ async fn search_tool_enabled_by_default_adds_tool_search() -> Result<()> {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query for deferred tools."},
-                    "limit": {"type": "number", "description": "Maximum number of tools to return. Defaults to 8."},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tools to return. Defaults to 8.",
+                        "minimum": 1,
+                        "maximum": 32,
+                    },
                 },
                 "required": ["query"],
                 "additionalProperties": false,

@@ -327,15 +327,6 @@ async fn process_sse_failed_event_records_response_error_message() {
         })]),
     )
     .await;
-    mount_sse_once(
-        &server,
-        sse(vec![
-            ev_assistant_message("msg-1", "local shell done"),
-            ev_completed("done"),
-        ]),
-    )
-    .await;
-
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config
@@ -524,7 +515,8 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
                 line.contains("codex.sse_event")
                     && line.contains("event.kind=response.completed")
                     && line.contains("error.message")
-                    && line.contains("failed to parse ResponseCompleted")
+                    && line.contains("response protocol error")
+                    && line.contains("missing field `id`")
             })
             .map(|_| Ok(()))
             .unwrap_or(Err("missing codex.sse_event".to_string()))

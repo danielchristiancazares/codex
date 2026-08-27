@@ -38,6 +38,18 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
             }
         }
         ApiError::Stream(msg) => CodexErr::Stream(msg),
+        ApiError::IncompleteResponse {
+            reason,
+            response_id,
+            token_usage,
+        } => CodexErr::new(CodexErrorDetails::IncompleteResponse {
+            reason,
+            response_id,
+            token_usage,
+        }),
+        ApiError::ResponseProtocol { message, .. } => {
+            CodexErr::new(CodexErrorDetails::ResponseProtocol(message))
+        }
         ApiError::ServerOverloaded => CodexErr::ServerOverloaded,
         ApiError::Api { status, message } => {
             let user_message = api_error_user_message(status, &message);

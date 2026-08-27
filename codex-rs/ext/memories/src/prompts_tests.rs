@@ -33,3 +33,22 @@ async fn build_memory_tool_developer_instructions_renders_embedded_template() {
         1
     );
 }
+
+#[tokio::test]
+async fn build_memory_tool_developer_instructions_rejects_oversized_summary() {
+    let temp = tempdir().unwrap();
+    let codex_home = AbsolutePathBuf::from_absolute_path(temp.path()).unwrap();
+    let memories_dir = codex_home.join("memories");
+    tokio_fs::create_dir_all(&memories_dir).await.unwrap();
+    let file = tokio_fs::File::create(memories_dir.join("memory_summary.md"))
+        .await
+        .unwrap();
+    file.set_len(/*size*/ MEMORY_SUMMARY_MAX_FILE_BYTES + 1)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        build_memory_tool_developer_instructions(&codex_home).await,
+        None
+    );
+}

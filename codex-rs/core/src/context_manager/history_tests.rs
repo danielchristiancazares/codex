@@ -455,14 +455,33 @@ fn items_after_last_model_generated_tokens_include_user_and_tool_output() {
 }
 
 #[test]
-fn items_after_last_model_generated_tokens_are_zero_without_model_generated_items() {
-    let history = create_history_with_items(vec![user_msg("no model output yet")]);
+fn items_after_last_model_generated_tokens_include_history_without_model_generated_items() {
+    let item = user_msg("no model output yet");
+    let history = create_history_with_items(vec![item.clone()]);
 
     assert_eq!(
         history
             .items_after_last_model_generated_item()
             .map(estimate_item_token_count)
             .fold(0i64, i64::saturating_add),
+        estimate_item_token_count(&item)
+    );
+}
+
+#[test]
+fn items_without_model_output_are_not_recounted_after_usage_is_recorded() {
+    let mut history = create_history_with_items(vec![user_msg("counted by API")]);
+    history.update_token_info(
+        &TokenUsage {
+            input_tokens: 10,
+            total_tokens: 10,
+            ..Default::default()
+        },
+        /*model_context_window*/ None,
+    );
+
+    assert_eq!(
+        history.estimated_tokens_after_last_model_generated_item(),
         0
     );
 }
@@ -2175,6 +2194,34 @@ fn normalize_keeps_server_tool_search_output_without_matching_call() {
     );
 }
 
+#[test]
+fn record_items_bounds_persisted_tool_search_output() {
+    let tools = (0..40)
+        .map(|index| serde_json::json!({"type": "function", "name": format!("tool_{index}")}))
+        .collect::<Vec<_>>();
+    let expected_tools = tools[..codex_tools::TOOL_SEARCH_MAX_RESULTS].to_vec();
+    let history = create_history_with_items(vec![ResponseItem::ToolSearchOutput {
+        id: None,
+        call_id: Some("server-search".to_string()),
+        status: "completed".to_string(),
+        execution: "server".to_string(),
+        tools,
+        internal_chat_message_metadata_passthrough: None,
+    }]);
+
+    assert_eq!(
+        raw_items(&history),
+        vec![ResponseItem::ToolSearchOutput {
+            id: None,
+            call_id: Some("server-search".to_string()),
+            status: "completed".to_string(),
+            execution: "server".to_string(),
+            tools: expected_tools,
+            internal_chat_message_metadata_passthrough: None,
+        }]
+    );
+}
+
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic]
@@ -2318,6 +2365,36 @@ fn image_data_url_payload_does_not_dominate_custom_tool_call_output_estimate() {
 
     assert_eq!(estimated, expected);
     assert!(estimated < raw_len);
+}
+
+#[test]
+fn image_generation_result_uses_image_estimate() {
+    let result = "A".repeat(100_000);
+    let item = ResponseItem::ImageGenerationCall {
+        id: None,
+        status: "completed".to_string(),
+        revised_prompt: Some("draw an image".to_string()),
+        result: result.clone(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let raw_len = serde_json::to_string(&item).unwrap().len() as i64;
+
+    assert_eq!(
+        estimate_response_item_model_visible_bytes(&item),
+        raw_len - result.len() as i64 + RESIZED_IMAGE_BYTES_ESTIMATE
+    );
+
+    let empty_item = ResponseItem::ImageGenerationCall {
+        id: None,
+        status: "completed".to_string(),
+        revised_prompt: None,
+        result: String::new(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    assert_eq!(
+        estimate_response_item_model_visible_bytes(&empty_item),
+        serde_json::to_string(&empty_item).unwrap().len() as i64
+    );
 }
 
 #[test]

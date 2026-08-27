@@ -72,3 +72,56 @@ fn filter_request_plugin_install_discoverable_tools_for_codex_tui_omits_plugins(
         }))]
     );
 }
+
+#[test]
+fn tool_search_output_is_bounded_by_leaf_count() {
+    let tools = (0..40)
+        .map(|index| {
+            json!({
+                "type": "function",
+                "name": format!("tool_{index}"),
+                "description": "small"
+            })
+        })
+        .collect();
+
+    let bounded = bound_tool_search_output(tools);
+
+    assert_eq!(bounded.len(), TOOL_SEARCH_MAX_RESULTS);
+    assert!(serde_json::to_vec(&bounded).unwrap().len() <= TOOL_SEARCH_MAX_OUTPUT_BYTES);
+}
+
+#[test]
+fn tool_search_output_bounds_nested_namespace_leaves() {
+    let tools = vec![json!({
+        "type": "namespace",
+        "name": "calendar",
+        "description": "calendar tools",
+        "tools": (0..40)
+            .map(|index| json!({"type": "function", "name": format!("tool_{index}")}))
+            .collect::<Vec<_>>()
+    })];
+
+    let bounded = bound_tool_search_output(tools);
+
+    assert_eq!(bounded.len(), 1);
+    assert_eq!(
+        bounded[0]["tools"].as_array().map(Vec::len),
+        Some(TOOL_SEARCH_MAX_RESULTS)
+    );
+    assert!(serde_json::to_vec(&bounded).unwrap().len() <= TOOL_SEARCH_MAX_OUTPUT_BYTES);
+}
+
+#[test]
+fn tool_search_output_drops_an_oversized_definition() {
+    let tools = vec![json!({
+        "type": "function",
+        "name": "oversized",
+        "description": "x".repeat(TOOL_SEARCH_MAX_OUTPUT_BYTES)
+    })];
+
+    assert_eq!(
+        bound_tool_search_output(tools),
+        Vec::<serde_json::Value>::new()
+    );
+}
