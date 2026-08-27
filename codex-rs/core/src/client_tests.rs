@@ -58,6 +58,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -427,19 +428,135 @@ fn test_session_telemetry() -> SessionTelemetry {
     )
 }
 
+fn spawned_session_source() -> SessionSource {
+    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: ThreadId::new(),
+        depth: 1,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: None,
+    })
+}
+
+fn reasoning_effort_in_request(
+    model_info: &ModelInfo,
+    session_source: SessionSource,
+    effort: ReasoningEffort,
+) -> ReasoningEffort {
+    let client = test_model_client(session_source);
+    client
+        .build_responses_request(
+            &Prompt::default(),
+            model_info,
+            Some(effort),
+            codex_protocol::config_types::ReasoningMode::Standard,
+            codex_protocol::config_types::ReasoningSummary::None,
+            ServiceTier::Default,
+            &test_responses_metadata_for_client(
+                &client,
+                /*turn_id*/ None,
+                format!("{}:0", client.state.thread_id),
+                /*parent_thread_id*/ None,
+                TestCodexResponsesRequestKind::Turn,
+            ),
+        )
+        .expect("build responses request")
+        .reasoning
+        .expect("request should include reasoning")
+        .effort
+        .expect("request should include reasoning effort")
+}
+
 #[test]
-fn reasoning_effort_for_requests_maps_ultra_and_persistent() {
+fn reasoning_effort_for_requests_uses_multi_agent_override_for_ultra() {
+    let mut model_info = test_model_info();
+    model_info.multi_agent_reasoning_effort = Some(ReasoningEffort::High);
+    model_info
+        .supported_reasoning_levels
+        .push(ReasoningEffortPreset {
+            effort: ReasoningEffort::High,
+            description: "high".to_string(),
+        });
+
+    let actual = [SessionSource::Cli, spawned_session_source()].map(|session_source| {
+        reasoning_effort_in_request(&model_info, session_source, ReasoningEffort::Ultra)
+    });
+
+    assert_eq!(actual, [ReasoningEffort::High, ReasoningEffort::High]);
+}
+
+#[test]
+fn reasoning_effort_for_requests_falls_back_for_missing_or_invalid_override() {
+    let mut model_info = test_model_info();
+    model_info.supported_reasoning_levels = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Low,
+            description: "low".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::XHigh,
+            description: "xhigh".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Ultra,
+            description: "ultra".to_string(),
+        },
+    ];
+
+    let actual = [
+        None,
+        Some(ReasoningEffort::Ultra),
+        Some(ReasoningEffort::High),
+    ]
+    .map(|multi_agent_reasoning_effort| {
+        model_info.multi_agent_reasoning_effort = multi_agent_reasoning_effort;
+        reasoning_effort_in_request(&model_info, SessionSource::Cli, ReasoningEffort::Ultra)
+    });
+
+    assert_eq!(
+        actual,
+        [
+            ReasoningEffort::XHigh,
+            ReasoningEffort::XHigh,
+            ReasoningEffort::XHigh,
+        ]
+    );
+
+    model_info.multi_agent_reasoning_effort = None;
+    model_info.supported_reasoning_levels.insert(
+        1,
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Max,
+            description: "max".to_string(),
+        },
+    );
+    assert_eq!(
+        reasoning_effort_in_request(&model_info, SessionSource::Cli, ReasoningEffort::Ultra),
+        ReasoningEffort::Max
+    );
+
+    model_info.supported_reasoning_levels.clear();
+    assert_eq!(
+        reasoning_effort_in_request(&model_info, SessionSource::Cli, ReasoningEffort::Ultra),
+        ReasoningEffort::Medium
+    );
+}
+
+#[test]
+fn reasoning_effort_for_requests_preserves_non_ultra_and_persistent_behavior() {
+    let mut model_info = test_model_info();
+    model_info.multi_agent_reasoning_effort = Some(ReasoningEffort::Low);
+
     assert_eq!(
         (
-            super::reasoning_effort_for_request(ReasoningEffort::Ultra),
-            super::reasoning_effort_for_request(ReasoningEffort::High),
-            super::reasoning_effort_for_request(ReasoningEffort::Persistent),
+            reasoning_effort_in_request(&model_info, SessionSource::Cli, ReasoningEffort::High,),
+            reasoning_effort_in_request(
+                &model_info,
+                SessionSource::Cli,
+                ReasoningEffort::Persistent,
+            ),
         ),
-        (
-            ReasoningEffort::Max,
-            ReasoningEffort::High,
-            ReasoningEffort::Max,
-        )
+        (ReasoningEffort::High, ReasoningEffort::Max,)
     );
 }
 
@@ -458,7 +575,7 @@ fn temporary_structured_requests_omit_reasoning_summaries() -> anyhow::Result<()
         let expected_effort = effort
             .clone()
             .or_else(|| model.default_reasoning_level.clone())
-            .map(super::reasoning_effort_for_request);
+            .map(|effort| super::reasoning_effort_for_request(&model, effort));
         let mut responses_metadata = test_responses_metadata_for_client(
             &client,
             /*turn_id*/ None,
@@ -593,7 +710,7 @@ fn reasoning_summary_policy_preserves_supported_consumers() -> anyhow::Result<()
         ),
     ));
     let effort = ReasoningEffort::Medium;
-    let expected_effort = super::reasoning_effort_for_request(effort.clone());
+    let expected_effort = super::reasoning_effort_for_request(&model, effort.clone());
 
     let request = client.build_responses_request(
         &Prompt::default(),
