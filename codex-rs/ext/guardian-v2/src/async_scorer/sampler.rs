@@ -28,8 +28,10 @@ use codex_login::default_client::add_originator_header;
 use codex_login::default_client::default_headers;
 use codex_model_provider::AgentIdentitySessionFallback;
 use codex_model_provider::ProviderAuthScope;
+use codex_model_provider::ProviderRequestContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -79,7 +81,7 @@ pub struct LunaSamplerConfig {
     /// Whether this thread may use the unmetered Guardian classifier endpoint.
     pub free_guardian: bool,
     /// Optional inference service tier.
-    pub service_tier: Option<String>,
+    pub service_tier: ServiceTier,
     /// Luna model's host-resolved encrypted-compaction compatibility hash.
     pub luna_compaction_hash: Option<String>,
     /// Host-provided metrics capability with the owning session's attribution.
@@ -268,6 +270,7 @@ impl LunaSampler {
                 agent_identity_policy: self.config.agent_identity_policy,
                 session_source: self.config.session_source.clone(),
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: ProviderRequestContext::Unscoped,
             })
             .await
             .map_err(LunaSamplerError::Provider)?
@@ -520,7 +523,7 @@ impl LunaSampler {
             stream: true,
             stream_options: None,
             include: Vec::new(),
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             prompt_cache_key: Some(format!("guardian-v2:{}", self.config.thread_id)),
             text: None,
             client_metadata: None,
@@ -573,9 +576,9 @@ impl LunaSampler {
             };
             request.service_tier =
                 if lease.connection.endpoint == ResponsesEndpoint::GuardianClassifier {
-                    None
+                    ServiceTier::Default
                 } else {
-                    self.config.service_tier.clone()
+                    self.config.service_tier
                 };
             let thread_id = &lease.connection.thread_id;
             let turn_metadata = json!({

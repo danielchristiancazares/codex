@@ -4,84 +4,72 @@ expression: "snapshots.join(\"\\n---\\n\")"
 ---
 resume lookup fallback:
 before:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
   Resuming session…
-
-› draft while loading
-
+────────────────────────────────────────────────
+│› draft while loading
+│
 
 after:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› draft while loading
-
+────────────────────────────────────────────────
+│› draft while loading
+│
 
 ---
 fork lookup fallback:
 before:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
   Forking session…
-
-› draft while loading
-
+────────────────────────────────────────────────
+│› draft while loading
+│
 
 after:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› draft while loading
-
+────────────────────────────────────────────────
+│› draft while loading
+│
 
 ---
 resume picker cancellation:
 before:
 hidden while picker owns input
 after:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› Ask Codex to do anything
-
-  ? for shortcuts
+────────────────────────────────────────────────
+│›
+│
+  ? shortcuts
 ---
 fork picker cancellation:
 before:
 hidden while picker owns input
 after:
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› Ask Codex to do anything
-
-  ? for shortcuts
+────────────────────────────────────────────────
+│›
+│
+  ? shortcuts

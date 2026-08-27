@@ -6,6 +6,7 @@
 
 use super::*;
 use codex_config::ConfigLayerSource;
+use codex_protocol::config_types::ServiceTier;
 #[cfg(target_os = "windows")]
 use codex_utils_approval_presets::ApprovalPreset;
 
@@ -26,7 +27,7 @@ async fn build_config_on_runtime_worker(
     }
 }
 
-pub(super) fn resume_model_settings_for_overrides(
+pub(crate) fn resume_model_settings_for_overrides(
     config: &Config,
     harness_overrides: &ConfigOverrides,
 ) -> crate::app_server_session::ResumeModelSettings {
@@ -38,9 +39,14 @@ pub(super) fn resume_model_settings_for_overrides(
                     profile: Some(_),
                     ..
                 }
-        ) && ["model", "model_provider", "model_reasoning_effort"]
-            .iter()
-            .any(|key| layer.config.get(*key).is_some())
+        ) && [
+            "model",
+            "model_provider",
+            "model_reasoning_effort",
+            "model_context_window",
+        ]
+        .iter()
+        .any(|key| layer.config.get(*key).is_some())
     });
     if harness_overrides.model.is_some()
         || harness_overrides.model_provider.is_some()
@@ -219,7 +225,7 @@ impl App {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
@@ -617,7 +623,7 @@ impl App {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                /*service_tier*/ None,
+                /*service_tier*/ ServiceTier::Default,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             );
@@ -1003,7 +1009,7 @@ impl App {
             /*model*/ None,
             /*effort*/ None,
             /*summary*/ None,
-            /*service_tier*/ None,
+            /*service_tier*/ ServiceTier::Default,
             /*collaboration_mode*/ None,
             /*personality*/ None,
         );
@@ -1082,7 +1088,7 @@ impl App {
                     /*model*/ None,
                     /*effort*/ None,
                     /*summary*/ None,
-                    /*service_tier*/ None,
+                    /*service_tier*/ ServiceTier::Default,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
                 )));
@@ -1396,6 +1402,10 @@ mod tests {
                 crate::app_server_session::ResumeModelSettings::OverrideFromCurrentConfig,
             ),
             (
+                "model_context_window",
+                crate::app_server_session::ResumeModelSettings::OverrideFromCurrentConfig,
+            ),
+            (
                 "sandbox_mode",
                 crate::app_server_session::ResumeModelSettings::RestoreFromThread,
             ),
@@ -1572,7 +1582,7 @@ enabled = false
                 thread_name: None,
                 model: "gpt-test".to_string(),
                 model_provider_id: "test-provider".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 approval_policy: AskForApproval::Never,
                 approvals_reviewer: ApprovalsReviewer::User,
                 permission_profile: PermissionProfile::read_only(),

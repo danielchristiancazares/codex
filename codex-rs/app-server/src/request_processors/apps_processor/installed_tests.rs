@@ -118,7 +118,6 @@ fn installed_duration_records_one_sample_per_success_with_legacy_comparison_dime
 
     Ok(())
 }
-
 #[test]
 fn installed_duration_does_not_record_failed_requests() -> Result<()> {
     let metrics = test_metrics()?;

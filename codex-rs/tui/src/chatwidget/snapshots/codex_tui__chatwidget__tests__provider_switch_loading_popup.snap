@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 3263
+expression: popup
+---
+  Switching Provider
+  Preparing GitHub Copilot for this conversation.
+
+›    Loading models and session state...
+
+  Press esc to hide; switching continues

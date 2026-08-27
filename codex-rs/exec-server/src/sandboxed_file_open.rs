@@ -58,7 +58,7 @@ async fn open_platform(
 
     let (mut receiver, sender) = UnixStream::pair().map_err(io_error)?;
     let sender: OwnedFd = sender.into();
-    let child = spawn_command(command, std::process::Stdio::from(sender))?;
+    let child = spawn_command(command, std::process::Stdio::from(sender)).await?;
     receiver.write_all(&request).map_err(io_error)?;
     receiver
         .shutdown(std::net::Shutdown::Write)
@@ -78,7 +78,7 @@ async fn open_platform(
 ) -> Result<tokio::fs::File, JSONRPCErrorError> {
     use tokio::io::AsyncWriteExt;
 
-    let mut child = spawn_command(command, std::process::Stdio::piped())?;
+    let mut child = spawn_command(command, std::process::Stdio::piped()).await?;
     let mut stdin = child
         .stdin
         .take()

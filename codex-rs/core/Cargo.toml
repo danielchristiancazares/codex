@@ -8,6 +8,10 @@ version.workspace = true
 name = "codex_core"
 path = "src/lib.rs"
 
+[[bench]]
+name = "latency_paths"
+harness = false
+
 [[bin]]
 name = "codex-write-config-schema"
 path = "src/bin/config_schema.rs"
@@ -37,6 +41,7 @@ codex-context-fragments = { workspace = true }
 codex-config = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-diagnostics = { workspace = true }
+codex-exec-output-artifacts = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-extension-items = { workspace = true }
@@ -66,6 +71,7 @@ codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-rmcp-client = { workspace = true }
 codex-sandboxing = { workspace = true }
+codex-secrets = { workspace = true }
 codex-skills = { workspace = true }
 codex-skills-extension = { workspace = true }
 codex-state = { workspace = true }
@@ -151,6 +157,7 @@ codex-utils-redacted-string = { workspace = true }
 codex-web-search-extension = { workspace = true }
 core_test_support = { workspace = true }
 ctor = { workspace = true }
+divan = { workspace = true }
 insta = { workspace = true }
 maplit = { workspace = true }
 opentelemetry = { workspace = true }

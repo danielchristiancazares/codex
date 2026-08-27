@@ -19,6 +19,8 @@ pub(crate) struct StreamingMarkdownRender {
     pub(crate) lines: Vec<HyperlinkLine>,
     /// Byte offset of the final top-level block when at least one earlier block exists.
     pub(crate) last_top_level_block_start: Option<usize>,
+    /// Number of rendered lines in the completed prefix before the final top-level block.
+    pub(crate) stable_prefix_rendered_len: Option<usize>,
     /// Whether a reference definition can retroactively change another block's rendering.
     pub(crate) has_reference_link_definition: bool,
     /// Whether the first block is raw HTML, which joins a retained prefix without a separator.
@@ -52,6 +54,7 @@ pub(crate) fn render_streaming_markdown_lines_with_width_and_cwd(
     StreamingMarkdownRender {
         lines: writer.text,
         last_top_level_block_start: (writer.iter.block_count > 1).then_some(writer.iter.last_start),
+        stable_prefix_rendered_len: None,
         has_reference_link_definition,
         first_top_level_block_is_html: writer.iter.first_is_html,
     }

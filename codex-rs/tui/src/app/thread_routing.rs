@@ -753,7 +753,7 @@ impl App {
                             model.to_string(),
                             effort.clone(),
                             *summary,
-                            service_tier.clone(),
+                            *service_tier,
                             collaboration_mode.clone(),
                             *personality,
                             final_output_json_schema.clone(),
@@ -1754,7 +1754,7 @@ impl App {
                 self.chat_widget.handle_history_entry_response(event)
             }
             ThreadBufferedEvent::FeedbackSubmission(event) => {
-                self.handle_feedback_thread_event(event);
+                self.handle_feedback_thread_event(event)
             }
         }
     }

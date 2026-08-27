@@ -45,7 +45,8 @@ pub enum GoalObjectiveUpdate<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalTokenBudgetUpdate {
     Keep,
-    Set(Option<i64>),
+    ResetToMaximum,
+    Set(i64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -160,9 +161,8 @@ impl GoalService {
         };
         let token_budget = match token_budget {
             GoalTokenBudgetUpdate::Keep => None,
-            GoalTokenBudgetUpdate::Set(token_budget) => {
-                Some(token_budget.or(max_goal_token_budget))
-            }
+            GoalTokenBudgetUpdate::ResetToMaximum => Some(max_goal_token_budget),
+            GoalTokenBudgetUpdate::Set(token_budget) => Some(Some(token_budget)),
         };
 
         if let Some(objective) = objective {

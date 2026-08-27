@@ -22,7 +22,7 @@ pub struct CollaborationModeMask {
     pub model: Option<String>,
     #[serde(rename = "reasoning_effort")]
     #[ts(rename = "reasoning_effort")]
-    pub reasoning_effort: Option<Option<ReasoningEffort>>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl From<CoreCollaborationModeMask> for CollaborationModeMask {
@@ -31,7 +31,7 @@ impl From<CoreCollaborationModeMask> for CollaborationModeMask {
             name: value.name,
             mode: value.mode,
             model: value.model,
-            reasoning_effort: value.reasoning_effort,
+            reasoning_effort: value.reasoning_effort.flatten(),
         }
     }
 }

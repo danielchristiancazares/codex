@@ -19,6 +19,7 @@ use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ThreadIdleCause;
 use codex_protocol::SanitizedGitUrl;
 use codex_protocol::config_types::MultiAgentMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -113,12 +114,10 @@ fn collect_resume_override_mismatches(
             config_snapshot.model_provider_id
         ));
     }
-    if let Some(requested_service_tier) = request.service_tier.as_ref()
-        && requested_service_tier != &config_snapshot.service_tier
-    {
+    if request.service_tier != config_snapshot.service_tier {
         mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={:?}",
-            config_snapshot.service_tier
+            "service_tier requested={} active={}",
+            request.service_tier, config_snapshot.service_tier
         ));
     }
     if let Some(requested_cwd) = request.cwd.as_deref() {
@@ -1179,7 +1178,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -1220,6 +1218,7 @@ impl ThreadRequestProcessor {
                 client_mcp_extensions,
                 config,
                 typesafe_overrides,
+                service_tier,
                 dynamic_tools,
                 selected_capability_roots.unwrap_or_default(),
                 history_mode.map(Into::into),
@@ -1299,6 +1298,7 @@ impl ThreadRequestProcessor {
         client_mcp_extensions: ClientMcpExtensions,
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
+        service_tier: ServiceTier,
         dynamic_tools: Option<Vec<DynamicToolSpec>>,
         selected_capability_roots: Vec<SelectedCapabilityRoot>,
         history_mode: Option<ThreadHistoryMode>,
@@ -1318,6 +1318,7 @@ impl ThreadRequestProcessor {
             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.service_tier = service_tier;
         // Project-local config can launch host processes, so only the effective
         // permissions after managed constraints can imply project trust.
         let effective_permission_profile = config.permissions.effective_permission_profile();
@@ -1605,7 +1606,6 @@ impl ThreadRequestProcessor {
         &self,
         model: Option<String>,
         model_provider: Option<String>,
-        service_tier: Option<Option<String>>,
         cwd: Option<String>,
         runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
@@ -1619,7 +1619,6 @@ impl ThreadRequestProcessor {
         ConfigOverrides {
             model,
             model_provider,
-            service_tier,
             cwd: cwd.map(PathBuf::from),
             workspace_roots: runtime_workspace_roots,
             default_permissions: permissions,
@@ -3701,6 +3700,7 @@ impl ThreadRequestProcessor {
             // Attach to the resolved child with only the caller's history-paging preferences.
             let attach_params = ThreadResumeParams {
                 thread_id: child_thread_id.to_string(),
+                service_tier,
                 exclude_turns,
                 initial_turns_page,
                 ..Default::default()
@@ -3727,7 +3727,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -3782,6 +3781,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        config.service_tier = service_tier;
         if !has_explicit_model_resume_override
             && persisted_metadata
                 .as_ref()
@@ -4801,7 +4801,6 @@ impl ThreadRequestProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -4875,11 +4874,12 @@ impl ThreadRequestProcessor {
             }
         }
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = self
+        let mut config = self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.service_tier = service_tier;
         let goals_enabled = config.features.enabled(Feature::Goals);
 
         let fallback_model_provider = config.model_provider_id.clone();

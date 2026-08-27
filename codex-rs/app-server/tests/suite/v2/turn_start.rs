@@ -75,6 +75,7 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::ImageDetail;
@@ -716,7 +717,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
 }
 
 #[tokio::test]
-async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
+async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
     let server = responses::start_mock_server().await;
     let body = responses::sse(vec![
         responses::ev_response_created("resp-1"),
@@ -732,7 +733,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
         .iter()
         .find(|preset| preset.show_in_picker && !preset.service_tiers.is_empty())
         .expect("bundled model catalog should include a picker model with service tiers");
-    let service_tier_id = service_tier_model.service_tiers[0].id.clone();
+    let service_tier = service_tier_model.service_tiers[0].id;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -751,7 +752,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
             request_id,
             params: TurnStartParams {
                 thread_id: thread.id.clone(),
-                service_tier: Some(Some(service_tier_id.clone())),
+                service_tier: Some(Some(service_tier)),
                 input: vec![V2UserInput::Text {
                     text: "Hello".to_string(),
                     text_elements: Vec::new(),
@@ -768,12 +769,12 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
 
     assert_eq!(
         response_mock.single_request().body_json()["service_tier"],
-        json!(service_tier_id)
+        json!(service_tier)
     );
 
     for (service_tier_for_turn, expected_service_tier) in [
-        (Some("default".to_string()), None),
-        (None, Some(json!(service_tier_id))),
+        (Some(ServiceTier::Default), None),
+        (None, Some(json!(service_tier))),
     ] {
         let response_mock = responses::mount_sse_once(&server, body.clone()).await;
         mcp.start_turn_and_wait_for_completion(TurnStartParams {

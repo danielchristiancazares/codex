@@ -101,6 +101,7 @@ struct RunningProcess {
     accepted_stdin_write_ids: Arc<Mutex<AcceptedStdinWriteIds>>,
     output: VecDeque<RetainedOutputChunk>,
     retained_bytes: usize,
+    evicted_output_through: u64,
     next_seq: u64,
     exit_code: Option<i32>,
     wake_tx: watch::Sender<u64>,
@@ -436,6 +437,7 @@ impl LocalProcess {
                     ),
                     output: VecDeque::new(),
                     retained_bytes: 0,
+                    evicted_output_through: 0,
                     next_seq: 1,
                     exit_code: None,
                     wake_tx: wake_tx.clone(),
@@ -541,10 +543,13 @@ impl LocalProcess {
                 if params.max_bytes.is_none() {
                     next_seq = process.next_seq;
                 }
+                let output_lost = after_seq < process.evicted_output_through
+                    || process.session.output_lost_flag().load(Ordering::Acquire);
                 (
                     ReadResponse {
                         chunks,
                         next_seq,
+                        output_lost,
                         exited: process.exit_code.is_some(),
                         exit_code: process.exit_code,
                         closed: process.closed,
@@ -916,6 +921,7 @@ async fn stream_output(
                 let Some(evicted) = process.output.pop_front() else {
                     break;
                 };
+                process.evicted_output_through = evicted.seq;
                 process.retained_bytes = process.retained_bytes.saturating_sub(evicted.chunk.len());
             }
             let _ = process.wake_tx.send(seq);
@@ -1066,12 +1072,16 @@ async fn maybe_emit_closed(process_id: ProcessId, inner: Arc<Inner>) {
         }
         let seq = process.next_seq;
         process.next_seq += 1;
+        let output_lost = process.session.output_lost_flag().load(Ordering::Acquire);
         let _ = process.wake_tx.send(seq);
-        process.events.publish(ExecProcessEvent::Closed { seq });
+        process
+            .events
+            .publish(ExecProcessEvent::Closed { seq, output_lost });
         (
             ExecClosedNotification {
                 process_id: process_id.clone(),
                 seq,
+                output_lost,
             },
             Arc::clone(&process.output_notify),
             process.network_proxy_handle.take(),
@@ -1167,102 +1177,6 @@ mod tests {
             managed_network: None,
             network_proxy: None,
         }
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn executor_proxy_sends_final_network_policy_notification() {
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(NOTIFICATION_CHANNEL_CAPACITY);
-        let backend = LocalProcess::with_runtime_paths(
-            RpcNotificationSender::new(outgoing_tx),
-            ExecServerTelemetry::default(),
-            /*runtime_paths*/ None,
-        );
-        let proxy_config = RemoteNetworkProxyConfig::from_effective_config(&NetworkProxyConfig {
-            enabled: true,
-            ..NetworkProxyConfig::default()
-        })
-        .expect("build remote network proxy config");
-        let mut params = test_exec_params(HashMap::new());
-        params.process_id = ProcessId::from("audit-process");
-        params.argv = vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "printf '%s\\n' \"$HTTP_PROXY\"; exec sleep 60".to_string(),
-        ];
-        params.network_proxy = Some(
-            RemoteNetworkProxyLaunchConfig::new(proxy_config)
-                .for_execution("environment-1".to_string(), "execution-1".to_string()),
-        );
-        backend
-            .exec(params)
-            .await
-            .expect("start process with proxy");
-        let output = backend
-            .exec_read(ReadParams {
-                process_id: ProcessId::from("audit-process"),
-                after_seq: None,
-                max_bytes: None,
-                wait_ms: Some(1_000),
-            })
-            .await
-            .expect("read executor proxy address");
-        let proxy_addr = String::from_utf8(
-            output
-                .chunks
-                .into_iter()
-                .find(|chunk| matches!(chunk.stream, ExecOutputStream::Stdout))
-                .expect("executor proxy address output")
-                .chunk
-                .into_inner(),
-        )
-        .expect("UTF-8 proxy address");
-        let proxy_addr = proxy_addr
-            .trim()
-            .strip_prefix("http://")
-            .expect("HTTP executor proxy address");
-        let mut stream = tokio::net::TcpStream::connect(proxy_addr)
-            .await
-            .expect("connect to executor proxy");
-        stream
-            .write_all(b"CONNECT 8.8.8.8:443 HTTP/1.1\r\nHost: 8.8.8.8:443\r\n\r\n")
-            .await
-            .expect("write CONNECT request");
-        let mut response = [0_u8; 256];
-        let response_len = timeout(Duration::from_secs(2), stream.read(&mut response))
-            .await
-            .expect("proxy response timeout")
-            .expect("read proxy response");
-        assert!(String::from_utf8_lossy(&response[..response_len]).starts_with("HTTP/1.1 403"));
-
-        let notification = timeout(Duration::from_secs(2), async {
-            loop {
-                match outgoing_rx.recv().await {
-                    Some(RpcServerOutboundMessage::Notification(notification))
-                        if notification.method == NETWORK_POLICY_DECISION_METHOD =>
-                    {
-                        break serde_json::from_value::<NetworkPolicyDecisionNotification>(
-                            notification
-                                .params
-                                .expect("network policy notification params"),
-                        )
-                        .expect("deserialize network policy notification");
-                    }
-                    Some(_) => {}
-                    None => panic!("outbound notifications closed"),
-                }
-            }
-        })
-        .await
-        .expect("network policy notification timeout");
-        assert_eq!(notification.process_id, ProcessId::from("audit-process"));
-        assert_eq!(notification.decision, "deny");
-        assert_eq!(notification.host, "8.8.8.8");
-        assert_eq!(
-            notification.protocol,
-            ExecServerNetworkProtocol::HttpsConnect
-        );
-        backend.shutdown().await;
     }
 
     fn telemetry_backend() -> (
@@ -1543,6 +1457,7 @@ mod tests {
             ReadResponse {
                 chunks: Vec::new(),
                 next_seq: 2,
+                output_lost: false,
                 exited: true,
                 exit_code: Some(0),
                 closed: false,
@@ -1589,6 +1504,47 @@ mod tests {
             .await
             .expect("closed process should remain readable");
         assert_eq!(replay_after_exit.next_seq, 4);
+        backend.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_read_reports_driver_output_loss() {
+        let backend = LocalProcess::default();
+        let process = spawn_test_process(&backend, "proc-output-loss").await;
+        {
+            let processes = backend.inner.processes.lock().await;
+            let Some(ProcessEntry::Running(running)) = processes.get(&process.process_id) else {
+                panic!("process should be running");
+            };
+            running
+                .session
+                .output_lost_flag()
+                .store(true, Ordering::Release);
+        }
+
+        let response = backend
+            .exec_read(ReadParams {
+                process_id: process.process_id.clone(),
+                after_seq: None,
+                max_bytes: None,
+                wait_ms: Some(0),
+            })
+            .await
+            .expect("read process with lost output");
+        assert_eq!(
+            response,
+            ReadResponse {
+                chunks: Vec::new(),
+                next_seq: 1,
+                output_lost: true,
+                exited: false,
+                exit_code: None,
+                closed: false,
+                failure: None,
+                sandbox_denied: false,
+            }
+        );
+
         backend.shutdown().await;
     }
 
@@ -1665,6 +1621,7 @@ mod tests {
             ReadResponse {
                 chunks: expected_chunks,
                 next_seq: retained_chunk_count + 2,
+                output_lost: true,
                 exited: false,
                 exit_code: None,
                 closed: false,
@@ -1886,6 +1843,7 @@ mod tests {
                 accepted_stdin_write_ids: Arc::new(Mutex::new(AcceptedStdinWriteIds::default())),
                 output: VecDeque::new(),
                 retained_bytes: 0,
+                evicted_output_through: 0,
                 next_seq: 1,
                 exit_code: None,
                 wake_tx: wake_tx.clone(),

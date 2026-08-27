@@ -1,4 +1,5 @@
 use super::*;
+use crate::bottom_pane::ActiveGoalDetail;
 use crate::bottom_pane::goal_status_indicator_line;
 use crate::chatwidget::ThreadUsageOutcome;
 use crate::chatwidget::rate_limits::NUDGE_MODEL_SLUG;
@@ -57,11 +58,11 @@ async fn resumed_session_hides_unknown_token_usage_until_an_update_arrives() {
         .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
         .expect("render resumed session");
     let rendered = normalized_backend_snapshot(terminal.backend());
-    assert!(!rendered.contains("100% context left"));
+    assert!(!rendered.contains("Context 100%"));
     insta::assert_snapshot!(
         rendered
             .lines()
-            .find(|line| line.contains("context left"))
+            .find(|line| line.contains("Context"))
             .map(str::trim)
             .unwrap_or("(hidden)"),
         @"(hidden)"
@@ -85,7 +86,7 @@ async fn resumed_session_hides_unknown_token_usage_until_an_update_arrives() {
     chat.refresh_status_line();
     assert_eq!(
         status_line_text(&chat),
-        Some("Context 30% left · Context 70% used · 0 in · 0 out".to_string())
+        Some("Context 30% left · Context used 70% · 0 in · 0 out".to_string())
     );
 }
 
@@ -256,7 +257,7 @@ async fn raw_output_status_line_value_only_shows_when_enabled() {
 
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::RawOutput),
-        Some("raw output".to_string())
+        Some("Raw output".to_string())
     );
 }
 
@@ -322,6 +323,39 @@ async fn raw_output_mode_can_change_without_inserting_notice() {
         history.contains("Raw output mode off: rich transcript rendering restored."),
         "expected raw output notice, got {history:?}"
     );
+}
+
+#[tokio::test]
+async fn raw_output_mode_requeues_a_held_table_tail_and_restarts_commits() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.handle_streaming_delta("| Key | Value |\n| --- | --- |\n| alpha | beta |\n".to_string());
+    assert!(chat.active_cell_is_stream_tail());
+    assert!(chat.stream_controllers_idle());
+    while rx.try_recv().is_ok() {}
+
+    chat.set_raw_output_mode(/*enabled*/ true);
+
+    assert!(!chat.active_cell_is_stream_tail());
+    assert!(!chat.stream_controllers_idle());
+    let mut restarted_commits = false;
+    while let Ok(event) = rx.try_recv() {
+        restarted_commits |= matches!(event, AppEvent::StartCommitAnimation);
+    }
+    assert!(
+        restarted_commits,
+        "raw mode should restart commits for lines released from table holdback",
+    );
+
+    chat.on_commit_tick();
+    let history = drain_insert_history(&mut rx)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert!(
+        history.contains("| Key | Value |"),
+        "expected the released raw table header to render, got {history:?}",
+    );
+    assert_chatwidget_snapshot!("raw_output_mode_releases_held_stream_table", history);
 }
 
 #[tokio::test]
@@ -665,7 +699,7 @@ async fn status_line_uses_secondary_fallback_for_unsupported_window() {
 
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
-        Some("secondary usage 50% left".to_string())
+        Some("Secondary usage 50% left".to_string())
     );
 }
 
@@ -699,7 +733,7 @@ async fn status_line_legacy_limit_items_prefer_matching_windows() {
     );
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
-        Some("weekly 6% left".to_string())
+        Some("Weekly 6% left".to_string())
     );
 }
 
@@ -729,11 +763,11 @@ async fn status_line_shows_secondary_non_weekly_when_primary_is_weekly() {
 
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::FiveHourLimit),
-        Some("monthly 65% left".to_string())
+        Some("Monthly 65% left".to_string())
     );
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
-        Some("weekly 6% left".to_string())
+        Some("Weekly 6% left".to_string())
     );
 }
 
@@ -763,7 +797,7 @@ async fn status_line_five_hour_item_omits_weekly_only_limit() {
     );
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
-        Some("weekly 91% left".to_string())
+        Some("Weekly 91% left".to_string())
     );
 }
 
@@ -789,7 +823,7 @@ async fn status_line_single_monthly_primary_omits_weekly_limit_item() {
 
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::FiveHourLimit),
-        Some("monthly 65% left".to_string())
+        Some("Monthly 65% left".to_string())
     );
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
@@ -823,7 +857,7 @@ async fn status_line_secondary_only_non_weekly_limit_omits_primary_limit_item() 
     );
     assert_eq!(
         chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::WeeklyLimit),
-        Some("monthly 65% left".to_string())
+        Some("Monthly 65% left".to_string())
     );
 }
 
@@ -2280,7 +2314,7 @@ async fn fast_status_indicator_requires_chatgpt_auth() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
 
@@ -2296,7 +2330,7 @@ async fn fast_status_indicator_is_hidden_for_models_without_fast_support() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     set_fast_mode_test_catalog(&mut chat);
     assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
@@ -2847,7 +2881,7 @@ async fn status_line_context_used_renders_labeled_percent() {
 
     chat.refresh_status_line();
 
-    assert_eq!(status_line_text(&chat), Some("Context 0% used".to_string()));
+    assert_eq!(status_line_text(&chat), Some("Context used 0%".to_string()));
     assert!(
         drain_insert_history(&mut rx).is_empty(),
         "context-used should remain a valid status line item"
@@ -2880,7 +2914,7 @@ async fn status_line_legacy_context_usage_renders_context_used_percent() {
 
     chat.refresh_status_line();
 
-    assert_eq!(status_line_text(&chat), Some("Context 0% used".to_string()));
+    assert_eq!(status_line_text(&chat), Some("Context used 0%".to_string()));
     assert!(
         drain_insert_history(&mut rx).is_empty(),
         "legacy context-usage should remain a valid status line item"
@@ -3832,7 +3866,7 @@ async fn status_line_fast_mode_renders_on_and_off() {
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Fast off".to_string()));
 
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     chat.refresh_status_line();
     assert_eq!(status_line_text(&chat), Some("Fast on".to_string()));
 }
@@ -3854,7 +3888,7 @@ async fn status_line_fast_mode_updates_visibility_on_model_change() {
 
     chat.set_model("uncatalogued-model");
     assert_eq!(status_line_text(&chat), Some("Fast off".to_string()));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     assert_eq!(status_line_text(&chat), Some("Fast on".to_string()));
 }
 
@@ -3897,7 +3931,7 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -3906,7 +3940,7 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
 
     assert_eq!(
         status_line_text(&chat),
-        Some(format!("gpt-5.4 xhigh fast · Context 0% used · {test_cwd}"))
+        Some(format!("GPT 5.4 XHigh Fast · Context used 0% · {test_cwd}"))
     );
 
     chat.set_model("gpt-5.2");
@@ -3914,7 +3948,16 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
 
     assert_eq!(
         status_line_text(&chat),
-        Some(format!("gpt-5.2 xhigh · Context 0% used · {test_cwd}"))
+        Some(format!("GPT 5.2 XHigh · Context used 0% · {test_cwd}"))
+    );
+
+    chat.set_model("gpt-5.6-sol");
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Max));
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some(format!("GPT 5.6 Sol Max · Context used 0% · {test_cwd}"))
     );
 }
 
@@ -3924,11 +3967,11 @@ async fn terminal_title_model_updates_on_model_change_without_manual_refresh() {
     chat.config.tui_terminal_title = Some(vec!["model".to_string()]);
     chat.refresh_terminal_title();
 
-    assert_eq!(chat.last_terminal_title, Some("gpt-5.4".to_string()));
+    assert_eq!(chat.last_terminal_title, Some("GPT 5.4".to_string()));
 
     chat.set_model("gpt-5.2");
 
-    assert_eq!(chat.last_terminal_title, Some("gpt-5.2".to_string()));
+    assert_eq!(chat.last_terminal_title, Some("GPT 5.2".to_string()));
 }
 
 #[tokio::test]
@@ -3937,7 +3980,7 @@ async fn status_line_and_terminal_title_reasoning_render_only_effort() {
     chat.config.tui_status_line = Some(vec!["reasoning".to_string()]);
     chat.config.tui_terminal_title = Some(vec!["reasoning".to_string()]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
 
     chat.refresh_status_line();
     chat.refresh_terminal_title();
@@ -3953,13 +3996,13 @@ async fn status_line_reasoning_updates_on_mode_switch_without_manual_refresh() {
     chat.config.tui_status_line = Some(vec!["reasoning".to_string()]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
 
-    assert_eq!(status_line_text(&chat), Some("high".to_string()));
+    assert_eq!(status_line_text(&chat), Some("High".to_string()));
 
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
 
-    assert_eq!(status_line_text(&chat), Some("medium".to_string()));
+    assert_eq!(status_line_text(&chat), Some("Medium".to_string()));
 }
 
 #[tokio::test]
@@ -3969,19 +4012,19 @@ async fn status_line_model_with_reasoning_updates_on_mode_switch_without_manual_
     chat.config.tui_status_line = Some(vec!["model-with-reasoning".to_string()]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
 
-    assert_eq!(status_line_text(&chat), Some("gpt-5.2 high".to_string()));
+    assert_eq!(status_line_text(&chat), Some("GPT 5.2 High".to_string()));
 
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
 
-    assert_eq!(status_line_text(&chat), Some("gpt-5.2 medium".to_string()));
+    assert_eq!(status_line_text(&chat), Some("GPT 5.2 Medium".to_string()));
 
     let default_mask = collaboration_modes::default_mask(chat.model_catalog.as_ref())
         .expect("expected default collaboration mode");
     chat.set_collaboration_mask(default_mask);
 
-    assert_eq!(status_line_text(&chat), Some("gpt-5.2 high".to_string()));
+    assert_eq!(status_line_text(&chat), Some("GPT 5.2 High".to_string()));
 }
 
 #[tokio::test]
@@ -4065,7 +4108,7 @@ async fn status_line_model_with_reasoning_fast_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -4099,7 +4142,7 @@ async fn status_line_model_with_reasoning_context_remaining_footer_snapshot() {
         "current-dir".to_string(),
     ]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
-    chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
+    chat.set_service_tier(ServiceTier::Fast);
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
     assert!(get_available_model(&chat, "gpt-5.4").supports_fast_mode());
@@ -4150,6 +4193,110 @@ async fn status_line_goal_active_token_budget_footer_snapshot() {
         .expect("draw goal status footer");
     assert_chatwidget_snapshot!(
         "status_line_goal_active_token_budget_footer",
+        normalized_backend_snapshot(terminal.backend())
+    );
+}
+
+#[tokio::test]
+async fn status_line_goal_active_elapsed_footer_snapshot() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    chat.show_welcome_banner = false;
+    chat.config.tui_status_line = Some(vec!["model-with-reasoning".to_string()]);
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Max));
+    chat.refresh_status_line();
+    let mut goal = test_thread_goal(
+        codex_app_server_protocol::ThreadGoalStatus::Active,
+        /*token_budget*/ None,
+        /*tokens_used*/ 40_000,
+    );
+    goal.time_used_seconds = 4 * 60 * 60 + 31 * 60;
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: None,
+                goal,
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    let width = 80;
+    let height = chat.desired_height(width);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create terminal");
+    terminal
+        .draw(|f| chat.render(f.area(), f.buffer_mut()))
+        .expect("draw elapsed goal footer");
+    assert_chatwidget_snapshot!(
+        "status_line_goal_active_elapsed_footer",
+        normalized_backend_snapshot(terminal.backend())
+    );
+}
+
+#[tokio::test]
+async fn status_line_rich_footer_with_active_goal_snapshot() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    chat.show_welcome_banner = false;
+    chat.config.cwd = test_project_path().abs();
+    chat.config.tui_status_line = Some(vec![
+        "model-with-reasoning".to_string(),
+        "git-branch".to_string(),
+        "current-dir".to_string(),
+        "context-remaining".to_string(),
+        "weekly-limit".to_string(),
+    ]);
+    chat.config.tui_status_line_use_colors = true;
+    chat.status_line_branch = Some("main".to_string());
+    chat.status_line_branch_pending = false;
+    chat.status_line_branch_lookup_complete = true;
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Max));
+    chat.on_rate_limit_snapshot(Some(RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
+        primary: Some(RateLimitWindow {
+            used_percent: 6,
+            window_duration_mins: Some(7 * 24 * 60),
+            resets_at: None,
+        }),
+        secondary: None,
+        credits: None,
+        individual_limit: None,
+        plan_type: None,
+        spend_control_reached: None,
+        rate_limit_reached_type: None,
+    }));
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: None,
+                goal: test_thread_goal(
+                    codex_app_server_protocol::ThreadGoalStatus::Active,
+                    /*token_budget*/ Some(50_000),
+                    /*tokens_used*/ 40_000,
+                ),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    chat.refresh_status_line();
+
+    let width = 180;
+    let height = chat.desired_height(width);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create terminal");
+    terminal
+        .draw(|f| chat.render(f.area(), f.buffer_mut()))
+        .expect("draw rich goal footer");
+    assert_chatwidget_snapshot!(
+        "status_line_rich_footer_with_active_goal",
         normalized_backend_snapshot(terminal.backend())
     );
 }
@@ -4214,7 +4361,7 @@ async fn session_configured_clears_goal_status_footer() {
     assert_eq!(
         chat.current_goal_status_indicator,
         Some(GoalStatusIndicator::Active {
-            usage: Some("40K / 50K".to_string())
+            detail: Some(ActiveGoalDetail::TokenBudget("40K / 50K".to_string()))
         })
     );
     chat.turn_lifecycle
@@ -4229,7 +4376,7 @@ async fn session_configured_clears_goal_status_footer() {
         thread_name: None,
         model: "gpt-5.4".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -4287,7 +4434,7 @@ fn goal_status_indicator_formats_statuses_and_budgets() {
             /*tokens_used*/ 40_000,
         )),
         Some(GoalStatusIndicator::Active {
-            usage: Some("40K / 50K".to_string()),
+            detail: Some(ActiveGoalDetail::TokenBudget("40K / 50K".to_string())),
         })
     );
     assert_eq!(
@@ -4297,7 +4444,7 @@ fn goal_status_indicator_formats_statuses_and_budgets() {
             /*tokens_used*/ 0,
         )),
         Some(GoalStatusIndicator::Active {
-            usage: Some("30m".to_string()),
+            detail: Some(ActiveGoalDetail::Elapsed("30m".to_string())),
         })
     );
     assert_eq!(
@@ -4351,9 +4498,15 @@ fn goal_status_indicator_line_formats_goal_text() {
     let cases = [
         (
             GoalStatusIndicator::Active {
-                usage: Some("4K / 5K".to_string()),
+                detail: Some(ActiveGoalDetail::TokenBudget("4K / 5K".to_string())),
             },
-            "Pursuing goal (4K / 5K)",
+            "Goal · 4K / 5K",
+        ),
+        (
+            GoalStatusIndicator::Active {
+                detail: Some(ActiveGoalDetail::Elapsed("15m".to_string())),
+            },
+            "Goal (15m)",
         ),
         (
             GoalStatusIndicator::BudgetLimited {

@@ -2,6 +2,7 @@
 
 use std::sync::LazyLock;
 
+use crate::version::CODEX_CLI_VERSION;
 use codex_models_manager::bundled_models_response;
 use codex_protocol::openai_models::ModelPreset;
 pub(crate) use codex_utils_absolute_path::test_support::PathBufExt;
@@ -20,6 +21,30 @@ pub(crate) static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new
 
 pub(crate) fn test_path_display(path: &str) -> String {
     test_path_buf(path).display().to_string()
+}
+
+pub(crate) fn sanitize_codex_version(text: &str) -> String {
+    text.split('\n')
+        .map(|line| {
+            let Some(version_start) = line.find(CODEX_CLI_VERSION) else {
+                return line.to_string();
+            };
+            let original_width = unicode_width::UnicodeWidthStr::width(line);
+            let mut sanitized = line.to_string();
+            sanitized.replace_range(
+                version_start..version_start + CODEX_CLI_VERSION.len(),
+                "0.0.0",
+            );
+            let sanitized_width = unicode_width::UnicodeWidthStr::width(sanitized.as_str());
+            if let Some(border_index) = sanitized.rfind('│')
+                && let Some(padding) = original_width.checked_sub(sanitized_width)
+            {
+                sanitized.insert_str(border_index, &" ".repeat(padding));
+            }
+            sanitized
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn session_source_cli<T>() -> T

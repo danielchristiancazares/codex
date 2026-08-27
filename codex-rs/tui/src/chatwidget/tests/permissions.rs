@@ -618,7 +618,7 @@ async fn required_windows_sandbox_setup_defers_configured_initial_prompt() {
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::OnRequest,
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::workspace_write(),
@@ -847,7 +847,10 @@ async fn permissions_selection_emits_history_cell_when_selection_changes() {
         2,
         "expected command and permissions selection history cells"
     );
-    assert!(lines_to_single_string(&cells[0]).contains("Ran printf before"));
+    assert_eq!(
+        lines_to_single_string(&cells[0]),
+        "• Ran 1 command\n  └ printf before\n"
+    );
     let rendered = lines_to_single_string(&cells[1]);
     assert!(
         rendered.contains("Permissions updated to"),
@@ -1036,7 +1039,7 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::OnRequest,
         approvals_reviewer: ApprovalsReviewer::AutoReview,
         permission_profile: PermissionProfile::workspace_write(),
@@ -1085,7 +1088,7 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::OnRequest,
         approvals_reviewer: ApprovalsReviewer::AutoReview,
         permission_profile,
@@ -1210,7 +1213,7 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
             model: None,
             effort: None,
             summary: None,
-            service_tier: None,
+            service_tier: ServiceTier::Default,
             collaboration_mode: None,
             personality: None,
         }

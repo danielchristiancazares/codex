@@ -301,7 +301,7 @@ fn configured_settings() -> StepSettings {
             },
         },
         reasoning_summary: Some(ReasoningSummary::Concise),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         personality: Some(Personality::Friendly),
         approval_policy: Constrained::allow_any(AskForApproval::OnRequest),
         approvals_reviewer: ApprovalsReviewer::User,
@@ -323,7 +323,7 @@ fn sparse_patch_uses_the_settings_version_being_updated() {
     let constraints = step_settings_constraints(&requirements);
     let initial = configured_settings();
     let tier_update = StepSettingsUpdate {
-        service_tier: Some(Some("fast".to_string())),
+        service_tier: Some(Some(ServiceTier::Fast)),
         ..Default::default()
     };
     let latest = initial
@@ -341,7 +341,7 @@ fn sparse_patch_uses_the_settings_version_being_updated() {
         .apply(&tier_update, &constraints)
         .expect("a previously prepared sparse update should apply");
     let expected = StepSettings {
-        service_tier: Some(ServiceTier::Fast.request_value().to_string()),
+        service_tier: ServiceTier::Fast,
         ..latest
     };
     assert_eq!(updated, expected);

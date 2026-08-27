@@ -1,27 +1,15 @@
 use super::*;
-use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
-use opentelemetry::trace::TraceContextExt;
-use opentelemetry::trace::TraceId;
-use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_sdk::trace::SdkTracerProvider;
 use pretty_assertions::assert_eq;
 use std::io;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tempfile::tempdir;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
-
-fn test_tracing_subscriber() -> impl tracing::Subscriber + Send + Sync {
-    let provider = SdkTracerProvider::builder().build();
-    let tracer = provider.tracer("codex-exec-tests");
-    tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer))
-}
 
 #[derive(Clone)]
 struct TestLogWriter {
@@ -76,25 +64,6 @@ fn exec_default_stderr_filter_suppresses_otel_self_diagnostics() {
     assert!(!logs.contains("telemetry export failed"));
     assert!(!logs.contains("telemetry request failed"));
     assert!(logs.contains("real exec error"));
-}
-
-#[test]
-fn exec_root_span_can_be_parented_from_trace_context() {
-    let subscriber = test_tracing_subscriber();
-    let _guard = tracing::subscriber::set_default(subscriber);
-
-    let parent = codex_protocol::protocol::W3cTraceContext {
-        traceparent: Some("00-00000000000000000000000000000077-0000000000000088-01".into()),
-        tracestate: Some("vendor=value".into()),
-    };
-    let exec_span = exec_root_span();
-    assert!(set_parent_from_w3c_trace_context(&exec_span, &parent));
-
-    let trace_id = exec_span.context().span().span_context().trace_id();
-    assert_eq!(
-        trace_id,
-        TraceId::from_hex("00000000000000000000000000000077").expect("trace id")
-    );
 }
 
 #[test]
@@ -323,108 +292,6 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
         Some(vec!["test-provider".to_string()])
     );
     assert_eq!(resume_lookup_model_providers(&config, &named_args), None);
-}
-
-#[test]
-fn turn_items_for_thread_returns_matching_turn_items() {
-    let thread = AppServerThread {
-        id: "thread-1".to_string(),
-        extra: None,
-        session_id: "thread-1".to_string(),
-        forked_from_id: None,
-        parent_thread_id: None,
-        preview: String::new(),
-        ephemeral: false,
-        section: None,
-        section_entered_at: None,
-        project_id: None,
-        history_mode: Default::default(),
-        model_provider: "openai".to_string(),
-        created_at: 0,
-        updated_at: 0,
-        recency_at: Some(0),
-        status: codex_app_server_protocol::ThreadStatus::Idle,
-        path: None,
-        cwd: test_path_buf("/tmp/project").abs(),
-        cli_version: "0.0.0-test".to_string(),
-        source: codex_app_server_protocol::SessionSource::Exec,
-        can_accept_direct_input: None,
-        thread_source: None,
-        agent_nickname: None,
-        agent_role: None,
-        git_info: None,
-        name: None,
-        turns: vec![
-            codex_app_server_protocol::Turn {
-                id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
-                items: vec![AppServerThreadItem::AgentMessage {
-                    id: "msg-1".to_string(),
-                    text: "hello".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                    delivery: None,
-                }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
-                error: None,
-                started_at: None,
-                completed_at: None,
-                duration_ms: None,
-            },
-            codex_app_server_protocol::Turn {
-                id: "turn-2".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
-                items: vec![AppServerThreadItem::Plan {
-                    id: "plan-1".to_string(),
-                    text: "ship it".to_string(),
-                }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
-                error: None,
-                started_at: None,
-                completed_at: None,
-                duration_ms: None,
-            },
-        ],
-    };
-
-    assert_eq!(
-        turn_items_for_thread(&thread, "turn-1"),
-        Some(vec![AppServerThreadItem::AgentMessage {
-            id: "msg-1".to_string(),
-            text: "hello".to_string(),
-            phase: None,
-            memory_citation: None,
-            delivery: None,
-        }])
-    );
-    assert_eq!(turn_items_for_thread(&thread, "missing-turn"), None);
-}
-
-#[test]
-fn should_backfill_turn_completed_items_backfills_persisted_summaries_only() {
-    let notification =
-        ServerNotification::TurnCompleted(codex_app_server_protocol::TurnCompletedNotification {
-            thread_id: "thread-1".to_string(),
-            turn: codex_app_server_protocol::Turn {
-                id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Summary,
-                items: Vec::new(),
-                status: codex_app_server_protocol::TurnStatus::Completed,
-                error: None,
-                started_at: None,
-                completed_at: None,
-                duration_ms: None,
-            },
-        });
-
-    assert!(!should_backfill_turn_completed_items(
-        /*thread_ephemeral*/ true,
-        &notification
-    ));
-    assert!(should_backfill_turn_completed_items(
-        /*thread_ephemeral*/ false,
-        &notification
-    ));
 }
 
 #[test]
@@ -844,7 +711,7 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         },
         model: "gpt-5.4".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),

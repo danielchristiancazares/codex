@@ -1,0 +1,16 @@
+---
+source: tui/src/tui/scrollback_tests.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+shell-history-marker
+
+
+
+
+
+
+history-tail-one
+history-tail-two
+composer-top
+composer-bottom

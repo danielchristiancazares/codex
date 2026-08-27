@@ -55,7 +55,7 @@ async fn list_collaboration_modes_returns_presets() -> Result<()> {
             name: preset.name,
             mode: preset.mode,
             model: preset.model,
-            reasoning_effort: preset.reasoning_effort,
+            reasoning_effort: preset.reasoning_effort.flatten(),
         })
         .collect();
     assert_eq!(expected, items);

@@ -81,7 +81,7 @@ async fn ordinary_settings_updates_keep_the_running_turn_snapshot() -> Result<()
             });
             config.model_reasoning_effort = Some(ReasoningEffort::Low);
             config.model_reasoning_summary = None;
-            config.service_tier = None;
+            config.service_tier = ServiceTier::Default;
         })
         .build_with_auto_env(&server)
         .await?;
@@ -104,7 +104,7 @@ async fn ordinary_settings_updates_keep_the_running_turn_snapshot() -> Result<()
             model: Some("snapshot-model-b".to_string()),
             effort: Some(Some(ReasoningEffort::High)),
             summary: Some(ReasoningSummary::Detailed),
-            service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+            service_tier: Some(Some(ServiceTier::Fast)),
             ..Default::default()
         },
     )
@@ -112,7 +112,7 @@ async fn ordinary_settings_updates_keep_the_running_turn_snapshot() -> Result<()
     expected.model = "snapshot-model-b".to_string();
     expected.reasoning_effort = Some(ReasoningEffort::High);
     expected.reasoning_summary = Some(ReasoningSummary::Detailed);
-    expected.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    expected.service_tier = ServiceTier::Fast;
     expected.collaboration_mode = expected.collaboration_mode.with_updates(
         Some(expected.model.clone()),
         Some(expected.reasoning_effort.clone()),

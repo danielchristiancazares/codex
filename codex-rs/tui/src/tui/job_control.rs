@@ -16,6 +16,7 @@ use ratatui::crossterm::execute;
 use ratatui::layout::Rect;
 use ratatui::layout::Size;
 
+use crate::custom_terminal::InlineViewportState;
 use crate::key_hint;
 
 use super::DisableAlternateScroll;
@@ -104,11 +105,14 @@ impl SuspendContext {
     /// resumes; returns `None` when there was no pending suspend intent.
     pub(crate) fn prepare_resume_action(
         &self,
-        alt_saved_viewport: &mut Option<Rect>,
+        alt_saved_viewport: &mut Option<InlineViewportState>,
     ) -> Option<PreparedResumeAction> {
         let action = self.take_resume_action()?;
         match action {
             ResumeAction::RealignInline => {
+                if let Some(saved) = alt_saved_viewport.as_mut() {
+                    saved.visible_history_rows = 0;
+                }
                 let viewport = Rect::new(
                     /*x*/ 0,
                     self.cursor_y(),
@@ -119,7 +123,8 @@ impl SuspendContext {
             }
             ResumeAction::RestoreAlt => {
                 if let Some(saved) = alt_saved_viewport.as_mut() {
-                    saved.y = self.cursor_y();
+                    saved.area.y = self.cursor_y();
+                    saved.visible_history_rows = 0;
                 }
                 Some(PreparedResumeAction::RestoreAltScreen)
             }
@@ -182,6 +187,8 @@ impl PreparedResumeAction {
     pub(crate) fn apply(self, terminal: &mut Terminal, screen_size: Size) -> Result<()> {
         match self {
             PreparedResumeAction::RealignViewport(area) => {
+                let visible_history_rows = terminal.visible_history_rows();
+                terminal.note_history_rows_removed(visible_history_rows);
                 terminal.set_viewport_area(area);
             }
             PreparedResumeAction::RestoreAltScreen => {

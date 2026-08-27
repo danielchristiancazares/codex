@@ -1,5 +1,6 @@
 //! Turn-input request and result types shared by Core's submission APIs.
 
+use crate::config_types::ServiceTier;
 use crate::models::ResponseItem;
 use crate::protocol::AdditionalContextEntry;
 use crate::protocol::InterAgentCommunication;
@@ -165,7 +166,7 @@ pub struct TurnStartOptions {
     /// the input if the active turn uses a different schema.
     pub final_output_json_schema: Option<Value>,
     /// Service tier for a new turn, without changing the thread's preference.
-    pub service_tier: Option<String>,
+    pub service_tier: Option<ServiceTier>,
     /// Parent turn lineage recorded if this request starts a new turn.
     pub parent_turn_id: Option<String>,
     /// Causal root turn lineage recorded if this request starts a new turn.

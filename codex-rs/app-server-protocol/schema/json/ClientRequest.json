@@ -2197,6 +2197,13 @@
             "integer",
             "null"
           ]
+        },
+        "modelProvider": {
+          "description": "Optional provider id whose catalog should be listed.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -3867,6 +3874,14 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SessionMigration": {
       "properties": {
         "cwd": {
@@ -4162,10 +4177,12 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the forked thread."
         },
         "threadId": {
           "type": "string"
@@ -4183,6 +4200,7 @@
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "type": "object"
@@ -4766,16 +4784,19 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the resumed thread."
         },
         "threadId": {
           "type": "string"
         }
       },
       "required": [
+        "serviceTier",
         "threadId"
       ],
       "type": "object"
@@ -5109,10 +5130,12 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete routing selection for the new thread."
         },
         "sessionStartSource": {
           "anyOf": [
@@ -5136,6 +5159,9 @@
           "description": "Optional client-supplied analytics source classification for this thread."
         }
       },
+      "required": [
+        "serviceTier"
+      ],
       "type": "object"
     },
     "ThreadStartSource": {
@@ -5368,11 +5394,12 @@
           "description": "Override the sandbox policy for this turn and subsequent turns."
         },
         "serviceTier": {
-          "description": "Override the service tier for this turn and subsequent turns.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Complete current routing selection for this turn and subsequent turns."
         },
         "serviceTierForTurn": {
           "description": "Override the service tier only when this request starts a new turn. Use \"default\" for standard speed. Omitted or null inherits the thread's tier. Does not change the thread's tier or a turn being steered.",
@@ -5415,6 +5442,7 @@
       },
       "required": [
         "input",
+        "serviceTier",
         "threadId"
       ],
       "type": "object"

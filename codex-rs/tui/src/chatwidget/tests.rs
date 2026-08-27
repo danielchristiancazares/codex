@@ -141,7 +141,6 @@ pub(super) use codex_protocol::approvals::GuardianUserAuthorization;
 pub(super) use codex_protocol::config_types::CollaborationMode;
 pub(super) use codex_protocol::config_types::ModeKind;
 pub(super) use codex_protocol::config_types::Personality;
-pub(super) use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 pub(super) use codex_protocol::config_types::ServiceTier;
 pub(super) use codex_protocol::models::ActivePermissionProfile;
 pub(super) use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -236,6 +235,7 @@ mod approval_requests;
 mod composer_submission;
 #[path = "tests/config_errors_tests.rs"]
 mod config_errors;
+mod context_window_picker;
 mod exec_flow;
 mod goal_menu;
 mod goal_validation;

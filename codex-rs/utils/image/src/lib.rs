@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
@@ -6,8 +7,9 @@ use std::sync::LazyLock;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::read::DecoderReader;
 use codex_utils_cache::BlockingLruCache;
-use codex_utils_cache::sha1_digest;
+use codex_utils_cache::blake3_digest;
 use image::ColorType;
 use image::DynamicImage;
 use image::GenericImageView;
@@ -21,6 +23,8 @@ use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 
 const DATA_URL_PREFIX: &str = "data:";
+const DATA_URL_BASE64_MARKER: &str = ";base64,";
+const IMAGE_DIMENSION_PREFIX_BYTES: [usize; 5] = [256, 1024, 4 * 1024, 64 * 1024, 256 * 1024];
 pub const PROMPT_IMAGE_PATCH_SIZE: u32 = 32;
 /// Maximum width or height used when resizing images before uploading.
 pub const MAX_DIMENSION: u32 = 2048;
@@ -53,8 +57,59 @@ impl EncodedImage {
 
 /// Wraps image bytes in a data URL without decoding or validating them.
 pub fn data_url_from_bytes(mime: &str, bytes: &[u8]) -> String {
-    let encoded = BASE64_STANDARD.encode(bytes);
-    format!("data:{mime};base64,{encoded}")
+    let encoded_len = bytes.len().div_ceil(3) * 4;
+    let mut data_url = String::with_capacity(
+        DATA_URL_PREFIX.len() + mime.len() + DATA_URL_BASE64_MARKER.len() + encoded_len,
+    );
+    data_url.push_str(DATA_URL_PREFIX);
+    data_url.push_str(mime);
+    data_url.push_str(DATA_URL_BASE64_MARKER);
+    BASE64_STANDARD.encode_string(bytes, &mut data_url);
+    data_url
+}
+
+/// Reads image dimensions while decoding only the base64 prefix needed by the image header.
+pub fn dimensions_from_base64(encoded: &str) -> Result<(u32, u32), ImageProcessingError> {
+    let mut decoder = DecoderReader::new(encoded.as_bytes(), &BASE64_STANDARD);
+    let mut bytes = Vec::with_capacity(IMAGE_DIMENSION_PREFIX_BYTES[0]);
+
+    for target_len in IMAGE_DIMENSION_PREFIX_BYTES {
+        let remaining = target_len.saturating_sub(bytes.len());
+        decoder
+            .by_ref()
+            .take(remaining as u64)
+            .read_to_end(&mut bytes)
+            .map_err(invalid_base64_error)?;
+
+        match dimensions_from_bytes(&bytes) {
+            Ok(dimensions) => return Ok(dimensions),
+            Err(source) if bytes.len() < target_len => {
+                return Err(ImageProcessingError::decode_error(
+                    Path::new("<base64-image>"),
+                    source,
+                ));
+            }
+            Err(_) => {}
+        }
+    }
+
+    decoder
+        .read_to_end(&mut bytes)
+        .map_err(invalid_base64_error)?;
+    dimensions_from_bytes(&bytes)
+        .map_err(|source| ImageProcessingError::decode_error(Path::new("<base64-image>"), source))
+}
+
+fn dimensions_from_bytes(bytes: &[u8]) -> image::ImageResult<(u32, u32)> {
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .into_dimensions()
+}
+
+fn invalid_base64_error(source: std::io::Error) -> ImageProcessingError {
+    ImageProcessingError::InvalidDataUrl {
+        reason: format!("invalid base64 payload: {source}"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,7 +132,7 @@ struct ImageMetadata {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ImageCacheKey {
-    digest: [u8; 20],
+    digest: [u8; 32],
     mode: PromptImageMode,
 }
 
@@ -91,10 +146,8 @@ pub fn load_for_prompt_bytes(
     file_bytes: Vec<u8>,
     mode: PromptImageMode,
 ) -> Result<EncodedImage, ImageProcessingError> {
-    let path_buf = path.to_path_buf();
-
     let key = ImageCacheKey {
-        digest: sha1_digest(&file_bytes),
+        digest: blake3_digest(&file_bytes),
         mode,
     };
 
@@ -102,7 +155,7 @@ pub fn load_for_prompt_bytes(
         return Ok(image);
     }
 
-    let image = load_for_prompt_bytes_uncached(&path_buf, file_bytes, mode)?;
+    let image = load_for_prompt_bytes_uncached(path, file_bytes, mode)?;
     cache_image(&IMAGE_CACHE, key, image.clone(), MAX_IMAGE_CACHE_BYTES);
     Ok(image)
 }

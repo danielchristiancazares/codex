@@ -1,6 +1,7 @@
 use crate::error::ApiError;
 use codex_protocol::ResponseUsageMetadata;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -13,6 +14,7 @@ use codex_protocol::turn_input::CyberAccessProgram;
 use futures::Stream;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::Serializer;
 use serde_json::Value;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -24,6 +26,29 @@ use tokio::sync::mpsc;
 
 pub const WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY: &str = "ws_request_header_traceparent";
 pub const WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY: &str = "ws_request_header_tracestate";
+
+/// Returns the OpenAI request value for a product-domain service tier.
+pub const fn openai_service_tier_wire_value(service_tier: ServiceTier) -> &'static str {
+    match service_tier {
+        ServiceTier::Fast => "priority",
+        ServiceTier::Flex => "flex",
+        ServiceTier::Default => "default",
+    }
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde serialize_with functions receive fields by reference"
+)]
+fn serialize_openai_service_tier<S>(
+    service_tier: &ServiceTier,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(openai_service_tier_wire_value(*service_tier))
+}
 
 /// Explicit per-request access selection using the Responses API wire values.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -55,8 +80,11 @@ pub struct CompactionInput<'a> {
     pub parallel_tool_calls: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<&'a str>,
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,8 +315,11 @@ pub struct ResponsesApiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
     pub include: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<String>,
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -314,7 +345,7 @@ impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
             stream: request.stream,
             stream_options: request.stream_options.as_ref(),
             include: &request.include,
-            service_tier: request.service_tier.as_deref(),
+            service_tier: request.service_tier,
             prompt_cache_key: request.prompt_cache_key.as_deref(),
             text: request.text.as_ref(),
             generate: None,
@@ -342,8 +373,11 @@ pub struct ResponseCreateWsRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<&'a StreamOptions>,
     pub include: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_tier: Option<&'a str>,
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

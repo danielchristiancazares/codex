@@ -11,6 +11,7 @@ use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
@@ -279,7 +280,9 @@ pub struct Config {
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
     pub analytics: Option<AnalyticsConfig>,
     #[experimental("config/read.apps")]
     #[serde(default)]
@@ -306,7 +309,6 @@ pub struct ConfigLayer {
     pub name: ConfigLayerSource,
     pub version: String,
     pub config: JsonValue,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_reason: Option<String>,
 }
 
@@ -379,7 +381,6 @@ pub struct ConfigReadResponse {
     #[experimental(nested)]
     pub config: Config,
     pub origins: HashMap<String, ConfigLayerMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub layers: Option<Vec<ConfigLayer>>,
 }
 
@@ -457,7 +458,9 @@ pub struct ModelsRequirements {
 pub struct NewThreadModelDefaults {
     pub model: Option<String>,
     pub model_reasoning_effort: Option<ReasoningEffort>,
-    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "ServiceTier::is_default")]
+    #[ts(optional, as = "Option<ServiceTier>")]
+    pub service_tier: ServiceTier,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1108,3 +1111,7 @@ pub struct ConfigWarningNotification {
     #[ts(optional)]
     pub range: Option<TextRange>,
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

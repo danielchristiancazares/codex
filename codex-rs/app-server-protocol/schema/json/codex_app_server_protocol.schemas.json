@@ -8246,14 +8246,7 @@
           "reasoning_effort": {
             "anyOf": [
               {
-                "anyOf": [
-                  {
-                    "$ref": "#/definitions/v2/ReasoningEffort"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "$ref": "#/definitions/v2/ReasoningEffort"
               },
               {
                 "type": "null"
@@ -9116,10 +9109,7 @@
             ]
           },
           "service_tier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "tools": {
             "anyOf": [
@@ -14723,16 +14713,24 @@
               }
             ]
           },
+          "contextWindow": {
+            "description": "Curated default input budget for this model.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "defaultReasoningEffort": {
             "$ref": "#/definitions/v2/ReasoningEffort"
           },
           "defaultServiceTier": {
-            "default": null,
-            "description": "Catalog default service tier id for this model, when one is configured.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Catalog default service tier for this model."
           },
           "description": {
             "type": "string"
@@ -14758,6 +14756,14 @@
           },
           "isDefault": {
             "type": "boolean"
+          },
+          "maxContextWindow": {
+            "description": "Largest usable input budget advertised for this model.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "model": {
             "type": "string"
@@ -14860,6 +14866,13 @@
             "minimum": 0.0,
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "modelProvider": {
+            "description": "Optional provider id whose catalog should be listed.",
+            "type": [
+              "string",
               "null"
             ]
           }
@@ -15002,7 +15015,7 @@
             "type": "string"
           },
           "id": {
-            "type": "string"
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "name": {
             "type": "string"
@@ -15288,10 +15301,7 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           }
         },
         "type": "object"
@@ -19148,6 +19158,14 @@
         "title": "ServerRequestResolvedNotification",
         "type": "object"
       },
+      "ServiceTier": {
+        "enum": [
+          "fast",
+          "flex",
+          "default"
+        ],
+        "type": "string"
+      },
       "SessionMigration": {
         "properties": {
           "cwd": {
@@ -20271,10 +20289,12 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Complete routing selection for the forked thread."
           },
           "threadId": {
             "type": "string"
@@ -20292,6 +20312,7 @@
           }
         },
         "required": [
+          "serviceTier",
           "threadId"
         ],
         "title": "ThreadForkParams",
@@ -20347,10 +20368,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -22510,16 +22528,19 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Complete routing selection for the resumed thread."
           },
           "threadId": {
             "type": "string"
           }
         },
         "required": [
+          "serviceTier",
           "threadId"
         ],
         "title": "ThreadResumeParams",
@@ -22583,10 +22604,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -23051,10 +23069,7 @@
             "$ref": "#/definitions/v2/SandboxPolicy"
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "summary": {
             "anyOf": [
@@ -23239,10 +23254,12 @@
             ]
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Complete routing selection for the new thread."
           },
           "sessionStartSource": {
             "anyOf": [
@@ -23266,6 +23283,9 @@
             "description": "Optional client-supplied analytics source classification for this thread."
           }
         },
+        "required": [
+          "serviceTier"
+        ],
         "title": "ThreadStartParams",
         "type": "object"
       },
@@ -23319,10 +23339,7 @@
             "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `activePermissionProfile` for profile provenance."
           },
           "serviceTier": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/definitions/v2/ServiceTier"
           },
           "thread": {
             "$ref": "#/definitions/v2/Thread"
@@ -24366,11 +24383,12 @@
             "description": "Override the sandbox policy for this turn and subsequent turns."
           },
           "serviceTier": {
-            "description": "Override the service tier for this turn and subsequent turns.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/ServiceTier"
+              }
+            ],
+            "description": "Complete current routing selection for this turn and subsequent turns."
           },
           "serviceTierForTurn": {
             "description": "Override the service tier only when this request starts a new turn. Use \"default\" for standard speed. Omitted or null inherits the thread's tier. Does not change the thread's tier or a turn being steered.",
@@ -24413,6 +24431,7 @@
         },
         "required": [
           "input",
+          "serviceTier",
           "threadId"
         ],
         "title": "TurnStartParams",

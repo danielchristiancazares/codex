@@ -1,0 +1,8 @@
+---
+source: tui/src/tui/screen_size_tests.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+shell-row-one
+shell-row-two

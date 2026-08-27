@@ -6,6 +6,23 @@
 
 use super::*;
 
+#[derive(Debug, Default)]
+pub(super) enum TerminalTitleSetupSnapshot {
+    #[default]
+    Inactive,
+    WithoutItems,
+    WithItems(Vec<String>),
+}
+
+impl TerminalTitleSetupSnapshot {
+    fn capture(items: Option<Vec<String>>) -> Self {
+        match items {
+            Some(items) => Self::WithItems(items),
+            None => Self::WithoutItems,
+        }
+    }
+}
+
 impl ChatWidget {
     /// Update the status indicator header and details.
     ///
@@ -122,8 +139,12 @@ impl ChatWidget {
 
     /// Applies a temporary terminal-title selection while the setup UI is open.
     pub(crate) fn preview_terminal_title(&mut self, items: Vec<TerminalTitleItem>) {
-        if self.terminal_title_setup_original_items.is_none() {
-            self.terminal_title_setup_original_items = Some(self.config.tui_terminal_title.clone());
+        if matches!(
+            &self.terminal_title_setup_snapshot,
+            TerminalTitleSetupSnapshot::Inactive
+        ) {
+            self.terminal_title_setup_snapshot =
+                TerminalTitleSetupSnapshot::capture(self.config.tui_terminal_title.clone());
         }
 
         let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
@@ -134,11 +155,12 @@ impl ChatWidget {
     /// Restores the terminal-title config that was active before the setup UI
     /// opened, undoing any preview changes. No-op if no setup session is active.
     pub(crate) fn revert_terminal_title_setup_preview(&mut self) {
-        let Some(original_items) = self.terminal_title_setup_original_items.take() else {
-            return;
-        };
-
-        self.config.tui_terminal_title = original_items;
+        self.config.tui_terminal_title =
+            match std::mem::take(&mut self.terminal_title_setup_snapshot) {
+                TerminalTitleSetupSnapshot::Inactive => return,
+                TerminalTitleSetupSnapshot::WithoutItems => None,
+                TerminalTitleSetupSnapshot::WithItems(items) => Some(items),
+            };
         self.refresh_terminal_title();
     }
 
@@ -155,7 +177,7 @@ impl ChatWidget {
     pub(crate) fn setup_terminal_title(&mut self, items: Vec<TerminalTitleItem>) {
         tracing::info!("terminal title setup confirmed with items: {items:#?}");
         let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
-        self.terminal_title_setup_original_items = None;
+        self.terminal_title_setup_snapshot = TerminalTitleSetupSnapshot::Inactive;
         self.config.tui_terminal_title = Some(ids);
         self.refresh_terminal_title();
     }
@@ -311,7 +333,8 @@ impl ChatWidget {
 
     pub(super) fn open_terminal_title_setup(&mut self) {
         let configured_terminal_title_items = self.configured_terminal_title_items();
-        self.terminal_title_setup_original_items = Some(self.config.tui_terminal_title.clone());
+        self.terminal_title_setup_snapshot =
+            TerminalTitleSetupSnapshot::capture(self.config.tui_terminal_title.clone());
         let view = TerminalTitleSetupView::new(
             Some(configured_terminal_title_items.as_slice()),
             self.terminal_title_preview_data(),
@@ -411,6 +434,7 @@ impl ChatWidget {
     ) -> Option<String> {
         let window = window?;
         let remaining = (100.0f64 - window.used_percent).clamp(0.0f64, 100.0f64);
+        let label = crate::text_formatting::capitalize_first(label);
         Some(format!("{label} {remaining:.0}% left"))
     }
 
@@ -418,8 +442,18 @@ impl ChatWidget {
         effort: Option<&ReasoningEffortConfig>,
     ) -> String {
         match effort {
-            None | Some(ReasoningEffortConfig::None) => "default".to_string(),
-            Some(effort) => effort.as_str().to_string(),
+            None | Some(ReasoningEffortConfig::None) => "Default".to_string(),
+            Some(ReasoningEffortConfig::Minimal) => "Minimal".to_string(),
+            Some(ReasoningEffortConfig::Low) => "Low".to_string(),
+            Some(ReasoningEffortConfig::Medium) => "Medium".to_string(),
+            Some(ReasoningEffortConfig::High) => "High".to_string(),
+            Some(ReasoningEffortConfig::XHigh) => "XHigh".to_string(),
+            Some(ReasoningEffortConfig::Max) => "Max".to_string(),
+            Some(ReasoningEffortConfig::Ultra) => "Ultra".to_string(),
+            Some(ReasoningEffortConfig::Persistent) => "Persistent".to_string(),
+            Some(ReasoningEffortConfig::Custom(effort)) => {
+                crate::text_formatting::capitalize_first(effort)
+            }
         }
     }
 }

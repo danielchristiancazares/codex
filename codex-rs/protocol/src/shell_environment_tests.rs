@@ -26,6 +26,11 @@ fn non_inheritable_environment_is_removed_after_policy_overrides() {
             "codex_exec_server_noise_auth_token".to_string(),
             "inherited-noise-token".to_string(),
         ),
+        (
+            "github_copilot_api_token".to_string(),
+            "inherited-copilot-token".to_string(),
+        ),
+        ("GH_TOKEN".to_string(), "inherited-gh-token".to_string()),
     ];
     let policy = ShellEnvironmentPolicy {
         inherit: ShellEnvironmentPolicyInherit::All,
@@ -40,6 +45,14 @@ fn non_inheritable_environment_is_removed_after_policy_overrides() {
             (
                 "Codex_Exec_Server_Noise_Auth_Token".to_string(),
                 "configured-noise-token".to_string(),
+            ),
+            (
+                "GitHub_Copilot_Api_Token".to_string(),
+                "configured-copilot-token".to_string(),
+            ),
+            (
+                "Copilot_GitHub_Token".to_string(),
+                "configured-github-token".to_string(),
             ),
         ]),
         ..Default::default()
@@ -67,6 +80,8 @@ fn command_scrubber_removes_names_from_real_child_environment() {
                 "Codex_Exec_Server_Noise_Auth_Token",
                 "inherited-noise-token",
             )
+            .env("GitHub_Copilot_Api_Token", "inherited-copilot-token")
+            .env("GH_TOKEN", "inherited-gh-token")
             .output()
             .expect("run inherited-environment test process");
         assert!(
@@ -86,6 +101,8 @@ fn command_scrubber_removes_names_from_real_child_environment() {
             CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR,
             "configured-noise-token",
         )
+        .env("COPILOT_GITHUB_TOKEN", "configured-copilot-token")
+        .env("GITHUB_TOKEN", "configured-github-token")
         .env("SAFE", "value");
     scrub_non_inheritable_env_vars(&mut command);
     let output = command.output().expect("read child environment");

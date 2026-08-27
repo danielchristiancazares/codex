@@ -71,6 +71,7 @@ use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupFailureReason;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
+use codex_rmcp_client::ManagedOAuthCredentials;
 use codex_rmcp_client::determine_streamable_http_auth_status_from_credentials;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -109,7 +110,9 @@ impl McpServerConnection {
             if matches!(desired.oauth_credentials(), Ok(None))
                 && tokio::time::timeout(Duration::ZERO, client.client.managed_oauth_credentials())
                     .await
-                    .is_ok_and(|credentials| matches!(credentials, Some(Some(_))))
+                    .is_ok_and(|credentials| {
+                        matches!(credentials, ManagedOAuthCredentials::Stored(_))
+                    })
             {
                 return None;
             }
@@ -119,8 +122,11 @@ impl McpServerConnection {
             return Some(client);
         };
         let reusable = match client.client.managed_oauth_credentials().await {
-            Some(live_credentials) => live_credentials.as_ref() == desired_credentials,
-            None => current
+            ManagedOAuthCredentials::Stored(live_credentials) => {
+                Some(&live_credentials) == desired_credentials
+            }
+            ManagedOAuthCredentials::Missing => desired_credentials.is_none(),
+            ManagedOAuthCredentials::Unmanaged => current
                 .oauth_credentials()
                 .is_ok_and(|startup_credentials| startup_credentials == desired_credentials),
         };

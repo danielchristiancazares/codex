@@ -605,7 +605,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
         })
         .with_model_info_override("gpt-5.4", |model_info| {
             model_info.service_tiers = vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
+                id: ServiceTier::Fast,
                 name: "Fast".to_string(),
                 description: "Priority processing".to_string(),
             }];
@@ -631,7 +631,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
         .with_config(|config| {
             config.review_model = Some("gpt-5.4".to_string());
             config.model_context_window = Some(128_000);
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
             config
                 .features
                 .enable(Feature::FastMode)
@@ -712,10 +712,7 @@ async fn review_uses_updated_turn_permissions_and_approval_policy() {
     assert_eq!(codex.thread_settings_snapshot().await, stored_settings);
     let request = request_log.single_request();
     assert_eq!(request.body_json()["reasoning"]["effort"], "medium");
-    assert_eq!(
-        request.body_json()["service_tier"],
-        ServiceTier::Fast.request_value()
-    );
+    assert_eq!(request.body_json()["service_tier"], "priority");
     assert!(
         request
             .message_input_texts("developer")
@@ -812,7 +809,7 @@ async fn review_omits_retained_tier_when_fast_mode_disabled() -> anyhow::Result<
     let test = test_codex()
         .with_model_info_override("gpt-5.4", |model| {
             model.service_tiers = vec![ModelServiceTier {
-                id: ServiceTier::Flex.request_value().to_string(),
+                id: ServiceTier::Flex,
                 name: "Flex".to_string(),
                 description: "Flexible processing".to_string(),
             }];
@@ -828,7 +825,7 @@ async fn review_omits_retained_tier_when_fast_mode_disabled() -> anyhow::Result<
     core_test_support::submit_thread_settings(
         &test.codex,
         ThreadSettingsOverrides {
-            service_tier: Some(Some(ServiceTier::Flex.request_value().to_string())),
+            service_tier: Some(Some(ServiceTier::Flex)),
             ..Default::default()
         },
     )
@@ -849,12 +846,8 @@ async fn review_omits_retained_tier_when_fast_mode_disabled() -> anyhow::Result<
     .await;
 
     assert_eq!(
-        test.codex
-            .thread_settings_snapshot()
-            .await
-            .service_tier
-            .as_deref(),
-        Some("flex")
+        test.codex.thread_settings_snapshot().await.service_tier,
+        ServiceTier::Flex
     );
     assert_eq!(
         request_log.single_request().body_json().get("service_tier"),

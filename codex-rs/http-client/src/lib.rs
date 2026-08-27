@@ -1,3 +1,4 @@
+mod bounded_response;
 mod chatgpt_cloudflare_cookies;
 mod chatgpt_hosts;
 mod client;
@@ -11,6 +12,8 @@ mod route_aware_redirect;
 mod tls_backend_fallback;
 mod transport;
 
+pub use crate::bounded_response::BoundedResponseError;
+pub use crate::bounded_response::read_response_body_bounded;
 pub use crate::chatgpt_cloudflare_cookies::with_chatgpt_cloudflare_cookie_store;
 pub use crate::chatgpt_hosts::is_allowed_chatgpt_host;
 pub use crate::client::HttpClient;

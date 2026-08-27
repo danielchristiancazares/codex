@@ -225,10 +225,11 @@ fn test_codex() -> TestCodexBuilder {
     })
 }
 
-fn unrestricted_user_turn(items: Vec<UserInput>) -> TurnInputRequest {
+fn unrestricted_user_turn(items: Vec<UserInput>, service_tier: ServiceTier) -> TurnInputRequest {
     TurnInputRequest::user_input(items).with_thread_settings(ThreadSettingsOverrides {
         approval_policy: Some(AskForApproval::Never),
         permission_profile: Some(PermissionProfile::Disabled),
+        service_tier: Some(Some(service_tier)),
         ..Default::default()
     })
 }
@@ -1073,7 +1074,7 @@ async fn remote_compact_uses_agent_identity_assertion() -> Result<()> {
 
 async fn assert_remote_manual_compact_request_parity(
     auth: CodexAuth,
-    configured_service_tier: Option<ServiceTier>,
+    configured_service_tier: ServiceTier,
     expected_service_tier: Option<&str>,
     snapshot_name: &str,
     scenario: &str,
@@ -1082,11 +1083,9 @@ async fn assert_remote_manual_compact_request_parity(
     let mut builder = test_codex()
         .with_auth(auth)
         .with_pre_build_hook(allow_echo_commands);
-    if let Some(service_tier) = configured_service_tier {
-        builder = builder.with_config(move |config| {
-            config.service_tier = Some(service_tier.request_value().to_string());
-        });
-    }
+    builder = builder.with_config(move |config| {
+        config.service_tier = configured_service_tier;
+    });
     let harness = TestCodexHarness::with_builder(builder).await?;
     let codex = harness.test().codex.clone();
     let image_url =
@@ -1147,10 +1146,13 @@ async fn assert_remote_manual_compact_request_parity(
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "TURN_ONE_USER".to_string(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "TURN_ONE_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            configured_service_tier,
+        ))
         .await?;
     wait_for_turn_complete(&codex).await;
 
@@ -1305,7 +1307,7 @@ async fn remote_manual_compact_api_auth_omits_service_tier_and_reuses_prompt_cac
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::from_api_key("dummy"),
-        Some(ServiceTier::Fast),
+        ServiceTier::Fast,
         /*expected_service_tier*/ None,
         "remote_manual_compact_api_auth_prompt_cache_key_request_diff",
         "After five varied API-key-auth turns, remote manual compaction omits service_tier, reuses prompt_cache_key, and still omits responses-only fields.",
@@ -1322,7 +1324,7 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-        Some(ServiceTier::Fast),
+        ServiceTier::Fast,
         Some("priority"),
         "remote_manual_compact_chatgpt_auth_service_tier_prompt_cache_key_request_diff",
         "After five varied ChatGPT-auth turns, remote manual compaction reuses service_tier and prompt_cache_key while omitting responses-only fields.",
@@ -2253,10 +2255,13 @@ async fn remote_compact_runs_automatically() -> Result<()> {
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "hello remote compact".into(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "hello remote compact".into(),
+                text_elements: Vec::new(),
+            }],
+            ServiceTier::Default,
+        ))
         .await?;
 
     let message = wait_for_event_match(&codex, |event| match event {
@@ -4790,10 +4795,13 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_multi_summary_reinjec
     .await;
 
     codex
-        .start_or_steer_turn(unrestricted_user_turn(vec![UserInput::Text {
-            text: "USER_ONE".to_string(),
-            text_elements: Vec::new(),
-        }]))
+        .start_or_steer_turn(unrestricted_user_turn(
+            vec![UserInput::Text {
+                text: "USER_ONE".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ServiceTier::Default,
+        ))
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 

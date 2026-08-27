@@ -2,11 +2,9 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: combined
 ---
-• Ran echo preparing
-  └ preparing
-
-────────────────────────────────────────────────────────────────────────────────
+• Ran 1 command
+  └ echo preparing
 
 • Final response.
 
-─ Worked for 2m 05s ────────────────────────────────────────────────────────────
+✦ Worked for 2m 05s

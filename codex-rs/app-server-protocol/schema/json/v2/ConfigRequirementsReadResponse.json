@@ -977,10 +977,7 @@
           ]
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         }
       },
       "type": "object"
@@ -1001,6 +998,22 @@
         "read-only",
         "workspace-write",
         "danger-full-access"
+      ],
+      "type": "string"
+    },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
       ],
       "type": "string"
     },

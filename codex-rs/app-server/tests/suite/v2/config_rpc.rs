@@ -40,6 +40,7 @@ use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ToolsV2;
 use codex_app_server_protocol::WriteStatus;
 use codex_core::config::set_project_trust_level;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchLocation;
@@ -402,7 +403,7 @@ ignore_rules = ["gpt-protected"]
 [models.new_thread]
 model = "gpt-managed"
 model_reasoning_effort = "medium"
-service_tier = "fast"
+service_tier = "priority"
 "#,
     )?;
     let mut mcp = TestAppServer::builder()
@@ -441,7 +442,7 @@ service_tier = "fast"
         defaults.model_reasoning_effort,
         Some(ReasoningEffort::Medium)
     );
-    assert_eq!(defaults.service_tier.as_deref(), Some("fast"));
+    assert_eq!(defaults.service_tier, ServiceTier::Fast);
 
     let config_id = mcp
         .send_config_read_request(ConfigReadParams {

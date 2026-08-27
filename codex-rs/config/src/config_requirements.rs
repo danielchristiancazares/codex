@@ -2,6 +2,7 @@ use codex_features::FeatureToml;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -970,12 +971,15 @@ impl ModelsRequirementsToml {
 pub struct NewThreadModelDefaultsToml {
     pub model: Option<String>,
     pub model_reasoning_effort: Option<ReasoningEffort>,
-    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub service_tier: ServiceTier,
 }
 
 impl NewThreadModelDefaultsToml {
     fn is_empty(&self) -> bool {
-        self.model.is_none() && self.model_reasoning_effort.is_none() && self.service_tier.is_none()
+        self.model.is_none()
+            && self.model_reasoning_effort.is_none()
+            && self.service_tier.is_default()
     }
 }
 
@@ -2556,7 +2560,7 @@ mod tests {
                 [models.new_thread]
                 model = "managed-model"
                 model_reasoning_effort = "medium"
-                service_tier = "fast"
+                service_tier = "priority"
             "#,
         )?;
 
@@ -2566,7 +2570,7 @@ mod tests {
                 new_thread: Some(NewThreadModelDefaultsToml {
                     model: Some("managed-model".to_string()),
                     model_reasoning_effort: Some(ReasoningEffort::Medium),
-                    service_tier: Some("fast".to_string()),
+                    service_tier: ServiceTier::Fast,
                 }),
             })
         );
@@ -2643,7 +2647,7 @@ mod tests {
             new_thread: Some(NewThreadModelDefaultsToml {
                 model: Some("managed-model".to_string()),
                 model_reasoning_effort: Some(ReasoningEffort::Medium),
-                service_tier: Some("fast".to_string()),
+                service_tier: ServiceTier::Fast,
             }),
         };
         let sqlite_home = AbsolutePathBuf::try_from(std::env::temp_dir().join("managed-state"))

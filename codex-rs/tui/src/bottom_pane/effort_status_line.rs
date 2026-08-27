@@ -41,7 +41,7 @@ const TOTAL: Duration = SCROLL_OUT
     .saturating_add(LABEL_FADE_OUT)
     .saturating_add(STATUS_FADE_IN);
 
-pub(crate) const EFFORT_STATUS_LINE_FRAME_TICK: Duration = Duration::from_millis(33);
+pub(crate) const EFFORT_STATUS_LINE_FRAME_TICK: Duration = crate::tui::TARGET_FRAME_INTERVAL;
 
 impl EffortTier {
     fn label(self) -> &'static str {

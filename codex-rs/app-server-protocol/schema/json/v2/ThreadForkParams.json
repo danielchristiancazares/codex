@@ -71,6 +71,22 @@
       ],
       "type": "string"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "ThreadSource": {
       "type": "string"
     }
@@ -161,10 +177,12 @@
       ]
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Complete routing selection for the forked thread."
     },
     "threadId": {
       "type": "string"
@@ -182,6 +200,7 @@
     }
   },
   "required": [
+    "serviceTier",
     "threadId"
   ],
   "title": "ThreadForkParams",

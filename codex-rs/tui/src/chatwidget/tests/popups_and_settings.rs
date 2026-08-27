@@ -3237,6 +3237,34 @@ async fn model_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn provider_selection_popup_snapshot_and_selection_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_provider_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("provider_selection_popup", popup);
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::SwitchModelProvider(provider_id))
+            if provider_id == codex_model_provider_info::COPILOT_PROVIDER_ID
+    );
+}
+
+#[tokio::test]
+async fn provider_switch_loading_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.show_provider_switch_loading("GitHub Copilot");
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("provider_switch_loading_popup", popup);
+}
+
+#[tokio::test]
 async fn personality_selection_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());
@@ -3265,6 +3293,8 @@ async fn model_picker_hides_show_in_picker_false_models_from_cache() {
         display_name: slug.to_string(),
         description: format!("{slug} description"),
         model_specialty: None,
+        context_window: None,
+        max_context_window: None,
         default_reasoning_effort: ReasoningEffortConfig::Medium,
         supported_reasoning_efforts: vec![ReasoningEffortPreset {
             effort: ReasoningEffortConfig::Medium,
@@ -3273,7 +3303,7 @@ async fn model_picker_hides_show_in_picker_false_models_from_cache() {
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: ServiceTier::Default,
         is_default: false,
         upgrade: None,
         show_in_picker,
@@ -3389,6 +3419,7 @@ async fn model_advanced_reasoning_selection_popup_snapshot() {
 #[tokio::test]
 async fn model_reasoning_selection_popup_applies_custom_effort() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    disable_context_window_selection(&mut chat, "gpt-5.4");
     let custom_effort = ReasoningEffortConfig::Custom("future".to_string());
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
 
@@ -3408,7 +3439,7 @@ async fn model_reasoning_selection_popup_applies_custom_effort() {
     let selected_effort_events = std::iter::from_fn(|| rx.try_recv().ok())
         .filter_map(|event| match event {
             AppEvent::UpdateReasoningEffort(effort) => Some((None, effort)),
-            AppEvent::PersistModelSelection { model, effort } => Some((Some(model), effort)),
+            AppEvent::PersistModelSelection { model, effort, .. } => Some((Some(model), effort)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -3423,6 +3454,7 @@ async fn model_reasoning_selection_popup_applies_custom_effort() {
 
 async fn select_ultra_with_multi_agent_thread_limit(max_threads: usize) -> (bool, Vec<String>) {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    disable_context_window_selection(&mut chat, "gpt-5.4");
     chat.config
         .multi_agent_v2
         .max_concurrent_threads_per_session = max_threads;
@@ -3496,6 +3528,7 @@ async fn ultra_reasoning_selection_skips_warning_below_threshold() {
 #[tokio::test]
 async fn max_reasoning_selection_persists_model_selection() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    disable_context_window_selection(&mut chat, "gpt-5.4");
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
 
     let mut preset = get_available_model(&chat, "gpt-5.4");
@@ -3516,6 +3549,7 @@ async fn max_reasoning_selection_persists_model_selection() {
         AppEvent::PersistModelSelection {
             model,
             effort: Some(ReasoningEffortConfig::Max),
+            ..
         } if model == "gpt-5.4"
     )));
     assert!(
@@ -3766,12 +3800,14 @@ async fn single_reasoning_option_skips_selection() {
         display_name: "model-with-single-reasoning".to_string(),
         description: "".to_string(),
         model_specialty: None,
+        context_window: None,
+        max_context_window: None,
         default_reasoning_effort: ReasoningEffortConfig::High,
         supported_reasoning_efforts: single_effort,
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
+        default_service_tier: ServiceTier::Default,
         is_default: false,
         upgrade: None,
         show_in_picker: true,
@@ -3853,59 +3889,6 @@ async fn auto_model_advertising_advanced_effort_opens_reasoning_picker() {
             .iter()
             .any(|event| matches!(event, AppEvent::OpenReasoningPopup { .. }))
     );
-}
-
-#[tokio::test]
-async fn feedback_selection_popup_snapshot() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    // Open the feedback category selection popup via slash command.
-    chat.dispatch_command(SlashCommand::Feedback);
-
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert_chatwidget_snapshot!("feedback_selection_popup", popup);
-}
-
-#[tokio::test]
-async fn feedback_upload_consent_popup_snapshot() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.show_selection_view(crate::bottom_pane::feedback_upload_consent_params(
-        chat.app_event_tx.clone(),
-        crate::app_event::FeedbackCategory::Bug,
-        chat.current_rollout_path.clone(),
-        Some("auto-review-rollout-thread-1.jsonl".to_string()),
-        /*include_windows_sandbox_log*/ true,
-        &codex_feedback::FeedbackDiagnostics::new(vec![codex_feedback::FeedbackDiagnostic {
-            headline: "Proxy environment variables are set and may affect connectivity."
-                .to_string(),
-            details: vec!["HTTPS_PROXY = hello".to_string()],
-        }]),
-    ));
-
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert_chatwidget_snapshot!("feedback_upload_consent_popup", popup);
-}
-
-#[tokio::test]
-async fn feedback_good_result_consent_popup_includes_connectivity_diagnostics_filename() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.show_selection_view(crate::bottom_pane::feedback_upload_consent_params(
-        chat.app_event_tx.clone(),
-        crate::app_event::FeedbackCategory::GoodResult,
-        chat.current_rollout_path.clone(),
-        Some("auto-review-rollout-thread-1.jsonl".to_string()),
-        /*include_windows_sandbox_log*/ false,
-        &codex_feedback::FeedbackDiagnostics::new(vec![codex_feedback::FeedbackDiagnostic {
-            headline: "Proxy environment variables are set and may affect connectivity."
-                .to_string(),
-            details: vec!["HTTPS_PROXY = hello".to_string()],
-        }]),
-    ));
-
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert_chatwidget_snapshot!("feedback_good_result_consent_popup", popup);
 }
 
 #[tokio::test]

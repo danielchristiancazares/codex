@@ -10,12 +10,12 @@ expression: "render_lines(&view, 100)"
   >                                                                                                 
 › [x] Use theme colors       Apply colors from the active /theme                                    
   ───────────────────────                                                                           
-  [x] thread-credits         Estimated current-thread credits (Enterprise workspaces only; omitte…  
-  [x] estimated-thread-cost  Estimated current-thread cost in USD (Enterprise workspaces only; om…  
-  [ ] model                  Current model name                                                     
-  [ ] model-with-reasoning   Current model name with reasoning level                                
-  [ ] reasoning              Current reasoning level                                                
-  [ ] current-dir            Current working directory                                              
+  [x] Thread credits         Estimated current-thread credits (Enterprise workspaces only; omitte…  
+  [x] Estimated thread cost  Estimated current-thread cost in USD (Enterprise workspaces only; om…  
+  [ ] Model                  Current model name                                                     
+  [ ] Model + reasoning      Current model name with reasoning level                                
+  [ ] Reasoning              Current reasoning level                                                
+  [ ] Current directory      Current working directory                                              
                                                                                                     
   5.2 credits · ~$1.82                                                                              
-  Press space to toggle; ←/→ to move; enter to confirm and close; esc to close
+  ↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel

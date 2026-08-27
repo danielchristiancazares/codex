@@ -4,7 +4,6 @@ use codex_config::types::McpServerOAuthConfig;
 use codex_config::types::McpServerToolConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_config::types::SessionPickerViewMode;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
@@ -35,45 +34,36 @@ model_reasoning_effort = "high"
 }
 
 #[test]
-fn set_service_tier_saves_default_as_default() {
+fn set_service_tier_omits_default() {
     let tmp = tempdir().expect("tmpdir");
     let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        "service_tier = \"fast\"\n",
+    )
+    .expect("seed config");
 
     ConfigEditsBuilder::new(codex_home)
-        .set_service_tier(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string()))
+        .set_service_tier(ServiceTier::Default)
         .apply_blocking()
         .expect("persist");
 
     let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-    assert_eq!(contents, "service_tier = \"default\"\n");
+    assert_eq!(contents, "");
 }
 
 #[test]
-fn set_service_tier_saves_priority_as_fast() {
+fn set_service_tier_saves_fast() {
     let tmp = tempdir().expect("tmpdir");
     let codex_home = tmp.path();
 
     ConfigEditsBuilder::new(codex_home)
-        .set_service_tier(Some(ServiceTier::Fast.request_value().to_string()))
+        .set_service_tier(ServiceTier::Fast)
         .apply_blocking()
         .expect("persist");
 
     let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
     assert_eq!(contents, "service_tier = \"fast\"\n");
-}
-
-#[test]
-fn set_service_tier_preserves_unknown_service_tier() {
-    let tmp = tempdir().expect("tmpdir");
-    let codex_home = tmp.path();
-
-    ConfigEditsBuilder::new(codex_home)
-        .set_service_tier(Some("experimental-tier-id".to_string()))
-        .apply_blocking()
-        .expect("persist");
-
-    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-    assert_eq!(contents, "service_tier = \"experimental-tier-id\"\n");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Choose terminal-safe strategies for growing the viewport and inserting history.
+//! Choose terminal-safe strategies for resizing the viewport and inserting history.
 
 use crate::custom_terminal::Terminal;
 use crate::insert_history::HistoryLineWrapPolicy;
@@ -76,6 +76,40 @@ impl ScrollbackStrategy {
                 .backend_mut()
                 .scroll_region_up(0..viewport_top, scroll_by),
         }
+    }
+
+    /// Moves a sparse, contiguous history tail with a bottom-docked viewport as it shrinks.
+    ///
+    /// Returns whether the physical terminal rows were moved. The caller skips this operation
+    /// while the terminal itself is resizing because terminal reflow owns those physical rows.
+    pub(super) fn dock_sparse_history_tail<B>(
+        self,
+        terminal: &mut Terminal<B>,
+        previous_viewport_top: u16,
+        viewport_top: u16,
+    ) -> io::Result<bool>
+    where
+        B: Backend<Error = io::Error> + Write,
+    {
+        if viewport_top <= previous_viewport_top {
+            return Ok(false);
+        }
+
+        let history_rows = terminal.visible_history_rows();
+        if history_rows == 0 {
+            return Ok(false);
+        }
+        let scroll_by = viewport_top - previous_viewport_top;
+        let history_top = previous_viewport_top - history_rows;
+        // Shrinking the viewport moves retained rows toward the bottom of the screen; no row needs
+        // to cross the screen edge into terminal scrollback. Limit the operation to the tracked
+        // history tail and the vacated viewport rows so the full-screen Windows strategy does not
+        // shift unrelated shell output or introduce blank rows above it.
+        let region = history_top..viewport_top;
+        terminal
+            .backend_mut()
+            .scroll_region_down(region, scroll_by)?;
+        Ok(true)
     }
 }
 

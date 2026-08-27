@@ -92,6 +92,7 @@ use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -419,7 +420,6 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cwd: resolved_cwd,
         workspace_roots: None,
         model_provider: model_provider.clone(),
-        service_tier: None,
         codex_self_exe: arg0_paths.codex_self_exe.clone(),
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
@@ -876,6 +876,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     thread_id: source_thread_id,
                     model: config.model.clone(),
                     model_provider: Some(config.model_provider_id.clone()),
+                    service_tier: config.service_tier,
                     cwd: Some(config.cwd.to_string_lossy().to_string()),
                     runtime_workspace_roots: Some(config.workspace_roots.clone()),
                     approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1188,6 +1189,7 @@ fn thread_start_params_from_config(
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
+        service_tier: config.service_tier,
         cwd: Some(config.cwd.to_string_lossy().to_string()),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1218,6 +1220,7 @@ fn thread_resume_params_from_config(
         thread_id,
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
+        service_tier: config.service_tier,
         cwd: Some(config.cwd.to_string_lossy().to_string()),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -1303,7 +1306,7 @@ fn session_configured_from_thread_start_response(
         response.thread.path.clone(),
         response.model.clone(),
         response.model_provider.clone(),
-        response.service_tier.clone(),
+        response.service_tier,
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
         config.permissions.effective_permission_profile(),
@@ -1327,7 +1330,7 @@ fn session_configured_from_thread_resume_response(
         response.thread.path.clone(),
         response.model.clone(),
         response.model_provider.clone(),
-        response.service_tier.clone(),
+        response.service_tier,
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
         config.permissions.effective_permission_profile(),
@@ -1360,7 +1363,7 @@ fn session_configured_from_thread_response(
     rollout_path: Option<PathBuf>,
     model: String,
     model_provider_id: String,
-    service_tier: Option<String>,
+    service_tier: ServiceTier,
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,

@@ -1985,6 +1985,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::account::PlanType;
     use codex_protocol::config_types::MultiAgentMode;
+    use codex_protocol::config_types::ServiceTier;
     use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::CodexResponseHandoffMode;
@@ -3141,7 +3142,7 @@ mod tests {
                 },
                 model: "gpt-5".to_string(),
                 model_provider: "openai".to_string(),
-                service_tier: None,
+                service_tier: ServiceTier::Default,
                 cwd,
                 runtime_workspace_roots: Vec::new(),
                 instruction_sources: vec![
@@ -3198,7 +3199,6 @@ mod tests {
                     },
                     "model": "gpt-5",
                     "modelProvider": "openai",
-                    "serviceTier": null,
                     "cwd": absolute_path_string("tmp"),
                     "runtimeWorkspaceRoots": [],
                     "instructionSources": [absolute_path_string("tmp/AGENTS.md")],
@@ -3561,6 +3561,7 @@ mod tests {
                 "method": "model/list",
                 "id": 6,
                 "params": {
+                    "modelProvider": null,
                     "limit": null,
                     "cursor": null,
                     "includeHidden": null
@@ -4400,7 +4401,7 @@ mod tests {
                     active_permission_profile: None,
                     model: "gpt-5.4".to_string(),
                     model_provider: "openai".to_string(),
-                    service_tier: None,
+                    service_tier: ServiceTier::Default,
                     effort: None,
                     summary: None,
                     collaboration_mode: codex_protocol::config_types::CollaborationMode {

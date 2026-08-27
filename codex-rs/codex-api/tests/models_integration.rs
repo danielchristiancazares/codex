@@ -5,6 +5,7 @@ use codex_api::RetryConfig;
 use codex_client::ReqwestTransport;
 use codex_http_client::HttpClientBuilder;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
@@ -77,7 +78,7 @@ async fn models_client_hits_models_endpoint() {
             priority: 1,
             additional_speed_tiers: Vec::new(),
             service_tiers: Vec::new(),
-            default_service_tier: None,
+            default_service_tier: ServiceTier::Default,
             upgrade: None,
             model_messages: None,
             include_skills_usage_instructions: false,

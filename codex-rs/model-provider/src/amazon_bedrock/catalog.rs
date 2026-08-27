@@ -4,6 +4,7 @@ use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_6_LUNA_MODEL_ID;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_6_SOL_MODEL_ID;
 use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_6_TERRA_MODEL_ID;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
@@ -60,7 +61,7 @@ pub(crate) fn normalize_bedrock_catalog(mut catalog: ModelsResponse) -> ModelsRe
         // Amazon Bedrock currently only supports the implicit "default" tier for GPT models.
         model.additional_speed_tiers.clear();
         model.service_tiers.clear();
-        model.default_service_tier = None;
+        model.default_service_tier = ServiceTier::Default;
         // Bedrock rejects the `search_content_types` field used by multimodal search.
         model.web_search_tool_type = WebSearchToolType::Text;
         // Bedrock does not support the response items used by multi-agent V2.
@@ -119,7 +120,6 @@ fn bundled_openai_model(slug: &str) -> ModelInfo {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -200,7 +200,7 @@ mod tests {
         let mut expected = model.clone();
         expected.additional_speed_tiers.clear();
         expected.service_tiers.clear();
-        expected.default_service_tier = None;
+        expected.default_service_tier = ServiceTier::Default;
         expected.web_search_tool_type = WebSearchToolType::Text;
         expected.multi_agent_version = Some(MultiAgentVersion::V1);
 
@@ -270,7 +270,7 @@ mod tests {
                 .retain(|level| level.effort != ReasoningEffort::Ultra);
             expected.additional_speed_tiers.clear();
             expected.service_tiers.clear();
-            expected.default_service_tier = None;
+            expected.default_service_tier = ServiceTier::Default;
             expected.web_search_tool_type = WebSearchToolType::Text;
             expected.multi_agent_version = Some(MultiAgentVersion::V1);
 
@@ -288,15 +288,14 @@ mod tests {
         for model in catalog.models {
             assert_eq!(model.additional_speed_tiers, Vec::<String>::new());
             assert_eq!(model.service_tiers, Vec::new());
-            assert_eq!(model.default_service_tier, None);
+            assert_eq!(model.default_service_tier, ServiceTier::Default);
             assert_eq!(
-                model.service_tier_for_request(Some("priority".to_string())),
-                None
+                model.service_tier_for_request(ServiceTier::Fast),
+                ServiceTier::Default
             );
             assert_eq!(
-                model
-                    .service_tier_for_request(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
-                None
+                model.service_tier_for_request(ServiceTier::Default),
+                ServiceTier::Default
             );
         }
     }

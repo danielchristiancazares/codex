@@ -41,6 +41,11 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
     /// Returns whether the currently resolved auth can use Codex backend-only models.
     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
 
+    /// Returns whether a successful remote catalog replaces the bundled list.
+    fn remote_catalog_is_authoritative(&self) -> bool {
+        false
+    }
+
     /// Fetches the latest remote model catalog and optional ETag.
     fn list_models<'a>(
         &'a self,
@@ -102,6 +107,21 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
                 refresh_strategy = %refresh_strategy
             )),
         )
+    }
+
+    /// Lists models and reports refresh failures when the remote catalog is authoritative.
+    ///
+    /// Implementations backed by fallback catalogs may retain best-effort refresh behavior.
+    fn list_models_with_refresh_errors(
+        &self,
+        refresh_strategy: RefreshStrategy,
+        http_client_factory: HttpClientFactory,
+    ) -> ModelsManagerFuture<'_, CoreResult<Vec<ModelPreset>>> {
+        Box::pin(async move {
+            Ok(self
+                .list_models(refresh_strategy, http_client_factory)
+                .await)
+        })
     }
 
     /// Return the active raw model catalog, refreshing according to the specified strategy.
@@ -238,6 +258,15 @@ impl OpenAiModelsManager {
         auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
+        Self::new_with_cache_path(cache_path, endpoint_client, auth_manager)
+    }
+
+    /// Construct a remote model manager with a provider-specific file cache.
+    pub fn new_with_cache_path(
+        cache_path: PathBuf,
+        endpoint_client: Arc<dyn ModelsEndpointClient>,
+        auth_manager: Option<Arc<AuthManager>>,
+    ) -> Self {
         Self::new_with_optional_cache(
             Some(Arc::new(FileModelsCache::new(
                 cache_path,
@@ -273,7 +302,11 @@ impl OpenAiModelsManager {
         endpoint_client: Arc<dyn ModelsEndpointClient>,
         auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
-        let remote_models = load_remote_models_from_file().unwrap_or_default();
+        let remote_models = if endpoint_client.remote_catalog_is_authoritative() {
+            Vec::new()
+        } else {
+            load_remote_models_from_file().unwrap_or_default()
+        };
         Self {
             remote_models: RwLock::new(remote_models),
             etag: RwLock::new(None),
@@ -295,6 +328,31 @@ impl StaticModelsManager {
 }
 
 impl ModelsManager for OpenAiModelsManager {
+    fn list_models_with_refresh_errors(
+        &self,
+        refresh_strategy: RefreshStrategy,
+        http_client_factory: HttpClientFactory,
+    ) -> ModelsManagerFuture<'_, CoreResult<Vec<ModelPreset>>> {
+        Box::pin(async move {
+            let catalog = match self
+                .raw_model_catalog_with_refresh_errors(refresh_strategy, http_client_factory)
+                .await
+            {
+                Ok(catalog) => catalog,
+                Err(err) if self.endpoint_client.remote_catalog_is_authoritative() => {
+                    return Err(err);
+                }
+                Err(err) => {
+                    error!("failed to refresh available models: {err}");
+                    ModelsResponse {
+                        models: self.get_remote_models().await,
+                    }
+                }
+            };
+            Ok(self.build_available_models(catalog.models))
+        })
+    }
+
     fn raw_model_catalog(
         &self,
         refresh_strategy: RefreshStrategy,
@@ -342,15 +400,30 @@ impl OpenAiModelsManager {
         refresh_strategy: RefreshStrategy,
         http_client_factory: HttpClientFactory,
     ) -> ModelsResponse {
-        if let Err(err) = self
-            .refresh_available_models(refresh_strategy, &http_client_factory)
+        match self
+            .raw_model_catalog_with_refresh_errors(refresh_strategy, http_client_factory)
             .await
         {
-            error!("failed to refresh available models: {err}");
+            Ok(catalog) => catalog,
+            Err(err) => {
+                error!("failed to refresh available models: {err}");
+                ModelsResponse {
+                    models: self.get_remote_models().await,
+                }
+            }
         }
-        ModelsResponse {
+    }
+
+    async fn raw_model_catalog_with_refresh_errors(
+        &self,
+        refresh_strategy: RefreshStrategy,
+        http_client_factory: HttpClientFactory,
+    ) -> CoreResult<ModelsResponse> {
+        self.refresh_available_models(refresh_strategy, &http_client_factory)
+            .await?;
+        Ok(ModelsResponse {
             models: self.get_remote_models().await,
-        }
+        })
     }
 
     async fn refresh_if_new_etag(&self, etag: String, http_client_factory: HttpClientFactory) {
@@ -444,6 +517,11 @@ impl OpenAiModelsManager {
 
     /// Replace the cached remote models and rebuild the derived presets list.
     async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
+        if self.endpoint_client.remote_catalog_is_authoritative() {
+            *self.remote_models.write().await = models;
+            return;
+        }
+
         // Use the remote models list as the source of truth if it contains at least one
         // non-hidden model and the user is using ChatGPT auth.
         let should_use_remote_models_only = !models.is_empty()

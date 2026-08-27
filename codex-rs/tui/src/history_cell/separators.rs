@@ -1,9 +1,10 @@
 //! Turn separators and runtime-metrics labels for transcript history.
 
 use super::*;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 
 #[derive(Debug)]
-/// A visual divider between turns, optionally showing how long the assistant "worked for".
+/// A compact completion stamp between turns, optionally showing how long the assistant worked.
 ///
 /// This separator is only emitted for turns that performed concrete work (e.g., running commands,
 /// applying patches, making MCP tool calls), so purely conversational turns do not show an empty
@@ -29,7 +30,6 @@ impl HistoryCell for FinalMessageSeparator {
         let mut label_parts = Vec::new();
         if let Some(elapsed_seconds) = self
             .elapsed_seconds
-            .filter(|seconds| *seconds > 60)
             .map(crate::status_indicator_widget::fmt_elapsed_compact)
         {
             label_parts.push(format!("Worked for {elapsed_seconds}"));
@@ -38,26 +38,21 @@ impl HistoryCell for FinalMessageSeparator {
             label_parts.push(metrics_label);
         }
 
-        if label_parts.is_empty() {
-            return vec![Line::from_iter(["─".repeat(width as usize).dim()])];
-        }
-
-        let label = format!("─ {} ─", label_parts.join(" • "));
-        let (label, _suffix, label_width) = take_prefix_by_width(&label, width as usize);
-        vec![
-            Line::from_iter([
-                label,
-                "─".repeat((width as usize).saturating_sub(label_width)),
-            ])
-            .dim(),
-        ]
+        let label = if label_parts.is_empty() {
+            "Done".to_string()
+        } else {
+            label_parts.join(" · ")
+        };
+        vec![truncate_line_with_ellipsis_if_overflow(
+            Line::from(vec!["✦".magenta().bold(), format!(" {label}").dim()]),
+            width as usize,
+        )]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut label_parts = Vec::new();
         if let Some(elapsed_seconds) = self
             .elapsed_seconds
-            .filter(|seconds| *seconds > 60)
             .map(crate::status_indicator_widget::fmt_elapsed_compact)
         {
             label_parts.push(format!("Worked for {elapsed_seconds}"));

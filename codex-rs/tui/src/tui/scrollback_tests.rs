@@ -11,6 +11,7 @@ use crossterm::cursor::MoveTo;
 use crossterm::queue;
 use crossterm::style::Print;
 use pretty_assertions::assert_eq;
+use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::layout::Size;
 use ratatui::text::Line;
@@ -166,4 +167,175 @@ fn full_screen_viewport_growth_preserves_terminal_scrollback() {
     history-row-3
     history-row-4
     ");
+}
+
+#[test]
+fn sparse_history_tail_stays_adjacent_to_bottom_docked_viewport_after_shrink() {
+    let width = 28;
+    let height = 12;
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+    let mut terminal = Terminal::with_options(backend).expect("terminal with scrollback");
+    let previous_viewport_top = 8;
+    let viewport_top = 10;
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+
+    for (row, line) in [
+        (1, "shell-history-marker"),
+        (6, "history-tail-one"),
+        (7, "history-tail-two"),
+        (8, "stale-live-one"),
+        (9, "stale-live-two"),
+        (10, "stale-live-three"),
+        (11, "stale-live-four"),
+    ] {
+        queue!(terminal.backend_mut(), MoveTo(/*x*/ 0, row), Print(line))
+            .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    let moved = ScrollbackStrategy::Standard
+        .dock_sparse_history_tail(&mut terminal, previous_viewport_top, viewport_top)
+        .expect("dock sparse history tail");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        viewport_top,
+        width,
+        height - viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, viewport_top))
+        .expect("clear stale live viewport");
+    queue!(
+        terminal.backend_mut(),
+        MoveTo(/*x*/ 0, viewport_top),
+        Print("composer-top"),
+        MoveTo(/*x*/ 0, viewport_top + 1),
+        Print("composer-bottom")
+    )
+    .expect("draw resized live viewport");
+
+    assert_eq!((moved, terminal.visible_history_rows()), (true, 2));
+    insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
+}
+
+#[test]
+fn full_screen_strategy_docks_history_without_moving_unrelated_rows() {
+    let width = 28;
+    let height = 12;
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+    let mut terminal = Terminal::with_options(backend).expect("terminal with scrollback");
+    let previous_viewport_top = 8;
+    let viewport_top = 10;
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+
+    for (row, line) in [
+        (1, "shell-history-marker"),
+        (6, "history-tail-one"),
+        (7, "history-tail-two"),
+        (8, "stale-live-one"),
+        (9, "stale-live-two"),
+        (10, "stale-live-three"),
+        (11, "stale-live-four"),
+    ] {
+        queue!(terminal.backend_mut(), MoveTo(/*x*/ 0, row), Print(line))
+            .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    let moved = ScrollbackStrategy::FullScreen
+        .dock_sparse_history_tail(&mut terminal, previous_viewport_top, viewport_top)
+        .expect("dock sparse history tail");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        viewport_top,
+        width,
+        height - viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, viewport_top))
+        .expect("clear stale live viewport");
+    queue!(
+        terminal.backend_mut(),
+        MoveTo(/*x*/ 0, viewport_top),
+        Print("composer-top"),
+        MoveTo(/*x*/ 0, viewport_top + 1),
+        Print("composer-bottom")
+    )
+    .expect("draw resized live viewport");
+
+    assert_eq!((moved, terminal.visible_history_rows()), (true, 2));
+    let contents = terminal.backend().vt100().screen().contents();
+    assert_eq!(contents.lines().nth(1), Some("shell-history-marker"));
+    insta::assert_snapshot!(contents);
+}
+
+#[test]
+fn full_history_band_stays_adjacent_to_bottom_docked_viewport_after_shrink() {
+    let width = 24;
+    let height = 8;
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 16);
+    let mut terminal = Terminal::with_options(backend).expect("terminal with scrollback");
+    let previous_viewport_top = 4;
+    let viewport_top = 6;
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+    for (row, line) in [
+        "history-row-one",
+        "history-row-two",
+        "history-row-three",
+        "history-row-four",
+        "stale-live-one",
+        "stale-live-two",
+        "stale-live-three",
+        "stale-live-four",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        queue!(
+            terminal.backend_mut(),
+            MoveTo(/*x*/ 0, row as u16),
+            Print(line)
+        )
+        .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(previous_viewport_top);
+
+    let moved = ScrollbackStrategy::FullScreen
+        .dock_sparse_history_tail(&mut terminal, previous_viewport_top, viewport_top)
+        .expect("dock full history band");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        viewport_top,
+        width,
+        height - viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, viewport_top))
+        .expect("clear stale live viewport");
+    queue!(
+        terminal.backend_mut(),
+        MoveTo(/*x*/ 0, viewport_top),
+        Print("composer-top"),
+        MoveTo(/*x*/ 0, viewport_top + 1),
+        Print("composer-bottom")
+    )
+    .expect("draw resized live viewport");
+
+    assert_eq!((moved, terminal.visible_history_rows()), (true, 4));
+    insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
 }

@@ -19,6 +19,7 @@ use tokio::sync::Semaphore;
 use super::HostSkillRoot;
 use super::MAX_CONCURRENT_ROOT_SCANS;
 use super::host::HostSkillRootSnapshot;
+use super::load_embedded_system_skill_root;
 use super::load_host_skill_root;
 use crate::SkillLoadOutcome;
 use crate::host_service::RequestSkillRootSnapshots;
@@ -36,6 +37,7 @@ pub(crate) async fn load_and_merge_host_skill_roots(
         restriction_product,
         plugin_skill_snapshots,
         /*request_root_snapshots*/ None,
+        /*embedded_system_root*/ None,
     )
     .await
 }
@@ -46,6 +48,7 @@ pub(crate) async fn load_and_merge_host_skill_roots_with_request_snapshots(
     restriction_product: Option<Product>,
     plugin_skill_snapshots: Option<&SkillRootSnapshots<PluginSkillRoot>>,
     request_root_snapshots: Option<&RequestSkillRootSnapshots>,
+    embedded_system_root: Option<&AbsolutePathBuf>,
 ) -> SkillLoadOutcome {
     let migrated_command_roots_by_plugin = roots
         .iter()
@@ -62,6 +65,8 @@ pub(crate) async fn load_and_merge_host_skill_roots_with_request_snapshots(
                 .cloned();
             let plugin_skill_root = root.plugin_skill_root();
             let file_system = Arc::clone(&root.file_system);
+            let is_embedded_system_root =
+                root.scope == SkillScope::System && embedded_system_root == Some(&root.path);
             let request_snapshot = if plugin_skill_root.is_none() {
                 request_root_snapshots.map(|snapshots| {
                     Arc::clone(
@@ -93,7 +98,11 @@ pub(crate) async fn load_and_merge_host_skill_roots_with_request_snapshots(
                         is_agent_plugin: snapshot.is_agent_plugin,
                     },
                     None => {
-                        let snapshot = load_host_skill_root(root).await;
+                        let snapshot = if is_embedded_system_root {
+                            load_embedded_system_skill_root(root).await
+                        } else {
+                            load_host_skill_root(root).await
+                        };
                         if let Some(plugin_skill_snapshots) = plugin_skill_snapshots
                             && let Some(plugin_skill_root) = plugin_skill_root
                         {

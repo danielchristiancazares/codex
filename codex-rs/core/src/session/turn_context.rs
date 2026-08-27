@@ -496,7 +496,7 @@ impl TurnContext {
             model_info,
             config.features.enabled(Feature::FastMode),
         ));
-        config.service_tier = step_settings.service_tier.clone();
+        config.service_tier = step_settings.service_tier;
         let session_telemetry = step_settings.telemetry(&self.session_telemetry);
 
         Self {
@@ -652,7 +652,7 @@ impl Session {
             .reasoning_effort();
         per_turn_config.model_reasoning_summary =
             session_configuration.step_settings.reasoning_summary;
-        per_turn_config.service_tier = session_configuration.step_settings.service_tier.clone();
+        per_turn_config.service_tier = session_configuration.step_settings.service_tier;
         per_turn_config.personality = session_configuration.step_settings.personality;
         per_turn_config.approvals_reviewer = session_configuration.step_settings.approvals_reviewer;
         session_configuration
@@ -741,7 +741,7 @@ impl Session {
         if step_settings.reasoning_effort() == Some(&ReasoningEffort::Persistent) {
             super::time_reminder::apply_persistent_defaults(&mut per_turn_config);
         }
-        per_turn_config.service_tier = step_settings.service_tier.clone();
+        per_turn_config.service_tier = step_settings.service_tier;
         let permission_profile = environments.permission_profile_or_else(|| {
             per_turn_config.permissions.effective_permission_profile()
         });
@@ -839,7 +839,7 @@ impl Session {
         options: NewTurnContextOptions,
         should_start: impl FnOnce(&SessionConfiguration, &SessionConfiguration) -> bool + Send,
     ) -> CodexResult<Option<(Arc<TurnContext>, ThreadSettingsSnapshot)>> {
-        let service_tier_for_turn = updates.service_tier_for_turn.clone();
+        let service_tier_for_turn = updates.service_tier_for_turn;
         let commit = match self.update_settings_if(updates, should_start).await {
             Ok(Some(commit)) => commit,
             Ok(None) => return Ok(None),
@@ -860,7 +860,7 @@ impl Session {
         let mut configuration = commit.configuration;
         // Apply the override only to the turn's copy, after persisting thread settings.
         if let Some(service_tier) = service_tier_for_turn {
-            Arc::make_mut(&mut configuration.step_settings).service_tier = Some(service_tier);
+            Arc::make_mut(&mut configuration.step_settings).service_tier = service_tier;
         }
         let turn_context = self
             .new_turn_from_configuration(sub_id, configuration, options)

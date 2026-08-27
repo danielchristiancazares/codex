@@ -34,6 +34,29 @@ pub trait AuthProvider: Send + Sync {
     /// used by telemetry and non-HTTP request paths.
     fn add_auth_headers(&self, headers: &mut HeaderMap);
 
+    /// Applies provider-specific shaping to a serialized Responses WebSocket request.
+    ///
+    /// Providers that override [`AuthProvider::apply_auth`] to adapt HTTP Responses request
+    /// bodies should override this hook as well so both transports send equivalent payloads.
+    fn prepare_responses_websocket_request(&self, request: String) -> Result<String, AuthError> {
+        Ok(request)
+    }
+
+    /// Observes a 401/403 rejection from a Responses WebSocket upgrade or error frame.
+    ///
+    /// Credential providers can use this to reject the exact credential generation attached to
+    /// the connection before the caller reconnects.
+    fn on_responses_websocket_auth_rejected(&self) {}
+
+    /// Identifies the credential snapshot used by a Responses WebSocket connection.
+    ///
+    /// When this value changes, callers must establish a new connection before sending another
+    /// request. Providers with connection-bound or model-bound credentials should return a stable,
+    /// non-secret identifier for the lifetime of that credential snapshot.
+    fn responses_websocket_connection_key(&self) -> Option<String> {
+        None
+    }
+
     /// Returns any auth headers that are available without request body access.
     fn to_auth_headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();

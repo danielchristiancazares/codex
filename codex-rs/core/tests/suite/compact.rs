@@ -2308,7 +2308,7 @@ async fn previous_model_compaction_resolves_selected_settings() -> Result<()> {
             model.comp_hash = Some("hash-a".to_string());
             model.default_reasoning_summary = ReasoningSummary::Detailed;
             model.service_tiers = vec![ModelServiceTier {
-                id: ServiceTier::Fast.request_value().to_string(),
+                id: ServiceTier::Fast,
                 name: "Fast".to_string(),
                 description: "Priority processing".to_string(),
             }];
@@ -2322,7 +2322,7 @@ async fn previous_model_compaction_resolves_selected_settings() -> Result<()> {
         .with_config(move |config| {
             config.model_provider = model_provider;
             config.model_reasoning_summary = None;
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = ServiceTier::Fast;
             config
                 .features
                 .enable(Feature::FastMode)

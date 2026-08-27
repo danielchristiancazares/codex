@@ -1,11 +1,13 @@
 set working-directory := "codex-rs"
-set positional-arguments
+set positional-arguments := true
+
 export CODEX_REPO_ROOT := justfile_directory()
 export JUST_SHELL := justfile_directory() / "scripts/just-shell.py"
+
 set shell := ["python3", "-c", 'import os, runpy; runpy.run_path(os.environ["JUST_SHELL"], run_name="__main__")']
 set windows-shell := ["python", "-c", 'import os, runpy; runpy.run_path(os.environ["JUST_SHELL"], run_name="__main__")']
 
-rust_min_stack := "8388608" # 8 MiB
+rust_min_stack := "8388608"
 python := if os_family() == "windows" { "python" } else { "python3" }
 
 # Display help
@@ -13,13 +15,15 @@ help:
     just -l
 
 # `codex`
+
 alias c := codex
+
 codex *args:
-    cargo run --bin codex -- {args}
+    cargo run --message-format short --bin codex -- {args}
 
 # `codex exec`
 exec *args:
-    cargo run --bin codex -- exec {args}
+    cargo run --message-format short --bin codex -- exec {args}
 
 # Start `codex exec-server` and run codex-tui.
 [no-cd]
@@ -30,11 +34,11 @@ tui-with-exec-server *args:
 
 # Run the CLI version of the file-search crate.
 file-search *args:
-    cargo run --bin codex-file-search -- {args}
+    cargo run --message-format short --bin codex-file-search -- {args}
 
 # Run the standalone code-mode host from source.
 code-mode-host *args:
-    cargo run --bin codex-code-mode-host -- {args}
+    cargo run --message-format short --bin codex-code-mode-host -- {args}
 
 # Assemble a local Codex package.
 [no-cd]
@@ -43,8 +47,8 @@ assemble-codex-package *args:
 
 # Build the CLI and run the app-server test client
 app-server-test-client *args:
-    cargo build -p codex-cli
-    cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex {args}
+    cargo build -p codex-cli --message-format short
+    cargo run -p codex-app-server-test-client --message-format short -- --codex-bin ./target/debug/codex {args}
 
 # Format the justfile, Rust, Bazel/Starlark, Python SDK code, and Python scripts.
 fmt:
@@ -55,10 +59,10 @@ fmt-check:
     @{{ python }} ../scripts/format.py --check
 
 fix *args:
-    cargo clippy --fix --tests --allow-dirty {args}
+    cargo clippy --message-format short --fix --tests --allow-dirty {args}
 
 clippy *args:
-    cargo clippy --tests {args}
+    cargo clippy --message-format short --tests {args}
 
 [unix]
 install:
@@ -82,6 +86,7 @@ install:
 #
 # Run `cargo install --locked cargo-nextest` if you don't have it installed.
 # Prefer this for routine local runs. Workspace crate features are banned, so
+
 # there should be no need to add `--all-features`.
 [unix]
 test *args:
@@ -89,9 +94,10 @@ test *args:
 
 [windows]
 test *args:
-    $env:RUST_MIN_STACK = "{{ rust_min_stack }}"; $env:NEXTEST_PROFILE = "local"; cargo nextest run --no-fail-fast @($args | Select-Object -Skip 1)
+    $v8Target = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) { "X64" { "x86_64-pc-windows-msvc" } "Arm64" { "aarch64-pc-windows-msvc" } default { $null } }; $v8Archive = Join-Path "{{ justfile_directory() }}" "rusty_v8_ptrcomp_sandbox_release_$v8Target.lib.gz"; $v8Binding = Join-Path "{{ justfile_directory() }}" "src_binding_ptrcomp_sandbox_release_$v8Target.rs"; if ([string]::IsNullOrWhiteSpace($env:RUSTY_V8_ARCHIVE) -and [string]::IsNullOrWhiteSpace($env:RUSTY_V8_SRC_BINDING_PATH) -and (Test-Path -LiteralPath $v8Archive -PathType Leaf) -and (Test-Path -LiteralPath $v8Binding -PathType Leaf)) { $env:RUSTY_V8_ARCHIVE = $v8Archive; $env:RUSTY_V8_SRC_BINDING_PATH = $v8Binding }; $env:RUST_MIN_STACK = "{{ rust_min_stack }}"; $env:NEXTEST_PROFILE = "local"; cargo nextest run --no-fail-fast @($args | Select-Object -Skip 1)
 
 # Run from the repository root so scripts that resolve paths from `cwd` see
+
 # the same layout they use in GitHub Actions.
 [no-cd]
 test-github-scripts:
@@ -99,7 +105,7 @@ test-github-scripts:
 
 # Run explicit workspace benchmark targets.
 bench *args:
-    cargo bench --workspace --bench '*' {args}
+    cargo bench --message-format short --workspace --bench '*' {args}
 
 # Run benchmark targets once to ensure they start successfully.
 bench-smoke:
@@ -111,6 +117,7 @@ bench-e2e:
     bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed //codex-rs:e2e-benchmarks
 
 # Run Bazel-backed end-to-end macrobenchmarks once per case with release-like
+
 # Rust cfg paths but fastbuild codegen.
 bench-e2e-smoke:
     # Avoid optimizer cost because smoke runs only check that benchmarks work.
@@ -120,6 +127,7 @@ bench-e2e-smoke:
 
 # Build and run Codex from source using Bazel.
 # On Unix, use `[no-cd]` and `--run_under="cd $PWD &&"` to ensure Bazel runs
+
 # the command in the current working directory.
 [no-cd]
 [unix]
@@ -171,19 +179,19 @@ build-for-release:
 
 # Run the MCP server
 mcp-server-run *args:
-    cargo run -p codex-mcp-server -- {args}
+    cargo run --message-format short -p codex-mcp-server -- {args}
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
-    cargo run -p codex-core --bin codex-write-config-schema
+    cargo run --message-format short -p codex-core --bin codex-write-config-schema
 
 # Regenerate vendored app-server protocol schema artifacts.
 write-app-server-schema *args:
-    cargo run -p codex-app-server-protocol --bin write_schema_fixtures -- {args}
+    {{ python }} app-server-protocol/scripts/write_schema_fixtures.py {args}
 
 [no-cd]
 write-hooks-schema:
-    cargo run --manifest-path {{ justfile_directory() }}/codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures
+    cargo run --message-format short --manifest-path {{ justfile_directory() }}/codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures
 
 # Run the argument-comment Dylint checks across codex-rs.
 [no-cd]
@@ -202,8 +210,8 @@ argument-comment-lint-from-source *args:
 # Tail logs from the state SQLite database
 [unix]
 log *args:
-    if [ "${1:-}" = "--" ]; then shift; fi; cargo run -p codex-cli --bin logs_client -- "$@"
+    if [ "${1:-}" = "--" ]; then shift; fi; cargo run --message-format short -p codex-cli --bin logs_client -- "$@"
 
 [windows]
 log *args:
-    $forwarded_args = @($args | Select-Object -Skip 1); if ($forwarded_args.Count -gt 0 -and $forwarded_args[0] -eq "--") { $forwarded_args = @($forwarded_args | Select-Object -Skip 1) }; cargo run -p codex-cli --bin logs_client -- @forwarded_args
+    $forwarded_args = @($args | Select-Object -Skip 1); if ($forwarded_args.Count -gt 0 -and $forwarded_args[0] -eq "--") { $forwarded_args = @($forwarded_args | Select-Object -Skip 1) }; cargo run --message-format short -p codex-cli --bin logs_client -- @forwarded_args

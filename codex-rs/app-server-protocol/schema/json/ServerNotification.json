@@ -3746,6 +3746,14 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "SessionSource": {
       "oneOf": [
         {
@@ -5780,10 +5788,7 @@
           "$ref": "#/definitions/SandboxPolicy"
         },
         "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/definitions/ServiceTier"
         },
         "summary": {
           "anyOf": [

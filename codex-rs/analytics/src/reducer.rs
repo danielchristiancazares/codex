@@ -3442,9 +3442,7 @@ fn codex_turn_event_params(
         )),
         reasoning_effort: reasoning_effort.map(|value| value.to_string()),
         reasoning_summary: reasoning_summary_mode(reasoning_summary),
-        service_tier: service_tier
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "default".to_string()),
+        service_tier: service_tier.to_string(),
         approval_policy: approval_policy.to_string(),
         approvals_reviewer: approvals_reviewer.to_string(),
         sandbox_network_access,

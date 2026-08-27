@@ -257,6 +257,14 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "enum": [
+        "fast",
+        "flex",
+        "default"
+      ],
+      "type": "string"
+    },
     "ThreadHistoryMode": {
       "enum": [
         "legacy",
@@ -392,10 +400,12 @@
       ]
     },
     "serviceTier": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Complete routing selection for the new thread."
     },
     "sessionStartSource": {
       "anyOf": [
@@ -419,6 +429,9 @@
       "description": "Optional client-supplied analytics source classification for this thread."
     }
   },
+  "required": [
+    "serviceTier"
+  ],
   "title": "ThreadStartParams",
   "type": "object"
 }

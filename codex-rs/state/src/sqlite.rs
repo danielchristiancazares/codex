@@ -6,6 +6,7 @@
 )]
 
 use crate::DbTelemetry;
+use crate::migrations::migrator_for_applied_line_endings;
 use crate::migrations::repair_legacy_recency_migration_version;
 use crate::runtime::RuntimeDbInitError;
 use crate::telemetry;
@@ -255,6 +256,7 @@ impl SqliteConfig {
             if matches!(spec.kind, DbKind::State) {
                 repair_legacy_recency_migration_version(&pool, migrator).await?;
             }
+            let migrator = migrator_for_applied_line_endings(&pool, migrator).await?;
             migrator.run(&pool).await.map_err(anyhow::Error::from)
         }
         .await;

@@ -7,14 +7,14 @@ expression: status_line_popup_snapshot(&mut chat)
 
   Type to search
   >
-› [x] Use theme colors      Apply colors from the active /theme
+› [x] Use theme colors     Apply colors from the active /theme
   ───────────────────────
-  [x] project-name          Project name (omitted when unavailable)
-  [x] git-branch            Current Git branch (omitted when unavailable)
-  [x] thread-title          Current thread title, or thread identifier when unnamed
-  [ ] model                 Current model name
-  [ ] model-with-reasoning  Current model name with reasoning level
-  [ ] reasoning             Current reasoning level
+  [x] Project name         Project name (omitted when unavailable)
+  [x] Git branch           Current Git branch (omitted when unavailable)
+  [x] Thread title         Current thread title, or thread identifier when unnamed
+  [ ] Model                Current model name
+  [ ] Model + reasoning    Current model name with reasoning level
+  [ ] Reasoning            Current reasoning level
 
   my-project · feature/mixed-preview · Mixed preview thread
-  Press space to toggle; ←/→ to move; enter to confirm and close; esc to close
+  ↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel

@@ -3,6 +3,7 @@ use super::*;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
 use codex_agent_extension::AgentRunner;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -120,7 +121,7 @@ struct ThreadSettingsBuildParams {
     sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
     permissions: Option<String>,
     model: Option<String>,
-    service_tier: Option<Option<String>>,
+    service_tier: Option<Option<ServiceTier>>,
     effort: Option<ReasoningEffort>,
     summary: Option<ReasoningSummary>,
     collaboration_mode: Option<CollaborationMode>,
@@ -864,7 +865,7 @@ impl TurnRequestProcessor {
                     model: model.clone(),
                     effort: effort.clone(),
                     summary,
-                    service_tier: service_tier.clone(),
+                    service_tier,
                     collaboration_mode: collaboration_mode.clone(),
                     personality,
                 })
@@ -920,7 +921,7 @@ impl TurnRequestProcessor {
                     sandbox_policy: params.sandbox_policy,
                     permissions: params.permissions,
                     model: params.model,
-                    service_tier: params.service_tier,
+                    service_tier: Some(Some(params.service_tier)),
                     effort: params.effort,
                     summary: params.summary,
                     collaboration_mode: params.collaboration_mode,

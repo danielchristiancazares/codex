@@ -29,8 +29,8 @@
 //!      even if it means dropping the right-side context earlier; the queue
 //!      hint may also be shortened before it is removed.
 //!    - When the queue hint is not active but the mode cycle hint is applicable,
-//!      drop "? for shortcuts" before dropping "(shift+tab to cycle)".
-//!    - If "(shift+tab to cycle)" cannot fit, also hide the right-side
+//!      drop "? shortcuts" before dropping "(Shift+Tab cycle)".
+//!    - If "(Shift+Tab cycle)" cannot fit, also hide the right-side
 //!      context to avoid too many state transitions in quick succession.
 //!    - Finally, try a mode-only line (with and without context), and fall
 //!      back to no left-side footer if nothing can fit.
@@ -93,8 +93,14 @@ pub(crate) enum CollaborationModeIndicator {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ActiveGoalDetail {
+    Elapsed(String),
+    TokenBudget(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum GoalStatusIndicator {
-    Active { usage: Option<String> },
+    Active { detail: Option<ActiveGoalDetail> },
     Paused,
     Blocked,
     UsageLimited,
@@ -102,7 +108,7 @@ pub(crate) enum GoalStatusIndicator {
     Complete { usage: Option<String> },
 }
 
-const MODE_CYCLE_HINT: &str = "shift+tab to cycle";
+const MODE_CYCLE_HINT: &str = "Shift+Tab cycle";
 const FOOTER_CONTEXT_GAP_COLS: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -315,19 +321,27 @@ fn left_side_line(
         SummaryHintKind::Shortcuts => {
             if let Some(key) = key_hints.toggle_shortcuts {
                 line.push_span(key);
-                line.push_span(" for shortcuts".dim());
+                line.push_span(" shortcuts".dim());
             }
         }
         SummaryHintKind::QueueMessage => {
             if let Some(key) = key_hints.queue {
-                line.push_span(key);
-                line.push_span(" to queue message".dim());
+                if key.display_label() == "tab" {
+                    line.push_span("Tab".dim());
+                } else {
+                    line.push_span(key);
+                }
+                line.push_span(" queue this message".dim());
             }
         }
         SummaryHintKind::QueueShort => {
             if let Some(key) = key_hints.queue {
-                line.push_span(key);
-                line.push_span(" to queue".dim());
+                if key.display_label() == "tab" {
+                    line.push_span("Tab".dim());
+                } else {
+                    line.push_span(key);
+                }
+                line.push_span(" queue".dim());
             }
         }
     };
@@ -385,7 +399,7 @@ pub(crate) fn single_line_footer_layout(
     };
     let state_width = |state: LeftSideState| -> u16 { state_line(state).width() as u16 };
     // When the mode cycle hint is applicable (idle, non-queue mode), only show
-    // the right-side context indicator if the "(shift+tab to cycle)" variant
+    // the right-side context indicator if the "(Shift+Tab cycle)" variant
     // can also fit.
     let context_requires_cycle_hint = show_cycle_hint && !show_queue_hint;
 
@@ -456,7 +470,7 @@ pub(crate) fn single_line_footer_layout(
 
         // Next fallback: mode label only. If the cycle hint is applicable but
         // cannot fit, we also suppress context so the right side does not
-        // outlive "(shift+tab to cycle)" on the left.
+        // outlive "(Shift+Tab cycle)" on the left.
         let mode_only_state = LeftSideState {
             hint: SummaryHintKind::None,
             show_cycle_hint: false,
@@ -532,34 +546,32 @@ pub(crate) fn goal_status_indicator_line(
     indicator: Option<&GoalStatusIndicator>,
 ) -> Option<Line<'static>> {
     let indicator = indicator?;
-    let label = match indicator {
-        GoalStatusIndicator::Active { usage } => {
-            if let Some(usage) = usage {
-                format!("Pursuing goal ({usage})")
-            } else {
-                "Pursuing goal".to_string()
-            }
-        }
-        GoalStatusIndicator::Paused => "Goal paused (/goal resume)".to_string(),
-        GoalStatusIndicator::Blocked => "Goal stalled (/goal resume)".to_string(),
-        GoalStatusIndicator::UsageLimited => "Goal hit usage limits (/goal resume)".to_string(),
+    let span = match indicator {
+        GoalStatusIndicator::Active { detail } => match detail {
+            Some(ActiveGoalDetail::Elapsed(elapsed)) => format!("Goal ({elapsed})").dim(),
+            Some(ActiveGoalDetail::TokenBudget(usage)) => format!("Goal · {usage}").dim(),
+            None => "Goal".dim(),
+        },
+        GoalStatusIndicator::Paused => "Goal paused (/goal resume)".cyan(),
+        GoalStatusIndicator::Blocked => "Goal stalled (/goal resume)".red(),
+        GoalStatusIndicator::UsageLimited => "Goal hit usage limits (/goal resume)".red(),
         GoalStatusIndicator::BudgetLimited { usage } => {
             if let Some(usage) = usage {
-                format!("Goal unmet ({usage})")
+                format!("Goal unmet ({usage})").red()
             } else {
-                "Goal abandoned".to_string()
+                "Goal abandoned".red()
             }
         }
         GoalStatusIndicator::Complete { usage } => {
             if let Some(usage) = usage {
-                format!("Goal achieved ({usage})")
+                format!("Goal achieved ({usage})").green()
             } else {
-                "Goal achieved".to_string()
+                "Goal achieved".green()
             }
         }
     };
 
-    Some(Line::from(vec![Span::from(label).magenta()]))
+    Some(Line::from(vec![span]))
 }
 
 pub(crate) fn status_line_right_indicator_line(
@@ -999,15 +1011,15 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
 pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'static> {
     if let Some(percent) = percent {
         let percent = percent.clamp(0, 100);
-        return Line::from(vec![Span::from(format!("{percent}% context left")).dim()]);
+        return Line::from(vec![Span::from(format!("Context {percent}% left")).dim()]);
     }
 
     if let Some(tokens) = used_tokens {
         let used_fmt = format_tokens_compact(tokens);
-        return Line::from(vec![Span::from(format!("{used_fmt} used")).dim()]);
+        return Line::from(vec![Span::from(format!("Context {used_fmt} used")).dim()]);
     }
 
-    Line::from(vec![Span::from("100% context left").dim()])
+    Line::from(vec![Span::from("Context 100% left").dim()])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2024,7 +2036,7 @@ mod tests {
             "mode indicator should remain visible"
         );
         assert!(
-            !collapsed.contains("shift+tab to cycle"),
+            !collapsed.contains("Shift+Tab cycle"),
             "compact mode indicator should be used when space is tight"
         );
         assert!(

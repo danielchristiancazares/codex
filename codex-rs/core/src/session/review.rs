@@ -85,12 +85,7 @@ pub(super) async fn spawn_review_thread(
         (
             state.session_configuration.forked_from_thread_id,
             state.session_configuration.thread_source.clone(),
-            state
-                .session_configuration
-                .step_settings
-                .service_tier
-                .clone()
-                .or_else(|| config.service_tier.clone()),
+            state.session_configuration.step_settings.service_tier,
         )
     };
     let auto_review_enabled = crate::guardian::routes_approval_policy_to_guardian(
@@ -109,7 +104,7 @@ pub(super) async fn spawn_review_thread(
     ));
     per_turn_config.model = Some(model);
     per_turn_config.model_reasoning_effort = reasoning_effort;
-    per_turn_config.service_tier = step_settings.service_tier.clone();
+    per_turn_config.service_tier = step_settings.service_tier;
     let session_telemetry_for_context =
         step_settings.telemetry(&parent_turn_context.session_telemetry);
     let per_turn_config = Arc::new(per_turn_config);

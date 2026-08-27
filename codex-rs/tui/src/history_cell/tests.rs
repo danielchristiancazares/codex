@@ -1,6 +1,7 @@
 //! Coverage for history-cell rendering, wrapping, and transcript behavior.
 
 use super::*;
+use crate::diff_model::FileChange;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCall;
 use crate::exec_cell::ExecCell;
@@ -9,6 +10,7 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::line_truncation::line_width;
 use crate::render::highlight::MAX_HIGHLIGHT_LINE_BYTES;
 use crate::session_state::ThreadSessionState;
+use crate::test_support::sanitize_codex_version;
 use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::McpAuthStatus;
@@ -17,6 +19,7 @@ use codex_otel::RuntimeMetricTotals;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::UnexpectedResponseError;
 use codex_protocol::parse_command::ParsedCommand;
 use dirs::home_dir;
@@ -49,242 +52,8 @@ fn test_cwd() -> PathBuf {
     std::env::temp_dir()
 }
 
-#[test]
-fn patch_preview_shows_minified_prefix_but_preserves_full_views() {
-    let changes = HashMap::from([(
-        PathBuf::from("metrics.json"),
-        FileChange::Add {
-            content: format!("[{}0]", "123,".repeat(/*n*/ 10_000)),
-        },
-    )]);
-    let cwd = test_cwd();
-    let cell = new_patch_event(changes.clone(), &cwd);
-
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @"
-    • Added metrics.json (+1 -0)
-        1 +[123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,
-           123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,1
-           23,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,12
-           3,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123
-           ,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,
-           123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,1
-           23,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,12
-           3,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123
-           ,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,
-           123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,1
-           23,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,12
-           3,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123,123
-      … Diff preview limited (ctrl + t to view transcript).
-    ");
-    assert_eq!(
-        cell.transcript_lines(/*width*/ 80),
-        create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80),
-    );
-    assert_eq!(
-        cell.raw_lines(),
-        plain_lines(create_diff_summary(&changes, &cwd, RAW_DIFF_SUMMARY_WIDTH)),
-    );
-}
-
-#[test]
-fn patch_preview_limits_add_delete_and_update_content() {
-    for content in [
-        "value\n".repeat(/*n*/ 20),
-        format!("short\n{}\ntail\n", "界123\t".repeat(/*n*/ 100)),
-    ] {
-        for change in [
-            FileChange::Add {
-                content: content.clone(),
-            },
-            FileChange::Delete {
-                content: content.clone(),
-            },
-            FileChange::Update {
-                unified_diff: diffy::create_patch("", &content).to_string(),
-                move_path: Some(PathBuf::from("renamed.txt")),
-            },
-            FileChange::Update {
-                unified_diff: diffy::create_patch(&content, "").to_string(),
-                move_path: None,
-            },
-            FileChange::Update {
-                unified_diff: diffy::DiffOptions::new()
-                    .set_context_len(/*context_len*/ 20)
-                    .create_patch(&content, &format!("{content}new\n"))
-                    .to_string(),
-                move_path: None,
-            },
-        ] {
-            let changes = HashMap::from([(PathBuf::from("values.txt"), change)]);
-            let cwd = test_cwd();
-            let cell = new_patch_event(changes.clone(), &cwd);
-            let full = create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80);
-            let mut expected = full[..13].to_vec();
-            expected.push(
-                "  … Diff preview limited (ctrl + t to view transcript)."
-                    .dim()
-                    .into(),
-            );
-            assert_eq!(cell.display_lines(/*width*/ 80), expected);
-            assert_eq!(cell.transcript_lines(/*width*/ 80), full);
-        }
-    }
-}
-
-#[test]
-fn patch_preview_shares_content_budget_and_keeps_file_summaries() {
-    let changes = HashMap::from([
-        (
-            PathBuf::from("a.txt"),
-            FileChange::Add {
-                content: "a\n".repeat(/*n*/ 11) + &"©️ ".repeat(/*n*/ 36),
-            },
-        ),
-        (
-            PathBuf::from("b.txt"),
-            FileChange::Add {
-                content: "b\n".repeat(/*n*/ 10),
-            },
-        ),
-        (
-            PathBuf::from("c.txt"),
-            FileChange::Add {
-                content: "c\n".into(),
-            },
-        ),
-    ]);
-    let cell = new_patch_event(changes, &test_cwd());
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @"
-    • Edited 3 files (+23 -0)
-      └ a.txt (+12 -0)
-         1 +a
-         2 +a
-         3 +a
-         4 +a
-         5 +a
-         6 +a
-         7 +a
-         8 +a
-         9 +a
-        10 +a
-        11 +a
-        12 +©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️
-
-      └ b.txt (+10 -0)
-
-      └ c.txt (+1 -0)
-      … Diff preview limited (ctrl + t to view transcript).
-    ");
-}
-
-#[test]
-fn patch_preview_budgets_wrapped_rows_at_narrow_widths() {
-    for content in [
-        "0123456789".repeat(/*n*/ 1_000),
-        "ｶﾞ".repeat(/*n*/ 1_000),
-        "0123456789\n".repeat(/*n*/ 20),
-        format!("{}\n", "界\tvalue".repeat(/*n*/ 100)).repeat(/*n*/ 20),
-        format!("{}\n", "\u{a9}\u{fe0f}".repeat(/*n*/ 50)).repeat(/*n*/ 20),
-    ] {
-        let changes = HashMap::from([(PathBuf::from("values.txt"), FileChange::Add { content })]);
-        let cell = new_patch_event(changes, &test_cwd());
-        for width in [8, 16, 40, 80] {
-            let lines = cell.display_lines(width);
-            let body = lines[1..lines.len() - 1].to_vec();
-            let rows = Paragraph::new(body)
-                .wrap(Wrap { trim: false })
-                .line_count(width);
-            assert_eq!(rows, 12);
-        }
-    }
-}
-
-#[test]
-fn patch_preview_preserves_small_diffs_and_exact_budget() {
-    for count in [1, 12] {
-        let mut changes = HashMap::from([(
-            PathBuf::from("small.rs"),
-            FileChange::Add {
-                content: "let value = 1;\n".repeat(count),
-            },
-        )]);
-        changes.extend([
-            (
-                PathBuf::from("z-empty"),
-                FileChange::Add {
-                    content: String::new(),
-                },
-            ),
-            (
-                PathBuf::from("z-renamed"),
-                FileChange::Update {
-                    unified_diff: String::new(),
-                    move_path: Some(PathBuf::from("renamed")),
-                },
-            ),
-        ]);
-        let cwd = test_cwd();
-        let cell = new_patch_event(changes.clone(), &cwd);
-        assert_eq!(
-            cell.display_lines(/*width*/ 80),
-            create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80),
-        );
-    }
-}
-
-#[test]
-fn patch_preview_caps_zero_width_source_before_later_content() {
-    let make_changes: [fn(String) -> FileChange; 3] = [
-        |content| FileChange::Add { content },
-        |content| FileChange::Delete { content },
-        |content| FileChange::Update {
-            unified_diff: diffy::create_patch("", &content).to_string(),
-            move_path: None,
-        },
-    ];
-    let cwd = test_cwd();
-    let content = format!("head\nxy{}\ntail\n", "\u{301}".repeat(/*n*/ 40_000));
-    let mut summaries = Vec::new();
-    for make_change in make_changes {
-        let changes = HashMap::from([
-            (PathBuf::from("a.txt"), make_change(content.clone())),
-            (PathBuf::from("b.txt"), make_change("later\n".into())),
-        ]);
-        let cell = new_patch_event(changes.clone(), &cwd);
-        let preview = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
-        // The next two-byte combining mark straddles the 64 KiB boundary.
-        assert_eq!(preview.matches('\u{301}').count(), 32_764);
-        summaries.push(preview.replace('\u{301}', ""));
-        assert_eq!(
-            cell.transcript_lines(/*width*/ 80),
-            create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80)
-        );
-    }
-    insta::assert_snapshot!(summaries.join("\n\n"), @"
-    • Edited 2 files (+4 -0)
-      └ a.txt (+3 -0)
-        1 +head
-        2 +xy
-
-      └ b.txt (+1 -0)
-      … Diff preview limited (ctrl + t to view transcript).
-
-    • Edited 2 files (+0 -4)
-      └ a.txt (+0 -3)
-        1 -head
-        2 -xy
-
-      └ b.txt (+0 -1)
-      … Diff preview limited (ctrl + t to view transcript).
-
-    • Edited 2 files (+4 -0)
-      └ a.txt (+3 -0)
-        1 +head
-        2 +xy
-
-      └ b.txt (+1 -0)
-      … Diff preview limited (ctrl + t to view transcript).
-    ");
+fn render_lines_with_sanitized_codex_version(lines: &[Line<'static>]) -> String {
+    sanitize_codex_version(&render_lines(lines).join("\n"))
 }
 
 #[test]
@@ -303,6 +72,65 @@ fn streaming_agent_tail_blank_line_uses_one_viewport_row() {
 
   second");
     assert_eq!(cell.desired_height(/*width*/ 80), 3);
+}
+
+#[test]
+fn patch_history_summarizes_files_and_keeps_full_transcript() {
+    let patch = diffy::create_patch("old\n", "new\n").to_string();
+    let changes = HashMap::from([(
+        PathBuf::from("src/example.rs"),
+        FileChange::Update {
+            unified_diff: patch,
+            move_path: None,
+        },
+    )]);
+    let cell = new_patch_event(changes, PathBuf::from("/project").as_path());
+
+    let display = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    let transcript = render_lines(&cell.transcript_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!("patch_history_file_summary", display);
+    assert!(!display.contains("old"));
+    assert!(!display.contains("new"));
+    assert!(transcript.contains("old"));
+    assert!(transcript.contains("new"));
+}
+
+#[test]
+fn patch_history_file_summary_limits_inline_rows_and_keeps_full_transcript() {
+    let changes = (0..20)
+        .map(|index| {
+            (
+                PathBuf::from(format!("file_{index:02}.rs")),
+                FileChange::Add {
+                    content: format!("line {index}\n"),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let cwd = PathBuf::from("/project");
+    let cell = new_patch_event(changes.clone(), cwd.as_path());
+
+    assert_eq!(
+        cell.transcript_lines(/*width*/ 80),
+        create_diff_summary(&changes, cwd.as_path(), /*wrap_cols*/ 80),
+    );
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @r###"
+    • Edited 20 files (+20 -0)
+      ├ A file_00.rs (+1 -0)
+      ├ A file_01.rs (+1 -0)
+      ├ A file_02.rs (+1 -0)
+      ├ A file_03.rs (+1 -0)
+      ├ A file_04.rs (+1 -0)
+      ├ A file_05.rs (+1 -0)
+      ├ A file_06.rs (+1 -0)
+      ├ A file_07.rs (+1 -0)
+      ├ A file_08.rs (+1 -0)
+      ├ A file_09.rs (+1 -0)
+      ├ A file_10.rs (+1 -0)
+      ├ A file_11.rs (+1 -0)
+      … Diff preview limited (ctrl + t to view transcript).
+    "###);
 }
 
 fn stdio_server_config(
@@ -576,7 +404,9 @@ fn composite_cell_preserves_child_web_links() {
     let destination = "https://chatgpt.com/codex/settings/usage";
     let cell = CompositeHistoryCell::new(vec![
         Box::new(PlainHistoryCell::new(vec![Line::from("/status")])),
-        Box::new(WebHyperlinkHistoryCell::new(vec![Line::from(destination)])),
+        Box::new(WebHyperlinkHistoryCell::new_hyperlink_lines(vec![
+            crate::terminal_hyperlinks::annotate_web_urls_in_line(Line::from(destination)),
+        ])),
     ]);
 
     let lines = cell.display_hyperlink_lines(/*width*/ 80);
@@ -784,7 +614,7 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         thread_name: None,
         model: model.to_string(),
         model_provider_id: "test-provider".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
@@ -858,7 +688,7 @@ fn final_message_separator_hides_short_worked_label_and_includes_runtime_metrics
     let rendered = render_lines(&cell.display_lines(/*width*/ 600));
 
     assert_eq!(rendered.len(), 1);
-    assert!(!rendered[0].contains("Worked for"));
+    assert!(rendered[0].contains("Worked for 12s"));
     assert!(rendered[0].contains("Local tools: 3 calls (2.5s)"));
     assert!(rendered[0].contains("Inference: 2 calls (1.2s)"));
     assert!(rendered[0].contains("WebSocket: 1 events send (700ms)"));
@@ -932,7 +762,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
         /*show_fast_status*/ false,
     );
 
-    let rendered = render_transcript(&cell).join("\n");
+    let rendered = sanitize_codex_version(&render_transcript(&cell).join("\n"));
     insta::assert_snapshot!(rendered);
 }
 
@@ -951,7 +781,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
 
     let rendered = render_transcript(&cell).join("\n");
     assert!(!rendered.contains("Model just became available"));
-    assert!(rendered.contains("To get started"));
+    assert!(rendered.contains("Start with a task"));
 }
 
 #[tokio::test]
@@ -1440,7 +1270,7 @@ fn web_search_history_cell_snapshot() {
 fn standalone_unix_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneUnix));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1449,7 +1279,7 @@ fn standalone_unix_update_available_history_cell_snapshot() {
 fn standalone_windows_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneWindows));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1458,7 +1288,7 @@ fn standalone_windows_update_available_history_cell_snapshot() {
 fn pnpm_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::PnpmGlobalLatest));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1946,10 +1776,10 @@ fn session_header_includes_reasoning_level_when_present() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
-    assert!(model_line.contains("gpt-4o high   fast"));
+    assert!(model_line.contains("gpt-4o high · fast"));
     assert!(model_line.contains("/model to change"));
 }
 
@@ -1966,7 +1796,7 @@ fn session_header_hides_fast_status_when_disabled() {
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
     let model_line = lines
         .iter()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("gpt-4o"))
         .expect("model line");
 
     assert!(model_line.contains("gpt-4o high"));
@@ -1988,7 +1818,11 @@ fn session_header_clamps_to_narrow_width() {
     let lines = cell.display_lines(WIDTH);
     let widths = lines.iter().map(line_width).collect::<Vec<_>>();
 
-    assert_eq!(widths, vec![usize::from(WIDTH); lines.len()]);
+    assert!(
+        widths
+            .iter()
+            .all(|line_width| *line_width <= usize::from(WIDTH))
+    );
     insta::assert_snapshot!(render_lines(&lines).join("\n"));
 }
 
@@ -2516,7 +2350,7 @@ fn user_history_cell_wraps_long_urls_inside_the_message_gutter() {
             line.line
                 .spans
                 .first()
-                .is_some_and(|span| span.content == "  ")
+                .is_some_and(|span| span.content == "│ ")
         }),
         "wrapped URL rows must retain the user-message gutter: {linked_rows:?}"
     );
@@ -2693,7 +2527,7 @@ fn render_uses_wrapping_for_long_url_like_line() {
             if index == 0 {
                 row.strip_prefix("› ").unwrap().trim()
             } else {
-                row.trim()
+                row.trim().strip_prefix("│ ").unwrap()
             }
         })
         .collect::<String>();
@@ -2737,7 +2571,18 @@ fn plan_update_with_note_and_wrapping_snapshot() {
     let cell = new_plan_update(update);
     // Narrow width to force wrapping for both the note and steps
     let lines = cell.display_lines(/*width*/ 32);
-    let rendered = render_lines(&lines).join("\n");
+    let rendered_lines = render_lines(&lines);
+    assert!(
+        rendered_lines.iter().any(|line| line.starts_with("  │   ")),
+        "non-final step continuations should retain the plan rail: {rendered_lines:?}"
+    );
+    assert!(
+        rendered_lines
+            .iter()
+            .any(|line| line.starts_with("      ") && !line.trim().is_empty()),
+        "final-step continuations should align under the step text: {rendered_lines:?}"
+    );
+    let rendered = rendered_lines.join("\n");
     insta::assert_snapshot!(rendered);
 }
 

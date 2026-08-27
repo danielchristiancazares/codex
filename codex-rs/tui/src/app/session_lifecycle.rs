@@ -439,7 +439,7 @@ impl App {
     /// This helper copies every known nickname/role from `AgentNavigationState` into the
     /// replacement widget so that replayed collab items render agent names immediately.
     pub(super) fn replace_chat_widget(&mut self, mut chat_widget: ChatWidget) {
-        self.commit_animation = None;
+        self.commit_animation_ticker.stop();
         // Transfer the last-written terminal title to the replacement widget
         // so it knows what OSC title is currently displayed. Without this, the
         // new widget would redundantly clear and rewrite the same title, causing
@@ -781,6 +781,7 @@ impl App {
                 if let Err(err) = self
                     .replace_chat_widget_with_app_server_thread(
                         tui,
+                        app_server,
                         started,
                         ThreadAttachPresentation::SessionLineage,
                         initial_user_message,
@@ -821,6 +822,7 @@ impl App {
     pub(super) async fn replace_chat_widget_with_app_server_thread(
         &mut self,
         tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
         started: AppServerStartedThread,
         presentation: ThreadAttachPresentation,
         initial_user_message: Option<crate::chatwidget::UserMessage>,
@@ -828,6 +830,23 @@ impl App {
         // Initial messages are for freshly attached primary threads only. Thread switches and
         // resume/fork flows pass `None` so they cannot replay old history and then auto-submit a new
         // user turn by accident.
+        let mut available_models = self.model_catalog.try_list_models().unwrap_or_default();
+        let mut runtime_model_provider_base_url = self
+            .chat_widget
+            .runtime_model_provider_base_url()
+            .map(str::to_string);
+        super::provider_switch::reconcile_session_model_environment(
+            &mut self.config,
+            app_server,
+            &self.app_server_target,
+            &started.session,
+            &mut available_models,
+            &mut runtime_model_provider_base_url,
+        )
+        .await?;
+        self.model_catalog = Arc::new(ModelCatalog::new(available_models));
+        self.chat_widget
+            .set_runtime_model_provider_base_url(runtime_model_provider_base_url);
         self.reset_thread_event_state();
         let init = self.chatwidget_init_for_forked_or_resumed_thread(
             tui,
@@ -1117,6 +1136,7 @@ impl App {
                 match self
                     .replace_chat_widget_with_app_server_thread(
                         tui,
+                        app_server,
                         resumed,
                         ThreadAttachPresentation::SessionLineage,
                         /*initial_user_message*/ None,

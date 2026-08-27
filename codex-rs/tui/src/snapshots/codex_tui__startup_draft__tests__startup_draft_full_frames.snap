@@ -3,68 +3,59 @@ source: tui/src/startup_draft_tests.rs
 expression: "snapshots.join(\"\\n---\\n\")"
 ---
 empty (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› Ask Codex to do anything
-
-  ? for shortcuts
+────────────────────────────────────────────────
+│›
+│
+  ? shortcuts
 ---
 resuming (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
   Resuming session…
-
-› Ask Codex to do anything
-
-  ? for shortcuts
+────────────────────────────────────────────────
+│›
+│
+  ? shortcuts
 ---
 forking (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
   Forking session…
-
-› draft while loading
-
+────────────────────────────────────────────────
+│› draft while loading
+│
 
 ---
 multiline (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+  >_ OpenAI Codex v<VERSION>
+  Model loading…  /model to change
+  Workspace loading…
+  guarded access  /permissions to review
 
-
-› first startup line
-  second startup line
-
+────────────────────────────────────────────────
+│› first startup line
+│  second startup line
+│
 
 ---
 narrow (18 columns):
-╭────────────────╮
-│ >_ OpenAI Cod… │
-│                │
-│ model:     lo… │
-│ directory: …ng │
-╰────────────────╯
+  >_ OpenAI Codex…
+  /model · loading
+  cwd · loading
+  /permissions
 
-
-› first startup
-  line
-  second startup
-  line
+──────────────────
+│› first startup
+│  line
+│  second startup
+│  line
+│

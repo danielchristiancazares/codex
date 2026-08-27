@@ -1119,7 +1119,7 @@ async fn goal_service_sets_gets_and_clears_thread_goal() -> anyhow::Result<()> {
                 thread_id,
                 objective: GoalObjectiveUpdate::Set(" ship goal API ownership "),
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(123)),
+                token_budget: GoalTokenBudgetUpdate::Set(123),
                 max_goal_token_budget: None,
             },
         )
@@ -1177,7 +1177,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(101)),
+                token_budget: GoalTokenBudgetUpdate::Set(101),
                 max_goal_token_budget: Some(100),
             },
         )
@@ -1203,7 +1203,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(Some(99)),
+                token_budget: GoalTokenBudgetUpdate::Set(99),
                 max_goal_token_budget: Some(100),
             },
         )
@@ -1217,7 +1217,7 @@ async fn goal_service_enforces_maximum_token_budget_on_creation_and_updates() ->
                 thread_id,
                 objective: GoalObjectiveUpdate::Keep,
                 status: None,
-                token_budget: GoalTokenBudgetUpdate::Set(None),
+                token_budget: GoalTokenBudgetUpdate::ResetToMaximum,
                 max_goal_token_budget: Some(100),
             },
         )

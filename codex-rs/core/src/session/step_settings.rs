@@ -11,7 +11,6 @@ use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -27,7 +26,7 @@ pub(crate) struct StepSettings {
     pub(crate) reasoning_summary: Option<ReasoningSummary>,
     /// Normalized requested tier. Startup retains initial-model filtering;
     /// resolution filters the effective tier against the pinned model.
-    pub(crate) service_tier: Option<String>,
+    pub(crate) service_tier: ServiceTier,
     pub(crate) personality: Option<Personality>,
     pub(crate) approval_policy: Constrained<AskForApproval>,
     pub(crate) approvals_reviewer: ApprovalsReviewer,
@@ -46,7 +45,7 @@ pub(crate) struct ResolvedStepSettings {
     /// Effective request summary: the configured value or the pinned model's default.
     pub(crate) reasoning_summary: ReasoningSummary,
     /// Tier sent on requests, filtered by feature and model support.
-    pub(crate) service_tier: Option<String>,
+    pub(crate) service_tier: ServiceTier,
 }
 
 impl ResolvedStepSettings {
@@ -59,11 +58,8 @@ impl ResolvedStepSettings {
         let reasoning_summary = selected
             .reasoning_summary
             .unwrap_or(model_info.default_reasoning_summary);
-        let service_tier = super::get_service_tier(
-            selected.service_tier.clone(),
-            fast_mode_enabled,
-            &model_info,
-        );
+        let service_tier =
+            super::get_service_tier(selected.service_tier, fast_mode_enabled, &model_info);
         Self {
             selected,
             model_info,
@@ -218,7 +214,7 @@ pub(crate) struct StepSettingsUpdate {
     /// A complete collaboration mode takes precedence over model and effort edits.
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummary>,
-    pub(crate) service_tier: Option<Option<String>>,
+    pub(crate) service_tier: Option<Option<ServiceTier>>,
     pub(crate) personality: Option<Personality>,
     pub(crate) approval_policy: Option<AskForApproval>,
     pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
@@ -266,16 +262,8 @@ impl StepSettings {
         if let Some(summary) = update.reasoning_summary {
             next.reasoning_summary = Some(summary);
         }
-        if let Some(service_tier) = update.service_tier.clone() {
-            // TODO(aibrahim): Remove once v2 clients no longer send the legacy
-            // "fast" service tier value.
-            next.service_tier = Some(match service_tier {
-                Some(service_tier) => ServiceTier::from_request_value(&service_tier)
-                    .map_or(service_tier, |service_tier| {
-                        service_tier.request_value().to_string()
-                    }),
-                None => SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string(),
-            });
+        if let Some(service_tier) = update.service_tier {
+            next.service_tier = service_tier.unwrap_or_default();
         }
         if let Some(personality) = update.personality {
             next.personality = Some(personality);

@@ -30,6 +30,7 @@ use crate::auth::ResolvedProviderAuth;
 use crate::auth::auth_manager_for_provider;
 use crate::auth::resolve_provider_auth;
 use crate::auth::resolve_provider_auth_for_scope;
+use crate::copilot::CopilotModelProvider;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
 pub(crate) fn enforce_managed_residency(provider: &mut Provider) {
@@ -311,6 +312,8 @@ pub fn create_model_provider(
 ) -> SharedModelProvider {
     if provider_info.is_amazon_bedrock() {
         Arc::new(AmazonBedrockModelProvider::new(provider_info, auth_manager))
+    } else if provider_info.is_copilot() {
+        Arc::new(CopilotModelProvider::new(provider_info))
     } else {
         Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
     }
@@ -620,6 +623,7 @@ mod tests {
                 agent_identity_policy: AgentIdentityAuthPolicy::JwtOnly,
                 session_source: SessionSource::Cli,
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: crate::ProviderRequestContext::Unscoped,
             })
             .await
             .expect("auth should resolve");
@@ -1147,7 +1151,10 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(catalog.models[0].service_tiers, Vec::new());
-        assert_eq!(catalog.models[0].default_service_tier, None);
+        assert_eq!(
+            catalog.models[0].default_service_tier,
+            codex_protocol::config_types::ServiceTier::Default
+        );
     }
 
     #[tokio::test]

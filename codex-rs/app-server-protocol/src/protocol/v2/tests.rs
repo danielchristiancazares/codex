@@ -3,6 +3,7 @@ use crate::ServerNotification;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::config_types::MultiAgentMode;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::CollabAgentTool as CoreCollabAgentTool;
@@ -306,7 +307,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
         },
         model: "gpt-5".to_string(),
         model_provider: "openai".to_string(),
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         cwd: absolute_path("tmp"),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
@@ -2020,7 +2021,7 @@ fn config_granular_approval_policy_is_marked_experimental() {
         model_reasoning_effort: None,
         model_reasoning_summary: None,
         model_verbosity: None,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         analytics: None,
         apps: None,
         browser_use: None,
@@ -2055,7 +2056,7 @@ fn config_approvals_reviewer_is_marked_experimental() {
         model_reasoning_effort: None,
         model_reasoning_summary: None,
         model_verbosity: None,
-        service_tier: None,
+        service_tier: ServiceTier::Default,
         analytics: None,
         apps: None,
         browser_use: None,
@@ -4585,23 +4586,6 @@ fn dynamic_tool_response_serializes_text_image_and_audio_content_items() {
 }
 
 #[test]
-fn thread_start_params_preserve_explicit_null_service_tier() {
-    let params: ThreadStartParams =
-        serde_json::from_value(json!({ "serviceTier": null })).expect("params should deserialize");
-    assert_eq!(params.service_tier, Some(None));
-
-    let serialized = serde_json::to_value(&params).expect("params should serialize");
-    assert_eq!(
-        serialized.get("serviceTier"),
-        Some(&serde_json::Value::Null)
-    );
-
-    let serialized_without_override =
-        serde_json::to_value(ThreadStartParams::default()).expect("params should serialize");
-    assert_eq!(serialized_without_override.get("serviceTier"), None);
-}
-
-#[test]
 fn thread_lifecycle_responses_default_missing_optional_fields() {
     let response = json!({
         "thread": {
@@ -4626,7 +4610,6 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
         },
         "model": "gpt-5",
         "modelProvider": "openai",
-        "serviceTier": null,
         "cwd": absolute_path_string("tmp"),
         "approvalPolicy": "on-request",
         "approvalsReviewer": "user",
@@ -4824,28 +4807,24 @@ fn thread_start_params_round_trip_multi_agent_mode() {
 }
 
 #[test]
-fn thread_settings_update_params_preserve_explicit_null_service_tier() {
-    let params: ThreadSettingsUpdateParams = serde_json::from_value(json!({
-        "threadId": "thread_123",
-        "serviceTier": null
+fn service_tier_requests_require_complete_canonical_routing() {
+    let legacy: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "priority",
     }))
-    .expect("params should deserialize");
-    assert_eq!(params.service_tier, Some(None));
-
-    let serialized = serde_json::to_value(&params).expect("params should serialize");
+    .expect("legacy service tier should deserialize");
+    assert_eq!(legacy.service_tier, ServiceTier::Fast);
     assert_eq!(
-        serialized.get("serviceTier"),
-        Some(&serde_json::Value::Null)
+        serde_json::to_value(legacy).expect("thread start params should serialize")["serviceTier"],
+        "fast"
     );
 
-    let without_override = ThreadSettingsUpdateParams {
-        thread_id: "thread_123".to_string(),
-        service_tier: None,
-        ..Default::default()
-    };
-    let serialized_without_override =
-        serde_json::to_value(&without_override).expect("params should serialize");
-    assert_eq!(serialized_without_override.get("serviceTier"), None);
+    let missing = serde_json::from_value::<ThreadStartParams>(json!({}));
+    assert_eq!(
+        missing
+            .expect_err("service tier should be required")
+            .to_string(),
+        "missing field `serviceTier`"
+    );
 }
 
 #[test]
