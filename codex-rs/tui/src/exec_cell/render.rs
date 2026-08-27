@@ -6,13 +6,13 @@ use super::model::ExecCell;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::plain_lines;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
 use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
-use crate::ui_consts::TRANSCRIPT_HINT;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
@@ -183,9 +183,54 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
     .unwrap_or_else(|| "•".dim())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompactCallState {
+    Active,
+    Succeeded,
+    Failed,
+}
+
+fn compact_call_state(call: &ExecCall) -> CompactCallState {
+    if call.duration.is_none() {
+        CompactCallState::Active
+    } else if call
+        .output
+        .as_ref()
+        .is_some_and(|output| output.exit_code != 0)
+    {
+        CompactCallState::Failed
+    } else {
+        CompactCallState::Succeeded
+    }
+}
+
+fn compact_branch(prefix: &'static str, state: CompactCallState) -> Span<'static> {
+    match state {
+        CompactCallState::Active => prefix.cyan(),
+        CompactCallState::Succeeded => prefix.green(),
+        CompactCallState::Failed => prefix.red(),
+    }
+}
+
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.calls.len() > 1 {
+        if !self.calls.is_empty()
+            && self.calls.iter().all(Self::is_exploring_call)
+            && self
+                .calls
+                .iter()
+                .all(|call| compact_call_state(call) != CompactCallState::Failed)
+        {
+            return self.exploring_display_lines(&self.calls, width);
+        }
+        if self.calls.len() > 1
+            || self.calls.first().is_some_and(|call| {
+                matches!(
+                    call.source,
+                    ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
+                )
+            })
+        {
             return self.compact_group_display_lines(width);
         }
 
@@ -252,6 +297,113 @@ impl HistoryCell for ExecCell {
 
 impl ExecCell {
     fn compact_group_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let uses_compact_lifecycle = self.calls.iter().all(|call| {
+            matches!(
+                call.source,
+                ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
+            )
+        });
+        if uses_compact_lifecycle {
+            let command_count = self.calls.len();
+            let active_count = self
+                .calls
+                .iter()
+                .filter(|call| call.duration.is_none())
+                .count();
+            let failed_count = self
+                .calls
+                .iter()
+                .filter(|call| compact_call_state(call) == CompactCallState::Failed)
+                .count();
+            let noun = if command_count == 1 {
+                "command"
+            } else {
+                "commands"
+            };
+            let activity = if active_count == 0 {
+                format!("Ran {command_count} {noun}")
+            } else if active_count == command_count {
+                format!("Running {command_count} {noun}")
+            } else {
+                format!("Running {active_count} of {command_count} {noun}")
+            };
+            let marker =
+                if let Some(active_call) = self.calls.iter().find(|call| call.duration.is_none()) {
+                    activity_marker(active_call.start_time, self.animations_enabled())
+                } else if failed_count > 0 {
+                    "•".red().bold()
+                } else {
+                    "•".dim()
+                };
+            let mut header = Line::from(vec![marker, " ".into(), activity.bold()]);
+            if failed_count > 0 {
+                header.push_span(" · ".dim());
+                header.push_span(format!("{failed_count} failed").red());
+            }
+            let mut lines = vec![truncate_line_with_ellipsis_if_overflow(
+                header,
+                usize::from(width.max(1)),
+            )];
+
+            for (index, call) in self.calls.iter().enumerate() {
+                let state = compact_call_state(call);
+                let prefix = if index + 1 == command_count {
+                    "  └ "
+                } else {
+                    "  ├ "
+                };
+                let command = strip_bash_lc_and_escape(&call.command).lines().join(" ");
+                let command_line = Line::from(vec![compact_branch(prefix, state), command.into()]);
+                lines.push(truncate_line_with_ellipsis_if_overflow(
+                    command_line,
+                    usize::from(width.max(1)),
+                ));
+            }
+
+            let previews = self
+                .calls
+                .iter()
+                .filter_map(|call| {
+                    let output = call.output.as_ref()?;
+                    let mut meaningful_rows = output.lines().rev().filter_map(|raw| {
+                        let row = raw.as_ref().trim();
+                        let is_divider = row
+                            .chars()
+                            .all(|ch| matches!(ch, ' ' | '-' | '=' | '_' | '─' | '━'));
+                        (!row.is_empty() && !is_divider).then(|| row.to_string())
+                    });
+                    let preview = meaningful_rows.next()?;
+                    let has_context = meaningful_rows.next().is_some();
+                    Some((compact_call_state(call), preview, has_context))
+                })
+                .collect_vec();
+            let preview = previews
+                .iter()
+                .rev()
+                .find(|(state, _, _)| *state == CompactCallState::Failed)
+                .or_else(|| {
+                    previews
+                        .iter()
+                        .rev()
+                        .find(|(_, _, has_context)| *has_context)
+                });
+            if let Some((state, preview, _)) = preview {
+                let mut preview_line = Line::from("    ");
+                if *state == CompactCallState::Failed {
+                    preview_line.push_span("Error: ".red());
+                }
+                preview_line.extend(ansi_escape_line(preview));
+                preview_line.spans.iter_mut().for_each(|span| {
+                    span.style = span.style.add_modifier(Modifier::DIM);
+                });
+                lines.push(truncate_line_with_ellipsis_if_overflow(
+                    preview_line,
+                    usize::from(width.max(1)),
+                ));
+            }
+            return lines;
+        }
+
         let completed_commands = self
             .calls
             .iter()
@@ -283,11 +435,9 @@ impl ExecCell {
                 "commands"
             };
             lines.push(Line::from(vec![
-                "•".green().bold(),
+                "•".dim(),
                 " ".into(),
                 format!("Ran {completed_commands} {noun}").bold(),
-                " · ".dim(),
-                TRANSCRIPT_HINT.dim(),
             ]));
         }
         let remaining_calls = &self.calls[completed_commands..];
@@ -326,7 +476,7 @@ impl ExecCell {
     }
 
     fn output_ellipsis_text(omitted: usize) -> String {
-        format!("… +{omitted} lines ({TRANSCRIPT_HINT})")
+        format!("… +{omitted} lines")
     }
 
     fn output_ellipsis_line(omitted: usize) -> Line<'static> {
@@ -355,7 +505,7 @@ impl ExecCell {
         ]));
 
         let mut calls = calls;
-        let mut out_indented = Vec::new();
+        let mut action_blocks: Vec<(Vec<Line<'static>>, CompactCallState)> = Vec::new();
         while let Some((call, remaining)) = calls.split_first() {
             let reads_only = call
                 .parsed
@@ -375,6 +525,19 @@ impl ExecCell {
             };
             let (group, remaining) = calls.split_at(group_len);
             calls = remaining;
+            let group_state = if group
+                .iter()
+                .any(|call| compact_call_state(call) == CompactCallState::Failed)
+            {
+                CompactCallState::Failed
+            } else if group
+                .iter()
+                .any(|call| compact_call_state(call) == CompactCallState::Active)
+            {
+                CompactCallState::Active
+            } else {
+                CompactCallState::Succeeded
+            };
 
             let call_lines: Vec<(&str, Vec<Span<'static>>)> = if reads_only {
                 let names = group
@@ -397,17 +560,35 @@ impl ExecCell {
                             lines.push(("Read", vec![name.clone().into()]));
                         }
                         ParsedCommand::ListFiles { cmd, path } => {
-                            lines.push(("List", vec![path.clone().unwrap_or(cmd.clone()).into()]));
+                            let title = if group_state == CompactCallState::Active {
+                                "List"
+                            } else {
+                                "Listed"
+                            };
+                            lines.push((title, vec![path.clone().unwrap_or(cmd.clone()).into()]));
                         }
                         ParsedCommand::Search { cmd, query, path } => {
+                            let title = if group_state == CompactCallState::Active {
+                                "Search"
+                            } else {
+                                "Searched"
+                            };
                             let spans = match (query, path) {
                                 (Some(q), Some(p)) => {
-                                    vec![q.clone().into(), " in ".dim(), p.clone().into()]
+                                    vec![
+                                        "\"".dim(),
+                                        q.clone().into(),
+                                        "\"".dim(),
+                                        " in ".dim(),
+                                        p.clone().into(),
+                                    ]
                                 }
-                                (Some(q), None) => vec![q.clone().into()],
+                                (Some(q), None) => {
+                                    vec!["\"".dim(), q.clone().into(), "\"".dim()]
+                                }
                                 _ => vec![cmd.clone().into()],
                             };
-                            lines.push(("Search", spans));
+                            lines.push((title, spans));
                         }
                         ParsedCommand::Unknown { cmd } => {
                             lines.push(("Run", vec![cmd.clone().into()]));
@@ -423,15 +604,27 @@ impl ExecCell {
                 let subsequent_indent = " ".repeat(initial_indent.width()).into();
                 let wrapped = adaptive_wrap_line(
                     &line,
-                    RtOptions::new(width as usize)
+                    RtOptions::new(usize::from(width.saturating_sub(4).max(1)))
                         .initial_indent(initial_indent)
                         .subsequent_indent(subsequent_indent),
                 );
-                push_owned_lines(&wrapped, &mut out_indented);
+                let mut block = Vec::new();
+                push_owned_lines(&wrapped, &mut block);
+                action_blocks.push((block, group_state));
             }
         }
 
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
+        let block_count = action_blocks.len();
+        for (index, (block, state)) in action_blocks.into_iter().enumerate() {
+            let is_last = index + 1 == block_count;
+            let initial_prefix = if is_last { "  └ " } else { "  ├ " };
+            let subsequent_prefix = if is_last { "    " } else { "  │ " };
+            out.extend(prefix_lines(
+                block,
+                compact_branch(initial_prefix, state),
+                subsequent_prefix.dim(),
+            ));
+        }
         out
     }
 
@@ -718,7 +911,7 @@ impl ExecCell {
         .max(1)
     }
 
-    /// Builds an output ellipsis line (`… +N lines (ctrl + t to view transcript)`)
+    /// Builds an output ellipsis line (`… +N lines`)
     /// with an optional leading prefix so the ellipsis aligns with the output gutter.
     fn output_ellipsis_line_with_prefix(
         omitted: usize,
@@ -891,8 +1084,8 @@ mod tests {
             .split_whitespace()
             .join(" ");
         assert!(
-            normalized.contains(TRANSCRIPT_HINT),
-            "expected truncated output to advertise transcript shortcut, got {normalized}"
+            normalized.contains("… +"),
+            "expected truncated output to report omitted lines, got {normalized}"
         );
     }
 
@@ -918,15 +1111,13 @@ mod tests {
         let rendered: Vec<String> = truncated.iter().map(render_line_text).collect();
 
         assert!(
-            rendered
-                .iter()
-                .any(|line| line.contains("… +6 lines (ctrl + t to view transcript)")),
+            rendered.iter().any(|line| line.contains("… +6 lines")),
             "expected omitted hint to count hidden lines (not wrapped rows), got: {rendered:?}"
         );
     }
 
     #[test]
-    fn output_lines_ellipsis_includes_transcript_hint() {
+    fn output_lines_ellipsis_reports_only_omitted_lines() {
         let output = CommandOutput::new(
             /*exit_code*/ 0,
             (1..=7).map(|n| n.to_string()).join("\n"),
@@ -946,16 +1137,7 @@ mod tests {
         .map(render_line_text)
         .collect();
 
-        assert_eq!(
-            rendered,
-            vec![
-                "1",
-                "2",
-                "… +3 lines (ctrl + t to view transcript)",
-                "6",
-                "7",
-            ]
-        );
+        assert_eq!(rendered, vec!["1", "2", "… +3 lines", "6", "7",]);
     }
 
     #[test]
@@ -1175,7 +1357,132 @@ mod tests {
     }
 
     #[test]
-    fn exploring_display_does_not_split_long_url_like_search_query() {
+    fn compact_command_roster_colors_branches_by_lifecycle_state() {
+        let mut cell = new_active_exec_command(
+            "call-success".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf success".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
+        );
+        assert!(cell.add_call(
+            "call-failed".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf failed".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+        ));
+        assert!(cell.add_call(
+            "call-active".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf active".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+        ));
+        assert!(cell.complete_call(
+            "call-success",
+            CommandOutput::new(/*exit_code*/ 0, String::new()),
+            std::time::Duration::from_millis(5),
+        ));
+        assert!(cell.complete_call(
+            "call-failed",
+            CommandOutput::new(/*exit_code*/ 7, String::new()),
+            std::time::Duration::from_millis(5),
+        ));
+
+        let lines = cell.display_lines(/*width*/ 80);
+        assert_eq!(
+            lines.iter().map(render_line_text).collect::<Vec<_>>(),
+            vec![
+                "• Running 1 of 3 commands · 1 failed",
+                "  ├ printf success",
+                "  ├ printf failed",
+                "  └ printf active",
+            ]
+        );
+        insta::assert_debug_snapshot!("compact_command_roster_branch_states", lines);
+    }
+
+    #[test]
+    fn compact_command_preview_selects_table_payload_and_preserves_transcript() {
+        let mut cell = new_active_exec_command(
+            "call-process".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Get-Process cargo".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
+        );
+        let output =
+            "\nId ProcessName CPU StartTime\n-- ----------- --- ---------\n42 cargo 8.1 08:01:02\n";
+        assert!(cell.append_output("call-process", output));
+
+        let active = cell
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            active,
+            vec![
+                "• Running 1 command",
+                "  └ Get-Process cargo",
+                "    42 cargo 8.1 08:01:02",
+            ]
+        );
+
+        assert!(cell.complete_call(
+            "call-process",
+            CommandOutput::new(/*exit_code*/ 0, output.to_string()),
+            std::time::Duration::from_millis(5),
+        ));
+        let completed = cell
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            completed,
+            vec![
+                "• Ran 1 command",
+                "  └ Get-Process cargo",
+                "    42 cargo 8.1 08:01:02",
+            ]
+        );
+
+        let transcript = cell
+            .transcript_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+        assert!(transcript.contains("Id ProcessName CPU StartTime"));
+        assert!(transcript.contains("-- ----------- --- ---------"));
+        assert!(transcript.contains("42 cargo 8.1 08:01:02"));
+    }
+
+    #[test]
+    fn exploring_preview_truncates_long_url_like_search_query_without_wrapping() {
         let url_like = "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path";
         let call = ExecCall {
             call_id: "call-id".to_string(),
@@ -1205,12 +1512,11 @@ mod tests {
             .collect();
 
         assert_eq!(
-            rendered
-                .iter()
-                .filter(|line| line.contains(url_like))
-                .count(),
-            1,
-            "expected full URL-like query in one rendered line, got: {rendered:?}"
+            rendered,
+            vec![
+                "• Exploring".to_string(),
+                "  └ Search example.test/api/v1/proj…".to_string(),
+            ]
         );
     }
 

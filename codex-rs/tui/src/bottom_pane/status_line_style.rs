@@ -108,9 +108,13 @@ where
         }
         let style = if use_theme_colors {
             let accent = StatusLineAccent::for_item(item);
-            soften_status_line_style(
-                theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
-            )
+            if matches!(accent, StatusLineAccent::Usage | StatusLineAccent::Limit) {
+                Style::default().dim()
+            } else {
+                soften_status_line_style(
+                    theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
+                )
+            }
         } else {
             Style::default().dim()
         };
@@ -229,7 +233,7 @@ mod tests {
         let line = status_line_from_segments_with_resolver(
             [
                 (StatusLineItem::ModelName, "gpt-5".to_string()),
-                (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
+                (StatusLineItem::ContextUsed, "Context used 12%".to_string()),
             ],
             /*use_theme_colors*/ true,
             |accent| match accent {
@@ -242,8 +246,8 @@ mod tests {
         assert_eq!(line.spans[0].style.fg, Some(Color::Red));
         assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::DIM));
-        assert_eq!(line.spans[2].style.fg, Some(Color::Green));
-        assert!(!line.spans[2].style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(line.spans[2].style.fg, None);
+        assert!(line.spans[2].style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -282,14 +286,14 @@ mod tests {
         let line = status_line_from_segments_with_resolver(
             [
                 (StatusLineItem::ModelName, "gpt-5".to_string()),
-                (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
+                (StatusLineItem::ContextUsed, "Context used 12%".to_string()),
             ],
             /*use_theme_colors*/ false,
             |_| Some(Style::default().red()),
         )
         .expect("status line");
 
-        assert_eq!(line_text(&line), "gpt-5 · Context 12% used");
+        assert_eq!(line_text(&line), "gpt-5 · Context used 12%");
         assert_eq!(line.spans[0].style.fg, None);
         assert!(line.spans[0].style.add_modifier.contains(Modifier::DIM));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::DIM));

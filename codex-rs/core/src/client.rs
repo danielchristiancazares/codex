@@ -62,6 +62,7 @@ use codex_api::WebsocketTelemetry;
 use codex_api::auth_header_telemetry;
 use codex_api::build_session_headers;
 use codex_api::create_text_param_for_request;
+use codex_api::openai_service_tier_wire_value;
 use codex_api::response_create_client_metadata;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClientFactory;
@@ -1021,6 +1022,7 @@ impl ModelClient {
 
         let routing_hint = match service_tier {
             ServiceTier::Fast | ServiceTier::Flex => {
+                let service_tier = openai_service_tier_wire_value(service_tier);
                 format!("model={model};tier={service_tier}")
             }
             ServiceTier::Default => format!("model={model}"),

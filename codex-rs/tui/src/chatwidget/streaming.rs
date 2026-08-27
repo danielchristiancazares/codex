@@ -464,15 +464,9 @@ impl ChatWidget {
             // Before starting an agent stream, flush any active exec cell group.
             self.flush_unified_exec_wait_streak();
             self.flush_active_cell();
-            // If the previous turn inserted non-stream history (exec output, patch status, MCP
-            // calls), render a separator before starting the next streamed assistant message.
-            if self.transcript.needs_final_message_separator && self.transcript.had_work_activity {
-                self.add_to_history(history_cell::FinalMessageSeparator::new(
-                    /*elapsed_seconds*/ None, /*runtime_metrics*/ None,
-                ));
-                self.transcript.needs_final_message_separator = false;
-            } else if self.transcript.needs_final_message_separator {
-                // Reset the flag even if we don't show separator (no work was done)
+            // The final assistant message follows the work cells directly. Turn completion owns
+            // the single elapsed-time stamp after the message.
+            if self.transcript.needs_final_message_separator {
                 self.transcript.needs_final_message_separator = false;
             }
             let inline_visualization_context = self.thread_id.and_then(|thread_id| {

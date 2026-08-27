@@ -54,7 +54,7 @@ use unicode_width::UnicodeWidthStr;
 const NOTES_PLACEHOLDER: &str = "Add notes";
 const ANSWER_PLACEHOLDER: &str = "Type your answer (optional)";
 // Keep in sync with ChatComposer's minimum composer height.
-const MIN_COMPOSER_HEIGHT: u16 = 3;
+const MIN_COMPOSER_HEIGHT: u16 = 2;
 const SELECT_OPTION_PLACEHOLDER: &str = "Select an option to add notes";
 pub(super) const TIP_SEPARATOR: &str = " | ";
 pub(super) const DESIRED_SPACERS_BETWEEN_SECTIONS: u16 = 2;
@@ -3784,16 +3784,16 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        insta::assert_snapshot!(snapshot, @r"
+        insta::assert_snapshot!(snapshot, @"
 
-          Question 1/1 (1 unanswered)
-          Share details.
-
-          › Type your answer (optional)
-
-
-
-          ctrl + x enter to submit answer | esc to interrupt
+        Question 1/1 (1 unanswered)
+        Share details.
+        ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        │› Type your answer (optional)
+        │
+        │
+        │
+        ctrl + x enter to submit answer | esc to interrupt
         ");
     }
 

@@ -771,7 +771,10 @@ async fn permissions_selection_emits_history_cell_when_selection_changes() {
         2,
         "expected command and permissions selection history cells"
     );
-    assert!(lines_to_single_string(&cells[0]).contains("Ran printf before"));
+    assert_eq!(
+        lines_to_single_string(&cells[0]),
+        "• Ran 1 command\n  └ printf before\n"
+    );
     let rendered = lines_to_single_string(&cells[1]);
     assert!(
         rendered.contains("Permissions updated to"),

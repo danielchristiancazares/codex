@@ -1637,13 +1637,7 @@ async fn pending_token_activity_refresh_keeps_composer_visible_in_short_viewport
     })
     .unwrap();
 
-    assert!(
-        term.backend()
-            .vt100()
-            .screen()
-            .contents()
-            .contains("Ask Codex to do anything")
-    );
+    assert!(term.backend().vt100().screen().contents().contains("│›"));
 }
 
 #[tokio::test]

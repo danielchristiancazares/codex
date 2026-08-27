@@ -149,6 +149,12 @@ where
     screen_size_override: Option<Size>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InlineViewportState {
+    pub(crate) area: Rect,
+    pub(crate) visible_history_rows: u16,
+}
+
 impl<B> Drop for Terminal<B>
 where
     B: Backend<Error = io::Error>,
@@ -321,6 +327,18 @@ where
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
         self.visible_history_rows = self.visible_history_rows.min(area.top());
+    }
+
+    pub(crate) fn inline_viewport_state(&self) -> InlineViewportState {
+        InlineViewportState {
+            area: self.viewport_area,
+            visible_history_rows: self.visible_history_rows,
+        }
+    }
+
+    pub(crate) fn restore_inline_viewport_state(&mut self, state: InlineViewportState) {
+        self.set_viewport_area(state.area);
+        self.visible_history_rows = state.visible_history_rows.min(state.area.top());
     }
 
     /// Queries the backend for size and resizes if it doesn't match the previous size.
@@ -561,6 +579,14 @@ where
             .visible_history_rows
             .saturating_add(inserted_rows)
             .min(self.viewport_area.top());
+    }
+
+    pub(crate) fn note_history_rows_removed(&mut self, removed_rows: u16) {
+        self.visible_history_rows = self.visible_history_rows.saturating_sub(removed_rows);
+    }
+
+    pub(crate) fn visible_history_rows(&self) -> u16 {
+        self.visible_history_rows
     }
 
     /// Clears the inactive buffer and swaps it with the current buffer

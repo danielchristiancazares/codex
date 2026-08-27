@@ -47,6 +47,7 @@ pub use crate::common::TextControls;
 pub use crate::common::WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY;
 pub use crate::common::WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY;
 pub use crate::common::create_text_param_for_request;
+pub use crate::common::openai_service_tier_wire_value;
 pub use crate::common::response_create_client_metadata;
 pub use crate::endpoint::CompactClient;
 pub use crate::endpoint::ImagesClient;

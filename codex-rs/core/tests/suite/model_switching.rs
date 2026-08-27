@@ -70,7 +70,7 @@ use wiremock::MockServer;
 enum RequestRouting {
     #[default]
     StandardRouting,
-    #[serde(rename = "fast")]
+    #[serde(rename = "priority")]
     FastRouting,
     #[serde(rename = "flex")]
     FlexRouting,
@@ -680,7 +680,7 @@ async fn settings_update_during_active_turn_applies_to_next_turn_only() -> Resul
             json!({
                 "model": "gpt-5.4",
                 "reasoning": { "effort": "high", "summary": "detailed" },
-                "service_tier": "fast",
+                "service_tier": "priority",
                 "approval_policy_never": true,
             }),
         ]
@@ -764,7 +764,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let first_body = requests[0].body_json();
     let second_body = requests[1].body_json();
 
-    assert_eq!(first_body["service_tier"], "fast");
+    assert_eq!(first_body["service_tier"], "priority");
     assert_eq!(second_body.get("service_tier"), None);
 
     Ok(())

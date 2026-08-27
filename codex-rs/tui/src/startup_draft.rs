@@ -13,9 +13,9 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::layout::Size;
-use ratatui::style::Modifier;
-use ratatui::style::Style;
 use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::Stream;
@@ -34,6 +34,7 @@ use crate::history_cell::HistoryCell;
 use crate::key_hint;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::Insets;
 use crate::render::renderable::FlexRenderable;
 use crate::render::renderable::Renderable;
@@ -445,22 +446,117 @@ fn handle_startup_draft_key(bottom_pane: &mut BottomPane, key: KeyEvent) -> io::
 }
 
 fn startup_session_header(config: Option<&Config>) -> Box<dyn HistoryCell> {
-    let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-    let directory = config.map_or_else(
-        || PathBuf::from("loading"),
-        |config| config.cwd.to_path_buf(),
-    );
-    Box::new(
-        history_cell::SessionHeaderHistoryCell::new_with_style(
-            "loading".to_string(),
-            placeholder_style,
-            /*reasoning_effort*/ None,
-            /*show_fast_status*/ false,
-            directory,
-            CODEX_CLI_VERSION,
-        )
-        .with_yolo_mode(config.is_some_and(history_cell::is_yolo_mode)),
-    )
+    Box::new(StartupSessionHeader {
+        directory: config.map(|config| config.cwd.to_path_buf()),
+        yolo_mode: config.is_some_and(history_cell::is_yolo_mode),
+    })
+}
+
+/// Compact loading header that keeps startup actions legible before session metadata arrives.
+#[derive(Debug)]
+struct StartupSessionHeader {
+    directory: Option<PathBuf>,
+    yolo_mode: bool,
+}
+
+impl HistoryCell for StartupSessionHeader {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let title = Line::from(vec![
+            "  >_ ".magenta().bold(),
+            "OpenAI Codex".bold(),
+            format!(" v{CODEX_CLI_VERSION}").dim(),
+        ]);
+        let lines = if width <= 18 {
+            let directory = self.directory.as_ref().map_or_else(
+                || "loading".to_string(),
+                |directory| {
+                    history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory,
+                        Some(usize::from(width).saturating_sub(8)),
+                    )
+                },
+            );
+            vec![
+                title,
+                Line::from(vec![
+                    "  ".into(),
+                    "/model".cyan(),
+                    " · loading".dim().italic(),
+                ]),
+                Line::from(vec!["  cwd".into(), " · ".dim(), directory.dim().italic()]),
+                Line::from(vec!["  ".into(), "/permissions".cyan()]),
+            ]
+        } else {
+            let workspace = self.directory.as_ref().map_or_else(
+                || "loading…".to_string(),
+                |directory| {
+                    history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory,
+                        Some(usize::from(width).saturating_sub(12)),
+                    )
+                },
+            );
+            let access = if self.yolo_mode {
+                vec![
+                    "  YOLO mode".magenta().bold(),
+                    "  ".into(),
+                    "/permissions".cyan(),
+                    " to change".dim(),
+                ]
+            } else {
+                vec![
+                    "  guarded access".into(),
+                    "  ".into(),
+                    "/permissions".cyan(),
+                    " to review".dim(),
+                ]
+            };
+            vec![
+                title,
+                Line::from(vec![
+                    "  Model ".into(),
+                    "loading…".dim().italic(),
+                    "  ".into(),
+                    "/model".cyan(),
+                    " to change".dim(),
+                ]),
+                Line::from(vec![
+                    "  Workspace ".into(),
+                    Span::from(workspace).dim().italic(),
+                ]),
+                Line::from(access),
+            ]
+        };
+
+        lines
+            .into_iter()
+            .map(|line| truncate_line_with_ellipsis_if_overflow(line, usize::from(width)))
+            .collect()
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from(format!("OpenAI Codex (v{CODEX_CLI_VERSION})")),
+            Line::from("model: loading"),
+            Line::from(format!(
+                "directory: {}",
+                self.directory.as_ref().map_or_else(
+                    || "loading".to_string(),
+                    |directory| history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory, /*max_width*/ None,
+                    ),
+                )
+            )),
+        ];
+        if self.yolo_mode {
+            lines.push(Line::from("permissions: YOLO mode"));
+        }
+        lines
+    }
 }
 
 fn startup_draft_renderable<'a>(
@@ -506,7 +602,7 @@ fn startup_draft_bottom_pane(
             frame_requester,
             has_input_focus: true,
             enhanced_keys_supported,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: None,

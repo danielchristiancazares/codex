@@ -2,8 +2,7 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: active_blob(&chat)
 ---
-• Exploring
-  └ Search needle in src
-    Read lib.rs
-
-• Running git status --short
+• Running 3 commands
+  ├ rg needle src
+  ├ sed -n '1,20p' src/lib.rs
+  └ git status --short

@@ -172,7 +172,7 @@ async fn remote_compaction_parity_v2_api_key_sends_service_tier_upgrade() -> Res
     );
     assert_eq!(
         v2.compact_body.get("service_tier").and_then(Value::as_str),
-        Some("fast"),
+        Some("priority"),
         "v2 compaction should send service_tier through /responses for API-key auth"
     );
 

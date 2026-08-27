@@ -12,6 +12,7 @@ use codex_protocol::protocol::W3cTraceContext;
 use futures::Stream;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::Serializer;
 use serde_json::Value;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -23,6 +24,29 @@ use tokio::sync::mpsc;
 
 pub const WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY: &str = "ws_request_header_traceparent";
 pub const WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY: &str = "ws_request_header_tracestate";
+
+/// Returns the OpenAI request value for a product-domain service tier.
+pub const fn openai_service_tier_wire_value(service_tier: ServiceTier) -> &'static str {
+    match service_tier {
+        ServiceTier::Fast => "priority",
+        ServiceTier::Flex => "flex",
+        ServiceTier::Default => "default",
+    }
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde serialize_with functions receive fields by reference"
+)]
+fn serialize_openai_service_tier<S>(
+    service_tier: &ServiceTier,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(openai_service_tier_wire_value(*service_tier))
+}
 
 /// Canonical input payload for the compaction endpoint.
 #[derive(Debug, Clone, Serialize)]
@@ -36,7 +60,10 @@ pub struct CompactionInput<'a> {
     pub parallel_tool_calls: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
-    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
     pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,
@@ -265,7 +292,10 @@ pub struct ResponsesApiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
     pub include: Vec<String>,
-    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
     pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
@@ -317,7 +347,10 @@ pub struct ResponseCreateWsRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<&'a StreamOptions>,
     pub include: &'a [String],
-    #[serde(skip_serializing_if = "ServiceTier::is_default")]
+    #[serde(
+        skip_serializing_if = "ServiceTier::is_default",
+        serialize_with = "serialize_openai_service_tier"
+    )]
     pub service_tier: ServiceTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<&'a str>,

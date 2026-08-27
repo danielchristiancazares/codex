@@ -18,6 +18,7 @@ use codex_api::ResponsesWsRequest;
 use codex_api::TransportError;
 use codex_api::build_session_headers;
 use codex_api::create_text_param_for_request;
+use codex_api::openai_service_tier_wire_value;
 use codex_extension_api::ExtensionMetrics;
 use codex_http_client::HttpClientFactory;
 use codex_login::AgentIdentityAuthPolicy;
@@ -280,7 +281,8 @@ impl LunaSampler {
         {
             let routing_hint = match self.config.service_tier {
                 ServiceTier::Fast | ServiceTier::Flex => {
-                    format!("model={MODEL};tier={}", self.config.service_tier)
+                    let service_tier = openai_service_tier_wire_value(self.config.service_tier);
+                    format!("model={MODEL};tier={service_tier}")
                 }
                 ServiceTier::Default => format!("model={MODEL}"),
             };

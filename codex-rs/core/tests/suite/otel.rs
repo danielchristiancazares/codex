@@ -141,7 +141,7 @@ async fn responses_api_emits_api_request_event() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let request_body = response_mock.single_request().body_json();
-    assert_eq!(request_body["service_tier"], "fast");
+    assert_eq!(request_body["service_tier"], "priority");
     assert_eq!(request_body["reasoning"]["effort"].as_str(), Some("high"));
 
     logs_assert(|lines: &[&str]| {

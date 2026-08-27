@@ -992,7 +992,7 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
     let handshake = server.single_handshake();
     assert_eq!(
         handshake.header(X_CODEX_ROUTING_HINT_HEADER),
-        Some(format!("model={MODEL};tier={service_tier}"))
+        Some(format!("model={MODEL};tier=priority"))
     );
     assert_eq!(
         handshake.header(OPENAI_BETA_HEADER),
@@ -1003,7 +1003,7 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
         .first()
         .expect("missing prewarm request")
         .body_json();
-    assert_eq!(prewarm["service_tier"], "fast");
+    assert_eq!(prewarm["service_tier"], "priority");
 
     server.shutdown().await;
 }

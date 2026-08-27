@@ -3,6 +3,7 @@
 use super::markdown_render_cache::MarkdownRenderCache;
 use super::*;
 use crate::style::accent_style;
+use crate::style::attachment_chip_style;
 use crate::terminal_hyperlinks::annotate_web_urls_in_line;
 use crate::terminal_hyperlinks::remap_wrapped_line;
 use crate::wrapping::url_preserving_wrap_options;
@@ -91,6 +92,7 @@ fn build_user_message_lines_with_elements(
     elements: &[TextElement],
     style: Style,
     element_style: Style,
+    image_style: Style,
 ) -> Vec<Line<'static>> {
     let mut elements = elements.to_vec();
     elements.sort_by_key(|e| e.byte_range.start);
@@ -123,7 +125,17 @@ fn build_user_message_lines_with_elements(
                 spans.push(Span::from(segment.to_string()));
             }
             if let Some(segment) = line_text.get(rel_start..rel_end) {
-                spans.push(Span::styled(segment.to_string(), element_style));
+                let style = if segment
+                    .strip_prefix("[Image #")
+                    .and_then(|number| number.strip_suffix(']'))
+                    .is_some_and(|number| {
+                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    }) {
+                    image_style
+                } else {
+                    element_style
+                };
+                spans.push(Span::styled(segment.to_string(), style));
                 cursor = end;
             }
         }
@@ -172,6 +184,7 @@ impl HistoryCell for UserHistoryCell {
 
         let style = user_message_style();
         let element_style = style.fg(Color::Cyan);
+        let image_style = style.patch(attachment_chip_style());
 
         let wrapped_remote_images = if self.remote_image_urls.is_empty() {
             None
@@ -208,6 +221,7 @@ impl HistoryCell for UserHistoryCell {
                         text_elements,
                         style,
                         element_style,
+                        image_style,
                     ),
                     wrap_options,
                 )
@@ -399,7 +413,7 @@ impl HistoryCell for AgentMessageCell {
         let mut wrapped = Vec::new();
         for (index, line) in self.lines.iter().enumerate() {
             let initial_indent = if index == 0 && self.is_first_line {
-                "• ".dim().into()
+                "• ".into()
             } else {
                 "  ".into()
             };
@@ -513,7 +527,7 @@ impl HistoryCell for AgentMarkdownCell {
             else {
                 return prefix_hyperlink_lines(
                     vec![HyperlinkLine::new(Line::default())],
-                    "• ".dim(),
+                    "• ".into(),
                     "  ".into(),
                 );
             };
@@ -528,7 +542,7 @@ impl HistoryCell for AgentMarkdownCell {
             );
             normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
                 lines,
-                "• ".dim(),
+                "• ".into(),
                 "  ".into(),
             ))
         };
@@ -588,7 +602,7 @@ impl HistoryCell for StreamingAgentTailCell {
         normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
             self.lines.clone(),
             if self.is_first_line {
-                "• ".dim()
+                "• ".into()
             } else {
                 "  ".into()
             },

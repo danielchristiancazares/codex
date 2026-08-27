@@ -19,11 +19,11 @@ help:
 alias c := codex
 
 codex *args:
-    cargo run --bin codex -- {args}
+    cargo --quiet run --bin codex -- {args}
 
 # `codex exec`
 exec *args:
-    cargo run --bin codex -- exec {args}
+    cargo --quiet run --bin codex -- exec {args}
 
 # Start `codex exec-server` and run codex-tui.
 [no-cd]
@@ -34,11 +34,11 @@ tui-with-exec-server *args:
 
 # Run the CLI version of the file-search crate.
 file-search *args:
-    cargo run --bin codex-file-search -- {args}
+    cargo --quiet run --bin codex-file-search -- {args}
 
 # Run the standalone code-mode host from source.
 code-mode-host *args:
-    cargo run --bin codex-code-mode-host -- {args}
+    cargo --quiet run --bin codex-code-mode-host -- {args}
 
 # Assemble a local Codex package.
 [no-cd]
@@ -47,8 +47,8 @@ assemble-codex-package *args:
 
 # Build the CLI and run the app-server test client
 app-server-test-client *args:
-    cargo build -p codex-cli
-    cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex {args}
+    cargo --quiet build -p codex-cli
+    cargo --quiet run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex {args}
 
 # Format the justfile, Rust, Bazel/Starlark, Python SDK code, and Python scripts.
 fmt:
@@ -59,15 +59,15 @@ fmt-check:
     @{{ python }} ../scripts/format.py --check
 
 fix *args:
-    cargo clippy --fix --tests --allow-dirty {args}
+    cargo --quiet clippy --fix --tests --allow-dirty {args}
 
 clippy *args:
-    cargo clippy --tests {args}
+    cargo --quiet clippy --tests {args}
 
 [unix]
 install:
     rustup show active-toolchain
-    cargo fetch
+    cargo --quiet fetch
 
 [windows]
 install:
@@ -79,7 +79,7 @@ install:
     }
     rustup show active-toolchain
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    cargo fetch
+    cargo --quiet fetch
     exit $LASTEXITCODE
 
 # Run nextest with --no-fail-fast so all tests are run.
@@ -90,11 +90,11 @@ install:
 # there should be no need to add `--all-features`.
 [unix]
 test *args:
-    RUST_MIN_STACK={{ rust_min_stack }} NEXTEST_PROFILE=local cargo nextest run --no-fail-fast "$@"
+    RUST_MIN_STACK={{ rust_min_stack }} NEXTEST_PROFILE=local cargo --quiet nextest run --no-fail-fast "$@"
 
 [windows]
 test *args:
-    $env:RUST_MIN_STACK = "{{ rust_min_stack }}"; $env:NEXTEST_PROFILE = "local"; cargo nextest run --no-fail-fast @($args | Select-Object -Skip 1)
+    $env:RUST_MIN_STACK = "{{ rust_min_stack }}"; $env:NEXTEST_PROFILE = "local"; cargo --quiet nextest run --no-fail-fast @($args | Select-Object -Skip 1)
 
 # Run from the repository root so scripts that resolve paths from `cwd` see
 
@@ -105,7 +105,7 @@ test-github-scripts:
 
 # Run explicit workspace benchmark targets.
 bench *args:
-    cargo bench --workspace --bench '*' {args}
+    cargo --quiet bench --workspace --bench '*' {args}
 
 # Run benchmark targets once to ensure they start successfully.
 bench-smoke:
@@ -179,11 +179,11 @@ build-for-release:
 
 # Run the MCP server
 mcp-server-run *args:
-    cargo run -p codex-mcp-server -- {args}
+    cargo --quiet run -p codex-mcp-server -- {args}
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
-    cargo run -p codex-core --bin codex-write-config-schema
+    cargo --quiet run -p codex-core --bin codex-write-config-schema
 
 # Regenerate vendored app-server protocol schema artifacts.
 write-app-server-schema *args:
@@ -191,7 +191,7 @@ write-app-server-schema *args:
 
 [no-cd]
 write-hooks-schema:
-    cargo run --manifest-path {{ justfile_directory() }}/codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures
+    cargo --quiet run --manifest-path {{ justfile_directory() }}/codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures
 
 # Run the argument-comment Dylint checks across codex-rs.
 [no-cd]
@@ -210,8 +210,8 @@ argument-comment-lint-from-source *args:
 # Tail logs from the state SQLite database
 [unix]
 log *args:
-    if [ "${1:-}" = "--" ]; then shift; fi; cargo run -p codex-cli --bin logs_client -- "$@"
+    if [ "${1:-}" = "--" ]; then shift; fi; cargo --quiet run -p codex-cli --bin logs_client -- "$@"
 
 [windows]
 log *args:
-    $forwarded_args = @($args | Select-Object -Skip 1); if ($forwarded_args.Count -gt 0 -and $forwarded_args[0] -eq "--") { $forwarded_args = @($forwarded_args | Select-Object -Skip 1) }; cargo run -p codex-cli --bin logs_client -- @forwarded_args
+    $forwarded_args = @($args | Select-Object -Skip 1); if ($forwarded_args.Count -gt 0 -and $forwarded_args[0] -eq "--") { $forwarded_args = @($forwarded_args | Select-Object -Skip 1) }; cargo --quiet run -p codex-cli --bin logs_client -- @forwarded_args

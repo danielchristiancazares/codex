@@ -110,6 +110,31 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         )
         .replace("0.0.0", "<VERSION>");
 
+        if width > 18 {
+            assert_eq!(frame.matches("Model loading…  /model to change").count(), 1);
+            assert_eq!(frame.matches("Workspace loading…").count(), 1);
+        } else {
+            let rows = frame.lines().map(str::trim).collect::<Vec<_>>();
+            assert!(
+                rows.contains(&"/model · loading"),
+                "missing model action: {frame}"
+            );
+            assert!(
+                rows.contains(&"cwd · loading"),
+                "missing workspace state: {frame}"
+            );
+            assert!(
+                rows.contains(&"/permissions"),
+                "missing permissions action: {frame}"
+            );
+            assert!(
+                pump.header
+                    .display_lines(width)
+                    .iter()
+                    .all(|line| line.width() <= usize::from(width)),
+                "startup header rows must fit at {width} columns"
+            );
+        }
         assert!(
             cursor.1 >= pump.header.desired_height(width),
             "the composer cursor should remain below the startup header"

@@ -6,6 +6,7 @@ use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use serde_json::value::RawValue;
 use std::sync::Arc;
 
@@ -242,28 +243,28 @@ fn omits_text_when_not_set() {
 }
 
 #[test]
-fn serializes_flex_service_tier_when_set() {
-    let req = ResponsesApiRequest {
-        model: "gpt-5.4".to_string(),
-        instructions: "i".to_string(),
-        input: vec![],
-        tools: Some(empty_tools().into()),
-        tool_choice: "auto".to_string(),
-        parallel_tool_calls: true,
-        reasoning: None,
-        store: false,
-        stream: true,
-        stream_options: None,
-        include: vec![],
-        prompt_cache_key: None,
-        service_tier: ServiceTier::Flex,
-        text: None,
-        client_metadata: None,
-    };
+fn serializes_openai_service_tier_wire_values() {
+    let serialized_tiers = [ServiceTier::Fast, ServiceTier::Flex].map(|service_tier| {
+        let request = ResponsesApiRequest {
+            model: "gpt-5.4".to_string(),
+            instructions: "i".to_string(),
+            input: vec![],
+            tools: Some(empty_tools().into()),
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: true,
+            reasoning: None,
+            store: false,
+            stream: true,
+            stream_options: None,
+            include: vec![],
+            prompt_cache_key: None,
+            service_tier,
+            text: None,
+            client_metadata: None,
+        };
 
-    let v = serde_json::to_value(&req).expect("json");
-    assert_eq!(
-        v.get("service_tier").and_then(|tier| tier.as_str()),
-        Some("flex")
-    );
+        serde_json::to_value(request).expect("serialize Responses request")["service_tier"].clone()
+    });
+
+    assert_eq!(serialized_tiers, [json!("priority"), json!("flex")]);
 }

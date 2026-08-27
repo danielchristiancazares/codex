@@ -280,6 +280,7 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::style::accent_style;
+use crate::style::attachment_chip_style;
 use crate::style::table_separator_style;
 use crate::style::user_message_style;
 use codex_protocol::ThreadId;
@@ -997,7 +998,7 @@ impl ChatComposer {
         };
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1,
-            LIVE_PREFIX_COLS,
+            LIVE_PREFIX_COLS.saturating_add(/*rhs*/ 1),
             /*bottom*/ 1,
             /*right*/ 1u16.saturating_add(textarea_right_reserve),
         ));
@@ -1389,7 +1390,7 @@ impl ChatComposer {
             show_cycle_hint,
         ) {
             if !spans.is_empty() {
-                spans.push(" | ".dim());
+                spans.push(" · ".dim());
             }
             spans.extend(indicators.spans);
         }
@@ -1410,7 +1411,7 @@ impl ChatComposer {
             )
         };
         if let Some(vim_mode) = self.vim_mode_indicator_span() {
-            line.spans.push(" | ".dim());
+            line.spans.push(" · ".dim());
             line.spans.push(vim_mode);
         }
         line
@@ -4494,10 +4495,10 @@ impl Renderable for ChatComposer {
     }
 
     fn cursor_style(&self, _area: Rect) -> crossterm::cursor::SetCursorStyle {
-        if self.draft.textarea.uses_vim_insert_cursor() {
-            crossterm::cursor::SetCursorStyle::SteadyBar
+        if self.draft.textarea.is_vim_normal_mode() {
+            crossterm::cursor::SetCursorStyle::SteadyBlock
         } else {
-            crossterm::cursor::SetCursorStyle::DefaultUserShape
+            crossterm::cursor::SetCursorStyle::SteadyBar
         }
     }
 
@@ -4522,7 +4523,7 @@ impl ChatComposer {
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
-        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
+        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 2;
         let inner_width =
             width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
         let remote_images_height: u16 = self
@@ -4838,6 +4839,18 @@ impl ChatComposer {
             .border_style(table_separator_style())
             .style(style)
             .render(composer_rect, buf);
+        let rail_style = if self.has_focus && self.draft.input_enabled {
+            accent_style()
+        } else {
+            table_separator_style()
+        };
+        if !composer_rect.is_empty() {
+            for y in composer_rect.y.saturating_add(1)..composer_rect.bottom().saturating_sub(1) {
+                buf[(composer_rect.x, y)]
+                    .set_symbol("│")
+                    .set_style(rail_style);
+            }
+        }
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
@@ -4861,10 +4874,10 @@ impl ChatComposer {
                 "›".dim()
             };
             buf.set_span(
-                textarea_rect.x - LIVE_PREFIX_COLS,
+                textarea_rect.x.saturating_sub(/*rhs*/ 2),
                 textarea_rect.y,
                 &prompt,
-                textarea_rect.width,
+                /*width*/ 1,
             );
         }
 
@@ -4877,6 +4890,19 @@ impl ChatComposer {
                     .render_ref_masked(textarea_rect, buf, &mut state, mask_char);
             } else {
                 let mut highlights = self.plugin_at_mention_highlights();
+                highlights.extend(
+                    self.draft
+                        .textarea
+                        .text_element_snapshots()
+                        .into_iter()
+                        .filter(|snapshot| {
+                            self.attachments
+                                .local_images
+                                .iter()
+                                .any(|image| image.placeholder == snapshot.text)
+                        })
+                        .map(|snapshot| (snapshot.range, attachment_chip_style())),
+                );
                 let search_highlight_style =
                     Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
                 highlights.extend(
@@ -5075,7 +5101,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_hint_row_is_separated_from_composer() {
+    fn composer_separates_single_line_input_from_footer_hints() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let composer = ChatComposer::new(
@@ -5086,7 +5112,10 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        let area = Rect::new(0, 0, 40, 6);
+        let width = 40;
+        let height = composer.desired_height(width);
+        assert_eq!(height, 4);
+        let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
@@ -5101,7 +5130,7 @@ mod tests {
         let mut hint_row: Option<(u16, String)> = None;
         for y in 0..area.height {
             let row = row_to_string(y);
-            if row.contains("? for shortcuts") {
+            if row.contains("? shortcuts") {
                 hint_row = Some((y, row));
                 break;
             }
@@ -5115,17 +5144,41 @@ mod tests {
             "hint row should occupy the bottom line: {hint_row_contents:?}",
         );
 
+        let lower_separator = row_to_string(hint_row_idx - 1);
         assert!(
-            hint_row_idx > 0,
-            "expected a spacing row above the footer hints",
+            lower_separator.chars().all(|ch| ch == '─'),
+            "expected a lower input separator immediately above hints: {lower_separator:?}",
         );
+        let prompt_row = row_to_string(hint_row_idx - 2);
+        assert!(
+            prompt_row.starts_with("│› "),
+            "expected the prompt above the lower separator: {prompt_row:?}",
+        );
+        insta::assert_snapshot!(
+            [
+                row_to_string(/*y*/ 0),
+                prompt_row,
+                lower_separator,
+            ]
+            .map(|row| row.trim_end().to_string())
+            .join("\n"),
+            @r"
+        ────────────────────────────────────────
+        │› Ask Codex to do anything
+        ────────────────────────────────────────
+        "
+        );
+    }
 
-        let spacing_row = row_to_string(hint_row_idx - 1);
-        assert_eq!(
-            spacing_row.trim(),
-            "",
-            "expected blank spacing row above hints but saw: {spacing_row:?}",
+    #[test]
+    fn zero_width_composer_render_does_not_panic() {
+        let (composer, _rx) = new_test_composer();
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 0, /*height*/ 3,
         );
+        let mut buf = Buffer::empty(area);
+
+        composer.render(area, &mut buf);
     }
 
     #[test]
@@ -5223,7 +5276,7 @@ mod tests {
             /*has_input_focus*/ true,
             sender,
             enhanced_keys_supported,
-            "Ask Codex to do anything".to_string(),
+            String::new(),
             /*disable_paste_burst*/ false,
         );
         setup(&mut composer);
@@ -5383,7 +5436,7 @@ mod tests {
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
                 composer.set_status_line(Some(Line::from(
-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+                    "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
                 )));
                 composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
             },
@@ -5395,7 +5448,7 @@ mod tests {
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
                 composer.set_status_line(Some(Line::from(
-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+                    "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
                 )));
                 composer.set_text_content("!".to_string(), Vec::new(), Vec::new());
                 let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -5418,11 +5471,11 @@ mod tests {
 
         composer.set_text_content("!git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((5, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((6, 1)));
 
         composer.set_text_content("! git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((6, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((7, 1)));
     }
 
     #[test]
@@ -5438,7 +5491,7 @@ mod tests {
         );
         composer.set_status_line_enabled(/*enabled*/ true);
         composer.set_status_line(Some(Line::from(
-            "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+            "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
         )));
         composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
 
@@ -5446,7 +5499,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
-        let prompt_cell = &buf[(0, 1)];
+        let prompt_cell = &buf[(1, 1)];
         assert_eq!(prompt_cell.symbol(), "!");
         assert_eq!(prompt_cell.style().fg, Some(Color::LightRed));
 
@@ -6453,7 +6506,7 @@ mod tests {
     }
 
     #[test]
-    fn vim_insert_uses_bar_cursor_style() {
+    fn composer_cursor_is_steady_and_preserves_vim_mode_shape() {
         use crate::render::renderable::Renderable;
         use crossterm::cursor::SetCursorStyle;
         use crossterm::event::KeyCode;
@@ -6476,20 +6529,20 @@ mod tests {
             queue!(output, style).expect("queue cursor style");
             output
         };
-        let default = style_output(SetCursorStyle::DefaultUserShape);
+        let steady_block = style_output(SetCursorStyle::SteadyBlock);
         let steady_bar = style_output(SetCursorStyle::SteadyBar);
 
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), steady_bar);
 
         composer.set_vim_enabled(/*enabled*/ true);
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), steady_block);
 
         composer.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         composer.set_text_content("hey".to_string(), Vec::new(), Vec::new());
         assert_eq!(style_output(composer.cursor_style(area)), steady_bar);
 
         composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), steady_block);
     }
 
     #[test]
@@ -9082,7 +9135,7 @@ mod tests {
                 /*has_input_focus*/ true,
                 sender.clone(),
                 /*enhanced_keys_supported*/ false,
-                "Ask Codex to do anything".to_string(),
+                String::new(),
                 /*disable_paste_burst*/ false,
             );
 
@@ -9134,6 +9187,20 @@ mod tests {
                 composer.attach_image(PathBuf::from("/tmp/image2.png"));
             },
         );
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            AppEventSender::new(tx),
+            /*enhanced_keys_supported*/ false,
+            String::new(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.attach_image(PathBuf::from("/tmp/image1.png"));
+        let area = Rect::new(0, 0, 40, 3);
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        insta::assert_debug_snapshot!("image_placeholder_chip_style", buf[(2, 1)].style());
     }
 
     #[test]

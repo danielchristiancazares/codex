@@ -437,6 +437,7 @@ impl ChatWidget {
     ) -> Option<String> {
         let window = window?;
         let remaining = (100.0f64 - window.used_percent).clamp(0.0f64, 100.0f64);
+        let label = crate::text_formatting::capitalize_first(label);
         Some(format!("{label} {remaining:.0}% left"))
     }
 
@@ -444,8 +445,17 @@ impl ChatWidget {
         effort: Option<&ReasoningEffortConfig>,
     ) -> String {
         match effort {
-            None | Some(ReasoningEffortConfig::None) => "default".to_string(),
-            Some(effort) => effort.as_str().to_string(),
+            None | Some(ReasoningEffortConfig::None) => "Default".to_string(),
+            Some(ReasoningEffortConfig::Minimal) => "Minimal".to_string(),
+            Some(ReasoningEffortConfig::Low) => "Low".to_string(),
+            Some(ReasoningEffortConfig::Medium) => "Medium".to_string(),
+            Some(ReasoningEffortConfig::High) => "High".to_string(),
+            Some(ReasoningEffortConfig::XHigh) => "XHigh".to_string(),
+            Some(ReasoningEffortConfig::Max) => "Max".to_string(),
+            Some(ReasoningEffortConfig::Ultra) => "Ultra".to_string(),
+            Some(ReasoningEffortConfig::Custom(effort)) => {
+                crate::text_formatting::capitalize_first(effort)
+            }
         }
     }
 }

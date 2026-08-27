@@ -1,0 +1,25 @@
+---
+source: tui/src/exec_cell/render.rs
+expression: lines
+---
+[
+    Line::from_iter([
+        Span::from("•").dim(),
+        Span::from(" "),
+        Span::from("Running 1 of 3 commands").bold(),
+        Span::from(" · ").dim(),
+        Span::from("1 failed").red(),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").green(),
+        Span::from("printf success"),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").red(),
+        Span::from("printf failed"),
+    ]),
+    Line::from_iter([
+        Span::from("  └ ").cyan(),
+        Span::from("printf active"),
+    ]),
+]

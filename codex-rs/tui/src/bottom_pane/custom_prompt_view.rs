@@ -346,10 +346,10 @@ impl Renderable for CustomPromptView {
     }
 
     fn cursor_style(&self, _area: Rect) -> crossterm::cursor::SetCursorStyle {
-        if self.textarea.uses_vim_insert_cursor() {
-            crossterm::cursor::SetCursorStyle::SteadyBar
+        if self.textarea.is_vim_normal_mode() {
+            crossterm::cursor::SetCursorStyle::SteadyBlock
         } else {
-            crossterm::cursor::SetCursorStyle::DefaultUserShape
+            crossterm::cursor::SetCursorStyle::SteadyBar
         }
     }
 }

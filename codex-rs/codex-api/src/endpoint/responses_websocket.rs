@@ -1063,6 +1063,7 @@ mod tests {
 
         let mut expected_payload =
             serde_json::to_value(&api_request).expect("serialize responses API request");
+        assert_eq!(expected_payload["service_tier"], "priority");
         expected_payload["type"] = json!("response.create");
         expected_payload["previous_response_id"] = json!("resp-1");
         expected_payload["generate"] = json!(false);
@@ -1072,7 +1073,7 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, expected_payload);
-        assert_eq!(wire_payload["service_tier"], "fast");
+        assert_eq!(wire_payload["service_tier"], "priority");
     }
 
     #[tokio::test]

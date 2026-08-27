@@ -859,7 +859,7 @@ mod tests {
             message_rows
                 .iter()
                 .skip(/*n*/ 1)
-                .all(|(_, row)| row.starts_with("  ")),
+                .all(|(_, row)| row.starts_with("│ ")),
             "all wrapped URL rows must preserve the message gutter: {rows:?}"
         );
         assert_eq!(
@@ -870,7 +870,7 @@ mod tests {
                     if index == 0 {
                         row.strip_prefix("› ").unwrap().trim()
                     } else {
-                        row.trim()
+                        row.trim().strip_prefix("│ ").unwrap()
                     }
                 })
                 .collect::<String>(),

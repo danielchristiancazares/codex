@@ -1,6 +1,7 @@
 //! Coverage for history-cell rendering, wrapping, and transcript behavior.
 
 use super::*;
+use crate::diff_model::FileChange;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCall;
 use crate::exec_cell::ExecCell;
@@ -71,6 +72,28 @@ fn streaming_agent_tail_blank_line_uses_one_viewport_row() {
 
   second");
     assert_eq!(cell.desired_height(/*width*/ 80), 3);
+}
+
+#[test]
+fn patch_history_summarizes_files_and_keeps_full_transcript() {
+    let patch = diffy::create_patch("old\n", "new\n").to_string();
+    let changes = HashMap::from([(
+        PathBuf::from("src/example.rs"),
+        FileChange::Update {
+            unified_diff: patch,
+            move_path: None,
+        },
+    )]);
+    let cell = new_patch_event(changes, PathBuf::from("/project").as_path());
+
+    let display = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    let transcript = render_lines(&cell.transcript_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!("patch_history_file_summary", display);
+    assert!(!display.contains("old"));
+    assert!(!display.contains("new"));
+    assert!(transcript.contains("old"));
+    assert!(transcript.contains("new"));
 }
 
 fn stdio_server_config(
@@ -628,7 +651,7 @@ fn final_message_separator_hides_short_worked_label_and_includes_runtime_metrics
     let rendered = render_lines(&cell.display_lines(/*width*/ 600));
 
     assert_eq!(rendered.len(), 1);
-    assert!(!rendered[0].contains("Worked for"));
+    assert!(rendered[0].contains("Worked for 12s"));
     assert!(rendered[0].contains("Local tools: 3 calls (2.5s)"));
     assert!(rendered[0].contains("Inference: 2 calls (1.2s)"));
     assert!(rendered[0].contains("WebSocket: 1 events send (700ms)"));
@@ -2280,7 +2303,7 @@ fn user_history_cell_wraps_long_urls_inside_the_message_gutter() {
             line.line
                 .spans
                 .first()
-                .is_some_and(|span| span.content == "  ")
+                .is_some_and(|span| span.content == "│ ")
         }),
         "wrapped URL rows must retain the user-message gutter: {linked_rows:?}"
     );
@@ -2457,7 +2480,7 @@ fn render_uses_wrapping_for_long_url_like_line() {
             if index == 0 {
                 row.strip_prefix("› ").unwrap().trim()
             } else {
-                row.trim()
+                row.trim().strip_prefix("│ ").unwrap()
             }
         })
         .collect::<String>();
@@ -2501,7 +2524,18 @@ fn plan_update_with_note_and_wrapping_snapshot() {
     let cell = new_plan_update(update);
     // Narrow width to force wrapping for both the note and steps
     let lines = cell.display_lines(/*width*/ 32);
-    let rendered = render_lines(&lines).join("\n");
+    let rendered_lines = render_lines(&lines);
+    assert!(
+        rendered_lines.iter().any(|line| line.starts_with("  │   ")),
+        "non-final step continuations should retain the plan rail: {rendered_lines:?}"
+    );
+    assert!(
+        rendered_lines
+            .iter()
+            .any(|line| line.starts_with("      ") && !line.trim().is_empty()),
+        "final-step continuations should align under the step text: {rendered_lines:?}"
+    );
+    let rendered = rendered_lines.join("\n");
     insta::assert_snapshot!(rendered);
 }
 
