@@ -1811,10 +1811,10 @@ All items emit shared lifecycle events:
 
 When `features.omit_app_server_notification_media = true`, `item/started`,
 `item/completed`, and `rawResponseItem/completed` omit structured inline image/audio
-content from user messages, dynamic and MCP results, raw tool outputs, and image
-generation results. The feature is disabled by default. Local filesystem paths,
-encrypted content, and text previews remain; text previews can contain encoded
-media. Conversation history and model requests retain the original media.
+content from user messages, dynamic and MCP results, function-call output items,
+raw tool outputs, and image generation results. The feature is disabled by default.
+Local filesystem paths, encrypted content, and text previews remain; text previews
+can contain encoded media. Conversation history and model requests retain the original media.
 
 There are additional item-specific events:
 

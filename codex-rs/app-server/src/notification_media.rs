@@ -3,6 +3,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::UserInput;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 
@@ -157,6 +158,17 @@ fn without_thread_item_media(mut item: ThreadItem) -> ThreadItem {
                 DynamicToolCallOutputContentItem::InputText { .. } => true,
             });
         }
+        ThreadItem::FunctionCallOutput {
+            output: FunctionCallOutputBody::ContentItems(items),
+            ..
+        } => {
+            items.retain(|item| match item {
+                FunctionCallOutputContentItem::InputImage { .. }
+                | FunctionCallOutputContentItem::InputAudio { .. } => false,
+                FunctionCallOutputContentItem::InputText { .. }
+                | FunctionCallOutputContentItem::EncryptedContent { .. } => true,
+            });
+        }
         ThreadItem::McpToolCall {
             result: Some(result),
             ..
@@ -175,10 +187,13 @@ fn without_thread_item_media(mut item: ThreadItem) -> ThreadItem {
         }
         ThreadItem::ImageGeneration(item) => item.result.clear(),
         ThreadItem::HookPrompt { .. }
-        | ThreadItem::FunctionCallOutput { .. }
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
+        | ThreadItem::FunctionCallOutput {
+            output: FunctionCallOutputBody::Text(_),
+            ..
+        }
         | ThreadItem::CommandExecution { .. }
         | ThreadItem::FileChange { .. }
         | ThreadItem::McpToolCall { result: None, .. }
@@ -197,3 +212,7 @@ fn without_thread_item_media(mut item: ThreadItem) -> ThreadItem {
     }
     item
 }
+
+#[cfg(test)]
+#[path = "notification_media_tests.rs"]
+mod tests;
