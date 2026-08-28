@@ -15,6 +15,8 @@
 - The handoff-resumption refresh fetched `d05e6d5f46505976ec4a195f0a3bb6d6e617851e`.
   The explicitly handed-off source pin remains `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`;
   commits beyond that pin are outside this audit's 356-source scope.
+- The next continuation refreshed upstream to `459a79eb85400af759e9220c7bafb4429ae07516`;
+  the audited source pin and 356-source scope remain unchanged.
 - Existing stashes and other worktrees are preserved. This task includes local commits; pushes and releases remain separate.
 - Existing prepared semantic backports are available on `integrate/upstream-semantic-backports-20260903`; each reused change is checked against its upstream intent and current fork behavior.
 
@@ -54,7 +56,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **68 backported, 1 already present, 287 pending**.
+- Current ledger: **69 backported, 1 already present, 286 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -145,6 +147,20 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   launch inputs are preserved; dependency features remain explicit. Bazel lock refresh
   passed with no Cargo/module lockfile delta.
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
+- Entry 69 preserves standard MCP, legacy `openai/form`, and new `openai/elicitation`
+  identities through capability selection, request/response metadata, public API, and TUI
+  replay. New OpenAI forms retain opaque schemas and require explicit user responses;
+  the full-access exemption remains limited to enabled, non-approval input forms.
+- Both app-server schema modes were regenerated. Decoded bundle review found only the
+  new form variant in the expected public exports and stable internal rollout schema.
+  The initial 408-case batch passed **387**, including all **303** protocol tests,
+  **23** MCP policy/capability cases, RMCP transports, and **40** TUI cases. The remaining
+  21 cases exposed the new fixture bridge's missing WebSocket compression negotiation.
+- The corrected elicitation bridge uses the existing test transport's compression
+  configuration and reconstructs complete HTTP assertion inputs from per-connection
+  response history, preserving warmup/socket reuse and the shared call/output validator.
+  All **52/52** corrective and adjacent cases passed, including the new and legacy form
+  round trips, strict-review policy, connection-specific capabilities, and TUI handling.
 
 ## Source ledger
 
@@ -220,7 +236,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `c2abf869d539a6326a6e5a125dfdb8a5dc488ab4` | Run executor hooks for interrupted turns (#41432) | backported | Captured-step discovery and settings drive terminal cleanup; no prior-turn discovery reuse. Preserved scoped Code Mode/rollback cancellation and shared MCP runtime. Extracted terminal-hook owner, aligned request-body model/approval mode with metadata, and enabled native Windows integrations. 9 unit and 7 live cases passed; config schema unchanged. |
 | `c6bf330b42ed6fcbdcc902dc06ef38306b2e02f3` | Allow bundled browser cleanup hooks on subagent stop (#41435) | backported | Same five bundled identities and node_repl.turn_ended target now admit SubagentStop. Mixed-manifest and dispatch regressions preserve async/non-controlling cleanup and hidden lifecycle summaries. All 10 focused tests passed. |
 | `0ae94fdd49b05ee7faa4d984d06a68492cb32b54` | Respond to terminal queries from TTY subprocesses (#41436) | backported | Adapted `967652b80fd754bfc2bf91f859562b96f2eecf8e`: TTY-only bounded query responder, unchanged Windows sandbox inputs, explicit dependency features. Two native tests passed, including chunk-boundary/EOF preservation; Unix direct PTY case unverified. Bazel lock refresh unchanged. |
-| `eec4a23cb16de16e0c8cff7c913eed943f223df7` | Support `openai/elicitation` form requests (#41447) | pending |  |
+| `eec4a23cb16de16e0c8cff7c913eed943f223df7` | Support `openai/elicitation` form requests (#41447) | backported | Preserved distinct standard/legacy/new identities, opaque schema/metadata, explicit-response policy, and TUI replay decline. Stable/experimental exports regenerated; protocol and corrected WebSocket-backed integration coverage passed. |
 | `a5c581e2476fd5309af0ea8065b92bdd91aaf26e` | Clarify question handling in Default collaboration mode (#41448) | pending |  |
 | `75388bf321bffeda40e41dca2061c1cd72c2f4d4` | Rename the read-only Seatbelt platform defaults policy (#41449) | pending |  |
 | `48e22a5fa08b03a9d8acc6a6577dd334c5319446` | Report code mode host request durations (#41452) | pending |  |

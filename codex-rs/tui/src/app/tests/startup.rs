@@ -668,6 +668,11 @@ async fn auto_declined_mcp_elicitations_do_not_leave_startup_quarantine_armed() 
                 message: "Choose a report.".to_string(),
                 requested_schema: serde_json::json!({}),
             },
+            McpServerElicitationRequest::OpenAiElicitationForm {
+                meta: None,
+                message: "Choose a report with previews.".to_string(),
+                requested_schema: serde_json::json!({}),
+            },
         ] {
             let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
             app.startup_protected_input_boundary = true;
