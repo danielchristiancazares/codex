@@ -1365,10 +1365,6 @@ impl Renderable for ListSelectionView {
         let outer_content_area = content_area;
         // Paint the shared menu surface and then layout inside the returned inset.
         let mut content_area = render_menu_surface(outer_content_area, buf);
-        if outer_content_area.height <= 5 {
-            content_area.y = outer_content_area.y;
-            content_area.height = outer_content_area.height;
-        }
 
         let inner_width = popup_content_width(outer_content_area.width);
         let side_w = self.side_layout_width(inner_width);
@@ -1405,6 +1401,24 @@ impl Renderable for ListSelectionView {
             0
         };
         let stacked_gap = if stacked_side_h > 0 { 1 } else { 0 };
+        let required_content_height = header_height
+            .saturating_add(1)
+            .saturating_add(tab_height)
+            .saturating_add(u16::from(tab_height > 0))
+            .saturating_add(u16::from(self.is_searchable))
+            .saturating_add(rows_height)
+            .saturating_add(stacked_gap)
+            .saturating_add(stacked_side_h);
+        if content_area.height < required_content_height {
+            // In a constrained viewport, borrow the bottom inset first so the
+            // menu still starts with its usual top padding whenever it fits.
+            let top_inset = content_area.y.saturating_sub(outer_content_area.y);
+            content_area.height = outer_content_area.height.saturating_sub(top_inset);
+            if content_area.height < required_content_height {
+                content_area.y = outer_content_area.y;
+                content_area.height = outer_content_area.height;
+            }
+        }
 
         let [
             header_area,
