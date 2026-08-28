@@ -4,10 +4,9 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
 ---
 ✦ Working · 0s · Esc interrupt
 
-• Queued follow-up inputs
-  ↳ [Pasted Content 1006 chars]
-    ⌥ + ↑ edit last queued message
+• 1 queued · ⌥ + ↑ edit latest queued
+  + Queued: [Pasted Content 1006 chars]
 ────────────────────────────────────────────────────────────────────────────────
 │›
-│
+────────────────────────────────────────────────────────────────────────────────
   GPT 5.6 Sol Default · /tmp/project

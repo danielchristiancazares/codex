@@ -105,7 +105,7 @@ async fn completed_global_chord_reuses_the_existing_action_handler() -> Result<(
         @"
     ────────────────────────────────────────────────────────────────────────────────
     │›
-    │
+    ────────────────────────────────────────────────────────────────────────────────
        ctrl + x … waiting for next key    esc cancel
     "
     );

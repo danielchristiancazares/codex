@@ -56,9 +56,9 @@ async fn goal_clock_refresh_redraws_only_when_elapsed_label_changes() {
             .map(|span| span.content.as_ref())
             .collect::<String>()
     });
-    insta::assert_snapshot!(labels.join("\n"), @r"
-    Pursuing goal (1m)
-    Pursuing goal (2m)
+    insta::assert_snapshot!(labels.join("\n"), @"
+    Goal (1m)
+    Goal (2m)
     ");
 }
 

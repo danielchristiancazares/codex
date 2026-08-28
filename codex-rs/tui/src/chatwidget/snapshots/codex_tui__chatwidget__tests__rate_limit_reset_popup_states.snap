@@ -5,9 +5,9 @@ expression: "states.join(\"\\n---\\n\")"
   Usage limit resets
   Checking your available resets...
 
-›    Loading...
+     Loading...
 
-  Press enter to confirm or esc to go back
+  esc back
 ---
   Usage limit resets
   2 usage limit resets available.
@@ -36,7 +36,7 @@ expression: "states.join(\"\\n---\\n\")"
   Usage limit resets
   Resetting your usage...
 
-›    Using a reset...
+     Using a reset...
 ---
   Usage limit resets
   Couldn't reset usage. Please try again.
@@ -63,7 +63,7 @@ expression: "states.join(\"\\n---\\n\")"
   Usage limit resets
   Usage reset. Checking your remaining resets...
 
-›    Refreshing...
+     Refreshing...
 ---
   Usage limit resets
   Usage reset. You have 1 usage limit reset left.

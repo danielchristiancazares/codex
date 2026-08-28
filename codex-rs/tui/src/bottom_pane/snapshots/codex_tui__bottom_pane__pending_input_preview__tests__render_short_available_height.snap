@@ -1,0 +1,60 @@
+---
+source: tui/src/bottom_pane/pending_input_preview.rs
+expression: snapshots
+---
+2 rows
+Buffer {
+    area: Rect { x: 0, y: 0, width: 24, height: 2 },
+    content: [
+        "  ! Retry: Required…    ",
+        "… 4 hidden · esc steers ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Red, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 20, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 23, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
+
+3 rows
+Buffer {
+    area: Rect { x: 0, y: 0, width: 24, height: 3 },
+    content: [
+        "  ! Retry: Required     ",
+        "           retry        ",
+        "… 4 hidden · esc steers ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Red, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 19, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 16, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 23, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
+
+4 rows
+Buffer {
+    area: Rect { x: 0, y: 0, width: 24, height: 4 },
+    content: [
+        "  ! Retry: Required     ",
+        "           retry        ",
+        "… 4 hidden · esc steers ",
+        "    · ⌥ + ↑ edit queue  ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Red, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 19, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 16, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 23, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 22, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

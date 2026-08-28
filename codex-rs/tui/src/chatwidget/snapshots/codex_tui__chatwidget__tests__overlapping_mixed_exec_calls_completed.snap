@@ -2,5 +2,7 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: active_blob(&chat)
 ---
-✓ 3 commands completed
-  └ Ctrl+T transcript
+• Ran 3 commands
+  ├ rg needle src
+  ├ sed -n '1,20p' src/lib.rs
+  └ git status --short

@@ -33,12 +33,12 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
   that view.
 
 • Explored
-  ├ Searched "Change Approved"
+  ├ Searched Change Approved
   └ Read diff_render.rs
 
 ✦ Investigating rendering code · 0s · Esc interrupt
 
 ────────────────────────────────────────────────────────────────────────────────
 │› Summarize recent commits
-│
+────────────────────────────────────────────────────────────────────────────────
   Tab queue this message                                     Context 100% left

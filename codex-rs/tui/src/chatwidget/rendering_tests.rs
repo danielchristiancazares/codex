@@ -168,9 +168,14 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
     .replace("0.0.0", "<VERSION>");
 
     let cwd = widget.config.cwd.as_path().display().to_string();
-    let normalized_cwd = format!("{:<width$}", "/tmp/project", width = cwd.len());
+    let normalized_header = header
+        .replace(&cwd, "/tmp/project")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @"
+    insta::assert_snapshot!(normalized_header, @"
       >_ OpenAI Codex v<VERSION>
       loading  /model to change
       /tmp/project

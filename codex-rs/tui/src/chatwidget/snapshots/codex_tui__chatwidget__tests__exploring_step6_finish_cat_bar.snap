@@ -2,5 +2,6 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: active_blob(&chat)
 ---
-✓ 4 commands completed
-  └ Ctrl+T transcript
+• Explored
+  ├ Listed ls -la
+  └ Read foo.txt, bar.txt

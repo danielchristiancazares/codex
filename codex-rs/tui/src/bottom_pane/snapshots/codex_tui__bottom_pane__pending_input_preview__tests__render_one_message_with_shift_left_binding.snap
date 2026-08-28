@@ -1,22 +1,23 @@
 ---
 source: tui/src/bottom_pane/pending_input_preview.rs
-assertion_line: 216
 expression: "format!(\"{buf:?}\")"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 40, height: 3 },
     content: [
-        "• Queued follow-up inputs               ",
-        "  ↳ Hello, world!                       ",
-        "    shift + ← edit last queued message  ",
+        "• 1 queued · shift + ← edit latest      ",
+        "  queued                                ",
+        "  + Queued: Hello, world!               ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 10, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 34, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 4, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 8, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 38, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 12, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 25, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

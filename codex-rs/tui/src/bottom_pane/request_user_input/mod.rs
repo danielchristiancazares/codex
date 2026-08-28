@@ -4015,7 +4015,7 @@ mod tests {
         │› Type your answer (optional)
         │
         │
-        │
+        ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ctrl + x enter to submit answer | esc to interrupt
         ");
     }

@@ -577,18 +577,19 @@ fn full_screen_inserts_consume_docked_blank_band_before_scrolling() {
         .map(|row| row.trim_end())
         .collect::<Vec<_>>()
         .join("\n");
-    insta::assert_snapshot!(contents, @r"
+    insta::assert_snapshot!(contents, @"
 
 
 
 
-history-before-tail
-history-tail-one
-history-tail-two
-new-history-one
-new-history-two
-new-history-three
-
+    history-before-tail
+    history-tail-one
+    history-tail-two
+    new-history-one
+    new-history-two
+    new-history-three
+    composer-top
+    composer-bottom
     ");
 }
 

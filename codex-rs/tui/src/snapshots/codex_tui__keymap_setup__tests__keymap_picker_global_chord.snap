@@ -9,7 +9,7 @@ expression: "render_picker(params, 120)"
 
   [All]  Common  Customized (1)  Unbound (4)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
-  Type to search shortcuts
+  / ▏ Type to search shortcuts
 › Global         Open Agents                alt-a
   Global       * Open Transcript            ctrl-t, ctrl-x ctrl-t
   Global         Open External Editor       ctrl-g

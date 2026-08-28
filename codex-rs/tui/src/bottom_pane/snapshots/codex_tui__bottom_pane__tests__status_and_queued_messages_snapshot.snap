@@ -4,10 +4,9 @@ expression: "render_snapshot(&pane, area)"
 ---
 ✦ Working · 0s · Esc interrupt                  
                                                 
-• Queued follow-up inputs                       
-  ↳ Queued follow-up question                   
-    ⌥ + ↑ edit last queued message              
+• 1 queued · ⌥ + ↑ edit latest queued           
+  + Queued: Queued follow-up question           
 ────────────────────────────────────────────────
 │›                                              
-│                                               
+────────────────────────────────────────────────
   ? shortcuts                Context 100% left

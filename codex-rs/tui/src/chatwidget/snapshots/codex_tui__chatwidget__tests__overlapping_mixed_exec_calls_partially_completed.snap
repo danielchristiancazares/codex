@@ -3,7 +3,6 @@ source: tui/src/chatwidget/tests/exec_flow.rs
 expression: active_blob(&chat)
 ---
 • Running 1 of 3 commands
-  ├ ✓ rg needle src
-  ├ ✓ sed -n '1,20p' src/lib.rs
-  ├ ● git status --short
-  └ Ctrl+T transcript
+  ├ rg needle src
+  ├ sed -n '1,20p' src/lib.rs
+  └ git status --short

@@ -10,4 +10,6 @@ expression: "render_lines_with_width(&view, 80)"
   2. gpt-5.1-codex-mini       Optimized for Codex. Cheaper, faster, but less    
                               capable.                                          
   3. gpt-4.1-codex            Legacy model. Use when you need compatibility     
-                              with older automations.
+                              with older automations.                           
+                                                                                
+  ↵ ok · esc back

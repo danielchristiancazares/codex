@@ -92,7 +92,7 @@ async fn marketplace_upgrade_loading_popup_snapshot() {
         .join(" | ");
     insta::assert_snapshot!(
         upgrade_lines,
-        @"Upgrading debug marketplace... | ›    Upgrading debug marketplace...  This updates when marketplace upgrade completes."
+        @"Upgrading debug marketplace... | Upgrading debug marketplace...  This updates when marketplace upgrade completes."
     );
 }
 
@@ -3257,14 +3257,6 @@ async fn provider_selection_popup_snapshot_and_selection_event() {
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("provider_selection_popup", popup);
 
-    let compact_area = Rect::new(0, 0, /*width*/ 80, /*height*/ 6);
-    let mut compact_buf = Buffer::empty(compact_area);
-    chat.bottom_pane.render(compact_area, &mut compact_buf);
-    assert_chatwidget_snapshot!(
-        "provider_selection_popup_compact",
-        format!("{compact_buf:?}")
-    );
-
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
@@ -3272,6 +3264,21 @@ async fn provider_selection_popup_snapshot_and_selection_event() {
         rx.try_recv(),
         Ok(AppEvent::SwitchModelProvider(provider_id))
             if provider_id == codex_model_provider_info::COPILOT_PROVIDER_ID
+    );
+}
+
+#[tokio::test]
+async fn provider_selection_popup_compact_padding_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_provider_popup();
+
+    let compact_area = Rect::new(0, 0, /*width*/ 80, /*height*/ 6);
+    let mut compact_buf = Buffer::empty(compact_area);
+    chat.bottom_pane.render(compact_area, &mut compact_buf);
+    assert_chatwidget_snapshot!(
+        "provider_selection_popup_compact",
+        format!("{compact_buf:?}")
     );
 }
 
