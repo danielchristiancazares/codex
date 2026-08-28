@@ -183,9 +183,9 @@ pub(crate) struct CompactConversationRequestSettings {
 
 fn reasoning_effort_for_request(effort: ReasoningEffortConfig) -> ReasoningEffortConfig {
     match effort {
-        ReasoningEffortConfig::Ultra => ReasoningEffortConfig::Max,
-        // Keep "persistent" in local settings; the Responses API calls it "disabled".
-        ReasoningEffortConfig::Persistent => ReasoningEffortConfig::Custom("disabled".to_string()),
+        ReasoningEffortConfig::Ultra | ReasoningEffortConfig::Persistent => {
+            ReasoningEffortConfig::Max
+        }
         effort => effort,
     }
 }

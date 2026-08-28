@@ -388,7 +388,7 @@ fn reasoning_effort_for_requests_maps_ultra_and_persistent() {
         (
             ReasoningEffort::Max,
             ReasoningEffort::High,
-            ReasoningEffort::Custom("disabled".to_string()),
+            ReasoningEffort::Max,
         )
     );
 }

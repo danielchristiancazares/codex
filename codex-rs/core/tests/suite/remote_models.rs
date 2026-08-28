@@ -371,9 +371,9 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
 }
 
 #[test_case(ReasoningEffort::Custom("future".to_string()), "future", Some("Catalog follow-up instructions."); "custom")]
-#[test_case(ReasoningEffort::Persistent, "disabled", None; "persistent")]
-#[test_case(ReasoningEffort::Persistent, "disabled", Some("Catalog follow-up instructions."); "persistent override")]
-#[test_case(ReasoningEffort::Persistent, "disabled", Some(""); "empty persistent override")]
+#[test_case(ReasoningEffort::Persistent, "max", None; "persistent")]
+#[test_case(ReasoningEffort::Persistent, "max", Some("Catalog follow-up instructions."); "persistent override")]
+#[test_case(ReasoningEffort::Persistent, "max", Some(""); "empty persistent override")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_models_long_model_slug_is_sent_with_supported_reasoning(
     effort: ReasoningEffort,
