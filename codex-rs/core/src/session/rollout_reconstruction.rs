@@ -118,6 +118,7 @@ fn finalize_active_segment<'a>(
         .take_while(|item| !matches!(item, RolloutItem::Compacted(_)))
         .any(|item| matches!(item, RolloutItem::WorldState(world_state) if world_state.full));
 
+    let has_context_baseline = active_segment.counts_as_user_turn || has_surviving_context_baseline;
     world_state_replay.extend(active_segment.world_state_replay);
 
     // A surviving replacement-history checkpoint is a complete history base. Once we
@@ -132,16 +133,15 @@ fn finalize_active_segment<'a>(
         *window = active_segment.window;
     }
 
-    // `previous_turn_settings` come from the newest surviving user turn that established them.
-    if previous_turn_settings.is_none() && active_segment.counts_as_user_turn {
+    // Restore settings from the newest surviving context baseline.
+    if previous_turn_settings.is_none() && has_context_baseline {
         *previous_turn_settings = active_segment.previous_turn_settings;
     }
 
-    // `reference_context_item` comes from the newest surviving user turn baseline, or
+    // `reference_context_item` comes from the newest surviving context baseline, or
     // from a surviving compaction that explicitly cleared that baseline.
     if matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
-        && (active_segment.counts_as_user_turn
-            || has_surviving_context_baseline
+        && (has_context_baseline
             || matches!(
                 active_segment.reference_context_item,
                 TurnReferenceContextItem::Cleared

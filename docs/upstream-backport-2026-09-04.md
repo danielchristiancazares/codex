@@ -54,7 +54,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **62 backported, 1 already present, 293 pending**.
+- Current ledger: **63 backported, 1 already present, 292 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -89,6 +89,15 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   delta. The new serde_json dependency explicitly requests `alloc`; package version
   and existing dependency features remain fork-owned. This foundation has no live
   model-context caller; final assembled-item bounds remain a documented consumer duty.
+- Entry 63 initially passed **35/38** (all 30 rollout-reconstruction cases and five
+  of eight nested-agent cases). Diagnostic reruns varied between six and seven
+  successful nested-agent cases and identified a child finishing with mock-server
+  HTTP 404. The source fixture supplied exactly two followup responses; late child
+  completion notifications can require more. The corrected fixture bounds additional
+  replies and matches only already-recorded spawn calls, retaining descendant-completion
+  and exact context-count assertions. All **8/8** corrective cases passed. Independent
+  review confirmed that `trigger_turn=false` preserves idle parents while mailbox input
+  can require an additional sampling continuation in an already-active parent turn.
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
@@ -159,7 +168,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | backported | Preserved exhaustive fork variants; extracted WebSocket default/opt-in coverage and documented notification-only filtering. Both integration cases passed with entry 61; standalone function-output filtering follows in #41427. |
 | `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | backported | Adapted `c374194b19507145d959291c3316dfa211b2f419`: saved per-tool limits combine with current byte/token policy and a complete-item 10K ceiling; envelope-aware truncation and terminal outbound guard preserve metadata/hooks/resume/Code Mode. Config and stable internal schema regenerated. 441 focused, 44 adjacent, 1 corrective, and 303 protocol tests passed. |
 | `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | backported | Stateless borrowed collection, explicit serde_json alloc feature, fork version and dependency features retained. All 8 tests passed; Bazel lock refresh unchanged. No live model caller yet: documented complete-item bounds after labels, separate pools, other sections and framing. |
-| `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | pending | Prepared candidate: `e42b66ad9d36dace1f8ad882065e9787fce1f777`. |
+| `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | backported | Adapted `e42b66ad9d36dace1f8ad882065e9787fce1f777`: restore prior settings from the fork's surviving full WorldState plus TurnContext baseline; preserve user-only rollback counting, retained-prefix recovery and shared provider runtime. 30 replay tests and 8 corrected nested-fork integrations passed. |
 | `2008d27e98d7b46170d2d464b36dbf97008611b8` | Filter media from function call output notifications (#41427) | pending |  |
 | `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | pending |  |
 | `c2abf869d539a6326a6e5a125dfdb8a5dc488ab4` | Run executor hooks for interrupted turns (#41432) | pending |  |
@@ -235,18 +244,18 @@ This ledger is in progress. “Pending” entries still require source review an
 | `115ffaf8bf1eda460526605cf44d9a96d88f4371` | Limit background terminal input previews (#41937) | pending |  |
 | `0e03f88a30bbce4638aeabc62557dda90612d32c` | Clarify resume guidance in exit summaries (#41938) | pending |  |
 | `c5a3700dd7ee73a07b30ce1516dae51a264bb8cf` | Preserve transcript layout caches during backtrack selection (#41940) | pending |  |
-| `9c7edd4bc39f0314767431e6a5960c95c81aa814` | Add Vim undo to the TUI composer (#41941) | pending |  |
-| `e39ab0c1854dbd567172fd5a79dbfff9067cb609` | Emit turn cost telemetry for ChatGPT sessions (#41944) | pending |  |
-| `c2e5692e2c923ed222c77487b3141829881757cd` | Expand extension permission regression coverage (#41946) | pending |  |
-| `bfa9646787cda93c8012532ea8fa44a74fc38bfc` | Add plugin reconciliation app-server API (#41949) | pending |  |
+| `9c7edd4bc39f0314767431e6a5960c95c81aa814` | Add Vim undo to the TUI composer (#41941) | pending | Independently reviewed: no prepared seed. Keep bounded private undo history, full editable drafts/attachments/pastes, transaction boundaries, search cancel restoration and reset semantics; update state-machine docs/schema/snapshots. Source 1 MiB accounting omits heap-backed TextElement data: tighten or explicitly assess before retaining. |
+| `e39ab0c1854dbd567172fd5a79dbfff9067cb609` | Emit turn cost telemetry for ChatGPT sessions (#41944) | pending | Independently reviewed: preserve custom-provider worker, shared auth/runtime, 4096-ID dedup bound, exact microUSD formatting and all-observed-ID settlement. Auth changes clear pending work/reprobe; log status only. Adapt in-process OTLP fixture transport. |
+| `c2e5692e2c923ed222c77487b3141829881757cd` | Expand extension permission regression coverage (#41946) | pending | Independently reviewed: test-only. Preserve turn-vs-session grants, current permission checks on cached skill continuation, unchanged cached bytes and fail-closed denies; >1 MiB skill replacement warns once without replacing prior prompt. Adapt PathUri roots; restricted Windows cases remain unavailable without elevated fixture support. |
+| `bfa9646787cda93c8012532ea8fa44a74fc38bfc` | Add plugin reconciliation app-server API (#41949) | pending | Independently reviewed: stable v2 RPC waits through reconciliation and hook refresh. Preserve shared sync gate/generation fences, old+new capability hints, exact-account Workspace+Listed trust, and release reconciliation before exclusive config work; refresh runtimes even after failed trust. Regenerate stable/experimental exports and README. |
 | `55e5158e1841bb4b0b392a462c24b4d9fc38d597` | Improve tracing for nested tool calls and exec processes (#41950) | pending |  |
 | `633ab199cfd724aa78013c006b27a2b3d049fc3b` | Enforce marketplace source policy for curated plugins (#41953) | pending |  |
 | `c7fced56eb3f5b0b96f4957caefc06b07ef65940` | Track TUI starts by app server mode (#41974) | pending | Independently reviewed: no prepared equivalent. Emit once per TUI launch after resolved target/OTEL setup; keep exhaustive target variants and startup draft/workload-identity/panic-recovery flow. Do not gate the per-launch metric on process-start deduplication. |
 | `d038f3448f2eb9b48614f6359a3b21113d7d42ae` | Move `disable_paste_burst` under `[tui]` (#41976) | pending | Independently reviewed: preserve legacy top-level fallback and nested Option<bool>; merged nested key wins, including across layers. Retain fork Tui fields; update exhaustive literals and config schema. Composer state-machine behavior is unchanged. |
-| `e017e93aceafb2fe04bed1c926e448a5fb4f913d` | Preserve raw response usage metadata (#41980) | pending |  |
-| `2b7c279735d0d096cf7b34fe98938f46792f4d4f` | Report turn trigger and source in turn analytics (#42003) | pending |  |
-| `82099786163f3c05facf09078136679e18b64279` | Share Guardian user-message retention logic (#42031) | pending |  |
-| `2e5ee418ad6bef8b418ba1a809cfa53a56ae4aee` | Improve Guardian report diagnostics (#42033) | pending |  |
+| `e017e93aceafb2fe04bed1c926e448a5fb4f913d` | Preserve raw response usage metadata (#41980) | pending | Independently reviewed: preserve arbitrary non-null usage JSON and exact amount, hardened SSE/WS protocol errors, and refactored remote-compaction attempt emission. Regenerate stable/experimental rawResponse/completed exports; keep opaque raw-event data outside model context/persistence. |
+| `2b7c279735d0d096cf7b34fe98938f46792f4d4f` | Report turn trigger and source in turn analytics (#42003) | pending | Independently reviewed: read live metadata at emission so accepted steers appear; preserve fail-closed ambiguous-root state and configured-source precedence even when oversized. Analytics caps are 128 bytes; first-set trigger and request metadata remain unchanged. |
+| `82099786163f3c05facf09078136679e18b64279` | Share Guardian user-message retention logic (#42031) | pending | Independently reviewed: anchor first genuine user message even over budget; consider remaining users newest-first only when they fit, render in original order. Preserve consumer-specific pools/windows/dedup/framing costs and entry-132 final assembled-item ceiling. |
+| `2e5ee418ad6bef8b418ba1a809cfa53a56ae4aee` | Improve Guardian report diagnostics (#42033) | pending | Independently reviewed: keep all evidence/index/rollouts inside include_logs and the requested subtree. Root plus newest failed descendants precede newest UUIDv7 descendants (8 selected, 64 omitted IDs); dedupe paths, preserve bounded chronological failures and clearly process-wide discard accounting. Selection index precedes attachments and describes selection, not delivery. |
 | `9d0eae74cd3d543c40dcdfa4e4007b43445e6543` | Include shared histories in rollout compression (#42039) | pending |  |
 | `90ae0c4ef944bb80a3c725d15910289dfbb7db51` | Tag Codex home size metrics with compression state (#42043) | pending |  |
 | `0ec375eb7077a417a6a544615bded3544e4799bc` | Add per-account approval settings for apps (#42047) | pending |  |
