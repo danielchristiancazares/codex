@@ -2,7 +2,7 @@
 //!
 //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
 //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
-//! and transport fallback state).
+//! and transport state).
 //!
 //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
 //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
@@ -21,12 +21,14 @@
 //! ## Retry-Budget Tradeoff
 //!
 //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
-//! fails, normal stream retry/fallback logic handles recovery on the same turn.
+//! fails, normal stream retry logic handles recovery on the same turn.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
@@ -171,6 +173,15 @@ const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 // period between stream events.
 const COMPACT_REQUEST_TIMEOUT_IDLE_MULTIPLIER: u32 = 4;
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
+static RESPONSES_SSE_ENABLED_FOR_TESTS: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn enable_responses_sse_for_tests() {
+    RESPONSES_SSE_ENABLED_FOR_TESTS.store(true, Ordering::Relaxed);
+}
+
+fn responses_sse_enabled_for_tests() -> bool {
+    RESPONSES_SSE_ENABLED_FOR_TESTS.load(Ordering::Relaxed)
+}
 #[cfg(test)]
 pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
     Duration::from_millis(DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
@@ -252,10 +263,7 @@ impl RequestRouteTelemetry {
 /// A session-scoped client for model-provider API calls.
 ///
 /// This holds configuration and state that should be shared across turns within a Codex session
-/// (auth, provider selection, thread id, and transport fallback state).
-///
-/// WebSocket fallback is session-scoped: once a turn activates the HTTP fallback, subsequent turns
-/// will also use HTTP for the remainder of the session.
+/// (auth, provider selection, thread id, and transport state).
 ///
 /// Turn-scoped settings (model selection, reasoning controls, telemetry context, and turn
 /// metadata) are passed explicitly to the relevant methods to keep turn lifetime visible at the
@@ -1999,10 +2007,9 @@ impl ModelClientSession {
     /// Streams a single model request within the current turn.
     ///
     /// The caller is responsible for passing per-turn settings explicitly (model selection,
-    /// reasoning settings, telemetry context, and turn metadata). This method will prefer the
-    /// Responses WebSocket transport when the provider supports it and use the HTTP Responses API
-    /// transport otherwise. The trace context may be enabled or disabled, but is always explicit
-    /// so transport paths do not need separate trace/no-trace branches.
+    /// reasoning settings, telemetry context, and turn metadata). Production inference requires
+    /// the Responses WebSocket transport. The trace context may be enabled or disabled, but is
+    /// always explicit so transport paths do not need separate trace/no-trace branches.
     pub async fn stream(
         &mut self,
         prompt: &Prompt,
@@ -2035,17 +2042,25 @@ impl ModelClientSession {
                         .await;
                 }
 
-                self.stream_responses_api(
-                    prompt,
-                    model_info,
-                    session_telemetry,
-                    effort,
-                    summary,
-                    service_tier,
-                    responses_metadata,
-                    inference_trace,
-                )
-                .await
+                if responses_sse_enabled_for_tests() {
+                    return self
+                        .stream_responses_api(
+                            prompt,
+                            model_info,
+                            session_telemetry,
+                            effort,
+                            summary,
+                            service_tier,
+                            responses_metadata,
+                            inference_trace,
+                        )
+                        .await;
+                }
+
+                let provider_name = &self.client.state.provider.info().name;
+                Err(CodexErr::UnsupportedOperation(format!(
+                    "model provider `{provider_name}` is incompatible with this WebSocket-only build"
+                )))
             }
         }
     }

@@ -32,6 +32,7 @@ use codex_protocol::protocol::SessionSource;
 use once_cell::sync::Lazy;
 
 use crate::ThreadManager;
+use crate::client;
 use crate::config::Config;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
@@ -61,6 +62,11 @@ impl UserInstructionsProvider for EmptyUserInstructionsProvider {
 
 pub fn set_thread_manager_test_mode(enabled: bool) {
     thread_manager::set_thread_manager_test_mode_for_tests(enabled);
+}
+
+/// Enables the legacy Responses SSE transport for integration fixtures.
+pub fn enable_responses_sse_for_tests() {
+    client::enable_responses_sse_for_tests();
 }
 
 pub fn set_deterministic_process_ids(enabled: bool) {

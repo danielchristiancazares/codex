@@ -135,6 +135,45 @@ fn test_model_client_with_thread_id(
 }
 
 #[tokio::test]
+async fn streaming_requires_websocket_transport() {
+    let client = test_model_client(SessionSource::Cli);
+    let responses_metadata = test_responses_metadata_for_client(
+        &client,
+        /*turn_id*/ None,
+        format!("{}:0", client.state.thread_id),
+        /*parent_thread_id*/ None,
+        TestCodexResponsesRequestKind::Turn,
+    );
+    let session_telemetry = test_session_telemetry();
+    let inference_trace = InferenceTraceContext::disabled();
+    let mut session = client.new_session();
+
+    let result = session
+        .stream(
+            &Prompt::default(),
+            &test_model_info(),
+            &session_telemetry,
+            /*effort*/ None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            ServiceTier::Default,
+            &responses_metadata,
+            &inference_trace,
+        )
+        .await;
+
+    let Err(error) = result else {
+        panic!("provider without websocket support should be rejected");
+    };
+    let CodexErrorDetails::UnsupportedOperation(message) = error.details() else {
+        panic!("expected unsupported operation, got {error:?}");
+    };
+    assert_eq!(
+        message,
+        "model provider `gpt-oss` is incompatible with this WebSocket-only build"
+    );
+}
+
+#[tokio::test]
 async fn compact_uses_bearer_after_agent_identity_session_fallback() -> anyhow::Result<()> {
     let server = MockServer::start().await;
     let registration_count = Arc::new(AtomicUsize::new(0));

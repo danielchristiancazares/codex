@@ -49,9 +49,10 @@ pub use test_environment::test_target_os;
 static TEST_ARG0_PATH_ENTRY: OnceLock<Option<Arg0PathEntryGuard>> = OnceLock::new();
 
 #[ctor]
-fn enable_deterministic_unified_exec_process_ids_for_tests() {
+fn enable_core_test_modes() {
     codex_core::test_support::set_thread_manager_test_mode(/*enabled*/ true);
     codex_core::test_support::set_deterministic_process_ids(/*enabled*/ true);
+    codex_core::test_support::enable_responses_sse_for_tests();
 }
 
 #[ctor]
