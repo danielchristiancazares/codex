@@ -93,7 +93,7 @@ pub(super) async fn run_remote_compact_attempt(
                 service_tier: if sess.services.auth_manager.auth_mode() == Some(AuthMode::ApiKey) {
                     ServiceTier::Default
                 } else {
-                    turn_context.config.service_tier
+                    step_context.settings.service_tier
                 },
             },
             &turn_context.session_telemetry,

@@ -7,7 +7,6 @@ use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
-use codex_protocol::config_types::ServiceTier;
 use codex_tools::ToolSpec;
 
 #[derive(Default)]
@@ -92,7 +91,6 @@ async fn handle_spawn_agent(
         .await;
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
-    config.service_tier = args.service_tier;
     if args.fork_context {
         reject_full_fork_agent_type_override(role_name)?;
     }
@@ -107,6 +105,7 @@ async fn handle_spawn_agent(
     if !args.fork_context {
         apply_spawn_agent_role(&session, &mut config, role_name).await?;
     }
+    apply_spawn_agent_service_tier(&session, &mut config).await?;
     apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
 
     let result = Box::pin(session.services.agent_control.spawn_agent_with_metadata(
@@ -229,8 +228,6 @@ struct SpawnAgentArgs {
     agent_type: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    service_tier: ServiceTier,
     #[serde(default)]
     fork_context: bool,
 }

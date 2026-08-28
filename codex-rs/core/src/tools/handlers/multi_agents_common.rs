@@ -11,6 +11,7 @@ use crate::tools::context::ToolPayload;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::BaseInstructions;
@@ -315,6 +316,39 @@ pub(crate) async fn apply_requested_spawn_agent_model_overrides(
         config.model_reasoning_effort = Some(reasoning_effort);
     }
 
+    Ok(())
+}
+
+pub(crate) async fn apply_spawn_agent_service_tier(
+    session: &Session,
+    config: &mut Config,
+) -> Result<(), FunctionCallError> {
+    let service_tier = session.services.agent_control.root_service_tier();
+    if service_tier.is_default() {
+        config.service_tier = ServiceTier::Default;
+        return Ok(());
+    }
+
+    let model = config.model.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel(
+            "spawn_agent could not resolve the child model for service tier validation".to_string(),
+        )
+    })?;
+    let model_info = session
+        .services
+        .models_manager
+        .get_model_info(model.as_str(), &config.to_models_manager_config())
+        .await;
+
+    config.service_tier = if model_info
+        .service_tiers
+        .iter()
+        .any(|tier| tier.id == service_tier)
+    {
+        service_tier
+    } else {
+        ServiceTier::Default
+    };
     Ok(())
 }
 

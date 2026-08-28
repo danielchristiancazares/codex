@@ -14,7 +14,6 @@ use crate::tools::handlers::multi_agents_v2::message_tool::message_content;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_tools::ToolSpec;
 
@@ -125,7 +124,6 @@ async fn handle_spawn_agent(
     let child_depth = next_thread_spawn_depth(&session_source);
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
-    config.service_tier = args.service_tier;
     let is_full_history_fork = matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory));
     apply_requested_spawn_agent_model_overrides(
         &session,
@@ -143,6 +141,7 @@ async fn handle_spawn_agent(
                 .clone_from(&turn.developer_instructions);
         }
     }
+    apply_spawn_agent_service_tier(&session, &mut config).await?;
     apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
 
     // Remember an applied configured default so cold reload reapplies its restrictions.
@@ -280,8 +279,6 @@ struct SpawnAgentArgs {
     agent_type: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    service_tier: ServiceTier,
     fork_turns: Option<String>,
     fork_context: Option<bool>,
 }

@@ -721,6 +721,9 @@ impl Session {
             .parent_thread_id
             .or_else(|| initial_history.get_resumed_parent_thread_id());
         session_configuration.parent_thread_id = parent_thread_id;
+        if parent_thread_id.is_none() {
+            agent_control.set_root_service_tier(session_configuration.step_settings.service_tier);
+        }
         let is_paginated_subagent = matches!(
             session_configuration.history_mode,
             ThreadHistoryMode::Paginated
