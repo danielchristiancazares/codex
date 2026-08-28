@@ -9,8 +9,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::selection_popup_common::render_menu_surface;
 use super::selection_popup_common::wrap_styled_line;
@@ -19,9 +20,12 @@ use crate::clipboard_paste::normalize_pasted_search_query;
 use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::ShortcutHint;
 use crate::key_hint::is_plain_text_key_event;
+use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
+use crate::line_truncation::line_width;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
+use crate::width::display_width;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -38,7 +42,36 @@ pub(crate) use super::selection_row_layout::SelectionDescriptionLayout;
 use super::selection_tabs::SelectionTab;
 use super::selection_tabs::render_tab_bar;
 use super::selection_tabs::tab_bar_height;
-use unicode_width::UnicodeWidthStr;
+
+struct WrappedHeaderLine(Line<'static>);
+
+fn key_line(key: ShortcutHint, label: &'static str) -> Line<'static> {
+    vec![key.into(), label.into()].into()
+}
+
+fn word_ellipsis(text: &str, width: usize) -> String {
+    let wrapped = textwrap::wrap(text, width.saturating_sub(1).max(1));
+    match wrapped.as_slice() {
+        [first, _, ..] => format!("{}…", first.trim_end()),
+        _ => text.to_string(),
+    }
+}
+
+impl Renderable for WrappedHeaderLine {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        for (row, line) in wrap_styled_line(&self.0, area.width)
+            .into_iter()
+            .take(area.height as usize)
+            .enumerate()
+        {
+            line.render(Rect::new(area.x, area.y + row as u16, area.width, 1), buf);
+        }
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        u16::try_from(wrap_styled_line(&self.0, width).len()).unwrap_or(u16::MAX)
+    }
+}
 
 /// Minimum list width (in content columns) required before the side-by-side
 /// layout is activated. Keeps the list usable even when sharing horizontal
@@ -363,12 +396,16 @@ impl ListSelectionView {
     ) -> Self {
         let mut header = params.header;
         if params.title.is_some() || params.subtitle.is_some() {
-            let title = params.title.map(|title| Line::from(title.bold()));
-            let subtitle = params.subtitle.map(|subtitle| Line::from(subtitle.dim()));
+            let title = params
+                .title
+                .map(|title| WrappedHeaderLine(Line::from(title.bold())));
+            let subtitle = params
+                .subtitle
+                .map(|subtitle| WrappedHeaderLine(Line::from(subtitle.dim())));
             header = Box::new(ColumnRenderable::with([
                 header,
-                Box::new(title),
-                Box::new(subtitle),
+                Box::new(title) as Box<dyn Renderable>,
+                Box::new(subtitle) as Box<dyn Renderable>,
             ]));
         }
         let active_tab_idx = params.initial_tab_id.as_ref().and_then(|initial_tab_id| {
@@ -468,6 +505,113 @@ impl ListSelectionView {
             .or(self.footer_hint.as_ref())
     }
 
+    fn footer_hint_for_render(
+        &self,
+        width: u16,
+        actionable_selection: Option<usize>,
+    ) -> Option<Line<'static>> {
+        let width = width as usize;
+        let has_selection = actionable_selection.is_some();
+        let selection_hidden = !has_selection && self.selected_actual_idx().is_some();
+        if has_selection
+            && let Some(hint) = self
+                .active_footer_hint()
+                .filter(|hint| line_width(hint) <= width)
+        {
+            return Some(hint.clone());
+        }
+
+        let accept = has_selection
+            .then(|| self.keymap.primary_hint(ListAction::Accept))
+            .flatten();
+        let cancel = if self.allow_cancel {
+            self.keymap.primary_hint(ListAction::Cancel)
+        } else {
+            None
+        };
+        let candidates = if has_selection {
+            match (accept, cancel) {
+                (Some(accept), Some(cancel)) => {
+                    let compact_accept = if accept.display_label() == "enter" {
+                        "↵".cyan()
+                    } else {
+                        Span::from(accept)
+                    };
+                    vec![
+                        vec![
+                            compact_accept,
+                            " ok · ".into(),
+                            cancel.into(),
+                            " back".into(),
+                        ]
+                        .into(),
+                        key_line(cancel, " back"),
+                    ]
+                }
+                (Some(accept), None) => vec![key_line(accept, " confirm"), key_line(accept, "")],
+                (None, Some(cancel)) => vec![key_line(cancel, " back"), key_line(cancel, "")],
+                (None, None) => Vec::new(),
+            }
+        } else if let Some(cancel) = cancel {
+            if selection_hidden || self.filtered_indices.is_empty() {
+                vec![
+                    vec!["Press ".into(), cancel.into(), " to go back".into()].into(),
+                    key_line(cancel, " back"),
+                ]
+            } else {
+                vec![key_line(cancel, " back")]
+            }
+        } else {
+            Vec::new()
+        };
+        candidates
+            .into_iter()
+            .find(|line| line_width(line) <= width)
+    }
+
+    fn search_line(&self, width: u16) -> Line<'static> {
+        match width {
+            0 => return Line::default(),
+            1 => return Line::from("▏".cyan()),
+            2 => return vec!["/".cyan(), "▏".cyan()].into(),
+            _ => {}
+        }
+
+        let mut spans = vec!["/ ".cyan()];
+        if self.search_query.is_empty() {
+            spans.push("▏".cyan());
+            let placeholder_width = width.saturating_sub(4) as usize;
+            if placeholder_width > 0
+                && let Some(placeholder) = &self.search_placeholder
+            {
+                spans.push(" ".into());
+                spans.push(word_ellipsis(placeholder, placeholder_width).dim());
+            }
+        } else {
+            let query_width = width.saturating_sub(3) as usize;
+            let query = if display_width(&self.search_query) <= query_width {
+                self.search_query.clone()
+            } else if query_width == 0 {
+                String::new()
+            } else {
+                let mut used = 0;
+                let mut suffix = Vec::new();
+                for grapheme in self.search_query.graphemes(/*is_extended*/ true).rev() {
+                    let grapheme_width = display_width(grapheme);
+                    if used + grapheme_width > query_width.saturating_sub(1) {
+                        break;
+                    }
+                    used += grapheme_width;
+                    suffix.push(grapheme);
+                }
+                suffix.reverse();
+                format!("…{}", suffix.concat())
+            };
+            spans.extend([query.into(), "▏".cyan()]);
+        }
+        Line::from(spans)
+    }
+
     fn active_tab_id(&self) -> Option<&str> {
         self.active_tab_idx
             .and_then(|idx| self.tabs.get(idx))
@@ -519,21 +663,11 @@ impl ListSelectionView {
         }
 
         let len = self.filtered_indices.len();
-        let selected_visible_idx = self
-            .state
-            .selected_idx
-            .and_then(|visible_idx| {
-                self.filtered_indices
-                    .get(visible_idx)
-                    .and_then(|idx| self.filtered_indices.iter().position(|cur| cur == idx))
-            })
-            .or_else(|| {
-                previously_selected.and_then(|actual_idx| {
-                    self.filtered_indices
-                        .iter()
-                        .position(|idx| *idx == actual_idx)
-                })
-            });
+        let selected_visible_idx = previously_selected.and_then(|actual_idx| {
+            self.filtered_indices
+                .iter()
+                .position(|idx| *idx == actual_idx)
+        });
         self.state.selected_idx = selected_visible_idx
             .filter(|visible_idx| {
                 self.filtered_indices
@@ -541,11 +675,9 @@ impl ListSelectionView {
                     .and_then(|actual_idx| self.active_items().get(*actual_idx))
                     .is_some_and(Self::item_is_enabled)
             })
-            .or_else(|| self.first_enabled_visible_idx())
-            .or_else(|| (len > 0).then_some(0));
+            .or_else(|| self.first_enabled_visible_idx());
 
         let visible = Self::max_visible_rows(len);
-        self.state.clamp_selection(len);
         self.state.ensure_visible(len, visible);
 
         // Notify the callback when filtering changes the selected actual item
@@ -612,10 +744,16 @@ impl ListSelectionView {
                         name_prefix_spans.push(toggle_prefix.into());
                     }
                     name_prefix_spans.extend(item.name_prefix_spans.clone());
-                    let description = is_selected
+                    let mut description = is_selected
                         .then(|| item.selected_description.clone())
                         .flatten()
                         .or_else(|| item.description.clone());
+                    if let Some(reason) = &item.disabled_reason {
+                        let prefix = description
+                            .map(|text| format!("{text} · "))
+                            .unwrap_or_default();
+                        description = Some(format!("{prefix}Unavailable: {reason}"));
+                    }
                     let wrap_indent = description.is_none().then_some(wrap_prefix_width);
                     GenericDisplayRow {
                         name: name_with_marker,
@@ -626,7 +764,7 @@ impl ListSelectionView {
                         category_tag: None,
                         wrap_indent,
                         is_disabled,
-                        disabled_reason: item.disabled_reason.clone(),
+                        disabled_reason: None,
                     }
                 })
             })
@@ -658,10 +796,7 @@ impl ListSelectionView {
     }
 
     fn select_first_enabled_row(&mut self) {
-        let selected_visible_idx = self
-            .first_enabled_visible_idx()
-            .or_else(|| (!self.filtered_indices.is_empty()).then_some(0));
-        self.state.selected_idx = selected_visible_idx;
+        self.state.selected_idx = self.first_enabled_visible_idx();
         self.state.scroll_top = 0;
     }
 
@@ -896,6 +1031,16 @@ impl ListSelectionView {
         .map(|(_, side_width)| side_width)
     }
 
+    fn description_layout_for_width(&self, width: u16) -> SelectionDescriptionLayout {
+        if self.description_layout == SelectionDescriptionLayout::Columns && width <= 40 {
+            SelectionDescriptionLayout::StackBelowWhenNarrow {
+                min_description_width: u16::MAX,
+            }
+        } else {
+            self.description_layout
+        }
+    }
+
     fn skip_disabled_down(&mut self) {
         let len = self.visible_len();
         for _ in 0..len {
@@ -904,6 +1049,9 @@ impl ListSelectionView {
             } else {
                 break;
             }
+        }
+        if self.selected_visible_idx_is_disabled() {
+            self.state.selected_idx = None;
         }
     }
 
@@ -915,6 +1063,9 @@ impl ListSelectionView {
             } else {
                 break;
             }
+        }
+        if self.selected_visible_idx_is_disabled() {
+            self.state.selected_idx = None;
         }
     }
 
@@ -933,8 +1084,7 @@ impl ListSelectionView {
                 (0..start)
                     .rev()
                     .find(|idx| !self.visible_idx_is_disabled(*idx))
-            })
-            .or(Some(start));
+            });
     }
 
     fn skip_disabled_up_clamped(&mut self) {
@@ -949,8 +1099,7 @@ impl ListSelectionView {
         self.state.selected_idx = (0..start)
             .rev()
             .find(|idx| !self.visible_idx_is_disabled(*idx))
-            .or_else(|| ((start + 1)..len).find(|idx| !self.visible_idx_is_disabled(*idx)))
-            .or(Some(start));
+            .or_else(|| ((start + 1)..len).find(|idx| !self.visible_idx_is_disabled(*idx)));
     }
 
     fn selected_visible_idx_is_disabled(&self) -> bool {
@@ -1152,7 +1301,7 @@ impl Renderable for ListSelectionView {
         // Measure wrapped height for up to MAX_POPUP_ROWS items.
         let rows = self.build_rows();
         let column_width = ColumnWidthConfig::new(self.col_width_mode, self.name_column_width)
-            .with_description_layout(self.description_layout);
+            .with_description_layout(self.description_layout_for_width(effective_rows_width));
         let rows_height = match self.row_display {
             SelectionRowDisplay::Wrapped => measure_rows_height_with_col_width_mode(
                 &rows,
@@ -1190,9 +1339,10 @@ impl Renderable for ListSelectionView {
             let note_lines = wrap_styled_line(note, note_width);
             height = height.saturating_add(note_lines.len() as u16);
         }
-        if self.active_footer_hint().is_some() {
-            height = height.saturating_add(1);
-        }
+        height = height.saturating_add(u16::from(
+            self.footer_hint_for_render(width.saturating_sub(2), self.selected_actual_idx())
+                .is_some(),
+        ));
         height
     }
 
@@ -1207,13 +1357,18 @@ impl Renderable for ListSelectionView {
             .as_ref()
             .map(|note| wrap_styled_line(note, note_width));
         let note_height = note_lines.as_ref().map_or(0, |lines| lines.len() as u16);
-        let footer_rows = note_height + u16::from(self.active_footer_hint().is_some());
+        let mut footer_hint = self.footer_hint_for_render(note_width, self.selected_actual_idx());
+        let footer_rows = note_height + u16::from(footer_hint.is_some());
         let [content_area, footer_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_rows)]).areas(area);
 
         let outer_content_area = content_area;
         // Paint the shared menu surface and then layout inside the returned inset.
-        let content_area = render_menu_surface(outer_content_area, buf);
+        let mut content_area = render_menu_surface(outer_content_area, buf);
+        if outer_content_area.height <= 5 {
+            content_area.y = outer_content_area.y;
+            content_area.height = outer_content_area.height;
+        }
 
         let inner_width = popup_content_width(outer_content_area.width);
         let side_w = self.side_layout_width(inner_width);
@@ -1231,7 +1386,7 @@ impl Renderable for ListSelectionView {
         let tab_height = tab_bar_height(&self.tabs, self.active_tab_idx.unwrap_or(0), inner_width);
         let rows = self.build_rows();
         let column_width = ColumnWidthConfig::new(self.col_width_mode, self.name_column_width)
-            .with_description_layout(self.description_layout);
+            .with_description_layout(self.description_layout_for_width(effective_rows_width));
         let rows_height = match self.row_display {
             SelectionRowDisplay::Wrapped => measure_rows_height_with_col_width_mode(
                 &rows,
@@ -1262,7 +1417,7 @@ impl Renderable for ListSelectionView {
             stacked_side_area,
         ] = Layout::vertical([
             Constraint::Max(header_height),
-            Constraint::Max(1),
+            Constraint::Length(1),
             Constraint::Length(tab_height),
             Constraint::Length(u16::from(tab_height > 0)),
             Constraint::Length(if self.is_searchable { 1 } else { 0 }),
@@ -1271,16 +1426,27 @@ impl Renderable for ListSelectionView {
             Constraint::Length(stacked_side_h),
         ])
         .areas(content_area);
+        footer_hint = self.footer_hint_for_render(
+            note_width,
+            (list_area.height > 0)
+                .then(|| self.selected_actual_idx())
+                .flatten(),
+        );
 
         // -- Header --
-        if header_area.height < header_height {
-            let [header_area, elision_area] =
-                Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(header_area);
+        if header_area.height < header_height && header_area.height > 0 {
             header.render(header_area, buf);
-            Paragraph::new(vec![
-                Line::from(format!("[… {header_height} lines] ctrl + a view all")).dim(),
-            ])
-            .render(elision_area, buf);
+            if header_area.width > 0 {
+                "…".dim().render(
+                    Rect::new(
+                        header_area.right().saturating_sub(1),
+                        header_area.bottom().saturating_sub(1),
+                        1,
+                        1,
+                    ),
+                    buf,
+                );
+            }
         } else {
             header.render(header_area, buf);
         }
@@ -1292,16 +1458,7 @@ impl Renderable for ListSelectionView {
 
         // -- Search bar --
         if self.is_searchable {
-            Line::from(self.search_query.clone()).render(search_area, buf);
-            let query_span: Span<'static> = if self.search_query.is_empty() {
-                self.search_placeholder
-                    .as_ref()
-                    .map(|placeholder| placeholder.clone().dim())
-                    .unwrap_or_else(|| "".into())
-            } else {
-                self.search_query.clone().into()
-            };
-            Line::from(query_span).render(search_area, buf);
+            self.search_line(search_area.width).render(search_area, buf);
         }
 
         // -- List rows --
@@ -1323,7 +1480,11 @@ impl Renderable for ListSelectionView {
                     &rows,
                     &self.state,
                     render_area.height as usize,
-                    "no matches",
+                    if self.search_query.is_empty() {
+                        "no options available"
+                    } else {
+                        "no matches"
+                    },
                     column_width,
                 ),
                 SelectionRowDisplay::SingleLine => render_rows_single_line_with_col_width_mode(
@@ -1332,7 +1493,11 @@ impl Renderable for ListSelectionView {
                     &rows,
                     &self.state,
                     render_area.height as usize,
-                    "no matches",
+                    if self.search_query.is_empty() {
+                        "no options available"
+                    } else {
+                        "no matches"
+                    },
                     column_width,
                 ),
             };
@@ -1390,11 +1555,7 @@ impl Renderable for ListSelectionView {
         if footer_area.height > 0 {
             let [note_area, hint_area] = Layout::vertical([
                 Constraint::Length(note_height),
-                Constraint::Length(if self.active_footer_hint().is_some() {
-                    1
-                } else {
-                    0
-                }),
+                Constraint::Length(u16::from(footer_hint.is_some())),
             ])
             .areas(footer_area);
 
@@ -1419,7 +1580,7 @@ impl Renderable for ListSelectionView {
                 }
             }
 
-            if let Some(hint) = self.active_footer_hint() {
+            if let Some(hint) = footer_hint {
                 let hint_area = Rect {
                     x: hint_area.x + 2,
                     y: hint_area.y,
@@ -1554,6 +1715,111 @@ mod tests {
             })
             .collect();
         lines.join("\n")
+    }
+
+    fn render_responsive_matrix(view: &ListSelectionView) -> String {
+        let cancel = view
+            .keymap
+            .primary_hint(ListAction::Cancel)
+            .expect("default list keymap should expose cancel")
+            .display_label();
+        [24, 40, 80]
+            .into_iter()
+            .flat_map(|width| {
+                let compact = render_lines_in_area(view, width, /*height*/ 4);
+                assert!(compact.contains(&cancel) && compact.contains("back"));
+                if view.search_query.is_empty()
+                    && let Some(placeholder) = &view.search_placeholder
+                {
+                    let opening_word = placeholder.split_whitespace().next().unwrap_or(placeholder);
+                    assert!(compact.contains(opening_word));
+                    assert!(compact.contains(placeholder) || compact.contains('…'));
+                }
+                let accepts = compact.contains("enter") || compact.contains("↵ ok");
+                assert!(!accepts || compact.contains('›'));
+                let state = if view.search_query.is_empty() {
+                    "no options available"
+                } else {
+                    "no matches"
+                };
+                assert!(!view.filtered_indices.is_empty() || compact.contains(state));
+                [Some(4), Some(6), None].into_iter().map(move |height| {
+                    let height = height.unwrap_or_else(|| view.desired_height(width));
+                    let rendered = render_lines_in_area(view, width, height);
+                    format!("{width}x{height}:\n{rendered}")
+                })
+            })
+            .join("\n\n")
+    }
+
+    fn selection_state(view: &ListSelectionView) -> (Vec<usize>, Option<usize>, Option<usize>) {
+        (
+            view.filtered_indices.clone(),
+            view.state.selected_idx,
+            view.selected_actual_idx(),
+        )
+    }
+
+    fn responsive_fixture(fixture: &str) -> ListSelectionView {
+        let mut params = SelectionViewParams::default();
+        match fixture {
+            "loading" => {
+                params.items = [
+                    ("Local provider", Some("Loading…"), None),
+                    ("Cloud catalog", None, Some("Account offline")),
+                ]
+                .map(|(name, description, disabled_reason)| SelectionItem {
+                    name: name.to_string(),
+                    description: description.map(str::to_string),
+                    disabled_reason: disabled_reason.map(str::to_string),
+                    is_disabled: true,
+                    disabled_gutter_marker: Some("·"),
+                    ..Default::default()
+                })
+                .into();
+            }
+            "empty" => {
+                params.is_searchable = true;
+                params.search_placeholder = Some("Search workspaces".to_string());
+            }
+            "search" => {
+                params.items = vec![SelectionItem {
+                    name: "東京/修正-🦀".to_string(),
+                    search_value: Some("東京/修正-🦀".to_string()),
+                    ..Default::default()
+                }];
+                params.is_searchable = true;
+                params.search_placeholder = Some("Type a branch name".to_string());
+            }
+            "disabled" => {
+                params.items = vec![SelectionItem {
+                    name: "Cloud catalog".to_string(),
+                    disabled_reason: Some("Access required".to_string()),
+                    ..Default::default()
+                }];
+            }
+            "header" => {
+                params.title = Some(
+                    "Choose the execution policy for this carefully scoped workspace".to_string(),
+                );
+                params.items = vec![SelectionItem {
+                    name: "Read only".to_string(),
+                    ..Default::default()
+                }];
+            }
+            "header_stack" => {
+                params.header = Box::new(Line::from("Critical: workspace".red()));
+                params.title = Some("Choose access".to_string());
+                params.subtitle = Some("Applies immediately".to_string());
+                params.items = vec![SelectionItem {
+                    name: "Read only".to_string(),
+                    ..Default::default()
+                }];
+            }
+            _ => unreachable!("unknown responsive fixture"),
+        }
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        new_view(params, AppEventSender::new(tx_raw))
     }
 
     fn description_col(rendered: &str, item_marker: &str, description: &str) -> usize {
@@ -1754,6 +2020,145 @@ mod tests {
         assert!(
             lines.contains("filters"),
             "expected search query line to include rendered query, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn filtering_preserves_source_item_identity_as_ordinals_move() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut view = new_view(
+            SelectionViewParams {
+                items: [
+                    ("zero", "zero"),
+                    ("one", "shared"),
+                    ("two", "shared"),
+                    ("three", "shared only-three"),
+                ]
+                .into_iter()
+                .map(|(name, search_value)| SelectionItem {
+                    name: name.to_string(),
+                    search_value: Some(search_value.to_string()),
+                    ..Default::default()
+                })
+                .collect(),
+                initial_selected_idx: Some(2),
+                is_searchable: true,
+                ..Default::default()
+            },
+            tx,
+        );
+
+        view.set_search_query("shared".to_string());
+        assert_eq!(selection_state(&view), (vec![1, 2, 3], Some(1), Some(2)));
+
+        view.set_search_query("only-three".to_string());
+        assert_eq!(selection_state(&view), (vec![3], Some(0), Some(3)));
+    }
+
+    #[test]
+    fn snapshot_empty_and_loading_responsive_states() {
+        let loading = responsive_fixture("loading");
+        let empty = responsive_fixture("empty");
+        let mut zero_result = responsive_fixture("search");
+        zero_result.set_search_query("no-result".to_string());
+        let disabled = responsive_fixture("disabled");
+
+        assert_eq!(
+            [
+                loading.selected_actual_idx(),
+                empty.selected_actual_idx(),
+                zero_result.selected_actual_idx(),
+                disabled.selected_actual_idx(),
+            ],
+            [None; 4],
+        );
+        let loading_compact = render_lines_in_area(&loading, /*width*/ 24, /*height*/ 4);
+        let loading_expanded = render_lines_in_area(&loading, /*width*/ 24, /*height*/ 6);
+        assert!(
+            loading_compact.contains("Local provider")
+                && loading_compact.contains("Loading…")
+                && loading_expanded.contains("Account offline")
+        );
+        let disabled_compact =
+            render_lines_in_area(&disabled, /*width*/ 24, /*height*/ 4);
+        assert!(disabled_compact.contains("Access required"));
+        assert!(
+            disabled
+                .build_rows()
+                .iter()
+                .all(|row| row.disabled_reason.is_none())
+        );
+
+        assert_snapshot!(
+            "list_selection_empty_and_loading_responsive",
+            format!(
+                "loading:\n{}\n\nempty:\n{}\n\nzero result:\n{}\n\ndisabled:\n{}",
+                render_responsive_matrix(&loading),
+                render_responsive_matrix(&empty),
+                render_responsive_matrix(&zero_result),
+                render_responsive_matrix(&disabled),
+            )
+        );
+    }
+
+    #[test]
+    fn snapshot_search_focus_unicode_and_header_elision() {
+        let mut search = responsive_fixture("search");
+        let empty_query = render_responsive_matrix(&search);
+        search.set_search_query("東京/修正-🦀".to_string());
+        let unicode_query = render_responsive_matrix(&search);
+
+        let header = responsive_fixture("header");
+        let compact = render_lines_in_area(&header, /*width*/ 24, /*height*/ 4);
+        assert_eq!(compact.matches("Choose the execution").count(), 1);
+        assert!(
+            compact.contains("policy") && compact.contains('…'),
+            "expected a meaningful elided continuation:\n{compact}"
+        );
+        assert!(compact.contains("› 1. Read only"));
+        assert!(compact.contains("esc back"));
+
+        let expanded = render_lines_in_area(&header, /*width*/ 24, /*height*/ 6);
+        assert_eq!(expanded.matches("Choose the execution").count(), 1);
+        assert!(expanded.contains("policy for this"));
+        assert!(expanded.contains("workspace"));
+        assert!(expanded.contains("› 1. Read only"));
+        assert!(expanded.contains("esc back"));
+        assert!([24, 40, 80].into_iter().all(|width| {
+            [4, 6].into_iter().all(|height| {
+                let rendered = render_lines_in_area(&header, width, height);
+                rendered.contains("Choose") && rendered.contains('›')
+            })
+        }));
+
+        let header_stack = responsive_fixture("header_stack");
+        let stack_compact =
+            render_lines_in_area(&header_stack, /*width*/ 24, /*height*/ 4);
+        assert!(stack_compact.contains("Critical: workspace"));
+        assert!(
+            stack_compact
+                .lines()
+                .any(|line| line.contains("Choose access") && line.contains('…'))
+        );
+        assert!(stack_compact.contains("› 1. Read only"));
+        assert!(stack_compact.contains("esc back"));
+
+        let stack_expanded_height = header_stack.desired_height(/*width*/ 24);
+        let stack_expanded =
+            render_lines_in_area(&header_stack, /*width*/ 24, stack_expanded_height);
+        assert!(stack_expanded.contains("Critical: workspace"));
+        assert!(stack_expanded.contains("Choose access"));
+        assert!(stack_expanded.contains("Applies immediately"));
+        assert!(stack_expanded.contains("› 1. Read only"));
+        assert!(stack_expanded.contains("esc back"));
+
+        assert_snapshot!(
+            "list_selection_search_focus_unicode_and_header_elision",
+            format!(
+                "empty query:\n{empty_query}\n\nunicode query:\n{unicode_query}\n\nelided header:\n{}\n\nstacked header:\n24x4:\n{stack_compact}\n\n24x{stack_expanded_height}:\n{stack_expanded}",
+                render_responsive_matrix(&header),
+            )
         );
     }
 
