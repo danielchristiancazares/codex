@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::app_event::ModelSelectionScope;
+use crate::bottom_pane::SelectionRowDisplay;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;
 
@@ -172,6 +173,7 @@ impl ChatWidget {
             footer_hint: Some(standard_popup_hint_line()),
             items,
             header,
+            row_display: SelectionRowDisplay::SingleLine,
             ..Default::default()
         });
     }
@@ -233,6 +235,7 @@ impl ChatWidget {
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,
             header,
+            row_display: SelectionRowDisplay::SingleLine,
             ..Default::default()
         });
     }

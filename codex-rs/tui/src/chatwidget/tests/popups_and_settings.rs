@@ -3237,6 +3237,18 @@ async fn model_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn model_selection_popup_density_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+
+    let snapshots = [80, 96, 120]
+        .map(|width| format!("width {width}:\n{}", render_bottom_popup(&chat, width)))
+        .join("\n\n");
+    assert_chatwidget_snapshot!("model_selection_popup_density", snapshots);
+}
+
+#[tokio::test]
 async fn provider_selection_popup_snapshot_and_selection_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.thread_id = Some(ThreadId::new());
@@ -3244,6 +3256,14 @@ async fn provider_selection_popup_snapshot_and_selection_event() {
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("provider_selection_popup", popup);
+
+    let compact_area = Rect::new(0, 0, /*width*/ 80, /*height*/ 6);
+    let mut compact_buf = Buffer::empty(compact_area);
+    chat.bottom_pane.render(compact_area, &mut compact_buf);
+    assert_chatwidget_snapshot!(
+        "provider_selection_popup_compact",
+        format!("{compact_buf:?}")
+    );
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
