@@ -191,14 +191,14 @@ enum CompactCallState {
 }
 
 fn compact_call_state(call: &ExecCall) -> CompactCallState {
-    if call.duration.is_none() {
-        CompactCallState::Active
-    } else if call
+    if call
         .output
         .as_ref()
         .is_some_and(|output| output.exit_code != 0)
     {
         CompactCallState::Failed
+    } else if call.duration.is_none() {
+        CompactCallState::Active
     } else {
         CompactCallState::Succeeded
     }
@@ -272,8 +272,7 @@ impl HistoryCell for ExecCell {
                         push_owned_lines(&wrapped, &mut lines);
                     }
                 }
-                if let Some(duration) = call.duration {
-                    let duration = format_duration(duration);
+                if call.duration.is_some() || output.exit_code != 0 {
                     let mut result: Line = if output.exit_code == 0 {
                         Line::from("✓".green().bold())
                     } else {
@@ -282,7 +281,9 @@ impl HistoryCell for ExecCell {
                             format!(" ({})", output.exit_code).into(),
                         ])
                     };
-                    result.push_span(format!(" • {duration}").dim());
+                    if let Some(duration) = call.duration {
+                        result.push_span(format!(" • {}", format_duration(duration)).dim());
+                    }
                     lines.push(result);
                 }
             }
@@ -297,18 +298,19 @@ impl HistoryCell for ExecCell {
 
 impl ExecCell {
     fn compact_group_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let uses_compact_lifecycle = self.calls.iter().all(|call| {
-            matches!(
-                call.source,
-                ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
-            )
-        });
+        let uses_compact_lifecycle = self.calls.len() > 1
+            || self.calls.iter().all(|call| {
+                matches!(
+                    call.source,
+                    ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
+                )
+            });
         if uses_compact_lifecycle {
             let command_count = self.calls.len();
             let active_count = self
                 .calls
                 .iter()
-                .filter(|call| call.duration.is_none())
+                .filter(|call| compact_call_state(call) == CompactCallState::Active)
                 .count();
             let failed_count = self
                 .calls
@@ -327,14 +329,17 @@ impl ExecCell {
             } else {
                 format!("Running {active_count} of {command_count} {noun}")
             };
-            let marker =
-                if let Some(active_call) = self.calls.iter().find(|call| call.duration.is_none()) {
-                    activity_marker(active_call.start_time, self.animations_enabled())
-                } else if failed_count > 0 {
-                    "•".red().bold()
-                } else {
-                    "•".dim()
-                };
+            let marker = if let Some(active_call) = self
+                .calls
+                .iter()
+                .find(|call| compact_call_state(call) == CompactCallState::Active)
+            {
+                activity_marker(active_call.start_time, self.animations_enabled())
+            } else if failed_count > 0 {
+                "•".red().bold()
+            } else {
+                "•".dim()
+            };
             let mut header = Line::from(vec![marker, " ".into(), activity.bold()]);
             if failed_count > 0 {
                 header.push_span(" · ".dim());
@@ -352,7 +357,14 @@ impl ExecCell {
                 } else {
                     "  ├ "
                 };
-                let command = strip_bash_lc_and_escape(&call.command).lines().join(" ");
+                let command = if call.is_unified_exec_interaction() {
+                    format_unified_exec_interaction(
+                        &call.command,
+                        call.interaction_input.as_deref(),
+                    )
+                } else {
+                    strip_bash_lc_and_escape(&call.command).lines().join(" ")
+                };
                 let command_line = Line::from(vec![compact_branch(prefix, state), command.into()]);
                 lines.push(truncate_line_with_ellipsis_if_overflow(
                     command_line,
@@ -364,6 +376,9 @@ impl ExecCell {
                 .calls
                 .iter()
                 .filter_map(|call| {
+                    if call.is_unified_exec_interaction() {
+                        return None;
+                    }
                     let output = call.output.as_ref()?;
                     let mut meaningful_rows = output.lines().rev().filter_map(|raw| {
                         let row = raw.as_ref().trim();
@@ -487,9 +502,11 @@ impl ExecCell {
         let mut out: Vec<Line<'static>> = Vec::new();
         let active_start_time = calls
             .iter()
-            .find(|call| call.duration.is_none())
+            .find(|call| compact_call_state(call) == CompactCallState::Active)
             .and_then(|call| call.start_time);
-        let is_active = calls.iter().any(|call| call.duration.is_none());
+        let is_active = calls
+            .iter()
+            .any(|call| compact_call_state(call) == CompactCallState::Active);
         out.push(Line::from(vec![
             if is_active {
                 activity_marker(active_start_time, self.animations_enabled())
@@ -575,17 +592,9 @@ impl ExecCell {
                             };
                             let spans = match (query, path) {
                                 (Some(q), Some(p)) => {
-                                    vec![
-                                        "\"".dim(),
-                                        q.clone().into(),
-                                        "\"".dim(),
-                                        " in ".dim(),
-                                        p.clone().into(),
-                                    ]
+                                    vec![q.clone().into(), " in ".dim(), p.clone().into()]
                                 }
-                                (Some(q), None) => {
-                                    vec!["\"".dim(), q.clone().into(), "\"".dim()]
-                                }
+                                (Some(q), None) => vec![q.clone().into()],
                                 _ => vec![cmd.clone().into()],
                             };
                             lines.push((title, spans));
@@ -619,29 +628,33 @@ impl ExecCell {
             let is_last = index + 1 == block_count;
             let initial_prefix = if is_last { "  └ " } else { "  ├ " };
             let subsequent_prefix = if is_last { "    " } else { "  │ " };
-            out.extend(prefix_lines(
-                block,
-                compact_branch(initial_prefix, state),
-                subsequent_prefix.dim(),
-            ));
+            out.extend(
+                prefix_lines(
+                    block,
+                    compact_branch(initial_prefix, state),
+                    subsequent_prefix.dim(),
+                )
+                .into_iter()
+                .map(|line| {
+                    truncate_line_with_ellipsis_if_overflow(line, usize::from(width.max(1)))
+                }),
+            );
         }
         out
     }
 
     fn command_display_lines(&self, call: &ExecCall, width: u16) -> Vec<Line<'static>> {
         let layout = EXEC_DISPLAY_LAYOUT;
-        let success = call
-            .duration
-            .and_then(|_| call.output.as_ref().map(|o| o.exit_code == 0));
-        let bullet = match success {
-            Some(true) => "•".green().bold(),
-            Some(false) => "•".red().bold(),
-            None => activity_marker(call.start_time, self.animations_enabled()),
+        let state = compact_call_state(call);
+        let bullet = match state {
+            CompactCallState::Active => activity_marker(call.start_time, self.animations_enabled()),
+            CompactCallState::Succeeded => "•".green().bold(),
+            CompactCallState::Failed => "•".red().bold(),
         };
         let is_interaction = call.is_unified_exec_interaction();
         let title = if is_interaction {
             ""
-        } else if call.duration.is_none() {
+        } else if state == CompactCallState::Active {
             "Running"
         } else if call.is_user_shell_command() {
             "You ran"
@@ -974,6 +987,10 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
     PrefixedBlock::new("  └ ", "    "),
     /*output_max_lines*/ 5,
 );
+
+#[cfg(test)]
+#[path = "roster_tests.rs"]
+mod roster_tests;
 
 #[cfg(test)]
 mod tests {

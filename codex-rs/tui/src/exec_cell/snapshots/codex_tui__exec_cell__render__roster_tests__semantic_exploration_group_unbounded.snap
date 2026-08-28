@@ -1,0 +1,51 @@
+---
+source: tui/src/exec_cell/roster_tests.rs
+expression: lines
+---
+[
+    Line::from_iter([
+        Span::from("•").dim(),
+        Span::from(" "),
+        Span::from("Explored").bold(),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").green(),
+        Span::from("Searched").cyan(),
+        Span::from(" "),
+        Span::from("query-1"),
+        Span::from(" in ").dim(),
+        Span::from("codex-rs/tui"),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").green(),
+        Span::from("Searched").cyan(),
+        Span::from(" "),
+        Span::from("query-2"),
+        Span::from(" in ").dim(),
+        Span::from("codex-rs/tui"),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").green(),
+        Span::from("Searched").cyan(),
+        Span::from(" "),
+        Span::from("query-3"),
+        Span::from(" in ").dim(),
+        Span::from("codex-rs/tui"),
+    ]),
+    Line::from_iter([
+        Span::from("  ├ ").green(),
+        Span::from("Searched").cyan(),
+        Span::from(" "),
+        Span::from("query-4"),
+        Span::from(" in ").dim(),
+        Span::from("codex-rs/tui"),
+    ]),
+    Line::from_iter([
+        Span::from("  └ ").green(),
+        Span::from("Searched").cyan(),
+        Span::from(" "),
+        Span::from("query-5"),
+        Span::from(" in ").dim(),
+        Span::from("codex-rs/tui"),
+    ]),
+]
