@@ -18,6 +18,7 @@ const MACHINE_ID_HEX_BYTES: usize = 64;
 #[derive(Clone)]
 pub(super) struct CopilotCredentialStore {
     account: String,
+    #[cfg(windows)]
     target: String,
     keyring: Arc<dyn KeyringStore>,
 }
@@ -41,9 +42,11 @@ impl CopilotCredentialStore {
     pub(super) fn new_with_keyring(codex_home: &Path, keyring: Arc<dyn KeyringStore>) -> Self {
         let scope = codex_secrets::compute_keyring_account(codex_home);
         let account = format!("github-copilot|{scope}");
+        #[cfg(windows)]
         let target = format!("codex/github-copilot/{scope}");
         Self {
             account,
+            #[cfg(windows)]
             target,
             keyring,
         }

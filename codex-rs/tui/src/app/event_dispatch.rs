@@ -19,6 +19,7 @@ use crate::session_resume::cwds_differ;
 use codex_app_server_protocol::ThreadGoalStatus;
 #[cfg(target_os = "windows")]
 use codex_config::types::WindowsSandboxModeToml;
+#[cfg(target_os = "windows")]
 use codex_protocol::config_types::ServiceTier;
 use std::thread;
 

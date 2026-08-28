@@ -1,3 +1,11 @@
+#![cfg_attr(
+    target_os = "macos",
+    allow(
+        linker_messages,
+        reason = "Apple ld falls back to DWARF when the CLI exceeds compact unwind's 16 MiB offset range; rust-lang/rust#159105 tracks this diagnostic"
+    )
+)]
+
 use clap::Args;
 use clap::CommandFactory;
 use clap::Parser;
