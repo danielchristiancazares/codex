@@ -30,6 +30,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }
