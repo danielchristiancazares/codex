@@ -177,7 +177,7 @@ impl McpConnectionSet {
         let mut listed_tools = Vec::new();
         let mut clients = std::collections::HashMap::new();
         let optional_mcp_startup_grace = config.optional_mcp_startup_grace;
-        join_all(self.servers.iter().map(|(server_name, view)| async move {
+        let server_snapshots = join_all(self.servers.iter().map(|(server_name, view)| async move {
             if !view
                 .connection
                 .client
@@ -185,7 +185,11 @@ impl McpConnectionSet {
                 .load(Ordering::Acquire)
             {
                 let required = self.required_servers.binary_search(server_name).is_ok();
-                let has_cached_tools = view.connection.client.has_cached_tools();
+                // Keep the catalog that lets us skip startup even if it expires during the wait.
+                let cached_tools = view.connection.client.cached_tools().filter(|tools| {
+                    view.connection.client.is_codex_apps_mcp_server || !tools.is_empty()
+                });
+                let has_cached_tools = cached_tools.is_some();
                 let must_wait_for_startup = (required
                     && (!view.connection.startup_is_dormant() || !has_cached_tools))
                     || self.is_selected_plugin_mcp_server(server_name)
@@ -194,7 +198,7 @@ impl McpConnectionSet {
                         .any(|required| required == server_name)
                     || (server_name == CODEX_APPS_MCP_SERVER_NAME && !has_cached_tools);
                 if !must_wait_for_startup && has_cached_tools {
-                    return;
+                    return (server_name, view, cached_tools);
                 }
                 if !must_wait_for_startup && optional_mcp_startup_grace.is_zero() {
                     if let Some(cache) = view.connection.client.tool_catalog_cache_context.as_ref()
@@ -231,65 +235,45 @@ impl McpConnectionSet {
                     {
                         trace!(server_name = %server_name, "omitting pending optional MCP server");
                     }
-                    return;
+                    return (server_name, view, cached_tools);
                 }
                 let _ = view.connection.client().await;
+                return (server_name, view, cached_tools);
             }
+            (server_name, view, None)
         }))
         .await;
-        let server_results = join_all(self.servers.iter().map(|(server_name, view)| async move {
-            if !view
+        let server_results = join_all(server_snapshots.into_iter().map(|(server_name, view, cached_tools)| async move {
+            let (client, server_tools) = if !view
                 .connection
                 .client
                 .startup_complete
                 .load(Ordering::Acquire)
             {
-                if !view.connection.client.has_cached_tools() {
-                    return None;
-                }
-                let server_tools = view
-                    .listed_tools(
-                        server_name,
-                        &self.tool_plugin_provenance,
-                        &self.tool_catalog_revision,
-                    )
-                    .await?;
-                let server_tools = server_tools
-                    .into_iter()
-                    .map(|mut tool| {
-                        if let Some(annotations) = tool.tool.annotations.as_mut() {
-                            annotations.read_only_hint = None;
-                        }
-                        Self::with_server_metadata(tool, &view.metadata)
-                    })
-                    .collect::<Vec<_>>();
-                return Some((server_name.clone(), None, server_tools));
-            }
-            view.connection.client.reconnect_failed_startup().await;
-            let Ok(mut client) = view.connection.client().await else {
-                trace!(server_name = %server_name, "omitting MCP server without an exact ready client");
-                return None;
-            };
-            client.tool_timeout = view.tool_timeout;
-            let catalog_override = if server_name == CODEX_APPS_MCP_SERVER_NAME {
-                self.codex_apps_tools_override.read().await.clone()
+                (None, cached_tools.or_else(|| view.connection.client.cached_tools())?)
             } else {
-                None
-            };
-            if view
-                .connection
-                .client
-                .refresh_tools_if_changed(
+                view.connection.client.reconnect_failed_startup().await;
+                let Ok(mut client) = view.connection.client().await else {
+                    trace!(server_name = %server_name, "omitting MCP server without an exact ready client");
+                    return None;
+                };
+                let catalog_override = if server_name == CODEX_APPS_MCP_SERVER_NAME {
+                    self.codex_apps_tools_override.read().await.clone()
+                } else {
+                    None
+                };
+                if view.connection.client.refresh_tools_if_changed(
                     server_name,
                     view.catalog_item_limit,
                     &self.tool_catalog_revision,
-                )
-                .await
-            {
-                drop(client);
-                client = view.connection.client().await.ok()?;
-            }
-            let server_tools = catalog_override.unwrap_or_else(|| client.connection_tools());
+                ).await {
+                    drop(client);
+                    client = view.connection.client().await.ok()?;
+                }
+                client.tool_timeout = view.tool_timeout;
+                let server_tools = catalog_override.unwrap_or_else(|| client.connection_tools());
+                (Some(Arc::new(client)), server_tools)
+            };
             let server_tools = filter_tools(server_tools, &view.tool_filter);
             let server_tools = if server_name == CODEX_APPS_MCP_SERVER_NAME {
                 prepare_codex_apps_tools_for_model(server_tools, &self.tool_plugin_provenance)
@@ -301,9 +285,16 @@ impl McpConnectionSet {
             };
             let server_tools = server_tools
                 .into_iter()
-                .map(|tool| Self::with_server_metadata(tool, &view.metadata))
+                .map(|mut tool| {
+                    if client.is_none()
+                        && let Some(annotations) = tool.tool.annotations.as_mut()
+                    {
+                        annotations.read_only_hint = None;
+                    }
+                    Self::with_server_metadata(tool, &view.metadata)
+                })
                 .collect::<Vec<_>>();
-            Some((server_name.clone(), Some(Arc::new(client)), server_tools))
+            Some((server_name.clone(), client, server_tools))
         }))
         .await;
         for (server_name, client, server_tools) in server_results.into_iter().flatten() {
