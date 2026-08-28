@@ -16,8 +16,8 @@ use tokio::{
     time::timeout,
 };
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
 const BATCH_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 20);
@@ -50,9 +50,11 @@ fn large_payload_batch(bencher: Bencher) {
 
 #[divan::bench(sample_count = 20, sample_size = 1)]
 fn concurrent_large_delegate_serialization(bencher: Bencher) {
-    let mut fixture =
-        BenchmarkFixture::new(DELEGATE_SERIALIZATION_PAYLOAD_BYTES, BatchWorkload::SmallOutput)
-            .expect("delegate serialization benchmark fixture should initialize and warm");
+    let mut fixture = BenchmarkFixture::new(
+        DELEGATE_SERIALIZATION_PAYLOAD_BYTES,
+        BatchWorkload::SmallOutput,
+    )
+    .expect("delegate serialization benchmark fixture should initialize and warm");
     bencher.bench_local(move || {
         fixture
             .run_batch(DELEGATE_SERIALIZATION_BATCH_SIZE)
@@ -78,9 +80,8 @@ fn sequential_payload_round_trip(bencher: Bencher) {
 
 #[divan::bench(sample_count = 20, sample_size = 1)]
 fn multi_client_small_payload_round_trips(bencher: Bencher) {
-    let mut fixture =
-        MultiClientBenchmarkFixture::new(MULTI_CLIENT_COUNT, SMALL_PAYLOAD_BYTES)
-            .expect("multi-client WebSocket benchmark fixture should initialize and warm");
+    let mut fixture = MultiClientBenchmarkFixture::new(MULTI_CLIENT_COUNT, SMALL_PAYLOAD_BYTES)
+        .expect("multi-client WebSocket benchmark fixture should initialize and warm");
     bencher.bench_local(move || {
         fixture
             .run_batch(MULTI_CLIENT_BATCH_SIZE)
@@ -92,7 +93,9 @@ fn bench_websocket(bencher: Bencher, batch_size: usize, payload_bytes: usize) {
     let mut fixture = BenchmarkFixture::new(payload_bytes, BatchWorkload::EchoPayload)
         .expect("code-mode WebSocket benchmark fixture should initialize and warm");
     bencher.bench_local(move || {
-        fixture.run_batch(batch_size).expect("WebSocket batch should complete");
+        fixture
+            .run_batch(batch_size)
+            .expect("WebSocket batch should complete");
     });
 }
 
@@ -299,11 +302,7 @@ impl ClientState {
             .context("timed out running code-mode WebSocket benchmark batch")?
     }
 
-    async fn run_batch_inner(
-        &mut self,
-        batch_size: usize,
-        workload: BatchWorkload,
-    ) -> Result<()> {
+    async fn run_batch_inner(&mut self, batch_size: usize, workload: BatchWorkload) -> Result<()> {
         let requires_delegate = !matches!(workload, BatchWorkload::TrivialCell);
         let mut pending = HashMap::with_capacity(batch_size);
         let payload_json = serde_json::to_string(&self.payload)?;
@@ -358,15 +357,12 @@ impl ClientState {
             requests: HashMap::with_capacity(batch_size),
             unmatched_closes: HashSet::with_capacity(batch_size),
         };
-        while !pending
-            .values()
-            .all(|execution| {
-                execution.started
-                    && (execution.delegated || !requires_delegate)
-                    && execution.initial
-                    && execution.closed
-            })
-        {
+        while !pending.values().all(|execution| {
+            execution.started
+                && (execution.delegated || !requires_delegate)
+                && execution.initial
+                && execution.closed
+        }) {
             match self.client.read().await? {
                 HostToClient::Response {
                     id,
@@ -446,6 +442,7 @@ impl ClientState {
                                     cell_id,
                                     content_items,
                                     error_text,
+                                    code_mode_host_duration_ns: _,
                                 },
                         },
                 } => {
@@ -457,7 +454,10 @@ impl ClientState {
                             }
                         },
                     }];
-                    ensure!(content_items == expected && error_text.is_none(), "wrong initial response");
+                    ensure!(
+                        content_items == expected && error_text.is_none(),
+                        "wrong initial response"
+                    );
                     record_cell(&mut pending, &mut routes, id, &cell_id)?;
                     let execution = pending
                         .get_mut(&id)
@@ -495,7 +495,10 @@ impl ClientState {
             }
         }
 
-        ensure!(routes.unmatched_closes.is_empty(), "cell-close for unknown cell");
+        ensure!(
+            routes.unmatched_closes.is_empty(),
+            "cell-close for unknown cell"
+        );
         Ok(())
     }
 
@@ -556,7 +559,13 @@ fn record_cell(
     if let Some(expected) = &execution.cell_id {
         ensure!(expected == cell_id, "mismatched cell ID");
     } else {
-        ensure!(routes.requests.insert(cell_id.clone(), request_id).is_none(), "reused cell ID");
+        ensure!(
+            routes
+                .requests
+                .insert(cell_id.clone(), request_id)
+                .is_none(),
+            "reused cell ID"
+        );
         execution.cell_id = Some(cell_id.clone());
         execution.closed = routes.unmatched_closes.remove(cell_id);
     }

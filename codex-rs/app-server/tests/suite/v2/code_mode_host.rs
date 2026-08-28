@@ -5,8 +5,14 @@ use anyhow::Context;
 use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
+use codex_app_server_protocol::ThreadDecrementElicitationParams;
+use codex_app_server_protocol::ThreadDecrementElicitationResponse;
+use codex_app_server_protocol::ThreadIncrementElicitationParams;
+use codex_app_server_protocol::ThreadIncrementElicitationResponse;
 use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_features::Feature;
@@ -14,15 +20,178 @@ use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
+use test_case::test_case;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use super::responses_websocket_bridge::ResponsesWebSocketBridge;
+
 #[cfg(any(target_os = "macos", windows))]
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 60);
 #[cfg(not(any(target_os = "macos", windows)))]
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
+
+#[derive(Clone, Copy)]
+enum TimingTool {
+    Exec,
+    Wait,
+}
+
+enum TimingTransport {
+    Grpc,
+    Stdio,
+}
+
+/// Model output and the structured timing consumed by Bridge describe the same
+/// host operation over either transport, including missing-cell responses.
+#[test_case(TimingTool::Exec, TimingTransport::Grpc; "exec_grpc")]
+#[test_case(TimingTool::Wait, TimingTransport::Grpc; "wait_grpc")]
+#[test_case(TimingTool::Exec, TimingTransport::Stdio; "exec_stdio")]
+#[test_case(TimingTool::Wait, TimingTransport::Stdio; "wait_stdio")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn code_mode_model_output_uses_structured_host_timing(
+    tool: TimingTool,
+    transport: TimingTransport,
+) -> Result<()> {
+    let mut host = match transport {
+        TimingTransport::Grpc => Some(
+            Command::new(codex_utils_cargo_bin::cargo_bin("codex-code-mode-host")?)
+                .args(["--listen", "grpc://127.0.0.1:0"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .kill_on_drop(/*kill_on_drop*/ true)
+                .spawn()?,
+        ),
+        TimingTransport::Stdio => None,
+    };
+    let host_url = if let Some(host) = host.as_mut() {
+        let stdout = host.stdout.take().context("host stdout unavailable")?;
+        Some(
+            timeout(
+                DEFAULT_READ_TIMEOUT,
+                BufReader::new(stdout).lines().next_line(),
+            )
+            .await??
+            .context("host exited before publishing its URL")?,
+        )
+    } else {
+        None
+    };
+
+    let model_server = ResponsesWebSocketBridge::start().await?;
+    let tool_name = match tool {
+        TimingTool::Exec => "exec",
+        TimingTool::Wait => "wait",
+    };
+    let invocation = if matches!(tool, TimingTool::Exec) {
+        responses::ev_custom_tool_call(
+            "timed-call",
+            "exec",
+            "await new Promise(resolve => setTimeout(resolve, 100)); text('timed');",
+        )
+    } else {
+        responses::ev_function_call("timed-call", "wait", r#"{"cell_id":"missing"}"#)
+    };
+    responses::mount_sse_once(
+        &model_server.http,
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            invocation,
+            responses::ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let follow_up = responses::mount_sse_once(
+        &model_server.http,
+        responses::sse(vec![
+            responses::ev_assistant_message("msg-1", "Done"),
+            responses::ev_completed("resp-2"),
+        ]),
+    )
+    .await;
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(model_server.uri())
+        .with_provider_config("supports_websockets = true")
+        .enable_feature(Feature::CodeModeOnly)
+        .write(codex_home.path())?;
+    let mut builder = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .with_json_logging("codex_code_mode::timing=info,codex_core::tools::parallel=info");
+    if let Some(host_url) = host_url.as_deref() {
+        builder = builder.with_args(&["--code-mode-host", host_url]);
+    }
+    let mut app_server = builder.build_initialized().await?;
+    let thread = app_server
+        .start_thread(ThreadStartParams::default())
+        .await?;
+    let increment_id = app_server
+        .send_request(
+            "thread/increment_elicitation",
+            Some(serde_json::to_value(ThreadIncrementElicitationParams {
+                thread_id: thread.thread.id.clone(),
+            })?),
+        )
+        .await?;
+    let _: ThreadIncrementElicitationResponse = app_server.read_response(increment_id).await?;
+    let start_id = app_server
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "run the timed operation".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let _: TurnStartResponse = app_server.read_response(start_id).await?;
+    let timing = app_server
+        .wait_for_json_log_event("codex.code_mode.host_timing")
+        .await?;
+    // Hold only the app-server after the host outcome, so local elapsed time
+    // cannot round to the same displayed duration as the host measurement.
+    tokio::time::sleep(Duration::from_millis(/*millis*/ 300)).await;
+    let decrement_id = app_server
+        .send_request(
+            "thread/decrement_elicitation",
+            Some(serde_json::to_value(ThreadDecrementElicitationParams {
+                thread_id: thread.thread.id.clone(),
+            })?),
+        )
+        .await?;
+    let _: ThreadDecrementElicitationResponse = app_server.read_response(decrement_id).await?;
+    let completed: TurnCompletedNotification =
+        app_server.read_notification("turn/completed").await?;
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
+    let fields = &timing["fields"];
+    let code_mode_host_duration_ns = fields["code_mode_host_duration_ns"]
+        .as_u64()
+        .context("missing host timing")?;
+    assert_eq!(fields["conversation_id"], thread.thread.id);
+    assert_eq!(fields["turn_id"], completed.turn.id);
+    assert_eq!(fields["call_id"], "timed-call");
+    assert_eq!(fields["tool_name"], tool_name);
+    let request = follow_up.single_request();
+    let output = if matches!(tool, TimingTool::Exec) {
+        request.custom_tool_call_output("timed-call")
+    } else {
+        request.function_call_output("timed-call")
+    };
+    let status = if matches!(tool, TimingTool::Exec) {
+        "Script completed"
+    } else {
+        "Script failed"
+    };
+    let seconds = Duration::from_nanos(code_mode_host_duration_ns).as_secs_f32();
+    let seconds = (seconds * 10.0).round() / 10.0;
+    assert_eq!(
+        output["output"][0]["text"],
+        format!("{status}\nWall time {seconds:.1} seconds\nOutput:\n")
+    );
+    Ok(())
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_server_shares_flag_selected_grpc_code_mode_host_across_threads() -> Result<()> {
@@ -45,9 +214,9 @@ async fn app_server_shares_flag_selected_grpc_code_mode_host_across_threads() ->
         .context("timed out waiting for remote code-mode host URL")??
         .context("remote code-mode host exited before publishing its URL")?;
 
-    let model_server = responses::start_mock_server().await;
+    let model_server = ResponsesWebSocketBridge::start().await?;
     let response_mock = responses::mount_sse_sequence(
-        &model_server,
+        &model_server.http,
         vec![
             responses::sse(vec![
                 responses::ev_response_created("resp-1"),
@@ -80,7 +249,8 @@ async fn app_server_shares_flag_selected_grpc_code_mode_host_across_threads() ->
     .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&model_server.uri())
+    MockResponsesConfig::new(model_server.uri())
+        .with_provider_config("supports_websockets = true")
         .enable_feature(Feature::CodeModeOnly)
         .enable_feature(Feature::CodeModePrewarm)
         .write(codex_home.path())?;

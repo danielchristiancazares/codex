@@ -1235,9 +1235,9 @@ async fn turn_start_tracks_thread_originator_in_analytics() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
-    let server = responses::start_mock_server().await;
+    let server = super::responses_websocket_bridge::ResponsesWebSocketBridge::start().await?;
     let _responses = responses::mount_sse_sequence(
-        &server,
+        &server.http,
         vec![
             responses::sse(vec![
                 responses::ev_response_created("resp-1"),
@@ -1249,11 +1249,12 @@ async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
     )
     .await;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new(server.uri())
+        .with_provider_config("supports_websockets = true")
         .enable_feature(Feature::CodeModeOnly)
-        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
+        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.http.uri()))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_analytics_capture(&server.http, codex_home.path()).await?;
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -1274,7 +1275,7 @@ async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
         .await?;
 
     let event = wait_for_analytics_event(
-        &server,
+        &server.http,
         DEFAULT_READ_TIMEOUT,
         "codex_dynamic_tool_call_event",
     )

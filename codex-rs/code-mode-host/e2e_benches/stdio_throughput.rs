@@ -45,9 +45,7 @@ impl HostConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .expect("stdio code-mode host should start");
+        let mut child = command.spawn().expect("stdio code-mode host should start");
         let stdin = child.stdin.take().expect("host stdin should be piped");
         let stdout = child.stdout.take().expect("host stdout should be piped");
         let mut connection = Self {
@@ -66,7 +64,9 @@ impl HostConnection {
             host::CapabilitySet::empty(),
         )
         .expect("client hello should be valid");
-        connection.send(&host::ClientToHost::ClientHello(hello)).await;
+        connection
+            .send(&host::ClientToHost::ClientHello(hello))
+            .await;
         assert_eq!(
             connection.read().await,
             host::HostToClient::HostHello(host::HostHello::new(
@@ -160,6 +160,7 @@ impl HostConnection {
                         cell_id,
                         content_items,
                         error_text,
+                        code_mode_host_duration_ns: _,
                     } = result.into_result().expect("execution should complete")
                     else {
                         panic!("benchmark execution unexpectedly yielded or terminated");

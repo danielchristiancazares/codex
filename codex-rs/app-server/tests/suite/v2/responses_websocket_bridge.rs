@@ -18,13 +18,13 @@ use tokio_tungstenite::tungstenite::extensions::ExtensionsConfig;
 use tokio_tungstenite::tungstenite::extensions::compression::deflate::DeflateConfig;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-pub(super) struct ElicitationModelServer {
+pub(super) struct ResponsesWebSocketBridge {
     pub(super) http: wiremock::MockServer,
     uri: String,
     bridge: JoinHandle<()>,
 }
 
-impl ElicitationModelServer {
+impl ResponsesWebSocketBridge {
     pub(super) async fn start() -> Result<Self> {
         let http = responses::start_mock_server().await;
         let upstream = format!("{}/v1/responses", http.uri());
@@ -119,7 +119,7 @@ impl ElicitationModelServer {
     }
 }
 
-impl Drop for ElicitationModelServer {
+impl Drop for ResponsesWebSocketBridge {
     fn drop(&mut self) {
         // Dropping the bridge's JoinSet also cancels its outstanding connections.
         self.bridge.abort();

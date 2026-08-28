@@ -82,6 +82,8 @@ mod request_permissions;
 mod request_user_input;
 mod request_validation;
 mod residency;
+#[path = "responses_websocket_bridge.rs"]
+mod responses_websocket_bridge;
 mod review;
 mod rollout_migration;
 mod safety_check_downgrade;

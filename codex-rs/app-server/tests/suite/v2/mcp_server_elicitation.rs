@@ -93,9 +93,7 @@ use super::connection_handling_websocket::send_jsonrpc;
 use super::connection_handling_websocket::send_request;
 use super::connection_handling_websocket::spawn_websocket_server;
 
-#[path = "mcp_elicitation_transport.rs"]
-mod model_transport;
-use model_transport::ElicitationModelServer;
+use super::responses_websocket_bridge::ResponsesWebSocketBridge;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const CONNECTOR_ID: &str = "calendar";
@@ -540,8 +538,13 @@ async fn initialize_websocket_client(
 
 async fn start_elicitation_services(
     scenario: ElicitationScenario,
-) -> Result<(ElicitationModelServer, ResponseMock, String, JoinHandle<()>)> {
-    let responses_server = ElicitationModelServer::start().await?;
+) -> Result<(
+    ResponsesWebSocketBridge,
+    ResponseMock,
+    String,
+    JoinHandle<()>,
+)> {
+    let responses_server = ResponsesWebSocketBridge::start().await?;
     let tool_call_arguments = serde_json::to_string(&json!({}))?;
     let response_mock = responses::mount_sse_sequence(&responses_server.http, {
         let mut streams = vec![
@@ -614,7 +617,7 @@ async fn start_elicitation_services(
 struct ElicitationRoundTripFixture {
     mcp: TestAppServer,
     response_mock: ResponseMock,
-    _responses_server: ElicitationModelServer,
+    _responses_server: ResponsesWebSocketBridge,
     scenario: ElicitationScenario,
     next_turn: bool,
     thread_id: String,

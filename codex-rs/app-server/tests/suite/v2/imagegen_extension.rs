@@ -48,6 +48,13 @@ const TINY_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA
 #[derive(Clone, Copy)]
 enum ImagegenTestMode {
     Direct,
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "HTTP Code Mode image-invocation fixtures run on Unix"
+        )
+    )]
     CodeModeOnly,
 }
 
@@ -652,9 +659,9 @@ async fn transparent_image_edit_preserves_metadata_and_recent_pathless_image() -
 
 #[tokio::test]
 async fn standalone_image_generation_is_exposed_in_code_mode_only() -> Result<()> {
-    let server = responses::start_mock_server().await;
+    let server = super::responses_websocket_bridge::ResponsesWebSocketBridge::start().await?;
     let response_mock = responses::mount_sse_once(
-        &server,
+        &server.http,
         responses::sse(vec![
             responses::ev_assistant_message("msg-1", "Done"),
             responses::ev_completed("resp-1"),
@@ -663,11 +670,14 @@ async fn standalone_image_generation_is_exposed_in_code_mode_only() -> Result<()
     .await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        ImagegenTestMode::CodeModeOnly,
-    )?;
+    MockResponsesConfig::new(server.uri())
+        .with_model_provider("openai-custom")
+        .with_provider_name("OpenAI")
+        .with_provider_base_url(&format!("{}/api/codex", server.uri()))
+        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.http.uri()))
+        .with_provider_config("supports_websockets = true\nrequires_openai_auth = true")
+        .enable_feature(Feature::CodeModeOnly)
+        .write(codex_home.path())?;
     write_chatgpt_auth(
         codex_home.path(),
         ChatGptAuthFixture::new("access-chatgpt"),

@@ -56,7 +56,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **71 backported, 1 already present, 284 pending**.
+- Current ledger: **72 backported, 1 already present, 283 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -161,6 +161,25 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   response history, preserving warmup/socket reuse and the shared call/output validator.
   All **52/52** corrective and adjacent cases passed, including the new and legacy form
   round trips, strict-review policy, connection-specific capabilities, and TUI handling.
+- Entry 72 records host receipt-to-outcome time independently for execute/wait/terminate,
+  freezes it before serialization or client backpressure, preserves it through both
+  transports and cell-ID remappers, and uses it for model-visible wall time and telemetry.
+  Internal untimed responses remain representable; host wire conversion requires timing.
+  App-server and the host must be built together for the mandatory stdio field.
+- The 384-case Code Mode batch passed **380**, including every new timing integration,
+  runtime/protocol/host test, and the reused MCP bridge cases. Four older cases exposed
+  two HTTP-only app fixtures, live history estimation during a pending custom call, and
+  an oversized metadata fixture exceeding the conservative complete-item envelope cap.
+  The shared-host, timing, image-tool discovery, and analytics fixtures now use the
+  common WebSocket bridge while retaining their original HTTP assertion backend.
+- Entry 72 also updates both fork-only benchmark response patterns. Bazel analysis first
+  exposed a stale `prost-types-0.14.3` toolchain label; it now names the already-locked
+  `0.14.4` target. Cargo dependencies and lockfiles are unchanged. The default Windows
+  GNU host path was incompatible with V8's Python generation dependency. Explicit MSVC
+  host and target platforms passed analysis, then failed linking Bazel's own
+  `rules_rust//util/process_wrapper` bootstrap with `rust-lld.exe` before benchmark
+  compilation. Both benchmark targets remain unverified on this host. Attempt:
+  `bazel build --lockfile_mode=error --jobs=4 --host_platform=@rules_rs//rs/platforms:x86_64-pc-windows-msvc --platforms=@rules_rs//rs/platforms:x86_64-pc-windows-msvc //codex-rs/code-mode-host:stdio-throughput-bench-bin //codex-rs/code-mode-host:websocket-throughput-bench-bin`.
 
 ## Source ledger
 
@@ -239,7 +258,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `eec4a23cb16de16e0c8cff7c913eed943f223df7` | Support `openai/elicitation` form requests (#41447) | backported | Preserved distinct standard/legacy/new identities, opaque schema/metadata, explicit-response policy, and TUI replay decline. Stable/experimental exports regenerated; protocol and corrected WebSocket-backed integration coverage passed. |
 | `a5c581e2476fd5309af0ea8065b92bdd91aaf26e` | Clarify question handling in Default collaboration mode (#41448) | backported | Preserved availability/mode gates; optional quality questions may use the tool, unanswered requests continue, required input uses concise direct text. Focused model-preset rendering test passed (1/1); prompt remains below 1K tokens. |
 | `75388bf321bffeda40e41dca2061c1cd72c2f4d4` | Rename the read-only Seatbelt platform defaults policy (#41449) | backported | Byte-preserving asset rename, with include_str and Bazel compile_data updated together; old filename has no remaining source references. All 53 Windows-available sandboxing tests passed; macOS Seatbelt execution remains unverified. |
-| `48e22a5fa08b03a9d8acc6a6577dd334c5319446` | Report code mode host request durations (#41452) | pending |  |
+| `48e22a5fa08b03a9d8acc6a6577dd334c5319446` | Report code mode host request durations (#41452) | backported | Per-request host timing survives stdio/gRPC and generation remaps; model output and correlated telemetry agree while output bounds remain unchanged. New timing cases passed; shared WebSocket fixture and fork benchmark patterns adapted. Bazel toolchain label aligned with Cargo.lock; benchmark compilation blocked by Windows bootstrap linking. |
 | `62b458c93151595cdf2b5ef5e37aa3d8b5613aeb` | Block goals after repeated execution host failures (#41454) | pending | Prepared candidate: `ed2f26c84ba41aa3fc84e47217aeb2086723f515`. |
 | `2181224dad147a9ed37e698b66487aba54acdb65` | Support app targets in executor plugin hooks (#41456) | pending |  |
 | `03861e69ef549717c0fc7045abad56321d4a082b` | Source proactive multi-agent instructions from the model catalog (#41457) | pending | Prepared candidate: `b02ccf061477bc3edd152c238b46d29f11920713`. |
