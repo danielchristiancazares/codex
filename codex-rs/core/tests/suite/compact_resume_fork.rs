@@ -724,6 +724,80 @@ async fn snapshot_rollback_followup_turn_trims_context_updates() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// Scenario: rolling back ALL user turns keeps the session-prefix initial
+/// context (developer bundle + environment context) in retained history, so the
+/// next turn must reuse it instead of injecting a second full copy.
+async fn full_rollback_followup_turn_does_not_duplicate_initial_context() -> Result<()> {
+    if network_disabled() {
+        println!("Skipping test because network is disabled in this sandbox");
+        return Ok(());
+    }
+
+    const TURN_ONE_USER: &str = "turn 1 user";
+    const FOLLOWUP_USER: &str = "follow-up user";
+    const ENVIRONMENT_CONTEXT_OPEN_TAG: &str = "<environment_context>";
+
+    let server = MockServer::start().await;
+    let request_log = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_assistant_message("m1", "turn 1 assistant"),
+                ev_completed("r1"),
+            ]),
+            sse(vec![ev_response_created("r2"), ev_completed("r2")]),
+        ],
+    )
+    .await;
+
+    let (_home, _config, _manager, conversation) = start_test_conversation(&server, None).await;
+
+    user_turn(&conversation, TURN_ONE_USER).await;
+
+    conversation
+        .submit(Op::ThreadRollback { num_turns: 1 })
+        .await?;
+    let rollback_event = wait_for_event(&conversation, |ev| {
+        matches!(ev, EventMsg::ThreadRolledBack(_))
+    })
+    .await;
+    let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
+        panic!("expected thread rolled back event");
+    };
+    assert_eq!(rollback_event.num_turns, 1);
+
+    user_turn(&conversation, FOLLOWUP_USER).await;
+
+    let requests = request_log.requests();
+    assert_eq!(requests.len(), 2);
+
+    let turn_one_environment_context_count = requests[0]
+        .message_input_texts("user")
+        .iter()
+        .filter(|text| text.contains(ENVIRONMENT_CONTEXT_OPEN_TAG))
+        .count();
+    assert_eq!(turn_one_environment_context_count, 1);
+
+    let followup_user_texts = requests[1].message_input_texts("user");
+    assert_eq!(
+        followup_user_texts.last().map(String::as_str),
+        Some(FOLLOWUP_USER)
+    );
+    let followup_environment_context_count = followup_user_texts
+        .iter()
+        .filter(|text| text.contains(ENVIRONMENT_CONTEXT_OPEN_TAG))
+        .count();
+    assert_eq!(
+        followup_environment_context_count, 1,
+        "the follow-up request after a full rollback must contain exactly one \
+         environment context; a second copy means the initial-context bundle was \
+         re-injected while the original survived in retained history"
+    );
+
+    Ok(())
+}
+
 fn normalize_line_endings(value: &mut Value) {
     match value {
         Value::String(text) if text.contains('\r') => {

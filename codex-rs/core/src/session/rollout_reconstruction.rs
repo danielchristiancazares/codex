@@ -52,6 +52,23 @@ struct ActiveReplaySegment<'a> {
     world_state_replay: Vec<&'a RolloutItem>,
     base_replacement_history: Option<&'a [ResponseItemEnvelope]>,
     window: Option<ReconstructedWindow>,
+    /// Context recorded before this segment's first user-turn boundary. If a
+    /// rollback skips the segment, these values describe exactly the pre-turn
+    /// prefix that `drop_last_n_user_turns` retains from it.
+    pre_user_reference_context_item: Option<Box<TurnContextItem>>,
+    pre_user_world_state_replay: Vec<&'a RolloutItem>,
+}
+
+/// Pre-user-message context stashed from the oldest rollback-skipped user turn.
+///
+/// A full rollback drops every user-turn segment, so the reverse scan restores
+/// no baselines even though the forward history replay retains the session
+/// prefix recorded before the first user message. These values restore the
+/// baselines that describe that retained prefix so the next turn diffs against
+/// it instead of reinjecting a duplicate full initial context.
+struct RolledBackPrefixContext<'a> {
+    reference_context_item: Option<Box<TurnContextItem>>,
+    world_state_replay: Vec<&'a RolloutItem>,
 }
 
 fn turn_ids_are_compatible(active_turn_id: Option<&str>, item_turn_id: Option<&str>) -> bool {
@@ -59,6 +76,7 @@ fn turn_ids_are_compatible(active_turn_id: Option<&str>, item_turn_id: Option<&s
         .is_none_or(|turn_id| item_turn_id.is_none_or(|item_turn_id| item_turn_id == turn_id))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finalize_active_segment<'a>(
     active_segment: ActiveReplaySegment<'a>,
     base_replacement_history: &mut Option<&'a [ResponseItemEnvelope]>,
@@ -67,6 +85,7 @@ fn finalize_active_segment<'a>(
     world_state_replay: &mut Vec<&'a RolloutItem>,
     window: &mut Option<ReconstructedWindow>,
     pending_rollback_turns: &mut usize,
+    rolled_back_prefix_context: &mut Option<RolledBackPrefixContext<'a>>,
 ) {
     // Thread rollback drops the newest surviving real user-message boundaries. In replay, that
     // means skipping the next finalized segments that contain a non-contextual
@@ -74,6 +93,13 @@ fn finalize_active_segment<'a>(
     if *pending_rollback_turns > 0 {
         if active_segment.counts_as_user_turn {
             *pending_rollback_turns -= 1;
+            // Reverse scan visits older segments last, so keep overwriting: the
+            // final stash belongs to the oldest rolled-back user turn, whose
+            // pre-turn prefix is what `drop_last_n_user_turns` may retain.
+            *rolled_back_prefix_context = Some(RolledBackPrefixContext {
+                reference_context_item: active_segment.pre_user_reference_context_item,
+                world_state_replay: active_segment.pre_user_world_state_replay,
+            });
         }
         return;
     }
@@ -145,6 +171,12 @@ impl Session {
         // Rollback is "drop the newest N user turns". While scanning in reverse, that becomes
         // "skip the next N user-turn segments we finalize".
         let mut pending_rollback_turns = 0usize;
+        // Baselines describing the pre-turn prefix that a full rollback retains.
+        let mut rolled_back_prefix_context: Option<RolledBackPrefixContext<'_>> = None;
+        // Compaction rewrites history bases, making retained-prefix provenance
+        // ambiguous; prefix-baseline restoration stays scoped to rollouts
+        // without any compaction checkpoint.
+        let mut saw_compaction_in_scan = false;
         // Borrowed suffix of rollout items newer than the newest surviving replacement-history
         // checkpoint. If no such checkpoint exists, this remains the full rollout.
         let mut rollout_suffix = rollout_items;
@@ -155,9 +187,13 @@ impl Session {
         for (index, item) in rollout_items.iter().enumerate().rev() {
             match item {
                 RolloutItem::Compacted(compacted) => {
+                    saw_compaction_in_scan = true;
                     let active_segment =
                         active_segment.get_or_insert_with(ActiveReplaySegment::default);
                     active_segment.world_state_replay.push(item);
+                    if active_segment.counts_as_user_turn {
+                        active_segment.pre_user_world_state_replay.push(item);
+                    }
                     if active_segment.window.is_none()
                         && let Some(window_number) = compacted.window_number
                     {
@@ -242,12 +278,23 @@ impl Session {
                             active_segment.reference_context_item =
                                 TurnReferenceContextItem::Latest(Box::new(ctx.clone()));
                         }
+                        // In reverse, the boundary flag being set already means this
+                        // item precedes the segment's first user-turn boundary.
+                        if active_segment.counts_as_user_turn
+                            && active_segment.pre_user_reference_context_item.is_none()
+                        {
+                            active_segment.pre_user_reference_context_item =
+                                Some(Box::new(ctx.clone()));
+                        }
                     }
                 }
                 RolloutItem::WorldState(_) => {
                     let active_segment =
                         active_segment.get_or_insert_with(ActiveReplaySegment::default);
                     active_segment.world_state_replay.push(item);
+                    if active_segment.counts_as_user_turn {
+                        active_segment.pre_user_world_state_replay.push(item);
+                    }
                 }
                 RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => {
                     // `TurnStarted` is the oldest boundary of the active reverse segment.
@@ -266,6 +313,7 @@ impl Session {
                             &mut world_state_replay,
                             &mut window,
                             &mut pending_rollback_turns,
+                            &mut rolled_back_prefix_context,
                         );
                     }
                 }
@@ -307,6 +355,7 @@ impl Session {
                 &mut world_state_replay,
                 &mut window,
                 &mut pending_rollback_turns,
+                &mut rolled_back_prefix_context,
             );
         }
 
@@ -376,6 +425,32 @@ impl Session {
                 | RolloutItem::WorldState(_)
                 | RolloutItem::SecurityRiskScore(_)
                 | RolloutItem::SessionMeta(_) => {}
+            }
+        }
+
+        // A full rollback drops every user-turn segment, leaving both baselines
+        // unset even though `drop_last_n_user_turns` retained the pre-turn
+        // session prefix (initial context bundle) of the oldest rolled-back
+        // turn. Without them the next turn reinjects full initial context below
+        // the surviving copy. Restore the baselines that describe the retained
+        // prefix, scoped to compaction-free rollouts whose rebuilt history is a
+        // pure contextual prefix (no user-turn boundary items).
+        if matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
+            && !saw_compaction_in_scan
+            && let Some(prefix_context) = rolled_back_prefix_context.take()
+            && let Some(restored_reference) = prefix_context.reference_context_item
+        {
+            let items = history.annotated_items();
+            let retained_pure_prefix = !items.is_empty()
+                && !items
+                    .iter()
+                    .any(|envelope| is_user_turn_boundary(&envelope.item));
+            if retained_pure_prefix {
+                reference_context_item = TurnReferenceContextItem::Latest(restored_reference);
+                // Stashed items are chronologically oldest and `world_state_replay`
+                // is collected newest-first, so appending keeps the pre-reverse
+                // ordering invariant.
+                world_state_replay.extend(prefix_context.world_state_replay);
             }
         }
 
