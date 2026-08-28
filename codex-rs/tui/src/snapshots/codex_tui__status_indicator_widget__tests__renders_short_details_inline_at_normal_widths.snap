@@ -1,0 +1,9 @@
+---
+source: tui/src/status_indicator_widget.rs
+expression: "snapshots.join(\"\\n\\n\")"
+---
+width 80:
+✦ Working · Searching for cache defects · 0s · Esc interrupt
+
+width 120:
+✦ Working · Searching for cache defects · 0s · Esc interrupt
