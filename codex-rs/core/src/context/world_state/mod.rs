@@ -1,3 +1,4 @@
+mod additional_context;
 mod agents_md;
 mod apps_instructions;
 mod collaboration_mode;
@@ -36,6 +37,7 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 use std::fmt;
 
+pub(crate) use additional_context::AdditionalContextState;
 pub(crate) use agents_md::AgentsMdState;
 pub(crate) use apps_instructions::AppsInstructionsState;
 pub(crate) use collaboration_mode::CollaborationModeState;
@@ -307,6 +309,21 @@ impl From<&Map<String, Value>> for WorldStateSnapshot {
 }
 
 impl WorldStateSnapshot {
+    pub(crate) fn section<S: WorldStateSection>(&self) -> Option<S::Snapshot> {
+        let snapshot = self.sections.get(S::ID)?;
+        match S::Snapshot::deserialize(snapshot) {
+            Ok(snapshot) => Some(snapshot),
+            Err(err) => {
+                tracing::warn!(
+                    section_id = S::ID,
+                    %err,
+                    "failed to restore world-state section snapshot"
+                );
+                None
+            }
+        }
+    }
+
     pub(crate) fn into_object(self) -> Map<String, Value> {
         self.sections.into_iter().collect()
     }

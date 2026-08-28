@@ -563,11 +563,16 @@ impl ContextManager {
         mut cut_idx: usize,
     ) -> usize {
         while cut_idx > first_instruction_turn_idx {
-            match &snapshot[cut_idx - 1].item {
+            let item = &snapshot[cut_idx - 1].item;
+            match item {
                 ResponseItem::Message { role, content, .. }
-                    if role == "developer" && is_contextual_dev_message_content(content) =>
+                    if role == "developer"
+                        && (is_contextual_dev_message_content(content)
+                            || is_additional_context_message(item)) =>
                 {
-                    if has_non_contextual_dev_message_content(content) {
+                    if has_non_contextual_dev_message_content(content)
+                        && !is_additional_context_message(item)
+                    {
                         // Mixed `build_initial_context` bundles are not reconstructible from
                         // steady-state diffs once trimmed, so the next real turn must fully
                         // reinject context instead of diffing against a stale baseline.
@@ -585,6 +590,24 @@ impl ContextManager {
         }
         cut_idx
     }
+}
+
+fn is_additional_context_message(item: &ResponseItem) -> bool {
+    let ResponseItem::Message {
+        content,
+        internal_chat_message_metadata_passthrough: Some(metadata),
+        ..
+    } = item
+    else {
+        return false;
+    };
+    metadata.content_item_kinds.as_ref().is_some_and(|kinds| {
+        kinds.len() == content.len()
+            && !kinds.is_empty()
+            && kinds
+                .iter()
+                .all(|kind| kind.0.starts_with("additional_content."))
+    })
 }
 
 pub(crate) fn truncate_function_output_payload(

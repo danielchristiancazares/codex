@@ -13,6 +13,7 @@ use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEnt
 use codex_protocol::protocol::AdditionalContextKind as CoreAdditionalContextKind;
 use codex_protocol::protocol::TurnSettingsUpdate;
 use codex_protocol::protocol::TurnSettingsUpdateOutcome;
+use codex_protocol::turn_input::AdditionalContextAction;
 use codex_skills::system_cache_root_dir;
 
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
@@ -92,26 +93,39 @@ pub(crate) struct TurnRequestProcessor {
 
 fn map_additional_context(
     additional_context: Option<HashMap<String, AdditionalContextEntry>>,
-) -> BTreeMap<String, CoreAdditionalContextEntry> {
-    additional_context
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(key, entry)| {
-            (
-                key,
-                CoreAdditionalContextEntry {
-                    value: entry.value,
-                    kind: match entry.kind {
-                        AdditionalContextKind::Untrusted => CoreAdditionalContextKind::Untrusted,
-                        AdditionalContextKind::Application => {
-                            CoreAdditionalContextKind::Application
-                        }
-                    },
-                },
-            )
-        })
-        .collect()
+) -> AdditionalContextAction {
+    match additional_context {
+        None => AdditionalContextAction::KeepSourceState,
+        Some(additional_context) if additional_context.is_empty() => {
+            AdditionalContextAction::ClearSourceState
+        }
+        Some(additional_context) => AdditionalContextAction::PublishSnapshot(
+            additional_context
+                .into_iter()
+                .map(|(key, entry)| {
+                    (
+                        key,
+                        CoreAdditionalContextEntry {
+                            value: entry.value,
+                            kind: match entry.kind {
+                                AdditionalContextKind::Untrusted => {
+                                    CoreAdditionalContextKind::Untrusted
+                                }
+                                AdditionalContextKind::Application => {
+                                    CoreAdditionalContextKind::Application
+                                }
+                            },
+                        },
+                    )
+                })
+                .collect(),
+        ),
+    }
 }
+
+#[cfg(test)]
+#[path = "turn_processor_tests.rs"]
+mod tests;
 
 struct ThreadSettingsBuildParams {
     method: &'static str,
@@ -636,7 +650,7 @@ impl TurnRequestProcessor {
                         cyber_access_program: params.cyber_access_program.map(Into::into),
                         ..Default::default()
                     })
-                    .with_additional_context(additional_context)
+                    .with_additional_context_action(additional_context)
                     .with_responses_metadata(params.responsesapi_client_metadata)
                     .with_trace(self.request_trace_context(&request_id).await),
             )
@@ -1038,7 +1052,7 @@ impl TurnRequestProcessor {
                     content: mapped_items,
                     client_id: params.client_user_message_id,
                 })
-                .with_additional_context(additional_context)
+                .with_additional_context_action(additional_context)
                 .with_responses_metadata(params.responsesapi_client_metadata),
                 params.expected_turn_id,
             )

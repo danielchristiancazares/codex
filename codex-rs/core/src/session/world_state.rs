@@ -5,6 +5,7 @@ use super::step_context::StepContext;
 use crate::connectors;
 use crate::context::ApprovalPromptContext;
 use crate::context::TokenBudgetContext;
+use crate::context::world_state::AdditionalContextState;
 use crate::context::world_state::AgentsMdState;
 use crate::context::world_state::AppsInstructionsState;
 use crate::context::world_state::CollaborationModeState;
@@ -44,7 +45,7 @@ impl Session {
         let model_instructions = turn_context
             .model_info()
             .get_model_instructions(turn_context.personality());
-        let (previous_model, previous_context, base_instructions) = {
+        let (previous_model, previous_context, base_instructions, additional_context) = {
             let state = self.state.lock().await;
             let base_instructions = state.session_configuration.base_instructions.clone();
             (
@@ -64,6 +65,7 @@ impl Session {
                     }),
                 state.reference_context_item(),
                 base_instructions,
+                state.additional_context.snapshot(),
             )
         };
         let personality_is_baked = turn_context.model_info().supports_personality()
@@ -82,6 +84,7 @@ impl Session {
             previous_model.as_deref(),
             model_instructions,
         ));
+        world_state.add_section(AdditionalContextState::new(additional_context));
         if self.features.enabled(Feature::Personality) {
             let personality_instructions = turn_context.personality().and_then(|personality| {
                 turn_context

@@ -39,6 +39,17 @@ pub enum TurnInput {
     InterAgentCommunication(InterAgentCommunication),
 }
 
+/// How one accepted turn submission changes client-provided context state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdditionalContextAction {
+    /// Preserve the source state established by an earlier explicit publication.
+    KeepSourceState,
+    /// Replace the current source state with this complete snapshot.
+    PublishSnapshot(BTreeMap<String, AdditionalContextEntry>),
+    /// Clear the current source state explicitly.
+    ClearSourceState,
+}
+
 /// One turn input and the context that follows it through submission.
 ///
 /// Callers choose start-or-steer, idle-start, or steer-only behavior through
@@ -48,7 +59,7 @@ pub struct TurnInputRequest {
     pub input: TurnInput,
     pub thread_settings: ThreadSettingsOverrides,
     pub start: TurnStartOptions,
-    pub additional_context: BTreeMap<String, AdditionalContextEntry>,
+    pub additional_context: AdditionalContextAction,
     pub responsesapi_client_metadata: Option<HashMap<String, String>>,
     pub trace: Option<W3cTraceContext>,
 }
@@ -73,7 +84,7 @@ impl TurnInputRequest {
             input,
             thread_settings: ThreadSettingsOverrides::default(),
             start: TurnStartOptions::default(),
-            additional_context: BTreeMap::new(),
+            additional_context: AdditionalContextAction::KeepSourceState,
             responsesapi_client_metadata: None,
             trace: None,
         }
@@ -104,10 +115,25 @@ impl TurnInputRequest {
         self
     }
 
-    /// Context merged whether this request starts or steers.
+    /// Replaces the source snapshot whether this request starts or steers.
+    ///
+    /// An empty snapshot clears the source state explicitly.
     pub fn with_additional_context(
         mut self,
         additional_context: BTreeMap<String, AdditionalContextEntry>,
+    ) -> Self {
+        self.additional_context = if additional_context.is_empty() {
+            AdditionalContextAction::ClearSourceState
+        } else {
+            AdditionalContextAction::PublishSnapshot(additional_context)
+        };
+        self
+    }
+
+    /// Applies an already classified additional-context action.
+    pub fn with_additional_context_action(
+        mut self,
+        additional_context: AdditionalContextAction,
     ) -> Self {
         self.additional_context = additional_context;
         self

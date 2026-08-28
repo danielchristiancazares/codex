@@ -1,24 +1,80 @@
 use anyhow::Result;
+use codex_core::CodexThread;
+use codex_core::ForkSnapshot;
+use codex_core::NewThread;
 use codex_core::TurnInputRequest;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ItemCompletedEvent;
+use codex_protocol::protocol::Op;
 use codex_protocol::user_input::UserInput;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::context_snapshot::ContextSnapshotRenderMode;
+use core_test_support::responses::ResponsesRequest;
+use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
+use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
+use core_test_support::responses::sse_completed;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
+use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use super::compact::non_openai_model_provider;
+use super::compact::set_test_compact_prompt;
+
+fn additional_context(
+    entries: &[(&str, &str, AdditionalContextKind)],
+) -> BTreeMap<String, AdditionalContextEntry> {
+    entries
+        .iter()
+        .map(|(key, value, kind)| {
+            (
+                (*key).to_string(),
+                AdditionalContextEntry {
+                    value: (*value).to_string(),
+                    kind: *kind,
+                },
+            )
+        })
+        .collect()
+}
+
+fn context_texts(request: &ResponsesRequest, role: &str, prefix: &str) -> Vec<String> {
+    request
+        .message_input_texts(role)
+        .into_iter()
+        .filter(|text| text.starts_with(prefix))
+        .collect()
+}
+
+async fn submit_context_turn(
+    codex: &Arc<CodexThread>,
+    prompt: &str,
+    context: Option<BTreeMap<String, AdditionalContextEntry>>,
+) -> Result<()> {
+    let request = TurnInputRequest::user_input(vec![UserInput::Text {
+        text: prompt.to_string(),
+        text_elements: Vec::new(),
+    }]);
+    let request = match context {
+        Some(context) => request.with_additional_context(context),
+        None => request,
+    };
+    codex.start_or_steer_turn(request).await?;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    Ok(())
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn additional_context_is_model_visible_but_not_a_user_message_item() -> Result<()> {
@@ -291,6 +347,240 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
             "first turn",
             "second turn",
         ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn omitted_additional_context_preserves_the_current_projection() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let requests = mount_sse_sequence(
+        &server,
+        vec![
+            sse_completed("resp-1"),
+            sse_completed("resp-2"),
+            sse_completed("resp-3"),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| config.include_environment_context = false)
+        .build(&server)
+        .await?;
+    let context =
+        additional_context(&[("browser_info", "same tab", AdditionalContextKind::Untrusted)]);
+
+    for (prompt, context) in [
+        ("first turn", Some(context.clone())),
+        ("ordinary turn", None),
+        ("third turn", Some(context)),
+    ] {
+        submit_context_turn(&test.codex, prompt, context).await?;
+    }
+
+    let requests = requests.requests();
+    assert_eq!(requests.len(), 3);
+    let third_request = &requests[2];
+    let third_request_bytes = third_request.body_json().to_string().len();
+    eprintln!("additional_context_final_serialized_request_bytes={third_request_bytes}");
+    assert_eq!(
+        context_texts(&third_request, "user", "<external_browser_info>").len(),
+        1,
+        "third request serialized bytes: {third_request_bytes}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_rehydrates_the_current_additional_context_projection() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let requests = mount_sse_sequence(
+        &server,
+        vec![
+            sse_completed("resp-1"),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("summary-1", "compacted summary"),
+                ev_completed("resp-2"),
+            ]),
+            sse_completed("resp-3"),
+        ],
+    )
+    .await;
+    let model_provider = non_openai_model_provider(&server);
+    let test = test_codex()
+        .with_config(move |config| {
+            config.include_environment_context = false;
+            config.model_provider = model_provider;
+            set_test_compact_prompt(config);
+        })
+        .build(&server)
+        .await?;
+
+    submit_context_turn(
+        &test.codex,
+        "first turn",
+        Some(additional_context(&[(
+            "browser_info",
+            "same tab",
+            AdditionalContextKind::Untrusted,
+        )])),
+    )
+    .await?;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |event| matches!(event, EventMsg::Warning(_))).await;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    submit_context_turn(&test.codex, "after compact", None).await?;
+
+    let requests = requests.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        context_texts(&requests[2], "user", "<external_browser_info>"),
+        vec!["<external_browser_info>same tab</external_browser_info>"]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_and_fork_restore_the_additional_context_projection_snapshot() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let requests = mount_sse_sequence(
+        &server,
+        vec![
+            sse_completed("resp-initial"),
+            sse_completed("resp-forked"),
+            sse_completed("resp-resumed"),
+        ],
+    )
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.include_environment_context = false;
+    });
+    let initial = builder.build(&server).await?;
+    let context =
+        additional_context(&[("browser_info", "same tab", AdditionalContextKind::Untrusted)]);
+    submit_context_turn(&initial.codex, "initial turn", Some(context.clone())).await?;
+
+    let NewThread { thread: forked, .. } = initial
+        .thread_manager
+        .fork_thread(
+            ForkSnapshot::Interrupted,
+            initial.config.clone(),
+            initial.codex.rollout_path().expect("rollout path"),
+            /*thread_source*/ None,
+            /*parent_trace*/ None,
+        )
+        .await?;
+    submit_context_turn(&forked, "forked turn", Some(context.clone())).await?;
+    let resumed = builder.restart(&server, &initial).await?;
+    submit_context_turn(&resumed.codex, "resumed turn", Some(context)).await?;
+
+    let requests = requests.requests();
+    assert_eq!(requests.len(), 3);
+    for request in &requests[1..] {
+        assert_eq!(
+            context_texts(request, "user", "<external_browser_info>"),
+            vec!["<external_browser_info>same tab</external_browser_info>"]
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rollback_restores_projection_for_both_context_treatments() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let requests = mount_sse_sequence(
+        &server,
+        vec![
+            sse_completed("resp-1"),
+            sse_completed("resp-2"),
+            sse_completed("resp-3"),
+            sse_completed("resp-4"),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| config.include_environment_context = false)
+        .build(&server)
+        .await?;
+    let first_context = additional_context(&[
+        (
+            "automation_info",
+            "run one",
+            AdditionalContextKind::Application,
+        ),
+        ("browser_info", "tab one", AdditionalContextKind::Untrusted),
+    ]);
+    let second_context = additional_context(&[
+        (
+            "automation_info",
+            "run two",
+            AdditionalContextKind::Application,
+        ),
+        ("browser_info", "tab two", AdditionalContextKind::Untrusted),
+    ]);
+
+    for (prompt, context) in [
+        ("first turn", first_context.clone()),
+        ("second turn", second_context),
+    ] {
+        submit_context_turn(&test.codex, prompt, Some(context)).await?;
+    }
+
+    test.codex
+        .submit(Op::ThreadRollback { num_turns: 1 })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::ThreadRolledBack(_))
+    })
+    .await;
+    submit_context_turn(&test.codex, "retried turn", Some(first_context.clone())).await?;
+
+    let first_three_requests = requests.requests();
+    assert_eq!(
+        context_texts(&first_three_requests[2], "user", "<external_browser_info>",),
+        vec!["<external_browser_info>tab one</external_browser_info>"]
+    );
+    assert_eq!(
+        context_texts(&first_three_requests[2], "developer", "<automation_info>"),
+        vec!["<automation_info>run one</automation_info>"]
+    );
+
+    test.codex
+        .submit(Op::ThreadRollback { num_turns: 2 })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::ThreadRolledBack(_))
+    })
+    .await;
+    submit_context_turn(&test.codex, "fresh turn", Some(first_context)).await?;
+
+    let requests = requests.requests();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        context_texts(&requests[3], "user", "<external_browser_info>"),
+        vec!["<external_browser_info>tab one</external_browser_info>"]
+    );
+    assert_eq!(
+        context_texts(&requests[3], "developer", "<automation_info>"),
+        vec!["<automation_info>run one</automation_info>"]
     );
 
     Ok(())

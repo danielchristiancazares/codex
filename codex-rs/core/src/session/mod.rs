@@ -28,7 +28,9 @@ use crate::context::ModelSwitchInstructions;
 use crate::context::MultiAgentRoleInstructions;
 use crate::context::NetworkRuleSaved;
 use crate::context::RecommendedPluginsInstructions;
+use crate::context::world_state::AdditionalContextState;
 use crate::context::world_state::WorldState;
+use crate::context::world_state::WorldStateSnapshot;
 use crate::current_time::TimeProvider;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::exec_policy::BANNED_PREFIX_SUGGESTIONS;
@@ -212,6 +214,7 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 
+mod additional_context;
 mod code_mode_warning;
 pub(crate) mod context_window;
 mod environment;
@@ -1496,9 +1499,14 @@ impl Session {
             .zip(metadata)
             .map(|(item, metadata)| ResponseItemEnvelope { item, metadata })
             .collect();
+        let additional_context = world_state_baseline
+            .as_ref()
+            .and_then(WorldStateSnapshot::section::<AdditionalContextState>)
+            .unwrap_or_default();
         {
             let mut state = self.state.lock().await;
             state.replace_annotated_history(history, reference_context_item);
+            state.additional_context.restore(additional_context);
             if let Some(world_state) = world_state_baseline {
                 state.history.set_world_state_baseline(world_state);
             }
@@ -3492,6 +3500,9 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
+        items = self
+            .rehydrate_additional_context_for_compaction(items)
+            .await;
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }

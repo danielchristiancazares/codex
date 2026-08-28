@@ -22,13 +22,13 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::NonSteerableTurnKind;
 use codex_protocol::protocol::ThreadSettingsOverrides;
+use codex_protocol::turn_input::AdditionalContextAction;
 use codex_protocol::turn_input::NotSubmittedReason;
 use codex_protocol::turn_input::TurnInput as SubmittedTurnInput;
 use codex_protocol::turn_input::TurnInputMode;
@@ -546,7 +546,7 @@ impl Session {
     async fn steer_input(
         &self,
         input: &mut SubmittedTurnInput,
-        additional_context: BTreeMap<String, AdditionalContextEntry>,
+        additional_context: AdditionalContextAction,
         expected_turn_id: Option<&str>,
         required_final_output_json_schema: Option<&Value>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
@@ -639,11 +639,18 @@ impl Session {
 
 async fn merge_additional_context_input(
     session: &Session,
-    additional_context: BTreeMap<String, AdditionalContextEntry>,
+    additional_context: AdditionalContextAction,
 ) -> Vec<TurnInput> {
+    let values = match additional_context {
+        AdditionalContextAction::KeepSourceState => return Vec::new(),
+        AdditionalContextAction::PublishSnapshot(values) => values,
+        AdditionalContextAction::ClearSourceState => BTreeMap::new(),
+    };
     let additional_context_input = {
         let mut state = session.state.lock().await;
-        state.additional_context.merge(additional_context)
+        let (items, snapshot) = state.additional_context.prepare(values);
+        state.additional_context.commit(snapshot);
+        items
     };
     additional_context_input
         .into_iter()
