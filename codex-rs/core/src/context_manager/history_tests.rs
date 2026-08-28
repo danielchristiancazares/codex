@@ -41,6 +41,7 @@ use image::Luma;
 use image::Rgba;
 use pretty_assertions::assert_eq;
 use regex_lite::Regex;
+use test_case::test_case;
 
 const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
 const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
@@ -546,8 +547,16 @@ fn annotated_history_apis_preserve_envelopes() {
     assert_eq!(history.into_raw_items(), vec![first_item]);
 }
 
-#[test]
-fn record_annotated_items_preserves_metadata_while_processing_item() {
+#[test_case(64, None, 100, 64; "model policy")]
+#[test_case(512, Some(128), 300, 128; "smaller tool budget")]
+#[test_case(64, Some(200), 100, 64; "current global ceiling")]
+#[test_case(50_000, Some(30_000), 20_000, 10_000; "hard ceiling")]
+fn record_annotated_items_preserves_metadata_while_processing_item(
+    model_limit: usize,
+    fallback_token_limit_override: Option<usize>,
+    repeat_count: usize,
+    expected_token_limit: usize,
+) {
     let envelope = ResponseItemEnvelope {
         item: ResponseItem::FunctionCallOutput {
             id: None,
@@ -555,23 +564,36 @@ fn record_annotated_items_preserves_metadata_while_processing_item() {
             name: None,
             namespace: None,
             output: FunctionCallOutputPayload {
-                body: FunctionCallOutputBody::Text("word ".repeat(100)),
+                body: FunctionCallOutputBody::Text("word ".repeat(repeat_count)),
                 success: Some(true),
             },
             internal_chat_message_metadata_passthrough: None,
         },
-        metadata: Some(CodexHarnessMetadata::default()),
+        metadata: Some(CodexHarnessMetadata {
+            fallback_token_limit_override,
+            ..Default::default()
+        }),
     };
     let mut history = ContextManager::new();
 
-    history.record_annotated_items(std::slice::from_ref(&envelope), TruncationPolicy::Tokens(4));
-
-    assert_eq!(history.annotated_items().len(), 1);
-    assert_eq!(
-        history.annotated_items()[0].metadata,
-        Some(CodexHarnessMetadata::default())
+    history.record_annotated_items(
+        std::slice::from_ref(&envelope),
+        TruncationPolicy::Tokens(model_limit),
     );
-    assert_ne!(history.annotated_items()[0].item, envelope.item);
+    let expected_token_limit = expected_token_limit.min(
+        crate::context_manager::function_output_item_token_budget(&envelope.item)
+            .expect("output budget"),
+    );
+    let mut expected = envelope.clone();
+    let ResponseItem::FunctionCallOutput { output, .. } = &mut expected.item else {
+        panic!("expected function call output");
+    };
+    *output = crate::context_manager::truncate_function_output_payload(
+        output,
+        TruncationPolicy::Tokens(expected_token_limit),
+    );
+    assert_ne!(expected.item, envelope.item);
+    assert_eq!(history.annotated_items(), &[expected]);
 }
 
 #[test]

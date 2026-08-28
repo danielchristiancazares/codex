@@ -48,6 +48,11 @@ pub struct CodexHarnessMetadata {
     /// Whether a developer message was supplied by an app-server client.
     #[serde(default)]
     pub client_authored: bool,
+
+    /// Saved tool-specific fallback budget in tokens, including on resume.
+    /// The current model policy and the fork's hard ceiling can further restrict it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_token_limit_override: Option<usize>,
 }
 
 impl ResponseItemEnvelope {

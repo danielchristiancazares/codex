@@ -129,6 +129,8 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::context::BaseInstructionsFragment;
 use crate::context::ContextualUserFragment;
+use crate::context_manager::function_output_item_token_budget;
+use crate::context_manager::function_output_payload_cost;
 use crate::cyber_access_program;
 use crate::feedback_tags;
 use crate::responses_metadata::CodexResponsesMetadata;
@@ -655,7 +657,7 @@ impl ModelClient {
             text,
             ..
         } = request;
-        self.prepare_response_items_for_request(&mut input);
+        self.prepare_response_items_for_request(&mut input)?;
         let payload = ApiCompactionInput {
             model: &model,
             input: &input,
@@ -1040,7 +1042,7 @@ impl ModelClient {
         Ok(request)
     }
 
-    fn prepare_response_items_for_request(&self, input: &mut [ResponseItem]) {
+    fn prepare_response_items_for_request(&self, input: &mut [ResponseItem]) -> Result<()> {
         for item in input {
             if item.id().is_some_and(|id| !id.is_prefixed()) {
                 item.set_id(/*new_id*/ None);
@@ -1048,7 +1050,20 @@ impl ModelClient {
             if !self.state.content_item_kinds_enabled {
                 item.clear_content_item_kinds();
             }
+            if let Some(limit) = function_output_item_token_budget(item)
+                && let ResponseItem::FunctionCallOutput { output, .. }
+                | ResponseItem::CustomToolCallOutput { output, .. } = item
+                && function_output_payload_cost(
+                    output,
+                    codex_protocol::protocol::TruncationPolicy::Tokens(limit),
+                ) > limit
+            {
+                return Err(CodexErr::InvalidRequest(
+                    "tool output exceeds the 10K-token model-context item budget".to_string(),
+                ));
+            }
         }
+        Ok(())
     }
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
@@ -1680,7 +1695,7 @@ impl ModelClientSession {
                 prompt.cyber_access_program,
             );
             self.client
-                .prepare_response_items_for_request(&mut request.input);
+                .prepare_response_items_for_request(&mut request.input)?;
             let request_session_telemetry =
                 session_telemetry_for_request(session_telemetry, &request);
             let inference_trace_attempt = inference_trace.start_attempt();
@@ -1868,27 +1883,13 @@ impl ModelClientSession {
 
             let (incremental_request, previous_response_id_from_untraced_warmup) =
                 self.prepare_websocket_request(&request);
-            let inference_trace_attempt = if warmup {
-                // Prewarm sends `generate=false`; it is connection setup, not a
-                // model inference attempt that should appear in rollout traces.
-                InferenceTraceAttempt::disabled()
-            } else {
-                inference_trace.start_attempt()
-            };
-            if previous_response_id_from_untraced_warmup {
-                // The transport can reuse an untraced warmup response id and omit the
-                // already-sent input, but rollout replay needs the logical model-visible
-                // request rather than the compressed websocket delta.
-                inference_trace_attempt.record_started(&request);
-            }
-
             let (previous_response_id, mut incremental_items) = match incremental_request {
                 Some((response_id, items)) => (Some(response_id), Some(items)),
                 None => (None, None),
             };
             let original_item_ids = if let Some(incremental_items) = &mut incremental_items {
                 self.client
-                    .prepare_response_items_for_request(incremental_items);
+                    .prepare_response_items_for_request(incremental_items)?;
                 None
             } else {
                 let original_item_ids = request
@@ -1897,9 +1898,19 @@ impl ModelClientSession {
                     .map(|item| item.id().cloned())
                     .collect::<Vec<_>>();
                 self.client
-                    .prepare_response_items_for_request(&mut request.input);
+                    .prepare_response_items_for_request(&mut request.input)?;
                 Some(original_item_ids)
             };
+            let inference_trace_attempt = if warmup {
+                // Prewarm sends generate=false and stays outside inference traces.
+                InferenceTraceAttempt::disabled()
+            } else {
+                inference_trace.start_attempt()
+            };
+            if previous_response_id_from_untraced_warmup {
+                // Replay needs the full logical request when the wire uses a warmup delta.
+                inference_trace_attempt.record_started(&request);
+            }
             let mut client_metadata = request.client_metadata.take().unwrap_or_default();
             if model_info.use_responses_lite {
                 client_metadata.insert(

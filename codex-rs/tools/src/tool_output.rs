@@ -23,6 +23,12 @@ pub trait ToolOutput: Send {
         false
     }
 
+    /// Persists the tool-specific fallback token limit after output processing.
+    /// History also applies the current model policy and the fork's hard ceiling.
+    fn fallback_token_limit_override(&self) -> Option<usize> {
+        None
+    }
+
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem;
 
     /// Returns the tool call id exposed to `PostToolUse` hooks for this output.
@@ -65,6 +71,10 @@ where
 
     fn contains_external_context(&self) -> bool {
         (**self).contains_external_context()
+    }
+
+    fn fallback_token_limit_override(&self) -> Option<usize> {
+        (**self).fallback_token_limit_override()
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {

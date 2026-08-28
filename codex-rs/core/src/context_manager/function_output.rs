@@ -12,7 +12,75 @@ use tiktoken_rs::CoreBPE;
 static FUNCTION_OUTPUT_TOKENIZER: LazyLock<Option<CoreBPE>> =
     LazyLock::new(|| tiktoken_rs::o200k_base().ok());
 
+pub(crate) const MAX_FUNCTION_OUTPUT_TOKENS: usize = 10_000;
+
 pub(crate) fn truncate_function_output_payload(
+    output: &FunctionCallOutputPayload,
+    policy: TruncationPolicy,
+) -> FunctionCallOutputPayload {
+    truncate_function_output_payload_with_token_limit(output, policy, MAX_FUNCTION_OUTPUT_TOKENS)
+}
+
+/// Applies the model's byte/token policy and a saved tool limit to the complete
+/// output payload, including serialization, media estimates and omission markers.
+/// A nominal budget below the minimum wire representation retains only the
+/// irreducible empty string/array framing and the internal success metadata.
+pub(crate) fn truncate_function_output_payload_with_token_limit(
+    output: &FunctionCallOutputPayload,
+    policy: TruncationPolicy,
+    token_limit: usize,
+) -> FunctionCallOutputPayload {
+    let token_limit = token_limit.min(MAX_FUNCTION_OUTPUT_TOKENS);
+    let policy = match policy {
+        TruncationPolicy::Tokens(model_limit) => {
+            TruncationPolicy::Tokens(model_limit.min(token_limit))
+        }
+        TruncationPolicy::Bytes(_) => policy,
+    };
+    let bounded = truncate_with_policy(output, policy);
+    let token_policy = TruncationPolicy::Tokens(token_limit);
+    if matches!(policy, TruncationPolicy::Tokens(_))
+        || function_output_payload_cost(&bounded, token_policy) <= token_limit
+    {
+        return bounded;
+    }
+
+    let token_bounded = truncate_with_policy(&bounded, token_policy);
+    if function_output_payload_cost(&token_bounded, policy) <= policy_budget(policy) {
+        return token_bounded;
+    }
+
+    // A changed omission marker can shrink token cost while increasing bytes.
+    // Keep candidates verified against both currencies in that rare case.
+    let mut fitted = FunctionCallOutputPayload {
+        body: match &output.body {
+            FunctionCallOutputBody::Text(_) => FunctionCallOutputBody::Text(String::new()),
+            FunctionCallOutputBody::ContentItems(_) => {
+                FunctionCallOutputBody::ContentItems(Vec::new())
+            }
+        },
+        success: output.success,
+    };
+    let mut lower = 0usize;
+    let mut upper = token_limit;
+    while lower <= upper {
+        let candidate_limit = lower + (upper - lower) / 2;
+        let candidate = truncate_with_policy(&bounded, TruncationPolicy::Tokens(candidate_limit));
+        if function_output_payload_cost(&candidate, policy) <= policy_budget(policy)
+            && function_output_payload_cost(&candidate, token_policy) <= token_limit
+        {
+            fitted = candidate;
+            lower = candidate_limit.saturating_add(1);
+        } else if candidate_limit == 0 {
+            break;
+        } else {
+            upper = candidate_limit - 1;
+        }
+    }
+    fitted
+}
+
+fn truncate_with_policy(
     output: &FunctionCallOutputPayload,
     policy: TruncationPolicy,
 ) -> FunctionCallOutputPayload {

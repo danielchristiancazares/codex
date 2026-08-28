@@ -6,6 +6,19 @@ For advanced configuration instructions, see [this documentation](https://develo
 
 For a full configuration reference, see [this documentation](https://developers.openai.com/codex/config-reference).
 
+## MCP output budgets
+
+Each `[mcp_servers.<server>.tools.<tool>]` entry can set a positive
+`output_token_limit`. Plugin and user policies combine by taking the smaller
+explicit limit, independently of approval policy. This fork counts the complete
+serialized output and keeps the current model's byte/token policy and a 10K-token
+ceiling in effect. The saved per-tool budget also applies to post-tool hook
+feedback and resumed history; a lower current model policy can further reduce it.
+Code Mode receives the original typed tool result.
+Tool-result envelope metadata also consumes the context-item allowance. Oversized
+envelopes fail before a model request is sent. A zero or sub-framing global budget
+retains only the empty JSON string/array representation and internal status.
+
 ## Lifecycle hooks
 
 Admins can set top-level `allow_managed_hooks_only = true` in

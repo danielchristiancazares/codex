@@ -1,12 +1,16 @@
 mod citation_projection;
 mod function_output;
+mod function_output_envelope;
 mod history;
 mod normalize;
 mod tool_discovery;
 pub(crate) mod updates;
 
+pub(crate) use function_output::MAX_FUNCTION_OUTPUT_TOKENS;
 pub(crate) use function_output::function_output_payload_cost;
 pub(crate) use function_output::truncate_function_output_payload;
+pub(crate) use function_output::truncate_function_output_payload_with_token_limit;
+pub(crate) use function_output_envelope::function_output_item_token_budget;
 pub(crate) use history::ContextManager;
 pub(crate) use history::estimate_function_output_content_item_tokens;
 pub(crate) use history::estimate_image_bytes;

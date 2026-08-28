@@ -1,3 +1,4 @@
+use crate::context_manager::MAX_FUNCTION_OUTPUT_TOKENS;
 use crate::context_manager::function_output_payload_cost;
 use crate::context_manager::truncate_function_output_payload;
 use crate::original_image_detail::sanitize_original_image_detail;
@@ -121,6 +122,14 @@ impl ToolOutput for McpToolOutput {
 
     fn success_for_logging(&self) -> bool {
         self.result.success()
+    }
+
+    fn fallback_token_limit_override(&self) -> Option<usize> {
+        Some(
+            self.truncation_policy
+                .token_budget()
+                .min(MAX_FUNCTION_OUTPUT_TOKENS),
+        )
     }
 
     fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {

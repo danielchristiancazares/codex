@@ -230,8 +230,11 @@ fn mcp_tool_output_response_item_preserves_content_items() {
     }
 }
 
-#[test]
-fn mcp_tool_output_code_mode_result_preserves_content_without_private_metadata() {
+#[test_case::test_case(TruncationPolicy::Bytes(64); "byte budget")]
+#[test_case::test_case(TruncationPolicy::Tokens(1); "token budget")]
+fn mcp_tool_output_code_mode_result_preserves_content_without_private_metadata(
+    truncation_policy: TruncationPolicy,
+) {
     let large_content = "large structured value ".repeat(1_000);
     let output = McpToolOutput {
         result: CallToolResult {
@@ -250,12 +253,13 @@ fn mcp_tool_output_code_mode_result_preserves_content_without_private_metadata()
         tool_input: json!({}),
         wall_time: std::time::Duration::from_millis(1250),
         original_image_detail_supported: false,
-        truncation_policy: TruncationPolicy::Bytes(64),
+        truncation_policy,
     };
 
-    let result = output.code_mode_result(&ToolPayload::Function {
+    let payload = ToolPayload::Function {
         arguments: "{}".to_string(),
-    });
+    };
+    let result = output.code_mode_result(&payload);
 
     assert_eq!(
         result,
@@ -450,9 +454,11 @@ fn exec_command_tool_output_reserves_metadata_budget_and_preserves_policy_units(
         .collect::<String>()
         .into_bytes();
 
+    // Leave room for the fixed metadata and omission notice while still forcing
+    // the raw output to truncate and retain its first and last lines.
     for (policy, marker) in [
-        (TruncationPolicy::Bytes(200), "chars truncated"),
-        (TruncationPolicy::Tokens(50), "tokens truncated"),
+        (TruncationPolicy::Bytes(400), "chars truncated"),
+        (TruncationPolicy::Tokens(128), "tokens truncated"),
     ] {
         let response = ExecCommandToolOutput {
             event_call_id: "call-42".to_string(),

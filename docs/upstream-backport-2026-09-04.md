@@ -12,6 +12,9 @@
 - Initially pinned source: `upstream/main` at `a482e65b8643509f2217b3a34453f3c4a1968228`.
 - After disk recovery, upstream refresh advanced the pinned source to `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`, adding 11 commits to the requested range.
 - Source range now contains 356 commits. Git patch equivalence initially identified #42529 as present.
+- The handoff-resumption refresh fetched `d05e6d5f46505976ec4a195f0a3bb6d6e617851e`.
+  The explicitly handed-off source pin remains `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`;
+  commits beyond that pin are outside this audit's 356-source scope.
 - Existing stashes and other worktrees are preserved. This task includes local commits; pushes and releases remain separate.
 - Existing prepared semantic backports are available on `integrate/upstream-semantic-backports-20260903`; each reused change is checked against its upstream intent and current fork behavior.
 
@@ -51,10 +54,36 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **60 backported, 1 already present, 295 pending**.
+- Current ledger: **61 backported, 1 already present, 294 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
-- Notification-media filtering begins the next grouped validation batch. Its default/opt-in JSON-RPC fixtures use the fork's WebSocket transport; config schema regeneration is queued with the related MCP output-limit changes.
+- Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
+- The first entry-61 batch ran 43 cases: 41 passed, including both notification-media
+  integrations and 12 native MCP output-limit cases. Two older app-server realtime
+  fixtures selected by the broad `function_output` filter used HTTP against the fork's
+  WebSocket-only child runtime. The follow-up filter targets context-manager output tests.
+- Entry-61 handoff boundary work reserves the complete serialized tool-result envelope,
+  rejects oversized normalized outputs before model transmission and inference-trace
+  start, and documents irreducible empty wire framing for nominal zero/tiny budgets.
+  Initial builds exposed two corrected compile issues: fallible serialized-size accounting
+  and a regression assertion that needed the fork's `CodexErrorDetails` accessor.
+- The corrected entry-61 focused batch passed **441/441**, including all 14 native MCP
+  output-limit integrations, both notification-media cases, 285 config tests, 15 history
+  tests, 101 tools tests, and the new complete-item/tiny-budget checks. The terminal wait
+  was interrupted during operator coordination; the completed JUnit report recorded zero
+  failures and zero errors (run `e59e8e63-d6fc-461c-99f9-9918e317c932`). Independent boundary
+  review found no unresolved defect after the compile fixes.
+- Additional entry-61 transport/config/compaction coverage passed 44/45 initially.
+  The existing exec metadata fixture requested 200 bytes while its fixed header and
+  omission notice alone serialized to 218 bytes. Its producer and byte-truncation
+  algorithm were unchanged by this backport. The fixture budgets now leave room for
+  metadata plus retained first/last lines while still requiring truncation; production
+  exec-output behavior is unchanged. The targeted corrective rerun passed **1/1**.
+- Config and both stable/experimental app-server schema generation passed for entry 61.
+  Decoded export review found exactly the expected stable internal `RolloutLine.json`
+  metadata field; public API exports and the experimental bundle remained unchanged.
+- App-server protocol validation against the regenerated artifacts passed **303/303**
+  (the schema-writing test is intentionally ignored during ordinary test runs).
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
@@ -122,9 +151,9 @@ This ledger is in progress. “Pending” entries still require source review an
 | `d9511fb7888d98f89526d4ae019dd9be2f14199e` | Refresh MCP HTTP helper headers after authorization failures (#41400) | backported | Exact prepared single-flight header refresh with epoch fencing, effective-header retry comparison, OAuth precedence, deadline and redirect checks. |
 | `3ae4225b1761c135c6d3bbc1ea0cfcfc95752cdc` | Restrict cloud task credentials to trusted origins (#41403) | backported | Exact prepared trusted-origin check precedes credential loading; preserved fork route-aware cookies and disabled redirects for authenticated cloud requests. |
 | `170da98842877c730a1d8ec9ee7421e54c06bb6d` | Optimize history item lookups (#41413) | backported | Focused Linear/Indexed state and Unicode mapper modules; first-ID/rollback/UTF-8 semantics preserved. 322 tests passed; repeated measured gains and accepted small-turn costs documented in performance audit. |
-| `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | backported | Preserved exhaustive fork variants; extracted WebSocket default/opt-in coverage and documented notification-only filtering. Grouped validation pending; standalone function-output filtering follows in #41427. |
-| `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | pending | Prepared candidate: `c374194b19507145d959291c3316dfa211b2f419`. |
-| `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | pending |  |
+| `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | backported | Preserved exhaustive fork variants; extracted WebSocket default/opt-in coverage and documented notification-only filtering. Both integration cases passed with entry 61; standalone function-output filtering follows in #41427. |
+| `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | backported | Adapted `c374194b19507145d959291c3316dfa211b2f419`: saved per-tool limits combine with current byte/token policy and a complete-item 10K ceiling; envelope-aware truncation and terminal outbound guard preserve metadata/hooks/resume/Code Mode. Config and stable internal schema regenerated. 441 focused, 44 adjacent, 1 corrective, and 303 protocol tests passed. |
+| `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | pending | Independently reviewed: no prepared equivalent or live caller yet. Use explicit serde_json alloc feature, refresh Bazel lock, preserve stateless borrowed collection. Live consumers must bound assembled items after labels and all sections; separate transcript pools do not bound their sum. |
 | `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | pending | Prepared candidate: `e42b66ad9d36dace1f8ad882065e9787fce1f777`. |
 | `2008d27e98d7b46170d2d464b36dbf97008611b8` | Filter media from function call output notifications (#41427) | pending |  |
 | `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | pending |  |
@@ -207,8 +236,8 @@ This ledger is in progress. “Pending” entries still require source review an
 | `bfa9646787cda93c8012532ea8fa44a74fc38bfc` | Add plugin reconciliation app-server API (#41949) | pending |  |
 | `55e5158e1841bb4b0b392a462c24b4d9fc38d597` | Improve tracing for nested tool calls and exec processes (#41950) | pending |  |
 | `633ab199cfd724aa78013c006b27a2b3d049fc3b` | Enforce marketplace source policy for curated plugins (#41953) | pending |  |
-| `c7fced56eb3f5b0b96f4957caefc06b07ef65940` | Track TUI starts by app server mode (#41974) | pending |  |
-| `d038f3448f2eb9b48614f6359a3b21113d7d42ae` | Move `disable_paste_burst` under `[tui]` (#41976) | pending |  |
+| `c7fced56eb3f5b0b96f4957caefc06b07ef65940` | Track TUI starts by app server mode (#41974) | pending | Independently reviewed: no prepared equivalent. Emit once per TUI launch after resolved target/OTEL setup; keep exhaustive target variants and startup draft/workload-identity/panic-recovery flow. Do not gate the per-launch metric on process-start deduplication. |
+| `d038f3448f2eb9b48614f6359a3b21113d7d42ae` | Move `disable_paste_burst` under `[tui]` (#41976) | pending | Independently reviewed: preserve legacy top-level fallback and nested Option<bool>; merged nested key wins, including across layers. Retain fork Tui fields; update exhaustive literals and config schema. Composer state-machine behavior is unchanged. |
 | `e017e93aceafb2fe04bed1c926e448a5fb4f913d` | Preserve raw response usage metadata (#41980) | pending |  |
 | `2b7c279735d0d096cf7b34fe98938f46792f4d4f` | Report turn trigger and source in turn analytics (#42003) | pending |  |
 | `82099786163f3c05facf09078136679e18b64279` | Share Guardian user-message retention logic (#42031) | pending |  |

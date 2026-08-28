@@ -3,9 +3,11 @@ use crate::context::ModelSwitchInstructions;
 use crate::context::world_state::PersistentModeState;
 use crate::context::world_state::WorldState;
 use crate::context::world_state::WorldStateSnapshot;
+use crate::context_manager::MAX_FUNCTION_OUTPUT_TOKENS;
+use crate::context_manager::function_output_item_token_budget;
 use crate::context_manager::normalize;
 use crate::context_manager::tool_discovery::ToolDiscoveryState;
-use crate::context_manager::truncate_function_output_payload;
+use crate::context_manager::truncate_function_output_payload_with_token_limit;
 use crate::event_mapping::has_non_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_user_message_content;
@@ -173,7 +175,7 @@ impl ContextManager {
         self.record_items_with_metadata(items.into_iter().map(|item| (item, None)), policy);
     }
 
-    /// Records history envelopes while preserving their history-only metadata.
+    /// Records output while preserving its history-only metadata.
     pub(crate) fn record_annotated_items(
         &mut self,
         items: &[ResponseItemEnvelope],
@@ -201,7 +203,9 @@ impl ContextManager {
             if is_model_continuation_item(item) {
                 self.tool_discovery.note_model_generated_item();
             }
-            let mut processed_item = Self::process_item(item, policy);
+            let output_token_limit =
+                metadata.and_then(|metadata| metadata.fallback_token_limit_override);
+            let mut processed_item = Self::process_item(item, policy, output_token_limit);
             self.tool_discovery
                 .deduplicate_response_item(&mut processed_item);
             let processed = ResponseItemEnvelope {
@@ -531,17 +535,34 @@ impl ContextManager {
 
     fn finalize_function_outputs(&mut self, truncation_policy: TruncationPolicy) {
         for envelope in Arc::make_mut(&mut self.items) {
-            match &mut envelope.item {
-                ResponseItem::FunctionCallOutput { output, .. }
-                | ResponseItem::CustomToolCallOutput { output, .. } => {
-                    *output = truncate_function_output_payload(output, truncation_policy);
-                }
-                _ => {}
+            let item_limit = function_output_item_token_budget(&envelope.item)
+                .unwrap_or(MAX_FUNCTION_OUTPUT_TOKENS);
+            if let ResponseItem::FunctionCallOutput { output, .. }
+            | ResponseItem::CustomToolCallOutput { output, .. } = &mut envelope.item
+            {
+                let token_limit = envelope
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.fallback_token_limit_override)
+                    .unwrap_or(MAX_FUNCTION_OUTPUT_TOKENS)
+                    .min(item_limit);
+                *output = truncate_function_output_payload_with_token_limit(
+                    output,
+                    truncation_policy,
+                    token_limit,
+                );
             }
         }
     }
 
-    fn process_item(item: &ResponseItem, policy: TruncationPolicy) -> ResponseItem {
+    fn process_item(
+        item: &ResponseItem,
+        policy: TruncationPolicy,
+        output_token_limit: Option<usize>,
+    ) -> ResponseItem {
+        let output_token_limit = output_token_limit
+            .unwrap_or(MAX_FUNCTION_OUTPUT_TOKENS)
+            .min(function_output_item_token_budget(item).unwrap_or(MAX_FUNCTION_OUTPUT_TOKENS));
         match item {
             ResponseItem::FunctionCallOutput {
                 id,
@@ -555,7 +576,11 @@ impl ContextManager {
                 call_id: call_id.clone(),
                 name: name.clone(),
                 namespace: namespace.clone(),
-                output: truncate_function_output_payload(output, policy),
+                output: truncate_function_output_payload_with_token_limit(
+                    output,
+                    policy,
+                    output_token_limit,
+                ),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
             ResponseItem::CustomToolCallOutput {
@@ -568,7 +593,11 @@ impl ContextManager {
                 id: id.clone(),
                 call_id: call_id.clone(),
                 name: name.clone(),
-                output: truncate_function_output_payload(output, policy),
+                output: truncate_function_output_payload_with_token_limit(
+                    output,
+                    policy,
+                    output_token_limit,
+                ),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
             ResponseItem::ToolSearchOutput {

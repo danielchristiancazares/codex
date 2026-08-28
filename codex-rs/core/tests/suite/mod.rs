@@ -114,6 +114,8 @@ mod local_compaction;
 mod mcp_auth_elicitation;
 mod mcp_auth_refresh;
 mod mcp_optional_startup_grace;
+#[path = "mcp_output_limits.rs"]
+mod mcp_output_limits;
 #[cfg(unix)]
 mod mcp_refresh_cleanup;
 mod mcp_resource;
