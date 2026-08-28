@@ -557,6 +557,41 @@ async fn create_ready_async_managed_client(tools: Vec<ToolInfo>) -> AsyncManaged
 }
 
 #[tokio::test]
+async fn binding_tools_follow_deterministic_server_order() {
+    let mut manager = McpConnectionSet::empty(/*prefix_mcp_tool_names*/ true);
+    // Register servers in shuffled, non-alphabetical order. The `servers` map is
+    // a HashMap with arbitrary iteration order, so the deterministic sort by raw
+    // tool identity in `normalize_tools_for_model_with_prefix` is the only thing
+    // keeping the model-visible tools order stable across runtime republishes
+    // (prompt-cache prefix reuse). This test pins that sort.
+    for server_name in ["echo", "alpha", "delta", "charlie", "bravo"] {
+        let tool = create_test_tool(server_name, &format!("{server_name}_tool"));
+        manager.insert_test_client(
+            server_name,
+            create_ready_async_managed_client(vec![tool]).await,
+        );
+    }
+    let manager = Arc::new(manager);
+    let expected_server_order = vec!["alpha", "bravo", "charlie", "delta", "echo"];
+
+    let binding = capture_binding(&manager).await;
+    let binding_server_order = binding
+        .tools()
+        .iter()
+        .map(|tool| tool.server_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(binding_server_order, expected_server_order);
+
+    // `list_all_tools` shares the same server iteration and must match.
+    let listed_tools = manager.list_all_tools().await;
+    let listed_server_order = listed_tools
+        .iter()
+        .map(|tool| tool.server_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(listed_server_order, expected_server_order);
+}
+
+#[tokio::test]
 async fn connection_statuses_observe_clients_without_starting_them() {
     use codex_protocol::mcp::McpServerConnectionStatus as Status;
 

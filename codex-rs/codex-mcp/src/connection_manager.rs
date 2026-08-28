@@ -189,6 +189,10 @@ impl McpServerView {
 
 /// A published view over a set of running MCP server connections.
 pub(crate) struct McpConnectionSet {
+    /// Keyed by server name. Iteration order here is incidental: every
+    /// model-visible tool collection is sorted by raw tool identity in
+    /// `normalize_tools_for_model_with_prefix`, which is what keeps the
+    /// serialized tools order stable across runtime republishes.
     servers: HashMap<String, McpServerView>,
     disabled_servers: Vec<String>,
     protocol_mode: crate::McpProtocolMode,
