@@ -1809,6 +1809,13 @@ All items emit shared lifecycle events:
 
 `review` is [UNSTABLE] and currently has `{status, riskLevel?, userAuthorization?, rationale?}`, where `status` is one of `inProgress`, `approved`, `denied`, or `aborted`. `riskLevel` is one of `"low"`, `"medium"`, `"high"`, or `"critical"` when present. `userAuthorization` is one of `"unknown"`, `"low"`, `"medium"`, or `"high"` when present. `action` is a tagged union with `type: "command" | "execve" | "writeStdin" | "applyPatch" | "networkAccess" | "mcpToolCall" | "requestPermissions"`. Command-like actions include a `source` discriminator (`"shell"` or `"unifiedExec"`). A `writeStdin` action carries `approvalId`, `processId`, `stdin`, and `cwd`; it reviews input to an existing command item without changing that parent item's lifecycle. These notifications are separate from the target item's own `item/completed` lifecycle and are intentionally temporary while the auto-review app protocol is still being designed.
 
+When `features.omit_app_server_notification_media = true`, `item/started`,
+`item/completed`, and `rawResponseItem/completed` omit structured inline image/audio
+content from user messages, dynamic and MCP results, raw tool outputs, and image
+generation results. The feature is disabled by default. Local filesystem paths,
+encrypted content, and text previews remain; text previews can contain encoded
+media. Conversation history and model requests retain the original media.
+
 There are additional item-specific events:
 
 #### agentMessage

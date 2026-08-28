@@ -105,6 +105,9 @@ use super::analytics::mount_analytics_capture;
 use super::analytics::wait_for_analytics_event;
 use super::analytics::wait_for_matching_analytics_event;
 
+#[path = "turn_start_notification_media.rs"]
+mod notification_media;
+
 #[cfg(windows)]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
