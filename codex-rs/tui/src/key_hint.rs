@@ -160,22 +160,24 @@ impl KeyBindingListExt for [KeyBinding] {
 
 /// Returns whether an event should be treated as literal text input.
 ///
-/// Searchable pickers use this to avoid stealing plain printable characters for
-/// navigation when the same character might be a valid query. For example, a
-/// list may bind `j` and `k` for movement, but a searchable list must let
-/// plain `j` update the query while still allowing `Ctrl+J` to move. Calling
-/// this after normalizing keybindings would blur that distinction and cause
-/// printable search input to disappear.
+/// Searchable pickers use this to avoid stealing text-producing characters for
+/// navigation when the same character might be valid input. This matches the
+/// composer's modifier boundary: plain, Shift, and Windows AltGr characters
+/// are text. Ctrl/Alt shortcuts and Super/Hyper/Meta chords remain commands.
+/// Release events are excluded so enhanced-key terminals do not duplicate text.
 pub(crate) fn is_plain_text_key_event(event: KeyEvent) -> bool {
     matches!(
         event,
         KeyEvent {
             code: KeyCode::Char(ch),
             modifiers,
+            kind: KeyEventKind::Press | KeyEventKind::Repeat,
             ..
         } if !ch.is_ascii_control()
-            && !modifiers.contains(KeyModifiers::CONTROL)
-            && !modifiers.contains(KeyModifiers::ALT)
+            && !has_ctrl_or_alt(modifiers)
+            && !modifiers.intersects(
+                KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META
+            )
     )
 }
 
@@ -253,6 +255,7 @@ pub(crate) fn is_altgr(_mods: KeyModifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn is_press_accepts_press_and_repeat_but_rejects_release() {
@@ -281,6 +284,51 @@ mod tests {
         assert!(bindings.is_pressed(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)));
         assert!(bindings.is_pressed(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)));
         assert!(!bindings.is_pressed(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn plain_text_events_match_composer_modifiers_and_event_kinds() {
+        let press = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let repeat = KeyEvent {
+            kind: KeyEventKind::Repeat,
+            ..press
+        };
+        let release = KeyEvent {
+            kind: KeyEventKind::Release,
+            ..press
+        };
+
+        assert_eq!(
+            [
+                is_plain_text_key_event(press),
+                is_plain_text_key_event(repeat),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('界'), KeyModifiers::NONE,)),
+                is_plain_text_key_event(release),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::SUPER,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::HYPER,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::META,)),
+                is_plain_text_key_event(KeyEvent::new(
+                    KeyCode::Char('@'),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                )),
+            ],
+            [
+                true,
+                true,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                cfg!(windows),
+            ]
+        );
     }
 
     #[test]
