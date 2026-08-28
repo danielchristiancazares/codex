@@ -2272,6 +2272,38 @@ fn executor_hooks_use_one_environment_for_all_events() {
 }
 
 #[tokio::test]
+async fn executor_subagent_stop_cleanup_is_async_and_non_controlling() {
+    let (mut engine, calls, mut request, mut expected_call, mut source) =
+        executor_stop_hook_fixture();
+    source.hooks.subagent_stop = std::mem::take(&mut source.hooks.stop);
+    let HookHandlerConfig::McpTool { input, .. } = &mut source.hooks.subagent_stop[0].hooks[0]
+    else {
+        panic!("expected cleanup MCP handler");
+    };
+    input.insert(
+        "hook_event_name".to_string(),
+        serde_json::json!("${hook_event_name}"),
+    );
+    expected_call.input.insert(
+        "hook_event_name".to_string(),
+        serde_json::json!("SubagentStop"),
+    );
+    engine.set_executor_hooks(vec![source]);
+    request.target = StopHookTarget::SubagentStop {
+        agent_id: "child".to_string(),
+        agent_type: "worker".to_string(),
+        agent_transcript_path: None,
+    };
+
+    assert_eq!(engine.preview_stop(&request), Vec::new());
+    let outcome = engine.run_stop(request).await;
+    wait_for_mcp_calls(&calls, /*count*/ 1).await;
+    assert!(!outcome.should_block);
+    assert!(outcome.hook_events.is_empty());
+    assert_eq!(*calls.lock().expect("lock MCP calls"), vec![expected_call]);
+}
+
+#[tokio::test]
 async fn memory_consolidation_stop_preserves_policy_and_executor_cleanup() {
     for (source, runs_policy) in [
         (HookSource::User, false),

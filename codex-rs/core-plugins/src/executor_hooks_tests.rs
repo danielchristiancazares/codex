@@ -118,7 +118,8 @@ fn discovers_allowlisted_executor_plugin_hook_sources() {
                 "Interrupt": cleanup_hooks,
                 "UserPromptSubmit": cleanup_hooks
             } },
-            { "hooks": { "UserPromptSubmit": cleanup_hooks } }
+            { "hooks": { "UserPromptSubmit": cleanup_hooks } },
+            { "hooks": { "SubagentStop": cleanup_hooks } }
         ]
     });
     let snapshot = snapshot_for_manifest(
@@ -133,6 +134,8 @@ fn discovers_allowlisted_executor_plugin_hook_sources() {
     interrupt_source.hooks.interrupt = std::mem::take(&mut interrupt_source.hooks.stop);
     let mut stop_and_interrupt_source = expected_source(/*index*/ 2);
     stop_and_interrupt_source.hooks.interrupt = stop_and_interrupt_source.hooks.stop.clone();
+    let mut subagent_source = expected_source(/*index*/ 4);
+    subagent_source.hooks.subagent_stop = std::mem::take(&mut subagent_source.hooks.stop);
 
     assert_eq!(
         sources,
@@ -140,6 +143,7 @@ fn discovers_allowlisted_executor_plugin_hook_sources() {
             expected_source(/*index*/ 0),
             interrupt_source,
             stop_and_interrupt_source,
+            subagent_source,
         ]
     );
 }

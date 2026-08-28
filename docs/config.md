@@ -28,7 +28,7 @@ setting is only supported in `requirements.toml`; putting it in `config.toml`
 does not enable managed-hooks-only mode.
 
 Allowlisted executor cleanup hooks run asynchronously and use discovery from the
-selected execution step. Stop and Interrupt hook requests report that step's model
+selected execution step. Stop, SubagentStop, and Interrupt requests report that step's model
 and approval mode consistently with their MCP metadata. An interrupted turn with
 no captured step uses its initial settings for local hooks and has no executor
 cleanup discovery to reuse.
