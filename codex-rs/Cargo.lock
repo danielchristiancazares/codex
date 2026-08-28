@@ -3136,6 +3136,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-guardian-context"
+version = "0.153.4"
+dependencies = [
+ "codex-protocol",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "codex-guardian-v2"
 version = "0.153.4"
 dependencies = [
