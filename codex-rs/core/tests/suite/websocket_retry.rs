@@ -134,6 +134,58 @@ async fn websocket_reconnects_until_the_provider_recovers() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn response_failed_without_error_reconnects_with_full_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_websocket_server(vec![
+        vec![
+            vec![ev_response_created("warmup"), ev_completed("warmup")],
+            vec![
+                ev_response_created("resp-null-error"),
+                json!({
+                    "type": "response.failed",
+                    "response": {
+                        "id": "resp-null-error",
+                        "status": "failed",
+                        "error": null
+                    }
+                }),
+            ],
+        ],
+        vec![vec![
+            ev_response_created("resp-retry"),
+            ev_completed("resp-retry"),
+        ]],
+    ])
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.model_provider.stream_max_retries = 0.into();
+    });
+    let test = builder.build_with_websocket_server(&server).await?;
+
+    test.submit_turn("hello").await?;
+
+    assert_eq!(server.handshakes().len(), 2);
+    let connections = server.connections();
+    assert_eq!(
+        connections.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    let failed_request = connections[0][1].body_json();
+    let retry_request = connections[1][0].body_json();
+    assert_eq!(retry_request.get("previous_response_id"), None);
+    assert_eq!(retry_request["input"], failed_request["input"]);
+    assert!(
+        retry_request["input"]
+            .as_array()
+            .is_some_and(|input| !input.is_empty())
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn incomplete_response_is_terminal_with_unbounded_websocket_retries() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

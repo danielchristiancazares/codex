@@ -515,6 +515,12 @@ pub fn process_responses_event(
                     "missing response.error",
                 ));
             };
+            if error_val.is_null() {
+                return Err(ResponsesEventError::Api(ApiError::Retryable {
+                    message: "response.failed returned without error details".to_string(),
+                    delay: None,
+                }));
+            }
             let error = serde_json::from_value::<Error>(error_val.clone()).map_err(|err| {
                 response_protocol_event_error(
                     &event_kind,
@@ -2230,6 +2236,31 @@ mod tests {
                     .is_some_and(|raw| raw.len() <= RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES)
             );
         }
+    }
+
+    #[test]
+    fn response_failed_with_null_error_is_retryable() {
+        let event: ResponsesStreamEvent = serde_json::from_value(json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp-null-error",
+                "error": null
+            }
+        }))
+        .expect("event should deserialize");
+
+        let Err(ResponsesEventError::Api(ApiError::Retryable { message, delay })) =
+            process_responses_event(event)
+        else {
+            panic!("null response.error should return a retryable error");
+        };
+        assert_eq!(
+            (message, delay),
+            (
+                "response.failed returned without error details".to_string(),
+                None
+            )
+        );
     }
 
     #[tokio::test]
