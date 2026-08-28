@@ -16,7 +16,6 @@ use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolExposure;
 use codex_utils_output_truncation::TruncationPolicy;
-use codex_utils_output_truncation::formatted_truncate_text;
 use serde_json::Value;
 use serde_json::json;
 
@@ -271,6 +270,16 @@ impl HistoryNotesTool {
             serde_json::from_str(arguments)
                 .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?
         };
+        // The backend enforces the plaintext budget before encryption. Keep the
+        // fork's hard cap at that boundary, where ciphertext overhead is irrelevant.
+        let truncation_policy = match call.truncation_policy {
+            TruncationPolicy::Tokens(tokens) => {
+                TruncationPolicy::Tokens(tokens.min(MAX_HISTORY_NOTES_RESULT_TOKENS))
+            }
+            TruncationPolicy::Bytes(bytes) => TruncationPolicy::Bytes(
+                bytes.min(TruncationPolicy::Tokens(MAX_HISTORY_NOTES_RESULT_TOKENS).byte_budget()),
+            ),
+        };
         let result = self
             .backend
             .call(
@@ -278,15 +287,12 @@ impl HistoryNotesTool {
                 &self.session_id,
                 &self.current_agent_name,
                 arguments,
-                call.truncation_policy,
+                truncation_policy,
             )
             .await
             .map_err(FunctionCallError::RespondToModel)?;
 
-        Ok(Box::new(HistoryNotesToolOutput::new(
-            result,
-            call.truncation_policy,
-        )?))
+        Ok(Box::new(HistoryNotesToolOutput::new(result)?))
     }
 }
 
@@ -330,28 +336,25 @@ impl<'call> ToolExecutor<ToolCall<'call>> for HistoryNotesTool {
 
 struct HistoryNotesToolOutput {
     result: Value,
-    truncation_policy: TruncationPolicy,
 }
 
 impl HistoryNotesToolOutput {
-    fn new(result: Value, truncation_policy: TruncationPolicy) -> Result<Self, FunctionCallError> {
-        let maximum_bytes = truncation_policy
-            .byte_budget()
-            .min(TruncationPolicy::Tokens(MAX_HISTORY_NOTES_RESULT_TOKENS).byte_budget());
+    fn new(result: Value) -> Result<Self, FunctionCallError> {
+        // Preserve complete JSON from a conforming backend. An oversized plaintext
+        // fallback is rejected as a whole so the model never receives broken JSON.
         if result
             .get("encrypted_output")
             .and_then(Value::as_str)
-            .is_some_and(|output| output.len() > maximum_bytes)
+            .is_none()
+            && result.to_string().len()
+                > TruncationPolicy::Tokens(MAX_HISTORY_NOTES_RESULT_TOKENS).byte_budget()
         {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "History returned an encrypted result larger than the {maximum_bytes}-byte tool-output limit; retry with narrower bounds"
-            )));
+            return Err(FunctionCallError::RespondToModel(
+                "History returned plaintext above the 10000-token safety limit; retry with narrower bounds"
+                    .to_string(),
+            ));
         }
-
-        Ok(Self {
-            result,
-            truncation_policy,
-        })
+        Ok(Self { result })
     }
 }
 
@@ -365,16 +368,14 @@ impl ToolOutput for HistoryNotesToolOutput {
     }
 
     fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
+        // The server applies the requested output budget before encryption.
         let output = match self.result.get("encrypted_output").and_then(Value::as_str) {
             Some(encrypted_content) => FunctionCallOutputPayload::from_content_items(vec![
                 FunctionCallOutputContentItem::EncryptedContent {
                     encrypted_content: encrypted_content.to_string(),
                 },
             ]),
-            None => FunctionCallOutputPayload::from_text(formatted_truncate_text(
-                &self.result.to_string(),
-                self.truncation_policy,
-            )),
+            None => FunctionCallOutputPayload::from_text(self.result.to_string()),
         };
 
         ResponseInputItem::FunctionCallOutput {

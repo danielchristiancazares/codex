@@ -187,6 +187,35 @@ async fn installed_extension_exposes_and_invokes_history_notes_tools() -> TestRe
         })
     );
 
+    for (requested, expected) in [
+        (
+            TruncationPolicy::Tokens(20_000),
+            TruncationPolicy::Tokens(10_000),
+        ),
+        (
+            TruncationPolicy::Bytes(80_000),
+            TruncationPolicy::Bytes(40_000),
+        ),
+        (TruncationPolicy::Tokens(256), TruncationPolicy::Tokens(256)),
+        (TruncationPolicy::Bytes(1024), TruncationPolicy::Bytes(1024)),
+    ] {
+        let mut bounded_call = call.clone();
+        bounded_call.truncation_policy = requested;
+        read_file.handle(bounded_call).await?;
+        let requests = server.received_requests().await.expect("recorded requests");
+        let request = requests.last().expect("history request");
+        assert_eq!(
+            serde_json::from_str::<TruncationPolicy>(
+                request
+                    .headers
+                    .get("x-openai-tool-output-truncation-policy")
+                    .expect("output budget header")
+                    .to_str()?,
+            )?,
+            expected,
+        );
+    }
+
     for (namespace, name, mut arguments) in [
         ("history", "list_windows", json!({"limit": 101})),
         ("history", "list_items", json!({})),
