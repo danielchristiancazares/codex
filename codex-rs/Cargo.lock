@@ -3189,6 +3189,7 @@ dependencies = [
  "codex-protocol",
  "codex-tools",
  "codex-utils-output-truncation",
+ "core_test_support",
  "http 1.5.0",
  "pretty_assertions",
  "serde_json",

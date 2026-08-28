@@ -8,6 +8,7 @@ use codex_extension_api::ToolOutput;
 use codex_extension_api::ToolPayload;
 use codex_extension_api::ToolSpec;
 use codex_extension_api::parse_tool_input_schema;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
@@ -15,6 +16,8 @@ use codex_tools::JsonToolOutput;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolExposure;
+use codex_utils_output_truncation::MAX_FUNCTION_OUTPUT_IMAGE_ENCODED_BYTES;
+use codex_utils_output_truncation::MAX_FUNCTION_OUTPUT_IMAGES;
 use codex_utils_output_truncation::TruncationPolicy;
 use serde_json::Value;
 use serde_json::json;
@@ -336,10 +339,13 @@ impl<'call> ToolExecutor<ToolCall<'call>> for HistoryNotesTool {
 
 struct HistoryNotesToolOutput {
     result: Value,
+    output: FunctionCallOutputPayload,
 }
 
 impl HistoryNotesToolOutput {
-    fn new(result: Value) -> Result<Self, FunctionCallError> {
+    fn new(mut result: Value) -> Result<Self, FunctionCallError> {
+        // Separate attachments before serializing any text or retaining log output.
+        let images = result.as_object_mut().and_then(|map| map.remove("images"));
         // Preserve complete JSON from a conforming backend. An oversized plaintext
         // fallback is rejected as a whole so the model never receives broken JSON.
         if result
@@ -354,7 +360,59 @@ impl HistoryNotesToolOutput {
                     .to_string(),
             ));
         }
-        Ok(Self { result })
+        // The server applies the requested output budget before encryption.
+        let mut output = match result.get("encrypted_output").and_then(Value::as_str) {
+            Some(encrypted_content) => FunctionCallOutputPayload::from_content_items(vec![
+                FunctionCallOutputContentItem::EncryptedContent {
+                    encrypted_content: encrypted_content.to_string(),
+                },
+            ]),
+            None => FunctionCallOutputPayload::from_text(result.to_string()),
+        };
+        if let Some(images) = images {
+            let invalid_image = || {
+                FunctionCallError::RespondToModel(
+                    "History backend returned invalid image content.".to_string(),
+                )
+            };
+            let images = images.as_array().ok_or_else(invalid_image)?;
+            if images.len() > MAX_FUNCTION_OUTPUT_IMAGES {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "History returned more than {MAX_FUNCTION_OUTPUT_IMAGES} images; retry with narrower bounds"
+                )));
+            }
+            let mut encoded_image_bytes = 0usize;
+            let mut content = match output.body {
+                FunctionCallOutputBody::Text(text) => {
+                    vec![FunctionCallOutputContentItem::InputText { text }]
+                }
+                FunctionCallOutputBody::ContentItems(content) => content,
+            };
+            for image in images {
+                let data = image
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .ok_or_else(invalid_image)?;
+                let mime_type = image
+                    .get("mime_type")
+                    .and_then(Value::as_str)
+                    .ok_or_else(invalid_image)?;
+                let detail =
+                    serde_json::from_value(image.get("detail").cloned().unwrap_or(Value::Null))
+                        .map_err(|_| invalid_image())?;
+                let image_url = format!("data:{mime_type};base64,{data}");
+                encoded_image_bytes = encoded_image_bytes.saturating_add(image_url.len());
+                if encoded_image_bytes > MAX_FUNCTION_OUTPUT_IMAGE_ENCODED_BYTES {
+                    return Err(FunctionCallError::RespondToModel(
+                        "History returned more than 8 MiB of encoded images; retry with narrower bounds"
+                            .to_string(),
+                    ));
+                }
+                content.push(FunctionCallOutputContentItem::InputImage { image_url, detail });
+            }
+            output = FunctionCallOutputPayload::from_content_items(content);
+        }
+        Ok(Self { result, output })
     }
 }
 
@@ -367,20 +425,15 @@ impl ToolOutput for HistoryNotesToolOutput {
         true
     }
 
-    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
-        // The server applies the requested output budget before encryption.
-        let output = match self.result.get("encrypted_output").and_then(Value::as_str) {
-            Some(encrypted_content) => FunctionCallOutputPayload::from_content_items(vec![
-                FunctionCallOutputContentItem::EncryptedContent {
-                    encrypted_content: encrypted_content.to_string(),
-                },
-            ]),
-            None => FunctionCallOutputPayload::from_text(self.result.to_string()),
-        };
+    fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<Value> {
+        // Hooks must not receive model-only image attachments.
+        Some(self.result.clone())
+    }
 
+    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
         ResponseInputItem::FunctionCallOutput {
             call_id: call_id.to_string(),
-            output,
+            output: self.output.clone(),
         }
     }
 
