@@ -59,6 +59,7 @@ use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
 use crate::tui::job_control::SuspendContext;
 use crate::tui::screen_size::ScreenSizePolicy;
+use crate::tui::scrollback::HistoryTailDock;
 use crate::tui::scrollback::ScrollbackStrategy;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
@@ -920,12 +921,13 @@ impl Tui {
     ///
     /// Unlike the legacy draw path, a physical terminal resize leaves rows above the viewport for
     /// source-backed transcript reflow. When the terminal size is stable and only live content
-    /// shrinks, the tracked visible history tail moves down with the bottom-docked viewport.
+    /// shrinks, queued history can occupy the vacated rows before the visible tail is docked.
     fn update_inline_viewport_for_resize_reflow<B>(
         terminal: &mut CustomTerminal<B>,
         height: u16,
         screen_size: Size,
         scrollback: ScrollbackStrategy,
+        history_tail_dock: HistoryTailDock,
     ) -> Result<bool>
     where
         B: Backend<Error = io::Error> + Write,
@@ -954,6 +956,14 @@ impl Tui {
             area.y = screen_size.height - area.height;
         } else if viewport_was_empty || viewport_was_bottom_aligned {
             area.y = screen_size.height - area.height;
+        }
+
+        if history_tail_dock == HistoryTailDock::DeferToPendingHistory
+            && !terminal_size_changed
+            && terminal.visible_history_rows() > 0
+            && area.y > previous_area.y
+        {
+            area.y = previous_area.y;
         }
 
         if area != terminal.viewport_area {
@@ -1156,6 +1166,13 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
+        let history_tail_dock = if self.scrollback == ScrollbackStrategy::FullScreen
+            && !self.pending_history_lines.is_empty()
+        {
+            HistoryTailDock::DeferToPendingHistory
+        } else {
+            HistoryTailDock::Immediate
+        };
 
         stdout().sync_update(|_| {
             #[cfg(unix)]
@@ -1169,6 +1186,7 @@ impl Tui {
                 height,
                 screen_size,
                 self.scrollback,
+                history_tail_dock,
             )?;
             // A zero- or one-row history region cannot isolate raw history writes from the
             // viewport, so replayed rows can leave stale cells inside the composer.

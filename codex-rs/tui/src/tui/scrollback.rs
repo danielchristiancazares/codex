@@ -23,6 +23,15 @@ pub(super) enum ScrollbackStrategy {
     FullScreen,
 }
 
+/// Selects when a stable-screen viewport shrink moves its visible history tail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HistoryTailDock {
+    /// Move the tail with the viewport during this update.
+    Immediate,
+    /// Keep the tail adjacent to queued history and let insertion advance the viewport.
+    DeferToPendingHistory,
+}
+
 /// Discards up to `max_rows` of a tracked docking gap and moves the inline viewport with it.
 ///
 /// Callers clear the live viewport first so deleting lines from this isolated region only moves

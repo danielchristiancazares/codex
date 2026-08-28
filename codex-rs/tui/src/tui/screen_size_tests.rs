@@ -16,6 +16,7 @@ use crate::insert_history::InsertHistoryMode;
 use crate::insert_history::insert_history_lines_with_mode_and_wrap_policy;
 use crate::test_backend::VT100Backend;
 use crate::tui::TuiEvent;
+use crate::tui::scrollback::HistoryTailDock;
 use crate::tui::scrollback::ScrollbackStrategy;
 
 #[tokio::test]
@@ -143,6 +144,7 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
         /*height*/ 14,
         screen_size,
         scrollback,
+        HistoryTailDock::Immediate,
     )
     .expect("dock initial viewport");
     assert_eq!(
@@ -157,6 +159,7 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
         /*height*/ 8,
         screen_size,
         scrollback,
+        HistoryTailDock::Immediate,
     )
     .expect("keep shrunken viewport docked");
     assert_eq!(
@@ -205,6 +208,7 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
         /*height*/ 4,
         screen_size,
         ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
     )
     .expect("shrink provider popup viewport");
     assert!(needs_full_repaint);
@@ -248,6 +252,110 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
     ────────────────
       ? shortcuts
     ");
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("new-history-row")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("insert history after popup close");
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 5, screen_size.width, 4), 3, 0)
+    );
+
+    terminal.invalidate_viewport();
+    let composer_area = terminal.viewport_area;
+    terminal
+        .draw_with_size(screen_size, |frame| {
+            Paragraph::new(vec![
+                Line::from("composer-top"),
+                Line::from("│› ready"),
+                Line::from("────────────────"),
+                Line::from("  ? shortcuts"),
+            ])
+            .render(composer_area, frame.buffer_mut());
+        })
+        .expect("redraw composer after history insert");
+
+    let contents = terminal.backend().vt100().screen().contents();
+    insta::assert_snapshot!(contents, @r"
+    shell-history-marker
+
+    history-tail-one
+    history-tail-two
+    new-history-row
+    composer-top
+    │› ready
+    ────────────────
+      ? shortcuts
+    ");
+}
+
+#[test]
+fn pending_full_screen_history_refills_vacated_rows_before_bottom_dock() {
+    let width = 28;
+    let height = 12;
+    let screen_size = Size::new(width, height);
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+    let mut terminal = CustomTerminal::with_options(backend).expect("terminal with scrollback");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0, /*y*/ 8, width, /*height*/ 4,
+    ));
+    for (row, line) in [
+        (5, "history-before-tail"),
+        (6, "history-tail-one"),
+        (7, "history-tail-two"),
+    ] {
+        queue!(terminal.backend_mut(), MoveTo(/*x*/ 0, row), Print(line))
+            .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    let needs_full_repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 2,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::DeferToPendingHistory,
+    )
+    .expect("defer bottom docking");
+    assert!(needs_full_repaint);
+    assert_eq!(terminal.viewport_area, Rect::new(0, 8, width, 2));
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("new-history-one"), Line::from("new-history-two")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("insert pending history");
+
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 10, width, 2), 4, 0)
+    );
+    insta::assert_snapshot!(terminal.backend().vt100().screen().contents(), @r"
+
+
+
+
+
+history-before-tail
+history-tail-one
+history-tail-two
+new-history-one
+new-history-two
+    ");
 }
 
 #[test]
@@ -275,6 +383,7 @@ fn terminal_width_change_clears_stale_tracking_before_history_insertion() {
         /*height*/ 2,
         screen_size,
         ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
     )
     .expect("resize inline viewport");
 
@@ -318,6 +427,7 @@ fn terminal_height_shrink_then_growth_leaves_rows_for_source_reflow() {
         /*height*/ 2,
         shrunken_size,
         ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
     )
     .expect("shrink inline viewport");
     terminal
@@ -337,6 +447,7 @@ fn terminal_height_shrink_then_growth_leaves_rows_for_source_reflow() {
         /*height*/ 2,
         full_size,
         ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
     )
     .expect("grow inline viewport");
 

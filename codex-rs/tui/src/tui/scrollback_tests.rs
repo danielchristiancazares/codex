@@ -378,6 +378,35 @@ fn full_history_band_stays_adjacent_to_bottom_docked_viewport_after_shrink() {
 
     assert_eq!((moved, terminal.visible_history_rows()), (true, 4));
     insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("new-history-row")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("insert history after full-band dock");
+
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 5, width, 2), 5, 0)
+    );
+    let visible = terminal.backend().vt100().screen().contents();
+    let mut scrollback_screen = terminal.backend().vt100().screen().clone();
+    scrollback_screen.set_scrollback(/*rows*/ usize::MAX);
+    let scrollback = scrollback_screen.contents();
+    assert_eq!(scrollback, visible);
+    insta::assert_snapshot!(visible, @r"
+    history-row-one
+    history-row-two
+    history-row-three
+    history-row-four
+    new-history-row
+    ");
 }
 
 #[test]
