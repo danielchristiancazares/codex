@@ -54,7 +54,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **65 backported, 1 already present, 290 pending**.
+- Current ledger: **66 backported, 1 already present, 289 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -123,6 +123,19 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   remains initiating-primary after a successful current-model fallback. Installed history,
   completion and retained execution context use the selected fallback. Changing the
   outer hook/error/analytics contract requires a separate lifecycle decision and coverage.
+- Entry 66 terminal hooks moved into `hook_runtime/turn_hooks.rs`.
+  Interrupt uses its detached turn's retained step, preserving turn-scoped Code Mode
+  cancellation, rollback cancellation/draining, and shared MCP runtime ownership.
+  Stop/Interrupt input model and approval mode now come from the same selected settings
+  as their MCP metadata, with initial-settings fallback only when no step exists.
+- Entry-66 filtering/registration/environment/cancellation coverage passed **9/9**.
+  Its inherited integration module was Unix-gated; the portable module now also runs on
+  native Windows with an explicit PowerShell sleep command for its local-shell case.
+  All **7/7** live integrations passed, including two model-switch regressions covering
+  Stop and Interrupt and the no-step/no-prior-discovery case. Existing step-settings
+  test helpers are reused within the integration suite.
+- Config schema regeneration passed unchanged after the method-only hook-config
+  refactor. Entry 66 introduced no dependency or public protocol shape change.
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
@@ -196,7 +209,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | backported | Adapted `e42b66ad9d36dace1f8ad882065e9787fce1f777`: restore prior settings from the fork's surviving full WorldState plus TurnContext baseline; preserve user-only rollback counting, retained-prefix recovery and shared provider runtime. 30 replay tests and 8 corrected nested-fork integrations passed. |
 | `2008d27e98d7b46170d2d464b36dbf97008611b8` | Filter media from function call output notifications (#41427) | backported | Structured function-output notification filtering preserves text/encrypted content, metadata and original model history. Retained existing auth variants without duplicate arms; documented behavior and added full notification regression coverage. All 3 tests passed. |
 | `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | backported | Focused capture/retention module; exact selected Arc survives terminal transitions. Speculative captures retain plugin identities privately and publish router-owned inventory only on selection, clearing obsolete inventory. Preserved runtime/MCP/settings ownership. Step-settings fixture alignment and unit SSE opt-in corrections passed; final retention 6/6. |
-| `c2abf869d539a6326a6e5a125dfdb8a5dc488ab4` | Run executor hooks for interrupted turns (#41432) | pending |  |
+| `c2abf869d539a6326a6e5a125dfdb8a5dc488ab4` | Run executor hooks for interrupted turns (#41432) | backported | Captured-step discovery and settings drive terminal cleanup; no prior-turn discovery reuse. Preserved scoped Code Mode/rollback cancellation and shared MCP runtime. Extracted terminal-hook owner, aligned request-body model/approval mode with metadata, and enabled native Windows integrations. 9 unit and 7 live cases passed; config schema unchanged. |
 | `c6bf330b42ed6fcbdcc902dc06ef38306b2e02f3` | Allow bundled browser cleanup hooks on subagent stop (#41435) | pending |  |
 | `0ae94fdd49b05ee7faa4d984d06a68492cb32b54` | Respond to terminal queries from TTY subprocesses (#41436) | pending | Prepared candidate: `967652b80fd754bfc2bf91f859562b96f2eecf8e`. |
 | `eec4a23cb16de16e0c8cff7c913eed943f223df7` | Support `openai/elicitation` form requests (#41447) | pending |  |

@@ -2,6 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use codex_config::McpServerConfig;
 use codex_core::EnvironmentConfig;
+use codex_core::TurnInputRequest;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::ExecServerRuntimePaths;
@@ -11,26 +12,36 @@ use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfileSnapshot;
 use codex_protocol::protocol::EnvironmentConfigState;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::TurnEnvironmentSelections;
+use codex_protocol::protocol::TurnSettingsUpdate;
+use codex_protocol::protocol::TurnSettingsUpdateOutcome;
+use codex_protocol::user_input::UserInput;
 use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
-use core_test_support::responses::mount_sse_sequence;
+use core_test_support::responses::mount_response_sequence;
 use core_test_support::responses::sse;
+use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_remote;
 use core_test_support::submit_thread_settings;
 use core_test_support::test_codex::TestCodex;
+use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::test_codex;
+use core_test_support::wait_for_event;
 use core_test_support::wait_for_mcp_server;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
+use test_case::test_case;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use wiremock::Mock;
@@ -41,6 +52,12 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 use super::rmcp_client::remote_aware_environment_id;
+use super::step_settings::MODEL_B;
+use super::step_settings::answer_paused_turn;
+use super::step_settings::paused_response;
+use super::step_settings::start_paused_turn;
+use super::step_settings::step_settings_test;
+use super::step_settings::submit_turn_settings;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn executor_stop_hook_runs_after_attachment() -> Result<()> {
@@ -96,6 +113,192 @@ async fn executor_stop_hook_runs_after_attachment() -> Result<()> {
         fixture.test.session_configured.thread_id.to_string()
     );
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executor_interrupt_hook_runs_after_attachment() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let fixture = executor_hook_fixture(
+        test_codex(),
+        vec![completed_turn_response("turn").set_delay(Duration::from_secs(/*secs*/ 60))],
+    )
+    .await?;
+    fixture.attach().await?;
+    fixture
+        .test
+        .codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "interrupt this turn".to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+
+    // The model request confirms discovery was saved, without requiring a target shell.
+    tokio::time::timeout(Duration::from_secs(/*secs*/ 10), async {
+        while fixture.responses.requests().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .context("interrupted turn should reach the model request")?;
+    fixture.interrupt_turn().await?;
+    fixture.wait_for_hook_call().await?;
+
+    let calls = fixture.calls().await?;
+    assert_eq!(calls.len(), 1);
+    let call = &calls[0]["params"];
+    let response = fixture.responses.single_request().body_json();
+    let turn_id = &response["client_metadata"]["turn_id"];
+    assert_eq!(call["name"], "turn_ended");
+    assert_eq!(
+        call["arguments"],
+        json!({
+            "hook_event_name": "Interrupt",
+            "session_id": fixture.test.session_configured.thread_id.to_string(),
+            "turn_id": turn_id,
+            "model": response["model"],
+        })
+    );
+    assert_eq!(call["_meta"]["x-codex-turn-metadata"]["turn_id"], *turn_id);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executor_interrupt_hook_skips_turn_without_step_context() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_remote!(
+        Ok(()),
+        "standalone user shell commands require a local environment"
+    );
+
+    let fixture =
+        executor_hook_fixture(test_codex(), vec![completed_turn_response("first-turn")]).await?;
+    fixture.attach().await?;
+    fixture
+        .test
+        .submit_text_turn("populate executor discovery")
+        .await?;
+    fixture.wait_for_hook_call().await?;
+
+    // Standalone shell turns have no model step, despite the previous turn's discovery.
+    let command = if cfg!(windows) {
+        r#"powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 60""#
+    } else {
+        "sleep 60"
+    };
+    fixture
+        .test
+        .codex
+        .submit(Op::RunUserShellCommand {
+            command: command.to_string(),
+            timeout_ms: None,
+        })
+        .await?;
+    wait_for_event(&fixture.test.codex, |event| {
+        matches!(event, EventMsg::ExecCommandBegin(_))
+    })
+    .await;
+    fixture.interrupt_turn().await?;
+
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(/*secs*/ 1),
+            fixture.hook_called.notified()
+        )
+        .await
+        .is_err(),
+        "executor hooks must not reuse a previous turn's step context",
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum HookTermination {
+    Completed,
+    Interrupted,
+}
+
+#[test_case(HookTermination::Completed; "stop uses selected model")]
+#[test_case(HookTermination::Interrupted; "interrupt uses selected model")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executor_terminal_hook_uses_last_selected_step_model(
+    termination: HookTermination,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let completion = completed_turn_response("after-switch");
+    let completion = match termination {
+        HookTermination::Completed => completion,
+        HookTermination::Interrupted => completion.set_delay(Duration::from_secs(/*secs*/ 60)),
+    };
+    let fixture = executor_hook_fixture(
+        step_settings_test(),
+        vec![
+            sse_response(paused_response("before-switch", "pause")),
+            completion,
+        ],
+    )
+    .await?;
+    fixture.attach().await?;
+    let input_request = start_paused_turn(&fixture.test.codex).await?;
+    assert_eq!(
+        submit_turn_settings(
+            &fixture.test.codex,
+            &input_request.turn_id,
+            TurnSettingsUpdate {
+                model: Some(MODEL_B.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?,
+        TurnSettingsUpdateOutcome::Applied,
+    );
+    answer_paused_turn(&fixture.test.codex, &input_request.turn_id).await?;
+
+    let event_name = match termination {
+        HookTermination::Completed => {
+            wait_for_event(&fixture.test.codex, |event| {
+                matches!(event, EventMsg::TurnComplete(_))
+            })
+            .await;
+            "Stop"
+        }
+        HookTermination::Interrupted => {
+            tokio::time::timeout(Duration::from_secs(/*secs*/ 10), async {
+                while fixture.responses.requests().len() < 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .context("selected model should receive the second request")?;
+            fixture.interrupt_turn().await?;
+            "Interrupt"
+        }
+    };
+    fixture.wait_for_hook_call().await?;
+    let calls = fixture.calls().await?;
+    assert_eq!(calls.len(), 1);
+    let request = fixture.responses.requests()[1].body_json();
+    let params = &calls[0]["params"];
+    assert_eq!(
+        (
+            params["arguments"].clone(),
+            params["_meta"]["x-codex-turn-metadata"]["model"].clone(),
+            request["model"].clone(),
+        ),
+        (
+            json!({
+                "hook_event_name": event_name,
+                "session_id": fixture.test.session_configured.thread_id.to_string(),
+                "turn_id": input_request.turn_id,
+                "model": MODEL_B,
+            }),
+            json!(MODEL_B),
+            json!(MODEL_B),
+        ),
+    );
     Ok(())
 }
 
@@ -256,7 +459,28 @@ async fn executor_stop_hook_rejects_mismatched_environment() -> Result<()> {
     Ok(())
 }
 
-async fn executor_stop_hook_fixture() -> Result<ExecutorStopHookFixture> {
+fn completed_turn_response(id: &str) -> ResponseTemplate {
+    sse_response(sse(vec![
+        ev_response_created(id),
+        ev_assistant_message(id, "done"),
+        ev_completed(id),
+    ]))
+}
+
+async fn executor_stop_hook_fixture() -> Result<ExecutorHookFixture> {
+    executor_hook_fixture(
+        test_codex(),
+        ["first-turn", "second-turn"]
+            .map(completed_turn_response)
+            .to_vec(),
+    )
+    .await
+}
+
+async fn executor_hook_fixture(
+    builder: TestCodexBuilder,
+    responses: Vec<ResponseTemplate>,
+) -> Result<ExecutorHookFixture> {
     let server = start_mock_server().await;
     let hook_called = Arc::new(Notify::new());
     let hook_called_for_server = Arc::clone(&hook_called);
@@ -292,7 +516,7 @@ async fn executor_stop_hook_fixture() -> Result<ExecutorStopHookFixture> {
         .await;
 
     let node_repl_url = format!("{}/node-repl", server.uri());
-    let mut builder = test_codex().with_config(move |config| {
+    let mut builder = builder.with_config(move |config| {
         config
             .features
             .enable(Feature::ExecutorCapabilityDiscovery)
@@ -337,37 +561,40 @@ async fn executor_stop_hook_fixture() -> Result<ExecutorStopHookFixture> {
             &manifest_path,
             serde_json::to_vec(&json!({
                 "name": "computer-use",
-                "hooks": { "hooks": { "Stop": [{ "hooks": [{
-                    "type": "mcp_tool",
-                    "server": "node_repl",
-                    "tool": "turn_ended",
-                    "input": {
-                        "hook_event_name": "${hook_event_name}",
-                        "session_id": "${session_id}",
-                        "turn_id": "${turn_id}",
-                    },
-                }] }] } },
+                // Separate entries must both survive registration in the same environment.
+                "hooks": [
+                    { "hooks": { "Interrupt": [{ "hooks": [{
+                        "type": "mcp_tool",
+                        "server": "node_repl",
+                        "tool": "turn_ended",
+                        "input": {
+                            "hook_event_name": "${hook_event_name}",
+                            "session_id": "${session_id}",
+                            "turn_id": "${turn_id}",
+                            "model": "${model}",
+                        },
+                    }] }] } },
+                    { "hooks": { "Stop": [{ "hooks": [{
+                        "type": "mcp_tool",
+                        "server": "node_repl",
+                        "tool": "turn_ended",
+                        "input": {
+                            "hook_event_name": "${hook_event_name}",
+                            "session_id": "${session_id}",
+                            "turn_id": "${turn_id}",
+                            "model": "${model}",
+                        },
+                    }] }] } },
+                ],
             }))?,
             Default::default(),
             /*sandbox*/ None,
         )
         .await?;
 
-    let responses = mount_sse_sequence(
-        &server,
-        ["first-turn", "second-turn"]
-            .map(|id| {
-                sse(vec![
-                    ev_response_created(id),
-                    ev_assistant_message(id, "done"),
-                    ev_completed(id),
-                ])
-            })
-            .to_vec(),
-    )
-    .await;
+    let responses = mount_response_sequence(&server, responses).await;
 
-    Ok(ExecutorStopHookFixture {
+    Ok(ExecutorHookFixture {
         server,
         test,
         responses,
@@ -375,14 +602,14 @@ async fn executor_stop_hook_fixture() -> Result<ExecutorStopHookFixture> {
     })
 }
 
-struct ExecutorStopHookFixture {
+struct ExecutorHookFixture {
     server: MockServer,
     test: TestCodex,
     responses: ResponseMock,
     hook_called: Arc<Notify>,
 }
 
-impl ExecutorStopHookFixture {
+impl ExecutorHookFixture {
     async fn attach(&self) -> Result<TurnEnvironmentSelection> {
         let selection = self
             .test
@@ -427,10 +654,19 @@ impl ExecutorStopHookFixture {
         Ok(selection)
     }
 
+    async fn interrupt_turn(&self) -> Result<()> {
+        self.test.codex.submit(Op::Interrupt).await?;
+        wait_for_event(&self.test.codex, |event| {
+            matches!(event, EventMsg::TurnAborted(_))
+        })
+        .await;
+        Ok(())
+    }
+
     async fn wait_for_hook_call(&self) -> Result<()> {
         tokio::time::timeout(Duration::from_secs(10), self.hook_called.notified())
             .await
-            .context("attached executor Stop hook should call turn_ended")?;
+            .context("attached executor hook should call turn_ended")?;
 
         Ok(())
     }

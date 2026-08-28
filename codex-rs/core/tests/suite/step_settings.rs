@@ -57,7 +57,7 @@ use std::collections::HashMap;
 use test_case::test_case;
 
 const MODEL_A: &str = "step-settings-a";
-const MODEL_B: &str = "step-settings-b";
+pub(super) const MODEL_B: &str = "step-settings-b";
 const MODEL_C: &str = "step-settings-c";
 const TURN_STATE_HEADER: &str = "x-codex-turn-state";
 
@@ -80,7 +80,7 @@ fn step_settings_models() -> Vec<ModelInfo> {
         .collect()
 }
 
-fn step_settings_test() -> TestCodexBuilder {
+pub(super) fn step_settings_test() -> TestCodexBuilder {
     test_codex().with_model(MODEL_A).with_config(move |config| {
         for feature in [
             Feature::StepModelSwitching,
@@ -103,7 +103,7 @@ fn step_settings_test() -> TestCodexBuilder {
     })
 }
 
-fn paused_response(response_id: &str, call_id: &str) -> String {
+pub(super) fn paused_response(response_id: &str, call_id: &str) -> String {
     sse(vec![
         ev_response_created(response_id),
         ev_function_call(
@@ -129,7 +129,7 @@ fn paused_response(response_id: &str, call_id: &str) -> String {
     ])
 }
 
-async fn start_paused_turn(thread: &CodexThread) -> Result<RequestUserInputEvent> {
+pub(super) async fn start_paused_turn(thread: &CodexThread) -> Result<RequestUserInputEvent> {
     thread
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "pause before continuing".into(),
@@ -143,7 +143,7 @@ async fn start_paused_turn(thread: &CodexThread) -> Result<RequestUserInputEvent
     .await)
 }
 
-async fn answer_paused_turn(thread: &CodexThread, turn_id: &str) -> Result<()> {
+pub(super) async fn answer_paused_turn(thread: &CodexThread, turn_id: &str) -> Result<()> {
     thread
         .submit(Op::UserInputAnswer {
             id: turn_id.to_string(),
@@ -160,7 +160,7 @@ async fn answer_paused_turn(thread: &CodexThread, turn_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn submit_turn_settings(
+pub(super) async fn submit_turn_settings(
     thread: &CodexThread,
     turn_id: &str,
     update: TurnSettingsUpdate,
