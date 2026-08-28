@@ -51,10 +51,10 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **58 backported, 1 already present, 297 pending**.
-- Source #41413 has a recorded warmed release baseline in [the history performance audit](upstream-history-performance-2026-09-04.md), mirrored into the existing ignored `PERFORMANCE_LOG.md`. Its performance candidate is pending.
+- Current ledger: **59 backported, 1 already present, 296 pending**.
+- Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
-- `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
+- `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
 
@@ -120,7 +120,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `bb998aeb8e8aca2f707f83ce07f52adbb3cf2eb5` | Refresh runtimes for remote plugin state changes (#41396) | backported | Exact source patch; traced changed-only notifications through fork MCP/hooks/skills invalidation before materialization-only trust refresh. |
 | `d9511fb7888d98f89526d4ae019dd9be2f14199e` | Refresh MCP HTTP helper headers after authorization failures (#41400) | backported | Exact prepared single-flight header refresh with epoch fencing, effective-header retry comparison, OAuth precedence, deadline and redirect checks. |
 | `3ae4225b1761c135c6d3bbc1ea0cfcfc95752cdc` | Restrict cloud task credentials to trusted origins (#41403) | backported | Exact prepared trusted-origin check precedes credential loading; preserved fork route-aware cookies and disabled redirects for authenticated cloud requests. |
-| `170da98842877c730a1d8ec9ee7421e54c06bb6d` | Optimize history item lookups (#41413) | pending |  |
+| `170da98842877c730a1d8ec9ee7421e54c06bb6d` | Optimize history item lookups (#41413) | backported | Focused Linear/Indexed state and Unicode mapper modules; first-ID/rollback/UTF-8 semantics preserved. 322 tests passed; repeated measured gains and accepted small-turn costs documented in performance audit. |
 | `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | pending |  |
 | `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | pending | Prepared candidate: `c374194b19507145d959291c3316dfa211b2f419`. |
 | `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | pending |  |

@@ -28,24 +28,21 @@ pub(super) fn case_insensitive_match_ranges(text: &str, query: &str) -> Vec<Rang
 
     let mut ranges = Vec::new();
     let mut search_from = 0;
+    // Each pointer advances monotonically through the folded UTF-8 spans.
+    let mut start_span = 0;
+    let mut end_span = 0;
     while search_from <= folded.len()
         && let Some(relative_start) = folded[search_from..].find(&query_lower)
     {
         let folded_start = search_from + relative_start;
         let folded_end = folded_start + query_lower.len();
-        if let Some((_, first_original)) = folded_spans.iter().find(|(folded_range, _)| {
-            folded_range.end > folded_start && folded_range.start < folded_end
-        }) {
-            let original_end = folded_spans
-                .iter()
-                .rev()
-                .find(|(folded_range, _)| {
-                    folded_range.end > folded_start && folded_range.start < folded_end
-                })
-                .map(|(_, original_range)| original_range.end)
-                .unwrap_or(first_original.end);
-            ranges.push(first_original.start..original_end);
+        while folded_spans[start_span].0.end <= folded_start {
+            start_span += 1;
         }
+        while folded_spans[end_span].0.end < folded_end {
+            end_span += 1;
+        }
+        ranges.push(folded_spans[start_span].1.start..folded_spans[end_span].1.end);
         search_from = folded_end;
     }
     ranges
