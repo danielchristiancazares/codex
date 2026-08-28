@@ -3141,6 +3141,7 @@ version = "0.153.4"
 dependencies = [
  "codex-protocol",
  "pretty_assertions",
+ "serde_json",
 ]
 
 [[package]]

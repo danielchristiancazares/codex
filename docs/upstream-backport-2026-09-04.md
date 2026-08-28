@@ -54,7 +54,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **61 backported, 1 already present, 294 pending**.
+- Current ledger: **62 backported, 1 already present, 293 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -84,6 +84,11 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   metadata field; public API exports and the experimental bundle remained unchanged.
 - App-server protocol validation against the regenerated artifacts passed **303/303**
   (the schema-writing test is intentionally ignored during ordinary test runs).
+- Entry 62's shared Guardian collector passed **8/8** tests, including independent
+  reasoning/tool-output selection. `just bazel-lock-update` passed with no module-lock
+  delta. The new serde_json dependency explicitly requests `alloc`; package version
+  and existing dependency features remain fork-owned. This foundation has no live
+  model-context caller; final assembled-item bounds remain a documented consumer duty.
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
@@ -153,7 +158,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `170da98842877c730a1d8ec9ee7421e54c06bb6d` | Optimize history item lookups (#41413) | backported | Focused Linear/Indexed state and Unicode mapper modules; first-ID/rollback/UTF-8 semantics preserved. 322 tests passed; repeated measured gains and accepted small-turn costs documented in performance audit. |
 | `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | backported | Preserved exhaustive fork variants; extracted WebSocket default/opt-in coverage and documented notification-only filtering. Both integration cases passed with entry 61; standalone function-output filtering follows in #41427. |
 | `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | backported | Adapted `c374194b19507145d959291c3316dfa211b2f419`: saved per-tool limits combine with current byte/token policy and a complete-item 10K ceiling; envelope-aware truncation and terminal outbound guard preserve metadata/hooks/resume/Code Mode. Config and stable internal schema regenerated. 441 focused, 44 adjacent, 1 corrective, and 303 protocol tests passed. |
-| `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | pending | Independently reviewed: no prepared equivalent or live caller yet. Use explicit serde_json alloc feature, refresh Bazel lock, preserve stateless borrowed collection. Live consumers must bound assembled items after labels and all sections; separate transcript pools do not bound their sum. |
+| `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | backported | Stateless borrowed collection, explicit serde_json alloc feature, fork version and dependency features retained. All 8 tests passed; Bazel lock refresh unchanged. No live model caller yet: documented complete-item bounds after labels, separate pools, other sections and framing. |
 | `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | pending | Prepared candidate: `e42b66ad9d36dace1f8ad882065e9787fce1f777`. |
 | `2008d27e98d7b46170d2d464b36dbf97008611b8` | Filter media from function call output notifications (#41427) | pending |  |
 | `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | pending |  |
