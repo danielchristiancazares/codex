@@ -308,12 +308,12 @@ async fn settings_updates_preserve_turn_identity_and_target(target: SettingsTarg
 
     let original_request_settings = json!({
         "model": MODEL_A,
-        "reasoning": { "effort": "low", "summary": "concise" },
+        "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
         "service_tier": null,
     });
     let changed_request_settings = json!({
         "model": MODEL_B,
-        "reasoning": { "effort": "high", "summary": "detailed" },
+        "reasoning": { "mode": "standard", "effort": "high", "summary": "detailed" },
         "service_tier": "priority",
     });
     let (continued_settings, next_turn_settings) = match target {
@@ -904,22 +904,22 @@ async fn sparse_updates_preserve_divergent_active_and_future_models() -> Result<
         vec![
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_C,
-                "reasoning": { "effort": "high", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "high", "summary": "concise" },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_C,
-                "reasoning": { "effort": "high", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "high", "summary": "concise" },
                 "service_tier": "priority",
             }),
             json!({
                 "model": MODEL_B,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": "priority",
             }),
         ]
@@ -988,12 +988,12 @@ async fn turn_settings_do_not_target_idle_or_finished_turns() -> Result<()> {
         vec![
             json!({
                 "model": MODEL_B,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_C,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": null,
             }),
         ]
@@ -1103,17 +1103,17 @@ async fn model_activation_uses_destination_metadata_defaults(
         vec![
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": "priority",
             }),
             json!({
                 "model": MODEL_B,
-                "reasoning": { "effort": "low", "summary": expected_summary },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": expected_summary },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": "priority",
             }),
         ]
@@ -1279,7 +1279,7 @@ async fn turn_settings_rejection_preserves_independent_future_settings() -> Resu
             .map(|model| {
                 json!({
                     "model": model,
-                    "reasoning": { "effort": "low", "summary": "concise" },
+                    "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                     "service_tier": null,
                 })
             })
@@ -1372,17 +1372,17 @@ async fn request_preference_activation_keeps_admitted_model_metadata() -> Result
         vec![
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "low", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "high", "summary": "concise" },
+                "reasoning": { "mode": "standard", "effort": "high", "summary": "concise" },
                 "service_tier": null,
             }),
             json!({
                 "model": MODEL_A,
-                "reasoning": { "effort": "low", "summary": "detailed" },
+                "reasoning": { "mode": "standard", "effort": "low", "summary": "detailed" },
                 "service_tier": null,
             }),
         ]

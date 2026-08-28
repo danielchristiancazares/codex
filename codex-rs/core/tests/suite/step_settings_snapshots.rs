@@ -152,7 +152,7 @@ async fn ordinary_settings_updates_keep_the_running_turn_snapshot() -> Result<()
         .collect::<Vec<_>>();
     let original = json!({
         "model": "snapshot-model-a",
-        "reasoning": { "effort": "low", "summary": "concise" },
+        "reasoning": { "mode": "standard", "effort": "low", "summary": "concise" },
         "service_tier": null,
     });
     assert_eq!(
@@ -162,7 +162,7 @@ async fn ordinary_settings_updates_keep_the_running_turn_snapshot() -> Result<()
             original,
             json!({
                 "model": "snapshot-model-b",
-                "reasoning": { "effort": "high", "summary": "detailed" },
+                "reasoning": { "mode": "standard", "effort": "high", "summary": "detailed" },
                 "service_tier": "priority",
             })
         ]

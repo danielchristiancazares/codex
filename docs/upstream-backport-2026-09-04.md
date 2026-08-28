@@ -54,7 +54,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **64 backported, 1 already present, 291 pending**.
+- Current ledger: **65 backported, 1 already present, 290 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -103,6 +103,26 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   objects. Mixed/media-only structured outputs filter correctly; text, encrypted content,
   order and notification metadata are retained. Existing auth-recovery pass-through
   variants stay exhaustive and unduplicated. No API shape or dependency changes.
+- Entry 65 extracted capture/retention into `session/step_capture.rs` and
+  moved the new tests into a sibling retention module. Corrected an import ambiguity
+  from the extraction. The first behavioral batch passed 50/60: nine older request
+  expectations omitted the fork's explicit `reasoning.mode = standard`. The raw SSE
+  fallback-interruption fixture needed the unit-test crate's explicit SSE opt-in,
+  separate from the linked test-support crate's static; compression is disabled for
+  that plain-HTTP fixture as well.
+- Entry 65's semantic review found speculative captures publishing shared plugin and
+  Responses tool-inventory metadata before selection. Candidate snapshots now retain
+  plugin identity data, and selection publishes the exact finalized router inventory,
+  including clearing prior inventory when the chosen router has none. Regression
+  coverage exercises real primary/fallback captures and Lite-to-non-Lite selection.
+- The revised 62-case step-settings/activation/retention batch passed 60 initially;
+  the two remaining fixture issues were corrected. The final focused retention run
+  passed **6/6**, including primary/fallback selection, completion/interruption and
+  metadata publication. Source 66 supplies the live executor-hook consumer coverage.
+- Residual for focused follow-up: outer legacy/v2 PostCompact lifecycle attribution
+  remains initiating-primary after a successful current-model fallback. Installed history,
+  completion and retained execution context use the selected fallback. Changing the
+  outer hook/error/analytics contract requires a separate lifecycle decision and coverage.
 - `just argument-comment-lint` is Unix-only. The Windows source-wrapper fallback was attempted for protocol/TUI and exited because `cargo-dylint` and `dylint-link` are absent; its pinned-nightly prerequisites remain uninstalled. Report this check limitation explicitly.
 
 ## Source ledger
@@ -175,7 +195,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `0918cd2c08f6e3b1f2b1db593e632a2e092c1ea6` | Add shared Guardian transcript collection (#41422) | backported | Stateless borrowed collection, explicit serde_json alloc feature, fork version and dependency features retained. All 8 tests passed; Bazel lock refresh unchanged. No live model caller yet: documented complete-item bounds after labels, separate pools, other sections and framing. |
 | `f9cdc90c2c4d38cd557deb933e592f0032a5ea6e` | Preserve context baselines across nested agent forks (#41424) | backported | Adapted `e42b66ad9d36dace1f8ad882065e9787fce1f777`: restore prior settings from the fork's surviving full WorldState plus TurnContext baseline; preserve user-only rollback counting, retained-prefix recovery and shared provider runtime. 30 replay tests and 8 corrected nested-fork integrations passed. |
 | `2008d27e98d7b46170d2d464b36dbf97008611b8` | Filter media from function call output notifications (#41427) | backported | Structured function-output notification filtering preserves text/encrypted content, metadata and original model history. Retained existing auth variants without duplicate arms; documented behavior and added full notification regression coverage. All 3 tests passed. |
-| `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | pending |  |
+| `0d226929622ce177b56e35d09cf39dd001721466` | Retain the last selected step context for each turn (#41429) | backported | Focused capture/retention module; exact selected Arc survives terminal transitions. Speculative captures retain plugin identities privately and publish router-owned inventory only on selection, clearing obsolete inventory. Preserved runtime/MCP/settings ownership. Step-settings fixture alignment and unit SSE opt-in corrections passed; final retention 6/6. |
 | `c2abf869d539a6326a6e5a125dfdb8a5dc488ab4` | Run executor hooks for interrupted turns (#41432) | pending |  |
 | `c6bf330b42ed6fcbdcc902dc06ef38306b2e02f3` | Allow bundled browser cleanup hooks on subagent stop (#41435) | pending |  |
 | `0ae94fdd49b05ee7faa4d984d06a68492cb32b54` | Respond to terminal queries from TTY subprocesses (#41436) | pending | Prepared candidate: `967652b80fd754bfc2bf91f859562b96f2eecf8e`. |

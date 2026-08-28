@@ -62,7 +62,6 @@ use codex_analytics::ImagePreparationFact;
 use codex_analytics::ImagePreparationMetadata;
 use codex_analytics::SubAgentThreadStartedInput;
 use codex_analytics::TurnCodexErrorFact;
-use codex_async_utils::OrCancelExt;
 use codex_connectors::connector_runtime_context_key;
 use codex_context_fragments::RenderedFragment;
 use codex_exec_server::Environment;
@@ -237,6 +236,7 @@ mod service_tier;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
 mod step_activation;
+mod step_capture;
 pub(crate) mod step_context;
 pub(crate) mod step_settings;
 mod thread_settings;
@@ -3316,166 +3316,6 @@ impl Session {
                 .await;
         }
         Ok(world_state)
-    }
-
-    /// Captures one request-scoped view of dynamic state.
-    ///
-    /// This may refresh filesystem-derived state. Normal turns should call it only from
-    /// `run_turn` and pass the result down; standalone request or history boundaries may capture
-    /// their own step.
-    #[tracing::instrument(name = "step_context.capture", level = "info", skip_all)]
-    pub(crate) async fn capture_step_context(
-        self: &Arc<Self>,
-        turn_context: Arc<TurnContext>,
-        cancellation_token: &CancellationToken,
-    ) -> CodexResult<Arc<StepContext>> {
-        self.capture_step_context_with_required_mcp_servers(
-            turn_context,
-            cancellation_token,
-            /*required_servers*/ &[],
-        )
-        .await
-    }
-
-    pub(crate) async fn capture_step_context_with_required_mcp_servers(
-        self: &Arc<Self>,
-        turn_context: Arc<TurnContext>,
-        cancellation_token: &CancellationToken,
-        required_servers: &[String],
-    ) -> CodexResult<Arc<StepContext>> {
-        // Capture once before asynchronous planning; all request consumers
-        // retain this immutable settings version even if the turn is updated.
-        let mut settings = turn_context.current_settings.load_full();
-        if matches!(
-            turn_context.session_source,
-            SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
-        ) {
-            let root_service_tier = self.services.agent_control.root_service_tier();
-            if settings.selected().service_tier != root_service_tier {
-                let mut selected = settings.selected().clone();
-                selected.service_tier = root_service_tier;
-                settings = Arc::new(ResolvedStepSettings::new(
-                    Arc::new(selected),
-                    Arc::clone(&settings.model_info),
-                    self.features.enabled(Feature::FastMode),
-                ));
-            }
-        }
-        let token_budget = token_budget::resolve_token_budget(
-            turn_context.configured_token_budget.as_ref(),
-            turn_context.use_model_token_budget_defaults,
-            settings.model_info.as_ref(),
-        );
-        let session_telemetry = settings.telemetry(&turn_context.session_telemetry);
-        // Keep selections fixed for the turn while allowing their startup work to finish.
-        let environments = turn_context.environments.refresh_readiness();
-        self.services
-            .agents_md_manager
-            .refresh(&turn_context.config, &environments)
-            .await?;
-        let loaded_agents_md = self.services.agents_md_manager.get_loaded().await;
-        let selected_capability_roots = self
-            .resolve_selected_capability_roots_for_step(&environments)
-            .await;
-        let ready_selected_capability_roots =
-            Self::ready_selected_capability_roots(&selected_capability_roots);
-        let executor_capability_discovery = self
-            .executor_capability_discovery_for_step(
-                &turn_context.config,
-                &ready_selected_capability_roots,
-                &environments,
-            )
-            .or_cancel(cancellation_token)
-            .await?;
-        let extension_data = codex_extension_api::ExtensionData::new(turn_context.sub_id.clone());
-        extension_data.insert(selected_capability_roots.clone());
-        if let Some(discovery) = &executor_capability_discovery {
-            extension_data.insert(discovery.as_ref().clone());
-            if !discovery.sandbox_contexts().is_empty() {
-                extension_data.insert(discovery.sandbox_contexts().clone());
-            }
-        } else if !environments
-            .permission_profile_or_else(|| turn_context.permission_profile())
-            .file_system_sandbox_policy()
-            .has_full_disk_read_access()
-        {
-            let sandbox_contexts = environments
-                .turn_environments()
-                .map(|environment| {
-                    (
-                        environment.selection.environment_id.clone(),
-                        environment.sandbox_context(/*additional_permissions*/ None),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
-            extension_data.insert(sandbox_contexts);
-        }
-        let (mcp, prepared_recommendations) = async {
-            tokio::join!(
-                self.mcp_runtime_for_step(
-                    turn_context.as_ref(),
-                    &selected_capability_roots,
-                    required_servers,
-                ),
-                turn::prepare_tool_recommendations(self.as_ref(), turn_context.as_ref()),
-            )
-        }
-        .or_cancel(cancellation_token)
-        .await?;
-        let mut selected_plugins = self
-            .services
-            .thread_extension_data
-            .get::<codex_extension_api::SelectedPluginSnapshot>()
-            .map(|snapshot| snapshot.as_ref().clone())
-            .unwrap_or_default();
-        selected_plugins.plugins.retain(|plugin| {
-            ready_selected_capability_roots
-                .iter()
-                .any(|root| root.id == plugin.selected_root_id)
-        });
-        extension_data.insert(selected_plugins.clone());
-        turn_context.extension_data.insert(selected_plugins);
-        // Tool planning still uses the admitted turn. Migrating it to the
-        // captured model is a separate step from diagnostic activation.
-        let tool_router = turn::built_tools(
-            self.as_ref(),
-            turn_context.as_ref(),
-            // TODO(CDXENT-441): use the step scoped model
-            turn_context.model_info(),
-            &environments,
-            &mcp,
-            &extension_data,
-            prepared_recommendations,
-        )
-        .or_cancel(cancellation_token)
-        .await??;
-        // Publish inventory after planning rather than during finalization, so constructing
-        // additional candidate plans cannot overwrite turn-wide metadata.
-        if turn_context
-            .config
-            .tool_registry
-            .turn_metadata_includes_tool_info
-            && turn_context.model_info().use_responses_lite
-        {
-            turn_context.turn_metadata_state.set_tool_namespaces_info(
-                tool_router
-                    .tool_namespaces_info()
-                    .cloned()
-                    .unwrap_or_default(),
-            );
-        }
-        Ok(Arc::new(StepContext {
-            settings,
-            token_budget,
-            session_telemetry,
-            turn: turn_context,
-            environments,
-            selected_capability_roots,
-            executor_capability_discovery,
-            mcp,
-            tool_router,
-            loaded_agents_md,
-        }))
     }
 
     pub(crate) async fn record_inter_agent_communication(

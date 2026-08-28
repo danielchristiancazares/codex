@@ -8,6 +8,7 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::router::ToolRouter;
 use codex_exec_server::ExecutorCapabilityDiscoverySnapshot;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;
+use codex_extension_api::SelectedPluginSnapshot;
 use codex_mcp::McpBinding;
 use codex_otel::SessionTelemetry;
 
@@ -23,6 +24,8 @@ pub(crate) struct StepContext {
     pub(crate) environments: TurnEnvironmentSnapshot,
     /// Capability roots bound to ready environments in this exact step.
     pub(crate) selected_capability_roots: Vec<ResolvedSelectedCapabilityRoot>,
+    /// Plugin identities captured with this step, published only upon selection.
+    pub(crate) selected_plugins: SelectedPluginSnapshot,
     /// Executor-materialized capability files shared by MCP and skills in this exact step.
     pub(crate) executor_capability_discovery: Option<Arc<ExecutorCapabilityDiscoverySnapshot>>,
     /// The exact MCP connections, configuration, and catalog captured for this step.

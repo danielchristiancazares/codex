@@ -209,6 +209,10 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration as StdDuration;
 
+#[path = "step_context_retention_tests.rs"]
+mod step_context_retention_tests;
+pub(super) use step_context_retention_tests::HeldStepTask;
+
 pub(crate) fn mcp_config_for_test(config: &crate::config::Config) -> Arc<codex_mcp::McpConfig> {
     Arc::new(config.to_mcp_config_with_loaded_plugins(
         &codex_core_plugins::PluginLoadOutcome::default(),
@@ -250,6 +254,11 @@ impl StepContext {
             turn: Arc::clone(&turn),
             environments,
             selected_capability_roots: Vec::new(),
+            selected_plugins: turn
+                .extension_data
+                .get::<codex_extension_api::SelectedPluginSnapshot>()
+                .map(|snapshot| snapshot.as_ref().clone())
+                .unwrap_or_default(),
             executor_capability_discovery: None,
             mcp: Arc::new(codex_mcp::McpBinding::empty(mcp_config_for_test(
                 &turn.config,
