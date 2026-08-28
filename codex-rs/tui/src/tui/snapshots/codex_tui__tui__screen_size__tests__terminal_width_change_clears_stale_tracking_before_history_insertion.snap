@@ -1,8 +1,10 @@
 ---
 source: tui/src/tui/screen_size_tests.rs
-expression: terminal.backend().vt100().screen().contents()
+expression: contents
 ---
-
 
 shell-marker
 source-reflow-row
+
+
+new-history-row

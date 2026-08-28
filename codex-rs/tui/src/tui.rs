@@ -45,6 +45,7 @@ use self::input_boundary::TerminalInitializationGuard;
 pub(crate) use self::input_boundary::discard_pending_terminal_input;
 #[cfg(all(test, unix))]
 use self::input_boundary::terminal_input_is_readable;
+pub(crate) use self::scrollback::discard_docked_history_gap;
 use crate::custom_terminal;
 use crate::custom_terminal::InlineViewportState;
 use crate::custom_terminal::Terminal as CustomTerminal;
@@ -904,6 +905,17 @@ impl Tui {
         self.pending_history_lines.clear();
     }
 
+    fn clear_inline_history_tracking_for_size_change(&mut self, screen_size: Size) {
+        if screen_size == self.terminal.last_known_screen_size {
+            return;
+        }
+        self.terminal.clear_inline_history_tracking();
+        if let Some(saved) = self.alt_saved_viewport.as_mut() {
+            saved.visible_history_rows = 0;
+            saved.docked_history_gap_rows = 0;
+        }
+    }
+
     /// Resize the inline viewport for the resize-reflow path.
     ///
     /// Unlike the legacy draw path, a physical terminal resize leaves rows above the viewport for
@@ -924,6 +936,10 @@ impl Tui {
         let viewport_was_bottom_aligned =
             terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
         let previous_area = terminal.viewport_area;
+
+        if terminal_size_changed {
+            terminal.clear_inline_history_tracking();
+        }
 
         let mut area = terminal.viewport_area;
         area.height = height.min(screen_size.height);
@@ -991,6 +1007,7 @@ impl Tui {
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
         let screen_size = self.take_event_screen_size()?;
+        self.clear_inline_history_tracking_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -1130,6 +1147,7 @@ impl Tui {
         screen_size: Size,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
+        self.clear_inline_history_tracking_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]

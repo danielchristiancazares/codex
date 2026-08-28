@@ -112,6 +112,7 @@ impl SuspendContext {
             ResumeAction::RealignInline => {
                 if let Some(saved) = alt_saved_viewport.as_mut() {
                     saved.visible_history_rows = 0;
+                    saved.docked_history_gap_rows = 0;
                 }
                 let viewport = Rect::new(
                     /*x*/ 0,
@@ -125,6 +126,7 @@ impl SuspendContext {
                 if let Some(saved) = alt_saved_viewport.as_mut() {
                     saved.area.y = self.cursor_y();
                     saved.visible_history_rows = 0;
+                    saved.docked_history_gap_rows = 0;
                 }
                 Some(PreparedResumeAction::RestoreAltScreen)
             }
@@ -187,8 +189,7 @@ impl PreparedResumeAction {
     pub(crate) fn apply(self, terminal: &mut Terminal, screen_size: Size) -> Result<()> {
         match self {
             PreparedResumeAction::RealignViewport(area) => {
-                let visible_history_rows = terminal.visible_history_rows();
-                terminal.note_history_rows_removed(visible_history_rows);
+                terminal.clear_inline_history_tracking();
                 terminal.set_viewport_area(area);
             }
             PreparedResumeAction::RestoreAltScreen => {

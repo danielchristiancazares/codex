@@ -144,6 +144,9 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    /// Count of blank rows immediately above the visible history tail created by bottom docking.
+    /// Full-screen history insertion consumes these rows inside an isolated scroll region.
+    docked_history_gap_rows: u16,
     cursor_positioning: CursorPositioning,
     #[cfg(test)]
     screen_size_override: Option<Size>,
@@ -153,6 +156,7 @@ where
 pub(crate) struct InlineViewportState {
     pub(crate) area: Rect,
     pub(crate) visible_history_rows: u16,
+    pub(crate) docked_history_gap_rows: u16,
 }
 
 impl<B> Drop for Terminal<B>
@@ -230,6 +234,7 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            docked_history_gap_rows: 0,
             cursor_positioning: if cfg!(windows) || std::env::var_os("WT_SESSION").is_some() {
                 CursorPositioning::Explicit
             } else {
@@ -327,18 +332,25 @@ where
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
         self.visible_history_rows = self.visible_history_rows.min(area.top());
+        self.docked_history_gap_rows = self
+            .docked_history_gap_rows
+            .min(area.top().saturating_sub(self.visible_history_rows));
     }
 
     pub(crate) fn inline_viewport_state(&self) -> InlineViewportState {
         InlineViewportState {
             area: self.viewport_area,
             visible_history_rows: self.visible_history_rows,
+            docked_history_gap_rows: self.docked_history_gap_rows,
         }
     }
 
     pub(crate) fn restore_inline_viewport_state(&mut self, state: InlineViewportState) {
         self.set_viewport_area(state.area);
         self.visible_history_rows = state.visible_history_rows.min(state.area.top());
+        self.docked_history_gap_rows = state
+            .docked_history_gap_rows
+            .min(state.area.top().saturating_sub(self.visible_history_rows));
     }
 
     /// Queries the backend for size and resizes if it doesn't match the previous size.
@@ -550,7 +562,7 @@ where
         self.backend.clear_region(ClearType::All)?;
         self.set_cursor_position(home)?;
         std::io::Write::flush(&mut self.backend)?;
-        self.visible_history_rows = 0;
+        self.clear_inline_history_tracking();
         self.previous_buffer_mut().reset();
         Ok(())
     }
@@ -569,16 +581,17 @@ where
         write!(self.backend, "\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")?;
         std::io::Write::flush(&mut self.backend)?;
         self.last_known_cursor_pos = Position { x: 0, y: 0 };
-        self.visible_history_rows = 0;
+        self.clear_inline_history_tracking();
         self.previous_buffer_mut().reset();
         Ok(())
     }
 
     pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {
-        self.visible_history_rows = self
-            .visible_history_rows
-            .saturating_add(inserted_rows)
-            .min(self.viewport_area.top());
+        self.visible_history_rows = self.visible_history_rows.saturating_add(inserted_rows).min(
+            self.viewport_area
+                .top()
+                .saturating_sub(self.docked_history_gap_rows),
+        );
     }
 
     pub(crate) fn note_history_rows_removed(&mut self, removed_rows: u16) {
@@ -587,6 +600,23 @@ where
 
     pub(crate) fn visible_history_rows(&self) -> u16 {
         self.visible_history_rows
+    }
+
+    pub(crate) fn note_docked_history_gap(&mut self, rows: u16) {
+        self.docked_history_gap_rows = self.docked_history_gap_rows.saturating_add(rows);
+    }
+
+    pub(crate) fn consume_docked_history_gap(&mut self, rows: u16) {
+        self.docked_history_gap_rows = self.docked_history_gap_rows.saturating_sub(rows);
+    }
+
+    pub(crate) fn docked_history_gap_rows(&self) -> u16 {
+        self.docked_history_gap_rows
+    }
+
+    pub(crate) fn clear_inline_history_tracking(&mut self) {
+        self.visible_history_rows = 0;
+        self.docked_history_gap_rows = 0;
     }
 
     /// Clears the inactive buffer and swaps it with the current buffer

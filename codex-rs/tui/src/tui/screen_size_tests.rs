@@ -11,6 +11,9 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
 use crate::custom_terminal::Terminal as CustomTerminal;
+use crate::insert_history::HistoryLineWrapPolicy;
+use crate::insert_history::InsertHistoryMode;
+use crate::insert_history::insert_history_lines_with_mode_and_wrap_policy;
 use crate::test_backend::VT100Backend;
 use crate::tui::TuiEvent;
 use crate::tui::scrollback::ScrollbackStrategy;
@@ -74,14 +77,55 @@ async fn entering_alternate_screen_updates_cached_screen_size() {
         screen_size.height.saturating_sub(8),
     ));
     tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+    tui.terminal.note_docked_history_gap(/*rows*/ 2);
     let inline_state = tui.terminal.inline_viewport_state();
 
     tui.enter_alt_screen().expect("enter alternate screen");
 
     assert_eq!(tui.terminal.last_known_screen_size, screen_size);
-    assert_eq!(tui.terminal.visible_history_rows(), 0);
+    assert_eq!(
+        (
+            tui.terminal.visible_history_rows(),
+            tui.terminal.docked_history_gap_rows(),
+        ),
+        (0, 0)
+    );
     tui.leave_alt_screen().expect("leave alternate screen");
     assert_eq!(tui.terminal.inline_viewport_state(), inline_state);
+}
+
+#[tokio::test]
+async fn alternate_screen_resize_clears_saved_inline_history_tracking() {
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let screen_size = tui.terminal.size().expect("terminal size");
+    tui.terminal.last_known_screen_size = screen_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 8,
+        screen_size.width,
+        screen_size.height.saturating_sub(/*rhs*/ 8),
+    ));
+    tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+    tui.terminal.note_docked_history_gap(/*rows*/ 2);
+    tui.enter_alt_screen().expect("enter alternate screen");
+
+    let resized_size = Size::new(
+        screen_size.width.saturating_add(/*rhs*/ 4),
+        screen_size.height,
+    );
+    tui.screen_size_for_event(&TuiEvent::Resize(resized_size))
+        .expect("resolve alternate-screen resize");
+    tui.draw(u16::MAX, |_| {})
+        .expect("draw resized alternate screen");
+    tui.leave_alt_screen().expect("leave alternate screen");
+
+    assert_eq!(
+        (
+            tui.terminal.visible_history_rows(),
+            tui.terminal.docked_history_gap_rows(),
+        ),
+        (0, 0)
+    );
 }
 
 #[tokio::test]
@@ -207,7 +251,7 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
 }
 
 #[test]
-fn terminal_width_change_leaves_tracked_rows_for_source_reflow() {
+fn terminal_width_change_clears_stale_tracking_before_history_insertion() {
     let screen_size = Size::new(/*width*/ 24, /*height*/ 8);
     let backend = VT100Backend::new(screen_size.width, screen_size.height);
     let mut terminal = CustomTerminal::with_options(backend).expect("terminal");
@@ -216,6 +260,7 @@ fn terminal_width_change_leaves_tracked_rows_for_source_reflow() {
         /*x*/ 0, /*y*/ 4, /*width*/ 20, /*height*/ 4,
     ));
     terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+    terminal.note_docked_history_gap(/*rows*/ 2);
     queue!(
         terminal.backend_mut(),
         MoveTo(/*x*/ 0, /*y*/ 2),
@@ -234,10 +279,26 @@ fn terminal_width_change_leaves_tracked_rows_for_source_reflow() {
     .expect("resize inline viewport");
 
     assert_eq!(
-        (terminal.viewport_area, terminal.visible_history_rows()),
-        (Rect::new(0, 6, 24, 2), 2)
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 6, 24, 2), 0, 0)
     );
-    insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("new-history-row")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("insert history after resize");
+
+    let contents = terminal.backend().vt100().screen().contents();
+    assert!(contents.contains("shell-marker"), "{contents}");
+    assert!(contents.contains("source-reflow-row"), "{contents}");
+    insta::assert_snapshot!(contents);
 }
 
 #[test]
@@ -281,7 +342,7 @@ fn terminal_height_shrink_then_growth_leaves_rows_for_source_reflow() {
 
     assert_eq!(
         (terminal.viewport_area, terminal.visible_history_rows()),
-        (Rect::new(0, 6, 24, 2), 2)
+        (Rect::new(0, 6, 24, 2), 0)
     );
     insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
 }

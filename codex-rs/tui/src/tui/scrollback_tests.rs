@@ -277,6 +277,46 @@ fn full_screen_strategy_docks_history_without_moving_unrelated_rows() {
     let contents = terminal.backend().vt100().screen().contents();
     assert_eq!(contents.lines().nth(1), Some("shell-history-marker"));
     insta::assert_snapshot!(contents);
+
+    ScrollbackStrategy::FullScreen
+        .grow_viewport(
+            &mut terminal,
+            viewport_top,
+            Size::new(width, height),
+            /*scroll_by*/ 2,
+        )
+        .expect("grow viewport through tracked gap");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, previous_viewport_top))
+        .expect("clear expanded viewport");
+
+    assert_eq!(
+        (
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (2, 0)
+    );
+    let visible = terminal.backend().vt100().screen().contents();
+    let mut scrollback_screen = terminal.backend().vt100().screen().clone();
+    scrollback_screen.set_scrollback(/*rows*/ usize::MAX);
+    assert_eq!(scrollback_screen.contents(), visible);
+    insta::assert_snapshot!(visible, @r"
+
+    shell-history-marker
+
+
+
+
+    history-tail-one
+    history-tail-two
+    ");
 }
 
 #[test]
@@ -338,4 +378,291 @@ fn full_history_band_stays_adjacent_to_bottom_docked_viewport_after_shrink() {
 
     assert_eq!((moved, terminal.visible_history_rows()), (true, 4));
     insta::assert_snapshot!(terminal.backend().vt100().screen().contents());
+}
+
+#[test]
+fn full_screen_inserts_consume_docked_blank_band_before_scrolling() {
+    let width = 28;
+    let height = 12;
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+    let mut terminal = Terminal::with_options(backend).expect("terminal with scrollback");
+    let previous_viewport_top = 8;
+    let viewport_top = 10;
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+
+    for (row, line) in [
+        (5, "history-before-tail"),
+        (6, "history-tail-one"),
+        (7, "history-tail-two"),
+    ] {
+        queue!(terminal.backend_mut(), MoveTo(/*x*/ 0, row), Print(line))
+            .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    ScrollbackStrategy::FullScreen
+        .dock_sparse_history_tail(&mut terminal, previous_viewport_top, viewport_top)
+        .expect("dock sparse history tail");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        viewport_top,
+        width,
+        height - viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, viewport_top))
+        .expect("clear stale live viewport");
+
+    let mut insertion_states = Vec::new();
+    for (line, expected_gap_rows) in [
+        ("new-history-one", 1),
+        ("new-history-two", 0),
+        ("new-history-three", 0),
+    ] {
+        insert_history_lines_with_mode_and_wrap_policy(
+            &mut terminal,
+            vec![Line::from(line)],
+            InsertHistoryMode::FullScreen,
+            HistoryLineWrapPolicy::PreWrap,
+        )
+        .expect("insert pending history");
+        assert_eq!(
+            (
+                terminal.viewport_area.top(),
+                terminal.docked_history_gap_rows(),
+            ),
+            (10, expected_gap_rows)
+        );
+        let viewport = terminal.viewport_area;
+        assert_eq!(viewport.bottom(), height);
+        queue!(
+            terminal.backend_mut(),
+            MoveTo(/*x*/ 0, viewport.top()),
+            Print("composer-top"),
+            MoveTo(/*x*/ 0, viewport.top() + 1),
+            Print("composer-bottom")
+        )
+        .expect("redraw bottom-docked composer");
+        let rows: Vec<String> = terminal
+            .backend()
+            .vt100()
+            .screen()
+            .rows(/*start*/ 0, width)
+            .collect();
+        assert!(
+            rows[..viewport.top() as usize]
+                .iter()
+                .any(|row| row.contains(line)),
+            "inserted history should remain above the viewport: {rows:?}"
+        );
+        assert!(
+            rows[viewport.top() as usize..]
+                .iter()
+                .all(|row| !row.contains("history")),
+            "history must not overlap the live viewport: {rows:?}"
+        );
+        assert_eq!(
+            rows[viewport.top() as usize..]
+                .iter()
+                .map(|row| row.trim_end())
+                .collect::<Vec<_>>(),
+            ["composer-top", "composer-bottom"]
+        );
+        insertion_states.push(format!(
+            "{line} (gap {expected_gap_rows}):\n{}",
+            terminal.backend().vt100().screen().contents()
+        ));
+    }
+    insta::assert_snapshot!(insertion_states.join("\n---\n"), @r"
+    new-history-one (gap 1):
+
+
+
+
+
+    history-before-tail
+
+    history-tail-one
+    history-tail-two
+    new-history-one
+    composer-top
+    composer-bottom
+    ---
+    new-history-two (gap 0):
+
+
+
+
+
+    history-before-tail
+    history-tail-one
+    history-tail-two
+    new-history-one
+    new-history-two
+    composer-top
+    composer-bottom
+    ---
+    new-history-three (gap 0):
+
+
+
+
+    history-before-tail
+    history-tail-one
+    history-tail-two
+    new-history-one
+    new-history-two
+    new-history-three
+    composer-top
+    composer-bottom
+    ");
+
+    let rows: Vec<String> = terminal
+        .backend()
+        .vt100()
+        .screen()
+        .rows(/*start*/ 0, width)
+        .collect();
+    let positions = [
+        "history-before-tail",
+        "history-tail-one",
+        "history-tail-two",
+        "new-history-one",
+        "new-history-two",
+        "new-history-three",
+    ]
+    .map(|needle| {
+        rows.iter()
+            .position(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("missing {needle:?} in {rows:?}"))
+    });
+
+    assert_eq!(positions, [4, 5, 6, 7, 8, 9], "history rows: {rows:?}");
+    let contents = rows
+        .iter()
+        .map(|row| row.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!(contents, @r"
+
+
+
+
+history-before-tail
+history-tail-one
+history-tail-two
+new-history-one
+new-history-two
+new-history-three
+
+    ");
+}
+
+#[test]
+fn full_screen_wrapped_inserts_consume_gap_by_physical_rows() {
+    let width = 12;
+    let height = 8;
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 16);
+    let mut terminal = Terminal::with_options(backend).expect("terminal with scrollback");
+    let previous_viewport_top = 3;
+    let viewport_top = 6;
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        previous_viewport_top,
+        width,
+        height - previous_viewport_top,
+    ));
+    for (row, line) in [(1, "tail-one"), (2, "tail-two")] {
+        queue!(terminal.backend_mut(), MoveTo(/*x*/ 0, row), Print(line))
+            .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    ScrollbackStrategy::FullScreen
+        .dock_sparse_history_tail(&mut terminal, previous_viewport_top, viewport_top)
+        .expect("dock sparse history tail");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        viewport_top,
+        width,
+        height - viewport_top,
+    ));
+    terminal
+        .clear_after_position(Position::new(/*x*/ 0, viewport_top))
+        .expect("clear stale live viewport");
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("alpha beta gamma")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("insert two pre-wrapped rows");
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 6, width, 2), 4, 1)
+    );
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("abcdefghijklmnop")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::Terminal,
+    )
+    .expect("insert two terminal-wrapped rows");
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (Rect::new(0, 6, width, 2), 6, 0)
+    );
+
+    let viewport = terminal.viewport_area;
+    queue!(
+        terminal.backend_mut(),
+        MoveTo(/*x*/ 0, viewport.top()),
+        Print("composer"),
+        MoveTo(/*x*/ 0, viewport.top() + 1),
+        Print("footer")
+    )
+    .expect("draw bottom-docked viewport");
+    let rows: Vec<String> = terminal
+        .backend()
+        .vt100()
+        .screen()
+        .rows(/*start*/ 0, width)
+        .collect();
+    assert_eq!(
+        rows[viewport.top() as usize..]
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>(),
+        ["composer", "footer"]
+    );
+    insta::assert_snapshot!(
+        rows.iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        @r"
+    tail-one
+    tail-two
+    alpha beta
+    gamma
+    abcdefghijkl
+    mnop
+    composer
+    footer"
+    );
 }

@@ -136,6 +136,11 @@ where
             // The existing viewport is immediately replaced in the same draw pass. Clear it
             // before terminal scrolling can move composer contents into scrollback.
             terminal.clear_after_position(area.as_position())?;
+            let docked_gap_rows = terminal.docked_history_gap_rows();
+            if docked_gap_rows > 0 && wrapped_rows > 0 {
+                crate::tui::discard_docked_history_gap(terminal, screen_size, wrapped_lines)?;
+                area = terminal.viewport_area;
+            }
             let writer = terminal.backend_mut();
             queue!(writer, MoveTo(/*x*/ 0, area.top()))?;
             for (index, line) in wrapped.iter().enumerate() {
