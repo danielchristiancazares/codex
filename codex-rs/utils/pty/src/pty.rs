@@ -373,10 +373,12 @@ async fn spawn_process_preserving_fds(
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (_stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(1);
+    let output_lost = Arc::new(AtomicBool::new(false));
     let (reader_handle, writer_handle) = io.spawn(
         stdout_tx,
         writer_rx,
         crate::unix_io::StdinCloseBehavior::NoEof,
+        Arc::clone(&output_lost),
     );
 
     let (exit_tx, exit_rx) = oneshot::channel::<i32>();
@@ -413,6 +415,7 @@ async fn spawn_process_preserving_fds(
         wait_handle,
         exit_status,
         exit_code,
+        output_lost,
         Some(handles),
         /*resizer*/ None,
     );
