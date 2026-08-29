@@ -186,6 +186,52 @@ fn streaming_metadata_tracks_stable_rendered_boundary_in_the_parser_pass() {
 }
 
 #[test]
+fn recompute_retains_stable_top_level_prefix_metadata() {
+    let cwd = test_cwd();
+    let source = "Completed paragraph.\n\n- mutable item one\n- mutable item two\n";
+    let mut render = StreamingRender::new();
+
+    render.recompute(
+        source,
+        /*width*/ Some(32),
+        &cwd,
+        HistoryRenderMode::Rich,
+        /*inline_visualization_context*/ None,
+    );
+
+    let source_boundary = source.find("- mutable").expect("mutable list boundary");
+    assert_eq!(render.stable_source_prefix_len(), source_boundary);
+    assert!(render.stable_rendered_prefix_len() > 0);
+    assert!(
+        render.stable_rendered_prefix_len() < render.lines.len(),
+        "the final list must remain outside the stable rendered prefix"
+    );
+}
+
+#[test]
+fn recompute_uses_zero_stable_prefix_for_reference_definitions() {
+    let cwd = test_cwd();
+    let source = "Completed [link][target].\n\nMutable paragraph.\n\n[target]: README.md\n";
+    let mut render = StreamingRender::new();
+
+    render.recompute(
+        source,
+        /*width*/ Some(32),
+        &cwd,
+        HistoryRenderMode::Rich,
+        /*inline_visualization_context*/ None,
+    );
+
+    assert_eq!(
+        (
+            render.stable_source_prefix_len(),
+            render.stable_rendered_prefix_len(),
+        ),
+        (0, 0)
+    );
+}
+
+#[test]
 fn incremental_raw_render_preserves_blank_lines() {
     let cwd = test_cwd();
     let width = Some(80);

@@ -15,6 +15,8 @@ use crate::insert_history::HistoryLineWrapPolicy;
 use crate::insert_history::InsertHistoryMode;
 use crate::insert_history::insert_history_lines_with_mode_and_wrap_policy;
 use crate::test_backend::VT100Backend;
+use crate::tui::InlineViewportPlacement;
+use crate::tui::InlineViewportRole;
 use crate::tui::TuiEvent;
 use crate::tui::scrollback::HistoryTailDock;
 use crate::tui::scrollback::ScrollbackStrategy;
@@ -148,8 +150,14 @@ async fn alternate_screen_height_resize_restores_bottom_docked_inline_viewport()
     tui.draw(u16::MAX, |_| {})
         .expect("draw resized alternate screen");
     tui.leave_alt_screen().expect("leave alternate screen");
-    tui.draw_with_resize_reflow(/*height*/ 5, resized_size, |_| {})
-        .expect("draw restored inline viewport");
+    tui.draw_with_resize_reflow(
+        /*height*/ 5,
+        resized_size,
+        InlineViewportPlacement::FollowExisting,
+        InlineViewportRole::Persistent,
+        |_| {},
+    )
+    .expect("draw restored inline viewport");
 
     assert_eq!(
         tui.terminal.viewport_area,
@@ -193,6 +201,7 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
         &mut tui.terminal,
         /*height*/ 14,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         scrollback,
         HistoryTailDock::Immediate,
     )
@@ -208,6 +217,7 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
         &mut tui.terminal,
         /*height*/ 8,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         scrollback,
         HistoryTailDock::Immediate,
     )
@@ -221,7 +231,7 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
 }
 
 #[test]
-fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
+fn full_screen_popup_close_preserves_history_position() {
     let screen_size = Size::new(/*width*/ 32, /*height*/ 12);
     let backend = VT100Backend::with_scrollback(
         screen_size.width,
@@ -257,8 +267,9 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
         &mut terminal,
         /*height*/ 4,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
-        HistoryTailDock::Immediate,
+        HistoryTailDock::PreservePosition,
     )
     .expect("shrink provider popup viewport");
     assert!(needs_full_repaint);
@@ -291,12 +302,12 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
     insta::assert_snapshot!(contents, @r"
     shell-history-marker
 
-
-
-
-
     history-tail-one
     history-tail-two
+
+
+
+
     composer-top
     │› ready
     ────────────────
@@ -316,7 +327,7 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
             terminal.visible_history_rows(),
             terminal.docked_history_gap_rows(),
         ),
-        (Rect::new(0, 8, screen_size.width, 4), 3, 3)
+        (Rect::new(0, 8, screen_size.width, 4), 3, 0)
     );
     assert_eq!(terminal.viewport_area.bottom(), screen_size.height);
 
@@ -337,6 +348,7 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
         &mut terminal,
         /*height*/ 4,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -349,13 +361,12 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
 
     let contents = terminal.backend().vt100().screen().contents();
     insta::assert_snapshot!(contents, @r"
-    shell-history-marker
-
-
-
-
     history-tail-one
     history-tail-two
+
+
+
+
     new-history-row
     composer-top
     │› ready
@@ -394,6 +405,7 @@ fn full_screen_popup_regrow_discards_only_reclaimed_gap_rows() {
         &mut terminal,
         /*height*/ 8,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -413,6 +425,7 @@ fn full_screen_popup_regrow_discards_only_reclaimed_gap_rows() {
         &mut terminal,
         /*height*/ 5,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -436,6 +449,7 @@ fn full_screen_popup_regrow_discards_only_reclaimed_gap_rows() {
         &mut terminal,
         /*height*/ 7,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -501,6 +515,7 @@ fn full_height_viewport_collapse_keeps_flushed_history_adjacent() {
         &mut terminal,
         /*height*/ height,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -519,6 +534,7 @@ fn full_height_viewport_collapse_keeps_flushed_history_adjacent() {
         &mut terminal,
         /*height*/ 4,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -590,6 +606,7 @@ fn pending_full_screen_history_refills_vacated_rows_before_bottom_dock() {
         &mut terminal,
         /*height*/ 2,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::DeferToPendingHistory,
     )
@@ -651,6 +668,7 @@ fn terminal_width_change_clears_stale_tracking_before_history_insertion() {
         &mut terminal,
         /*height*/ 2,
         screen_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -695,6 +713,7 @@ fn terminal_height_shrink_then_growth_leaves_rows_for_source_reflow() {
         &mut terminal,
         /*height*/ 2,
         shrunken_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )
@@ -715,6 +734,7 @@ fn terminal_height_shrink_then_growth_leaves_rows_for_source_reflow() {
         &mut terminal,
         /*height*/ 2,
         full_size,
+        InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
         HistoryTailDock::Immediate,
     )

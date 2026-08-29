@@ -1,14 +1,17 @@
 use super::*;
 use crate::app::test_support::make_test_app;
 use crate::history_cell::AgentMarkdownCell;
+use crate::history_cell::AgentMessageCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use std::path::Path;
+use std::path::PathBuf;
 
 fn plain_history_cells(count: usize) -> Vec<Arc<dyn HistoryCell>> {
     (0..count)
@@ -337,6 +340,7 @@ async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<(
         screen_size.width,
         /*height*/ 4,
     ));
+    tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
 
     let model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
     app.chat_widget.open_reasoning_popup(reasoning_model);
@@ -361,6 +365,11 @@ async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<(
         model_area.top() > 0,
         "model picker must preserve its bottom-docked viewport provenance: {model_area:?}"
     );
+    assert_eq!(
+        tui.terminal.docked_history_gap_rows(),
+        0,
+        "model popup transitions must not create blank rows above transcript history"
+    );
     insta::assert_debug_snapshot!(
         "model_selection_stages_keep_inline_viewport_bottom_docked",
         [
@@ -369,6 +378,116 @@ async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<(
             restored_model_area,
             composer_area,
         ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn inline_resize_preserves_pending_history_and_acknowledges_width_and_height() -> Result<()> {
+    let mut app = make_test_app().await;
+    app.transcript_replay_policy = TranscriptReplayPolicy::InlinePreserveScrollback;
+    app.chat_widget
+        .set_transcript_replay_policy_for_tests(TranscriptReplayPolicy::InlinePreserveScrollback);
+    app.transcript_cells = plain_history_cells(/*count*/ 3);
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.insert_history_lines(vec![
+        Line::from("pre-codex-shell-output"),
+        Line::from("existing codex row"),
+    ]);
+    let pending_before = tui
+        .pending_history_lines_for_test()
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+
+    let width_resize = Size::new(/*width*/ 64, /*height*/ 24);
+    app.handle_draw_pre_render(&mut tui, width_resize)?;
+    let height_resize = Size::new(/*width*/ 64, /*height*/ 18);
+    tui.terminal.last_known_screen_size = width_resize;
+    app.handle_draw_pre_render(&mut tui, height_resize)?;
+
+    assert_eq!(
+        tui.pending_history_lines_for_test()
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
+        pending_before,
+        "inline resize must not purge shell or Codex rows awaiting terminal insertion"
+    );
+    assert!(!app.transcript_reflow.has_pending_reflow());
+    assert!(!app.transcript_reflow.reflow_needed_for_width(/*width*/ 64));
+    assert!(
+        app.transcript_reflow.visible_history_rows().is_some(),
+        "inline acknowledgement must preserve the cached visible-history budget"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn owned_resize_still_schedules_source_backed_replay() -> Result<()> {
+    let mut app = make_test_app().await;
+    app.transcript_replay_policy = TranscriptReplayPolicy::OwnedBufferReplay;
+    app.transcript_cells = plain_history_cells(/*count*/ 2);
+    let tui = crate::tui::test_support::make_test_tui()?;
+    let initial = Size::new(/*width*/ 80, /*height*/ 24);
+    app.handle_draw_size_change(initial, initial, &tui.frame_requester());
+
+    let resized = Size::new(/*width*/ 72, /*height*/ 20);
+    assert!(app.handle_draw_size_change(resized, initial, &tui.frame_requester(),));
+    assert!(app.transcript_reflow.has_pending_reflow());
+    Ok(())
+}
+
+#[tokio::test]
+async fn inline_mismatch_appends_one_terminal_only_correction_without_clearing_history()
+-> Result<()> {
+    let mut app = make_test_app().await;
+    app.transcript_replay_policy = TranscriptReplayPolicy::InlinePreserveScrollback;
+    app.chat_widget
+        .set_transcript_replay_policy_for_tests(TranscriptReplayPolicy::InlinePreserveScrollback);
+    app.transcript_cells = vec![Arc::new(AgentMessageCell::new(
+        vec![Line::from("streamed provisional response")],
+        /*is_first_line*/ true,
+    ))];
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.insert_history_lines(vec![Line::from("pre-codex-shell-output")]);
+
+    app.handle_consolidate_agent_message(
+        &mut tui,
+        "Authoritative **corrected** response.".to_string(),
+        PathBuf::from("/workspace"),
+        /*inline_visualization_context*/ None,
+        crate::app_event::ConsolidationScrollbackReflow::InlinePreserve(
+            crate::app_event::InlineCanonicalCorrection::AppendAuthoritativeSource,
+        ),
+        /*deferred_history_cell*/ None,
+    )?;
+
+    assert_eq!(app.transcript_cells.len(), 1);
+    assert!(
+        app.transcript_cells[0].as_any().is::<AgentMarkdownCell>(),
+        "canonical transcript should contain only the authoritative markdown cell"
+    );
+    let pending = tui
+        .pending_history_lines_for_test()
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pending
+            .iter()
+            .filter(|line| line.contains("Final response (corrected)"))
+            .count(),
+        1
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|line| line.contains("pre-codex-shell-output"))
+    );
+    insta::assert_snapshot!(
+        "inline_mismatch_preserves_shell_history_and_appends_correction",
+        pending.join("\n")
     );
     Ok(())
 }

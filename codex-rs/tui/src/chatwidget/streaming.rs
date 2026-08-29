@@ -28,7 +28,8 @@ impl ChatWidget {
         if let Some(mut controller) = self.stream_controller.take() {
             let had_live_tail = controller.has_live_tail();
             self.clear_active_stream_tail();
-            let (cell, streamed_source) = controller.finalize();
+            let finalization = controller.finalize();
+            let streamed_source = finalization.canonical_source;
             let completed_message_differs = completed_message.is_some_and(|completed| {
                 let Some(streamed) = streamed_source.as_deref() else {
                     return true;
@@ -36,25 +37,46 @@ impl ChatWidget {
                 // Stream finalization supplies one trailing newline when the last delta omitted it.
                 streamed != completed && streamed.strip_suffix('\n') != Some(completed)
             });
-            let scrollback_reflow = if had_live_tail || completed_message_differs {
-                crate::app_event::ConsolidationScrollbackReflow::Required
-            } else {
-                crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
+            let scrollback_reflow = match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay
+                    if had_live_tail
+                        || completed_message_differs
+                        || finalization.canonical_reflow == DeferredRowsReflow::Required =>
+                {
+                    crate::app_event::ConsolidationScrollbackReflow::Required
+                }
+                TranscriptReplayPolicy::OwnedBufferReplay => {
+                    crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
+                }
+                TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    let correction = if completed_message_differs {
+                        crate::app_event::InlineCanonicalCorrection::AppendAuthoritativeSource
+                    } else {
+                        crate::app_event::InlineCanonicalCorrection::None
+                    };
+                    crate::app_event::ConsolidationScrollbackReflow::InlinePreserve(correction)
+                }
             };
             // Match newline-committed streaming behavior: once assistant output is ready to be
             // committed into history, hide the inline status row so transcript content replaces it.
-            if cell.is_some() {
+            if finalization.unobserved_cell.is_some() {
                 self.bottom_pane.hide_status_indicator();
             }
-            let deferred_history_cell =
-                if scrollback_reflow == crate::app_event::ConsolidationScrollbackReflow::Required {
-                    cell
-                } else {
-                    if let Some(cell) = cell {
+            let deferred_history_cell = match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay
+                    if scrollback_reflow
+                        == crate::app_event::ConsolidationScrollbackReflow::Required =>
+                {
+                    finalization.unobserved_cell
+                }
+                TranscriptReplayPolicy::OwnedBufferReplay
+                | TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    if let Some(cell) = finalization.unobserved_cell {
                         self.add_boxed_history(cell);
                     }
                     None
-                };
+                }
+            };
             // Consolidate the run of streaming AgentMessageCells into a single AgentMarkdownCell
             // that can re-render from source on resize.
             let source = completed_message.map(str::to_owned).or_else(|| {
@@ -196,34 +218,30 @@ impl ChatWidget {
         self.transcript.plan_delta_buffer.clear();
         self.transcript.plan_item_active = false;
         self.transcript.saw_plan_item_this_turn = true;
-        let (finalized_streamed_cell, consolidated_plan_source) =
-            if let Some(mut controller) = self.plan_stream_controller.take() {
-                let had_live_tail = controller.has_live_tail();
-                self.clear_active_stream_tail();
-                let (cell, source) = controller.finalize();
-                if had_live_tail {
-                    (None, source)
-                } else {
-                    (cell, source)
+        if let Some(mut controller) = self.plan_stream_controller.take() {
+            self.clear_active_stream_tail();
+            let finalization = controller.finalize();
+            match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay => {
+                    // Owned replay reconstructs from the canonical plan cell. Suppress every
+                    // provisional finalization row so stale layout never reaches scrollback first.
+                    let _canonical_reflow = finalization.canonical_reflow;
                 }
-            } else {
-                (None, None)
-            };
-        if let Some(cell) = finalized_streamed_cell {
-            self.add_boxed_history(cell);
-            // TODO: Replace streamed output with the final plan item text if plan streaming is
-            // removed or if we need to reconcile mismatches between streamed and final content.
-            if let Some(source) = consolidated_plan_source {
+                TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    if let Some(cell) = finalization.unobserved_cell {
+                        self.add_boxed_history(cell);
+                    }
+                }
+            }
+            if let Some(source) = finalization.canonical_source {
                 self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
+            } else if !plan_text.is_empty() {
+                self.add_to_history(history_cell::new_proposed_plan(plan_text, &self.config.cwd));
             }
         } else if !plan_text.is_empty() {
             self.add_to_history(history_cell::new_proposed_plan(plan_text, &self.config.cwd));
-        } else if let Some(source) = consolidated_plan_source {
-            self.note_stream_consolidation_queued();
-            self.app_event_tx
-                .send(AppEvent::ConsolidateProposedPlan(source));
         }
         if should_restore_after_stream {
             self.status_state.pending_status_indicator_restore = true;

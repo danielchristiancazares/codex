@@ -121,6 +121,13 @@ pub(crate) enum HistoryLookupResponse {
 pub(crate) enum ConsolidationScrollbackReflow {
     IfResizeReflowRan,
     Required,
+    InlinePreserve(InlineCanonicalCorrection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InlineCanonicalCorrection {
+    None,
+    AppendAuthoritativeSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

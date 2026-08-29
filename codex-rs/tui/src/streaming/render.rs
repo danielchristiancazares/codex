@@ -55,7 +55,7 @@ impl StreamingRender {
         self.open_code_fence = None;
     }
 
-    /// Re-render the full source and reset both stable-prefix boundaries.
+    /// Re-render the full source and retain provable stable-prefix boundaries.
     ///
     /// This is used when width or render mode changes, and whenever source-wide rendering state
     /// makes retaining previously rendered blocks unsafe.
@@ -69,26 +69,43 @@ impl StreamingRender {
     ) {
         self.open_code_fence = None;
         self.has_inline_visualization_directive = contains_inline_visualization(source);
-        self.lines = match (render_mode, inline_visualization_context) {
-            (HistoryRenderMode::Rich, None) if !self.has_inline_visualization_directive => {
-                let rendered =
-                    render_streaming_markdown_agent_with_links_and_cwd(source, width, Some(cwd));
-                self.has_reference_link_definition = rendered.has_reference_link_definition;
-                rendered.lines
-            }
-            _ => {
-                self.has_reference_link_definition = false;
-                render_source(
-                    source,
-                    width,
-                    cwd,
-                    render_mode,
-                    inline_visualization_context,
-                )
-            }
-        };
-        self.stable_source_len = 0;
-        self.stable_rendered_len = 0;
+        let (lines, stable_source_len, stable_rendered_len) =
+            match (render_mode, inline_visualization_context) {
+                (HistoryRenderMode::Rich, None) if !self.has_inline_visualization_directive => {
+                    let rendered = render_streaming_markdown_agent_with_links_and_cwd(
+                        source,
+                        width,
+                        Some(cwd),
+                    );
+                    self.has_reference_link_definition = rendered.has_reference_link_definition;
+                    let stable_boundaries = (!rendered.has_reference_link_definition)
+                        .then_some((
+                            rendered.last_top_level_block_start,
+                            rendered.stable_prefix_rendered_len,
+                        ))
+                        .and_then(|(source_len, rendered_len)| source_len.zip(rendered_len));
+                    let (stable_source_len, stable_rendered_len) =
+                        stable_boundaries.unwrap_or((0, 0));
+                    (rendered.lines, stable_source_len, stable_rendered_len)
+                }
+                _ => {
+                    self.has_reference_link_definition = false;
+                    (
+                        render_source(
+                            source,
+                            width,
+                            cwd,
+                            render_mode,
+                            inline_visualization_context,
+                        ),
+                        0,
+                        0,
+                    )
+                }
+            };
+        self.lines = lines;
+        self.stable_source_len = stable_source_len;
+        self.stable_rendered_len = stable_rendered_len;
     }
 
     /// Append newly committed source while retaining only the final markdown block as mutable.
@@ -188,6 +205,14 @@ impl StreamingRender {
         if let Some(newly_stable_rendered_len) = newly_stable_rendered_len {
             self.stable_rendered_len = pending_render_start + newly_stable_rendered_len;
         }
+    }
+
+    pub(super) fn stable_source_prefix_len(&self) -> usize {
+        self.stable_source_len
+    }
+
+    pub(super) fn stable_rendered_prefix_len(&self) -> usize {
+        self.stable_rendered_len
     }
 }
 

@@ -129,13 +129,19 @@ impl ChatWidget {
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
-            let had_live_tail = controller.has_live_tail();
             self.clear_active_stream_tail();
-            let (cell, source) = controller.finalize();
-            if !had_live_tail && let Some(cell) = cell {
-                self.add_boxed_history(cell);
+            let finalization = controller.finalize();
+            match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay => {
+                    let _canonical_reflow = finalization.canonical_reflow;
+                }
+                TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    if let Some(cell) = finalization.unobserved_cell {
+                        self.add_boxed_history(cell);
+                    }
+                }
             }
-            if let Some(source) = source {
+            if let Some(source) = finalization.canonical_source {
                 self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));

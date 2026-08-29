@@ -799,6 +799,59 @@ async fn startup_draft_waits_for_session_picker_before_accepting_input() {
 }
 
 #[tokio::test]
+async fn startup_draft_bottom_docks_after_full_screen_startup_surface() {
+    let mut pump = startup_test_pump(std::iter::empty());
+    let mut tui = crate::tui::test_support::make_test_tui().expect("create test terminal");
+    let screen_size = tui.terminal.last_known_screen_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 0,
+        screen_size.width,
+        screen_size.height,
+    ));
+
+    pump.show(&mut tui)
+        .expect("show the composer after a full-screen startup surface");
+
+    let area = tui.terminal.viewport_area;
+    assert_eq!(area.bottom(), screen_size.height);
+
+    let renderable = startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action);
+    let mut buffer = Buffer::empty(area);
+    renderable.render(area, &mut buffer);
+    let visible_frame = sanitize_codex_version(
+        &(area.top()..area.bottom())
+            .map(|row| {
+                (area.left()..area.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .replace("0.0.0", "<VERSION>")
+    .replace(&"─".repeat(usize::from(area.width)), "<composer-border>");
+    insta::assert_snapshot!(
+        format!("screen: {screen_size:?}\nviewport: {area:?}\n{visible_frame}"),
+        @r"
+    screen: Size { width: 80, height: 24 }
+    viewport: Rect { x: 0, y: 15, width: 80, height: 9 }
+      >_ OpenAI Codex v<VERSION>
+      Model loading…  /model to change
+      Workspace loading…
+      guarded access  /permissions to review
+
+    <composer-border>
+    │›
+    <composer-border>
+      ? shortcuts
+    "
+    );
+}
+
+#[tokio::test]
 async fn startup_draft_allows_cancellation_before_session_picker_appears() {
     let mut pump = startup_test_pump(std::iter::once(TuiEvent::Key(KeyEvent::new(
         KeyCode::Char('c'),

@@ -585,12 +585,31 @@ pub enum TuiEvent {
     FocusLost,
 }
 
+/// Controls how a resize-reflow draw positions the live inline viewport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineViewportPlacement {
+    /// Follow the viewport's existing top or bottom anchor.
+    FollowExisting,
+    /// Place the viewport against the bottom edge of the terminal.
+    BottomDocked,
+}
+
+/// Describes whether an inline frame owns durable transcript layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineViewportRole {
+    /// A durable surface such as the composer or startup draft.
+    Persistent,
+    /// A popup or modal whose height must not relocate transcript rows.
+    Transient,
+}
+
 pub struct Tui {
     frame_requester: FrameRequester,
     draw_tx: broadcast::Sender<()>,
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
+    last_resize_reflow_role: InlineViewportRole,
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
@@ -648,6 +667,7 @@ impl Tui {
             event_broker: Arc::new(EventBroker::new()),
             terminal,
             pending_history_lines: vec![],
+            last_resize_reflow_role: InlineViewportRole::Persistent,
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
@@ -935,6 +955,7 @@ impl Tui {
         terminal: &mut CustomTerminal<B>,
         height: u16,
         screen_size: Size,
+        placement: InlineViewportPlacement,
         scrollback: ScrollbackStrategy,
         history_tail_dock: HistoryTailDock,
     ) -> Result<bool>
@@ -965,11 +986,15 @@ impl Tui {
                 scrollback.grow_viewport(terminal, area.top(), screen_size, scroll_by)?;
             }
             area.y = screen_size.height - area.height;
-        } else if viewport_was_empty || viewport_was_bottom_docked {
+        } else if placement == InlineViewportPlacement::BottomDocked
+            || viewport_was_empty
+            || viewport_was_bottom_docked
+        {
             area.y = screen_size.height - area.height;
         }
 
-        if history_tail_dock == HistoryTailDock::DeferToPendingHistory
+        if placement == InlineViewportPlacement::FollowExisting
+            && history_tail_dock == HistoryTailDock::DeferToPendingHistory
             && !terminal_size_changed
             && terminal.visible_history_rows() > 0
             && area.y > previous_area.y
@@ -978,7 +1003,9 @@ impl Tui {
         }
 
         if area != terminal.viewport_area {
-            let history_tail_moved = if terminal_size_changed {
+            let history_tail_moved = if terminal_size_changed
+                || history_tail_dock == HistoryTailDock::PreservePosition
+            {
                 false
             } else {
                 scrollback.dock_sparse_history_tail(terminal, previous_area.top(), area.top())?
@@ -1166,6 +1193,8 @@ impl Tui {
         &mut self,
         height: u16,
         screen_size: Size,
+        placement: InlineViewportPlacement,
+        role: InlineViewportRole,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
         self.update_inline_state_for_size_change(screen_size);
@@ -1177,7 +1206,11 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
-        let history_tail_dock = if self.scrollback == ScrollbackStrategy::FullScreen
+        let history_tail_dock = if role == InlineViewportRole::Transient
+            || self.last_resize_reflow_role == InlineViewportRole::Transient
+        {
+            HistoryTailDock::PreservePosition
+        } else if self.scrollback == ScrollbackStrategy::FullScreen
             && !self.pending_history_lines.is_empty()
         {
             HistoryTailDock::DeferToPendingHistory
@@ -1196,6 +1229,7 @@ impl Tui {
                 terminal,
                 height,
                 screen_size,
+                placement,
                 self.scrollback,
                 history_tail_dock,
             )?;
@@ -1227,7 +1261,9 @@ impl Tui {
             terminal.draw_with_size(screen_size, |frame| {
                 draw_fn(frame);
             })
-        })?
+        })??;
+        self.last_resize_reflow_role = role;
+        Ok(())
     }
 
     fn pending_viewport_area(&mut self, screen_size: Size) -> Result<Option<Rect>> {

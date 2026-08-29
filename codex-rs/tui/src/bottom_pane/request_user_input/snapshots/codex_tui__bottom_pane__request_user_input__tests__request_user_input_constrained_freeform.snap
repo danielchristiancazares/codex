@@ -1,0 +1,11 @@
+---
+source: tui/src/bottom_pane/request_user_input/mod.rs
+expression: rendered
+---
+                                        
+  Describe the expected behavior,       
+  constraints, and validation details   
+  for this implementation.              
+  ────────────────────────────────────  
+  │› visible draft                      
+  enter to submit answer

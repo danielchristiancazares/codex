@@ -433,17 +433,66 @@ fn streaming_hides_partial_directive_and_renders_completed_link() {
     );
 
     controller.push(".html\"}");
-    let (cell, source) = controller.finalize();
+    let finalization = controller.finalize();
     assert_eq!(
-        source.as_deref(),
+        finalization.canonical_source.as_deref(),
         Some("Before\n::codex-inline-vis{file=\"chart.html\"}\n")
     );
-    let cell = cell.expect("final streamed cell");
+    let cell = finalization.unobserved_cell.expect("final streamed cell");
     let lines = cell.display_hyperlink_lines(/*width*/ 80);
     assert!(
         lines.iter().any(|line| {
             line_text(&line.line).contains("Open chart visualization in the browser")
         })
+    );
+}
+
+#[test]
+fn streaming_resize_preserves_the_complete_inline_visualization_region() {
+    let (_codex_home, context) = context_with_fragment("<div>chart</div>");
+    let mut controller = StreamController::new_with_inline_visualizations(
+        /*width*/ Some(18),
+        Path::new("/workspace"),
+        HistoryRenderMode::Rich,
+        Some(context),
+    );
+    controller
+        .push("VISUAL_PREFIX alpha beta gamma delta\n::codex-inline-vis{file=\"chart.html\"}\n");
+    let (emitted, idle) = controller.on_commit_tick();
+    let emitted = emitted
+        .expect("expected one narrow visualization row")
+        .transcript_lines(u16::MAX);
+    assert!(!idle, "visualization region should remain queued");
+    let owned_rows_before_resize = controller.queued_lines();
+
+    controller.set_width(Some(/*width*/ 80));
+    assert!(controller.queued_lines() <= owned_rows_before_resize);
+    let finalization = controller.finalize();
+    let mut rendered = emitted.iter().map(line_text).collect::<Vec<_>>().join(" ");
+    if let Some(cell) = finalization.unobserved_cell {
+        rendered.push(' ');
+        rendered.push_str(
+            &cell
+                .transcript_lines(u16::MAX)
+                .iter()
+                .map(line_text)
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+
+    let normalized = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(
+        normalized.matches("VISUAL_PREFIX").count(),
+        1,
+        "{rendered:?}"
+    );
+    assert_eq!(
+        normalized
+            .matches("Open chart visualization in the browser")
+            .count(),
+        1,
+        "{rendered:?}"
     );
 }
 

@@ -91,7 +91,7 @@ fn group_rendering_snapshots_cover_lifecycle_states() {
         invocation("server", "lookup", "A"),
         /*animations_enabled*/ false,
     );
-    insta::assert_snapshot!("mcp_group_one_call", rendered(one.display_lines(80)), @r#"
+    insta::assert_snapshot!(&rendered(one.display_lines(80)), @r#"
     • Calling server.lookup({"title":"A"})
     "#);
 
@@ -105,20 +105,20 @@ fn group_rendering_snapshots_cover_lifecycle_states() {
         invocation("server", "lookup", "B"),
         /*animations_enabled*/ false,
     ));
-    insta::assert_snapshot!("mcp_group_two_active", rendered(group.display_lines(80)), @r#"
+    insta::assert_snapshot!(&rendered(group.display_lines(80)), @r#"
     • Calling server.lookup({"title":"A"})
     • Calling server.lookup({"title":"B"})
     "#);
 
     assert!(group.complete_call("call-a", Duration::ZERO, Ok(result("result A"))));
-    insta::assert_snapshot!("mcp_group_one_complete", rendered(group.display_lines(80)), @r#"
+    insta::assert_snapshot!(&rendered(group.display_lines(80)), @r#"
     • Called server.lookup({"title":"A"})
       └ result A
     • Calling server.lookup({"title":"B"})
     "#);
 
     assert!(group.complete_call("call-b", Duration::ZERO, Ok(result("result B"))));
-    insta::assert_snapshot!("mcp_group_all_complete", rendered(group.display_lines(80)), @r#"
+    insta::assert_snapshot!(&rendered(group.display_lines(80)), @r#"
     • Called server.lookup({"title":"A"})
       └ result A
     • Called server.lookup({"title":"B"})
@@ -136,7 +136,7 @@ fn group_rendering_snapshots_cover_lifecycle_states() {
         /*animations_enabled*/ false,
     );
     interrupted.mark_all_incomplete_failed();
-    insta::assert_snapshot!("mcp_group_interrupted", rendered(interrupted.display_lines(80)), @r#"
+    insta::assert_snapshot!(&rendered(interrupted.display_lines(80)), @r#"
     • Called server.lookup({"title":"A"})
       └ Error: interrupted
     • Called server.lookup({"title":"B"})

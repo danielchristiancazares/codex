@@ -476,6 +476,7 @@ pub(crate) use crate::branch_summary::StatusLineGitSummary;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
+use crate::streaming::controller::DeferredRowsReflow;
 use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
 use crate::transcript_reflow::TranscriptReplayPolicy;
@@ -1654,10 +1655,6 @@ impl ChatWidget {
         }
     }
 
-    pub(crate) fn transcript_replay_policy(&self) -> TranscriptReplayPolicy {
-        self.transcript_replay_policy
-    }
-
     pub(crate) fn history_stream_active(&self) -> bool {
         self.stream_controller.is_some()
             || self.plan_stream_controller.is_some()
@@ -1668,6 +1665,14 @@ impl ChatWidget {
         self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback
             && self.history_stream_active()
             && enabled != self.raw_output_mode
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_transcript_replay_policy_for_tests(
+        &mut self,
+        policy: TranscriptReplayPolicy,
+    ) {
+        self.transcript_replay_policy = policy;
     }
 
     pub(crate) fn defer_raw_output_mode_until_stream_boundary(&mut self, enabled: bool) {
@@ -1727,18 +1732,13 @@ impl ChatWidget {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
         self.set_raw_output_mode(enabled);
         self.add_info_message(
             Self::raw_output_mode_notice(enabled).to_string(),
             /*hint*/ None,
         );
-    }
-
-    pub(crate) fn toggle_raw_output_mode_and_notify(&mut self) -> bool {
-        let enabled = !self.raw_output_mode;
-        self.set_raw_output_mode_and_notify(enabled);
-        enabled
     }
 
     pub(crate) fn acknowledge_raw_output_mode_request(&mut self, enabled: bool) {

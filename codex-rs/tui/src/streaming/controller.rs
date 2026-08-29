@@ -22,9 +22,9 @@
 //! ## Resize handling
 //!
 //! On terminal width or render-mode change, `StreamCore` maps fully emitted
-//! source boundaries into the new render. If the change lands partway through
-//! a wrapped source line, its already-queued suffix stays in the old layout and
-//! only later source is rebuilt. Finalized content is canonicalized by
+//! semantic source boundaries into the new render. If queued rows belong to a
+//! mutable top-level Markdown region, those rows stay in the old layout and
+//! only later stable source is rebuilt. Finalized content is canonicalized by
 //! transcript consolidation into source-backed markdown cells.
 //!
 //! ## Invariants
@@ -60,6 +60,7 @@ use super::table_holdback::table_holdback_state;
 
 #[path = "remap.rs"]
 mod remap;
+pub(crate) use remap::DeferredRowsReflow;
 
 // ---------------------------------------------------------------------------
 // StreamCore — shared bookkeeping for both stream controllers
@@ -92,14 +93,20 @@ struct StreamCore {
     stable_prefix_len_cache: Option<StablePrefixLenCache>,
     /// Incremental holdback scanner state for append-only source updates.
     holdback_scanner: TableHoldbackScanner,
-    /// Queued rows from the old layout that finish a partially emitted source line.
+    /// Queued rows from the old layout that finish a layout-bound semantic source region.
     layout_bound_queue_remaining: usize,
     /// New-layout rendered boundary reached after the layout-bound rows drain.
     layout_bound_target_emitted_len: Option<usize>,
-    /// Source line whose queued suffix remains bound to an older layout.
-    layout_bound_source_line: Option<remap::PartialSourceLine>,
+    /// Semantic source region whose queued rows remain bound to an older layout.
+    layout_bound_source_region: Option<remap::LayoutBoundSourceRegion>,
     /// Queued rows removed from animation by an interrupt but still owed at finalization.
-    deferred_queue: Vec<HyperlinkLine>,
+    deferred_rows: remap::DeferredRows,
+}
+
+struct CoreFinalization {
+    remaining_rows: Vec<HyperlinkLine>,
+    canonical_source: String,
+    deferred_rows_reflow: DeferredRowsReflow,
 }
 
 struct StablePrefixLenCache {
@@ -134,8 +141,8 @@ impl StreamCore {
             holdback_scanner: TableHoldbackScanner::new(),
             layout_bound_queue_remaining: 0,
             layout_bound_target_emitted_len: None,
-            layout_bound_source_line: None,
-            deferred_queue: Vec::new(),
+            layout_bound_source_region: None,
+            deferred_rows: remap::DeferredRows::default(),
         }
     }
 
@@ -178,8 +185,8 @@ impl StreamCore {
     /// the mutable tail is taken from one final source render. Consolidation
     /// then replaces these transient rows with the canonical source-backed
     /// transcript cell.
-    fn finalize_remaining(&mut self) -> (Vec<HyperlinkLine>, String) {
-        let mut remaining = std::mem::take(&mut self.deferred_queue);
+    fn finalize_remaining(&mut self) -> CoreFinalization {
+        let (mut remaining, deferred_rows_reflow) = self.deferred_rows.take();
         remaining.extend(self.state.drain_n(/*max_lines*/ usize::MAX));
         let source = self.state.collector.finalize_and_take_source();
         let rendered = render_source(
@@ -191,7 +198,11 @@ impl StreamCore {
         );
         let tail_start = self.enqueued_stable_len.min(rendered.len());
         remaining.extend(rendered.into_iter().skip(tail_start));
-        (remaining, source)
+        CoreFinalization {
+            remaining_rows: remaining,
+            canonical_source: source,
+            deferred_rows_reflow,
+        }
     }
 
     /// Step animation: dequeue one line, update the emitted count.
@@ -250,7 +261,7 @@ impl StreamCore {
         self.enqueued_stable_len < self.render.lines.len()
     }
 
-    /// Update rendering width while preserving any partially emitted source line.
+    /// Update rendering width while preserving any layout-bound semantic region.
     fn set_width(&mut self, width: Option<usize>) {
         if self.width == width {
             return;
@@ -282,7 +293,7 @@ impl StreamCore {
         self.stable_prefix_len_cache = None;
         self.holdback_scanner.reset();
         remap::clear_layout_bound_queue(self);
-        self.deferred_queue.clear();
+        self.deferred_rows.clear();
     }
 
     fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
@@ -290,6 +301,7 @@ impl StreamCore {
             return;
         }
 
+        self.deferred_rows.mark_effective_render_mode_changed();
         let remap = remap::RenderRemap::capture(self);
         self.render_mode = render_mode;
         let source = self.state.collector.committed_source();
@@ -458,6 +470,12 @@ pub(crate) struct StreamController {
     header_emitted: bool,
 }
 
+pub(crate) struct AgentStreamFinalization {
+    pub(crate) unobserved_cell: Option<Box<dyn HistoryCell>>,
+    pub(crate) canonical_source: Option<String>,
+    pub(crate) canonical_reflow: DeferredRowsReflow,
+}
+
 impl StreamController {
     /// Create a controller whose markdown renderer shortens local file links relative to `cwd`.
     ///
@@ -492,16 +510,24 @@ impl StreamController {
 
     /// Finalize the active stream. Returns the final cell (if any remaining lines) and the raw
     /// markdown source for consolidation.
-    pub(crate) fn finalize(&mut self) -> (Option<Box<dyn HistoryCell>>, Option<String>) {
-        let (remaining, source) = self.core.finalize_remaining();
-        if source.is_empty() {
+    pub(crate) fn finalize(&mut self) -> AgentStreamFinalization {
+        let finalization = self.core.finalize_remaining();
+        if finalization.canonical_source.is_empty() {
             self.core.reset();
-            return (None, None);
+            return AgentStreamFinalization {
+                unobserved_cell: None,
+                canonical_source: None,
+                canonical_reflow: finalization.deferred_rows_reflow,
+            };
         }
 
-        let out = self.emit(remaining);
+        let out = self.emit(finalization.remaining_rows);
         self.core.reset();
-        (out, Some(source))
+        AgentStreamFinalization {
+            unobserved_cell: out,
+            canonical_source: Some(finalization.canonical_source),
+            canonical_reflow: finalization.deferred_rows_reflow,
+        }
     }
 
     pub(crate) fn on_commit_tick(&mut self) -> (Option<Box<dyn HistoryCell>>, bool) {
@@ -584,6 +610,12 @@ pub(crate) struct PlanStreamController {
     top_padding_emitted: bool,
 }
 
+pub(crate) struct PlanStreamFinalization {
+    pub(crate) unobserved_cell: Option<Box<dyn HistoryCell>>,
+    pub(crate) canonical_source: Option<String>,
+    pub(crate) canonical_reflow: DeferredRowsReflow,
+}
+
 impl PlanStreamController {
     /// Create a plan-stream controller whose markdown renderer shortens local file links relative
     /// to `cwd`.
@@ -609,16 +641,27 @@ impl PlanStreamController {
 
     /// Finalize the active stream. Returns the final cell (if any remaining
     /// lines) plus raw markdown source for consolidation.
-    pub(crate) fn finalize(&mut self) -> (Option<Box<dyn HistoryCell>>, Option<String>) {
-        let (remaining, source) = self.core.finalize_remaining();
-        if source.is_empty() {
+    pub(crate) fn finalize(&mut self) -> PlanStreamFinalization {
+        let finalization = self.core.finalize_remaining();
+        if finalization.canonical_source.is_empty() {
             self.core.reset();
-            return (None, None);
+            return PlanStreamFinalization {
+                unobserved_cell: None,
+                canonical_source: None,
+                canonical_reflow: finalization.deferred_rows_reflow,
+            };
         }
 
-        let out = self.emit(remaining, /*include_bottom_padding*/ true);
+        let out = self.emit(
+            finalization.remaining_rows,
+            /*include_bottom_padding*/ true,
+        );
         self.core.reset();
-        (out, Some(source))
+        PlanStreamFinalization {
+            unobserved_cell: out,
+            canonical_source: Some(finalization.canonical_source),
+            canonical_reflow: finalization.deferred_rows_reflow,
+        }
     }
 
     pub(crate) fn on_commit_tick(&mut self) -> (Option<Box<dyn HistoryCell>>, bool) {
@@ -787,7 +830,7 @@ mod tests {
                 }
             }
         }
-        if let (Some(cell), _source) = ctrl.finalize() {
+        if let Some(cell) = ctrl.finalize().unobserved_cell {
             lines.extend(cell.transcript_lines(u16::MAX));
         }
         lines_to_plain_strings(&lines)
@@ -807,7 +850,7 @@ mod tests {
             .into_iter()
             .flat_map(|cell| cell.transcript_lines(u16::MAX))
             .collect::<Vec<_>>();
-        if let (Some(cell), _source) = ctrl.finalize() {
+        if let Some(cell) = ctrl.finalize().unobserved_cell {
             streamed.extend(cell.transcript_lines(u16::MAX));
         }
         let streamed = lines_to_plain_strings(&streamed);
@@ -833,7 +876,7 @@ mod tests {
                 }
             }
         }
-        if let (Some(cell), _source) = ctrl.finalize() {
+        if let Some(cell) = ctrl.finalize().unobserved_cell {
             lines.extend(cell.transcript_lines(u16::MAX));
         }
         lines_to_plain_strings(&lines)
@@ -990,8 +1033,9 @@ mod tests {
 
         ctrl.set_width(Some(20));
 
-        let (cell, source) = ctrl.finalize();
-        let final_lines = cell
+        let finalization = ctrl.finalize();
+        let final_lines = finalization
+            .unobserved_cell
             .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
             .unwrap_or_default();
 
@@ -999,7 +1043,10 @@ mod tests {
             final_lines.iter().any(|l| l.contains("second line")),
             "un-emitted 'second line' was lost after resize; got: {final_lines:?}",
         );
-        assert!(source.is_some(), "expected source from finalize");
+        assert!(
+            finalization.canonical_source.is_some(),
+            "expected source from finalize"
+        );
     }
 
     #[test]
@@ -1043,7 +1090,7 @@ mod tests {
         ctrl.push("tail without newline");
         ctrl.set_width(Some(24));
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let rendered = lines_to_plain_strings(
             &cell
                 .expect("expected finalized tail")
@@ -1093,7 +1140,7 @@ mod tests {
         let rendered = lines_to_plain_strings(
             &(ctrl
                 .finalize()
-                .0
+                .unobserved_cell
                 .expect("expected finalized tail")
                 .transcript_lines(u16::MAX)),
         );
@@ -1204,7 +1251,7 @@ mod tests {
                 }
             }
         }
-        if let (Some(cell), _source) = ctrl.finalize() {
+        if let Some(cell) = ctrl.finalize().unobserved_cell {
             lines.extend(cell.transcript_lines(u16::MAX));
         }
 
@@ -1324,10 +1371,13 @@ mod tests {
 
         ctrl.set_width(Some(32));
 
-        let (cell, source) = ctrl.finalize();
-        let source = source.expect("expected finalized source");
+        let finalization = ctrl.finalize();
+        let source = finalization
+            .canonical_source
+            .expect("expected finalized source");
         let streamed = lines_to_plain_strings(
-            &cell
+            &finalization
+                .unobserved_cell
                 .expect("expected finalized table")
                 .transcript_lines(u16::MAX),
         )
@@ -1649,8 +1699,9 @@ mod tests {
         let mut ctrl = stream_controller(/*width*/ Some(32));
         ctrl.push(&source);
 
-        let (cell, _) = ctrl.finalize();
-        let lines = cell
+        let lines = ctrl
+            .finalize()
+            .unobserved_cell
             .expect("final stream table cell")
             .display_hyperlink_lines(/*width*/ 32);
         let linked_rows = lines
@@ -1734,8 +1785,9 @@ mod tests {
         );
         ctrl.push(&source);
 
-        let (cell, _) = ctrl.finalize();
-        let lines = cell
+        let lines = ctrl
+            .finalize()
+            .unobserved_cell
             .expect("final plan stream table cell")
             .display_hyperlink_lines(/*width*/ 32);
         let linked_rows = lines
@@ -1883,7 +1935,7 @@ mod tests {
 
         ctrl.set_width(Some(20));
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let remaining = cell
             .map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX)))
             .unwrap_or_default()
@@ -1916,7 +1968,7 @@ mod tests {
 
         ctrl.set_width(Some(120));
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let remaining = cell
             .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
             .unwrap_or_default()
@@ -1946,7 +1998,7 @@ mod tests {
 
         ctrl.set_width(Some(80));
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let remaining = cell
             .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
             .unwrap_or_default();
@@ -1975,7 +2027,7 @@ mod tests {
 
         ctrl.set_render_mode(HistoryRenderMode::Raw);
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let remaining = cell
             .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
             .unwrap_or_default();
@@ -2006,7 +2058,7 @@ mod tests {
         ctrl.clear_queue();
         assert_eq!(ctrl.queued_lines(), 0);
 
-        let (cell, _source) = ctrl.finalize();
+        let cell = ctrl.finalize().unobserved_cell;
         let remaining = cell
             .map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX)))
             .unwrap_or_default();
@@ -2020,5 +2072,183 @@ mod tests {
             joined.contains("lambda mu"),
             "clearing the animation queue lost its deferred suffix: {remaining:?}",
         );
+    }
+
+    #[test]
+    fn deferred_rich_rows_require_canonical_reflow_after_raw_mode_change() {
+        let mut ctrl = stream_controller(Some(/*width*/ 24));
+        ctrl.push("**bold response** with enough text to queue.\n");
+        assert!(ctrl.queued_lines() > 0);
+        ctrl.clear_queue();
+
+        ctrl.set_render_mode(HistoryRenderMode::Raw);
+        let finalization = ctrl.finalize();
+
+        assert_eq!(finalization.canonical_reflow, DeferredRowsReflow::Required);
+        assert!(finalization.unobserved_cell.is_some());
+    }
+
+    #[test]
+    fn deferred_raw_rows_require_canonical_reflow_after_rich_mode_change() {
+        let mut ctrl =
+            StreamController::new(Some(/*width*/ 24), &test_cwd(), HistoryRenderMode::Raw);
+        ctrl.push("**bold response** with enough text to queue.\n");
+        assert!(ctrl.queued_lines() > 0);
+        ctrl.clear_queue();
+
+        ctrl.set_render_mode(HistoryRenderMode::Rich);
+        let finalization = ctrl.finalize();
+
+        assert_eq!(finalization.canonical_reflow, DeferredRowsReflow::Required);
+        assert!(finalization.unobserved_cell.is_some());
+    }
+
+    #[test]
+    fn semantic_region_remap_preserves_cross_line_local_link_text_once() {
+        let mut ctrl = stream_controller(Some(/*width*/ 18));
+        ctrl.push("[binary](.../README.md:93)\n: core is the agent/business logic.\n");
+
+        let (emitted, idle) = ctrl.on_commit_tick();
+        let emitted = emitted
+            .expect("expected one narrow rendered row")
+            .transcript_lines(u16::MAX);
+        assert!(!idle, "expected queued rows before resize");
+        let owned_rows_before_resize = ctrl.queued_lines();
+
+        ctrl.set_width(Some(/*width*/ 80));
+        assert!(
+            ctrl.queued_lines() <= owned_rows_before_resize,
+            "semantic remap must remain bounded by rows already owned before resize"
+        );
+        let finalization = ctrl.finalize();
+        let mut all_lines = lines_to_plain_strings(&emitted);
+        all_lines.extend(
+            finalization
+                .unobserved_cell
+                .into_iter()
+                .flat_map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX))),
+        );
+        let rendered = all_lines.join(" ");
+        let words = rendered
+            .split_whitespace()
+            .map(|word| {
+                word.trim_matches(|character: char| {
+                    matches!(character, '•' | ':' | '.' | ',' | ';')
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for word in ["binary", "core", "is", "the", "agent/business", "logic"] {
+            assert_eq!(
+                words.iter().filter(|candidate| **candidate == word).count(),
+                1,
+                "expected {word:?} exactly once after remap: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_region_remap_preserves_source_appended_before_bound_rows_drain() {
+        let mut ctrl = stream_controller(Some(/*width*/ 12));
+        ctrl.push("alpha beta gamma delta epsilon zeta\n");
+
+        let (emitted, idle) = ctrl.on_commit_tick();
+        let emitted = emitted
+            .expect("expected one narrow rendered row")
+            .transcript_lines(u16::MAX);
+        assert!(!idle, "expected bound rows before resize");
+
+        ctrl.set_width(Some(/*width*/ 80));
+        ctrl.push("APPENDED_SENTINEL\n");
+
+        let finalization = ctrl.finalize();
+        let mut all_lines = lines_to_plain_strings(&emitted);
+        all_lines.extend(
+            finalization
+                .unobserved_cell
+                .into_iter()
+                .flat_map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX))),
+        );
+        let rendered = all_lines.join(" ");
+
+        assert!(rendered.contains("APPENDED_SENTINEL"), "{rendered:?}");
+    }
+
+    #[test]
+    fn semantic_region_remap_keeps_only_the_mutable_list_in_its_old_layout() {
+        let mut ctrl = stream_controller(Some(/*width*/ 18));
+        ctrl.push(
+            "COMPLETED_SENTINEL\n\n- MUTABLE_ALPHA beta gamma delta epsilon\n- MUTABLE_OMEGA psi chi\n",
+        );
+        let mut emitted = Vec::new();
+        loop {
+            let (cell, idle) = ctrl.on_commit_tick();
+            let cell = cell.expect("expected queued source before resize");
+            emitted.extend(cell.transcript_lines(u16::MAX));
+            if lines_to_plain_strings(&emitted)
+                .join(" ")
+                .contains("MUTABLE_ALPHA")
+            {
+                break;
+            }
+            assert!(!idle, "mutable list row should remain queued");
+        }
+        assert!(ctrl.queued_lines() > 0);
+
+        ctrl.set_width(Some(/*width*/ 80));
+        let finalization = ctrl.finalize();
+        let remaining = finalization
+            .unobserved_cell
+            .into_iter()
+            .flat_map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            !remaining.contains("COMPLETED_SENTINEL"),
+            "stable prefix was replayed after resize: {remaining:?}"
+        );
+
+        let rendered = format!("{} {remaining}", lines_to_plain_strings(&emitted).join(" "));
+        for sentinel in ["COMPLETED_SENTINEL", "MUTABLE_ALPHA", "MUTABLE_OMEGA"] {
+            assert_eq!(
+                rendered.matches(sentinel).count(),
+                1,
+                "expected {sentinel} exactly once after remap: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_region_remap_conservatively_preserves_reference_link_regions() {
+        let mut ctrl = stream_controller(Some(/*width*/ 16));
+        ctrl.push(
+            "REFERENCE_ALPHA REFERENCE_BETA [REFERENCE_LINK][target]\n\n[target]: README.md\n",
+        );
+        let (emitted, idle) = ctrl.on_commit_tick();
+        let emitted = emitted
+            .expect("expected one reference-link row")
+            .transcript_lines(u16::MAX);
+        assert!(!idle, "reference-link region should remain queued");
+        let owned_rows_before_resize = ctrl.queued_lines();
+
+        ctrl.set_width(Some(/*width*/ 80));
+        assert!(ctrl.queued_lines() <= owned_rows_before_resize);
+        let finalization = ctrl.finalize();
+        let mut all_lines = lines_to_plain_strings(&emitted);
+        all_lines.extend(
+            finalization
+                .unobserved_cell
+                .into_iter()
+                .flat_map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX))),
+        );
+        let rendered = all_lines.join(" ");
+
+        for sentinel in ["REFERENCE_ALPHA", "REFERENCE_BETA", "REFERENCE_LINK"] {
+            assert_eq!(
+                rendered.matches(sentinel).count(),
+                1,
+                "expected {sentinel} exactly once after remap: {rendered:?}"
+            );
+        }
     }
 }

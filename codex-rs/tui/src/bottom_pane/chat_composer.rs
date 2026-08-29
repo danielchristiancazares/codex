@@ -460,6 +460,8 @@ pub(crate) struct ChatComposerConfig {
     pub(crate) slash_commands_enabled: bool,
     /// Whether pasting a file path can attach local images.
     pub(crate) image_paste_enabled: bool,
+    /// Whether a two-row frame omits the bottom border to retain one editable text row.
+    pub(crate) compact_two_row_layout: bool,
 }
 
 impl Default for ChatComposerConfig {
@@ -468,6 +470,7 @@ impl Default for ChatComposerConfig {
             popups_enabled: true,
             slash_commands_enabled: true,
             image_paste_enabled: true,
+            compact_two_row_layout: false,
         }
     }
 }
@@ -482,6 +485,7 @@ impl ChatComposerConfig {
             popups_enabled: false,
             slash_commands_enabled: false,
             image_paste_enabled: false,
+            compact_two_row_layout: false,
         }
     }
 }
@@ -1028,10 +1032,12 @@ impl ChatComposer {
                 Layout::vertical([popup_constraint, Constraint::Min(3)]).areas(area);
             [composer_rect, popup_rect]
         };
+        let compact_two_row_composer =
+            self.config.compact_two_row_layout && composer_rect.height == 2;
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1,
             LIVE_PREFIX_COLS.saturating_add(/*rhs*/ 1),
-            /*bottom*/ 1,
+            /*bottom*/ u16::from(!compact_two_row_composer),
             /*right*/ 1u16.saturating_add(textarea_right_reserve),
         ));
         let remote_images_height = self
@@ -4873,8 +4879,15 @@ impl ChatComposer {
             }
         }
         let style = user_message_style();
+        let compact_two_row_composer =
+            self.config.compact_two_row_layout && composer_rect.height == 2;
+        let borders = if compact_two_row_composer {
+            Borders::TOP
+        } else {
+            Borders::TOP | Borders::BOTTOM
+        };
         Block::default()
-            .borders(Borders::TOP | Borders::BOTTOM)
+            .borders(borders)
             .border_style(table_separator_style())
             .style(style)
             .render(composer_rect, buf);
@@ -4884,7 +4897,10 @@ impl ChatComposer {
             table_separator_style()
         };
         if !composer_rect.is_empty() {
-            for y in composer_rect.y.saturating_add(1)..composer_rect.bottom().saturating_sub(1) {
+            let rail_bottom = composer_rect
+                .bottom()
+                .saturating_sub(u16::from(!compact_two_row_composer));
+            for y in composer_rect.y.saturating_add(1)..rail_bottom {
                 buf[(composer_rect.x, y)]
                     .set_symbol("│")
                     .set_style(rail_style);

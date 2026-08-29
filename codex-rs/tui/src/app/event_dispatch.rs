@@ -604,7 +604,14 @@ impl App {
                         tui.frame_requester().schedule_frame();
                     }
 
-                    self.finish_required_stream_reflow(tui)?;
+                    match self.transcript_replay_policy {
+                        TranscriptReplayPolicy::OwnedBufferReplay => {
+                            self.finish_required_stream_reflow(tui)?;
+                        }
+                        TranscriptReplayPolicy::InlinePreserveScrollback => {
+                            self.maybe_finish_stream_reflow(tui)?;
+                        }
+                    }
                 } else {
                     self.transcript_cells.push(consolidated.clone());
                     if let Some(Overlay::Transcript(t)) = &mut self.overlay {

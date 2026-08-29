@@ -1,0 +1,9 @@
+---
+source: tui/src/pager_overlay.rs
+expression: height_five
+---
+/ T R A N S C R I P T / / / / / / / / /
+transcript sentinel
+───────────────────────────────── 100% ─
+ ↑/↓ to scroll   pgup/pgdn to page   hom
+ q to quit   esc to edit prev

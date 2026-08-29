@@ -30,6 +30,8 @@ pub(super) enum HistoryTailDock {
     Immediate,
     /// Keep the tail adjacent to queued history and let insertion advance the viewport.
     DeferToPendingHistory,
+    /// Keep history in place while a transient inline view changes height.
+    PreservePosition,
 }
 
 /// Discards up to `max_rows` of a tracked docking gap and moves the inline viewport with it.

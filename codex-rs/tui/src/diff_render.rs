@@ -100,9 +100,9 @@ use crate::style::status_style;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::XTERM_COLORS;
 use crate::terminal_palette::default_bg;
+use crate::terminal_palette::effective_stdout_color_level;
 use crate::terminal_palette::indexed_color;
 use crate::terminal_palette::rgb_color;
-use crate::terminal_palette::stdout_color_level;
 use codex_git_utils::get_git_repo_root;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
@@ -740,10 +740,7 @@ fn render_change(
         } => {
             let prepared = PreparedUpdateDiff::new(unified_diff, move_path.as_deref());
             let patch = match prepared.mode() {
-                UpdateDiffMode::Unified => Some(
-                    diffy::Patch::from_str(prepared.source())
-                        .expect("prepared unified diff must remain parseable"),
-                ),
+                UpdateDiffMode::Unified => diffy::Patch::from_str(prepared.source()).ok(),
                 UpdateDiffMode::RawFallback => None,
             };
             if let Some(patch) = patch {
@@ -1318,7 +1315,7 @@ fn diff_theme() -> DiffTheme {
 /// [`diff_color_level_for_terminal`] stay pure and easy to unit test.
 fn diff_color_level() -> DiffColorLevel {
     diff_color_level_for_terminal(
-        stdout_color_level(),
+        effective_stdout_color_level(),
         terminal_info().name,
         std::env::var_os("WT_SESSION").is_some(),
         has_force_color_override(),

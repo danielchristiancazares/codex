@@ -54,31 +54,35 @@ impl<'a> PreparedUpdateDiff<'a> {
 
     pub(super) fn line_counts(&self) -> (usize, usize) {
         match self.mode {
-            UpdateDiffMode::Unified => diffy::Patch::from_str(self.source())
-                .expect("prepared unified diff must remain parseable")
-                .hunks()
-                .iter()
-                .flat_map(Hunk::lines)
-                .fold((0, 0), |(added, removed), line| match line {
-                    diffy::Line::Insert(_) => (added + 1, removed),
-                    diffy::Line::Delete(_) => (added, removed + 1),
-                    diffy::Line::Context(_) => (added, removed),
-                }),
-            UpdateDiffMode::RawFallback => {
-                self.source()
-                    .lines()
-                    .fold((0, 0), |(added, removed), line| {
-                        if line.starts_with('+') && !line.starts_with("+++") {
-                            (added + 1, removed)
-                        } else if line.starts_with('-') && !line.starts_with("---") {
-                            (added, removed + 1)
-                        } else {
-                            (added, removed)
-                        }
+            UpdateDiffMode::Unified => {
+                let Ok(patch) = diffy::Patch::from_str(self.source()) else {
+                    return raw_line_counts(self.source());
+                };
+                patch
+                    .hunks()
+                    .iter()
+                    .flat_map(Hunk::lines)
+                    .fold((0, 0), |(added, removed), line| match line {
+                        diffy::Line::Insert(_) => (added + 1, removed),
+                        diffy::Line::Delete(_) => (added, removed + 1),
+                        diffy::Line::Context(_) => (added, removed),
                     })
             }
+            UpdateDiffMode::RawFallback => raw_line_counts(self.source()),
         }
     }
+}
+
+fn raw_line_counts(source: &str) -> (usize, usize) {
+    source.lines().fold((0, 0), |(added, removed), line| {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            (added + 1, removed)
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            (added, removed + 1)
+        } else {
+            (added, removed)
+        }
+    })
 }
 
 fn parses_with_hunks(diff: &str) -> bool {

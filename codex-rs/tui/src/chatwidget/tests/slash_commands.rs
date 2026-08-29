@@ -3457,11 +3457,11 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
 }
 
 #[tokio::test]
-async fn raw_slash_command_toggles_and_accepts_on_off_args() {
+async fn raw_slash_command_emits_policy_event_without_mutating_widget_first() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.dispatch_command(SlashCommand::Raw);
-    assert!(chat.raw_output_mode());
+    assert!(!chat.raw_output_mode());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events
@@ -3479,7 +3479,7 @@ async fn raw_slash_command_toggles_and_accepts_on_off_args() {
     );
 
     chat.dispatch_command_with_args(SlashCommand::Raw, "on".to_string(), Vec::new());
-    assert!(chat.raw_output_mode());
+    assert!(!chat.raw_output_mode());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events

@@ -903,6 +903,11 @@ impl App {
             .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
             .is_some();
         let interactive_view_visible = self.chat_widget.has_active_view();
+        let viewport_role = if interactive_view_visible && !dashboard_visible {
+            tui::InlineViewportRole::Transient
+        } else {
+            tui::InlineViewportRole::Persistent
+        };
         if std::mem::replace(
             &mut self.agents_overview.rendered_full_screen,
             dashboard_visible,
@@ -922,16 +927,22 @@ impl App {
                 desired_height
             };
             let mut rendered_area = Rect::default();
-            tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-                let area = frame.area();
-                rendered_area = area;
-                chat_widget.render(area, frame.buffer);
-                self.chat_widget.note_rendered_width(area.width);
-                if let Some((x, y)) = chat_widget.cursor_pos(area) {
-                    frame.set_cursor_style(chat_widget.cursor_style(area));
-                    frame.set_cursor_position((x, y));
-                }
-            })?;
+            tui.draw_with_resize_reflow(
+                desired_height,
+                screen_size,
+                tui::InlineViewportPlacement::FollowExisting,
+                viewport_role,
+                |frame| {
+                    let area = frame.area();
+                    rendered_area = area;
+                    chat_widget.render(area, frame.buffer);
+                    self.chat_widget.note_rendered_width(area.width);
+                    if let Some((x, y)) = chat_widget.cursor_pos(area) {
+                        frame.set_cursor_style(chat_widget.cursor_style(area));
+                        frame.set_cursor_position((x, y));
+                    }
+                },
+            )?;
             Ok(rendered_area)
         })
     }

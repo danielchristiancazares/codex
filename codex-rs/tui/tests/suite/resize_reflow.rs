@@ -40,6 +40,21 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
     };
 
     let prompt = "Say hi.";
+    let launch_command = [
+        "printf '\\npre-codex-shell-output\\n'; exec env".to_string(),
+        format!("CODEX_HOME={}", shell_quote(codex_home.path())),
+        "OPENAI_API_KEY=dummy".to_string(),
+        shell_quote(&codex),
+        "-c".to_string(),
+        shell_quote("analytics.enabled=false"),
+        "-c".to_string(),
+        shell_quote(&openai_base_url_config),
+        "--no-alt-screen".to_string(),
+        "-C".to_string(),
+        shell_quote(&repo_root),
+        shell_quote(prompt),
+    ]
+    .join(" ");
     let start_output = checked_output(
         Command::new("tmux")
             .arg("new-session")
@@ -54,18 +69,9 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
             .arg("-s")
             .arg(&session_name)
             .arg("--")
-            .arg("env")
-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
-            .arg("OPENAI_API_KEY=dummy")
-            .arg(codex)
-            .arg("-c")
-            .arg("analytics.enabled=false")
-            .arg("-c")
-            .arg(&openai_base_url_config)
-            .arg("--no-alt-screen")
-            .arg("-C")
-            .arg(&repo_root)
-            .arg(prompt),
+            .arg("sh")
+            .arg("-lc")
+            .arg(launch_command),
     )?;
     let codex_pane = stdout_text(&start_output).trim().to_string();
     anyhow::ensure!(!codex_pane.is_empty(), "tmux did not report a pane id");
@@ -80,6 +86,10 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
         "gpt-5.4 default",
         Duration::from_secs(/*secs*/ 15),
     )?;
+    anyhow::ensure!(
+        capture_pane_with_history(&codex_pane)?.contains("pre-codex-shell-output"),
+        "seeded shell history was missing before resize"
+    );
     let draft = "Notice where we are here in terms of y location.";
     check(
         Command::new("tmux")
@@ -158,6 +168,11 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
          after={final_history_row}\n\
          baseline:\n{baseline_capture}\n\
          after:\n{final_capture}"
+    );
+    let final_history_capture = capture_pane_with_history(&codex_pane)?;
+    anyhow::ensure!(
+        final_history_capture.contains("pre-codex-shell-output"),
+        "inline resize erased pre-Codex shell history:\n{final_history_capture}"
     );
 
     Ok(())
@@ -653,6 +668,24 @@ fn capture_pane(pane: &str) -> Result<String> {
             .arg(pane),
     )?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn capture_pane_with_history(pane: &str) -> Result<String> {
+    let output = output(
+        Command::new("tmux")
+            .arg("capture-pane")
+            .arg("-p")
+            .arg("-S")
+            .arg("-")
+            .arg("-t")
+            .arg(pane),
+    )?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+    let value = value.as_ref().to_string_lossy();
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn last_composer_row(capture: &str) -> Option<usize> {

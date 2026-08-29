@@ -203,7 +203,7 @@ async fn replayed_completion_preserves_unrelated_running_command() {
         chat.on_task_started();
         let mut completed = begin_exec(&mut chat, "call-running", "sleep 5");
         if active_mcp {
-            chat.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
+            chat.transcript.active_cell = Some(Box::new(history_cell::McpToolCallGroupCell::new(
                 "mcp-running".to_string(),
                 McpInvocation {
                     server: "server".to_string(),

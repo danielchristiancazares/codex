@@ -43,6 +43,8 @@ use crate::render::renderable::RenderableItem;
 use crate::resume_picker::SessionSelection;
 use crate::tui;
 use crate::tui::FrameRequester;
+use crate::tui::InlineViewportPlacement;
+use crate::tui::InlineViewportRole;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::version::CODEX_CLI_VERSION;
@@ -383,14 +385,20 @@ impl StartupDraftPump {
         let renderable =
             startup_draft_renderable(&self.header, &self.bottom_pane, self.session_action);
         let desired_height = renderable.desired_height(screen_size.width);
-        tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-            let area = frame.area();
-            renderable.render(area, frame.buffer);
-            if let Some((x, y)) = renderable.cursor_pos(area) {
-                frame.set_cursor_style(renderable.cursor_style(area));
-                frame.set_cursor_position((x, y));
-            }
-        })
+        tui.draw_with_resize_reflow(
+            desired_height,
+            screen_size,
+            InlineViewportPlacement::BottomDocked,
+            InlineViewportRole::Persistent,
+            |frame| {
+                let area = frame.area();
+                renderable.render(area, frame.buffer);
+                if let Some((x, y)) = renderable.cursor_pos(area) {
+                    frame.set_cursor_style(renderable.cursor_style(area));
+                    frame.set_cursor_position((x, y));
+                }
+            },
+        )
     }
 }
 

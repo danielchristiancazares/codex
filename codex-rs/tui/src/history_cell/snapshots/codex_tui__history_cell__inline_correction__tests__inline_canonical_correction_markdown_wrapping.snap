@@ -1,0 +1,26 @@
+---
+source: tui/src/history_cell/inline_correction_tests.rs
+expression: rendered
+---
+[
+    Line::from(Span::from("Final response (corrected)").bold()),
+    Line::from_iter([
+        Span::from("• "),
+        Span::from("Corrected "),
+        Span::from("bold text").bold(),
+        Span::from(" with a "),
+        Span::from("local"),
+    ]),
+    Line::from_iter([
+        Span::from("  "),
+        Span::from("link"),
+        Span::from(" ("),
+        Span::from("README.md:93").cyan().underlined(),
+        Span::from(")"),
+        Span::from(" and enough"),
+    ]),
+    Line::from_iter([
+        Span::from("  "),
+        Span::from("words to wrap."),
+    ]),
+]

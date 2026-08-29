@@ -224,7 +224,10 @@ impl RequestUserInputOverlay {
             enhanced_keys_supported,
             ANSWER_PLACEHOLDER.to_string(),
             disable_paste_burst,
-            ChatComposerConfig::plain_text(),
+            ChatComposerConfig {
+                compact_two_row_layout: true,
+                ..ChatComposerConfig::plain_text()
+            },
         );
         composer.set_keymap_bindings(&keymap);
         // The overlay renders its own footer hints, so keep the composer footer empty.
@@ -1794,6 +1797,17 @@ mod tests {
         snapshot_buffer(&buf)
     }
 
+    fn expose_freeform_editor(overlay: &RequestUserInputOverlay) {
+        let sections = overlay.layout_sections(Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 76, /*height*/ 6,
+        ));
+        assert!(sections.notes_area.height >= MIN_COMPOSER_HEIGHT);
+        assert_eq!(
+            overlay.freeform_input_visibility.get(),
+            FreeformInputVisibility::Editable,
+        );
+    }
+
     #[test]
     fn queued_requests_are_fifo() {
         let (tx, _rx) = test_sender();
@@ -3178,6 +3192,7 @@ mod tests {
             /*enhanced_keys_supported*/ false,
             /*disable_paste_burst*/ false,
         );
+        expose_freeform_editor(&overlay);
 
         overlay
             .composer
@@ -3230,6 +3245,7 @@ mod tests {
             /*enhanced_keys_supported*/ true,
             /*disable_paste_burst*/ false,
         );
+        expose_freeform_editor(&overlay);
 
         overlay
             .composer
@@ -3262,6 +3278,7 @@ mod tests {
             /*disable_paste_burst*/ false,
             keymap,
         );
+        expose_freeform_editor(&overlay);
 
         overlay
             .composer
@@ -3293,6 +3310,7 @@ mod tests {
             /*disable_paste_burst*/ false,
             keymap,
         );
+        expose_freeform_editor(&overlay);
 
         overlay
             .composer
@@ -3367,6 +3385,7 @@ mod tests {
             /*enhanced_keys_supported*/ false,
             /*disable_paste_burst*/ false,
         );
+        expose_freeform_editor(&overlay);
 
         overlay
             .composer
@@ -4188,6 +4207,38 @@ mod tests {
         assert!(rendered.contains("visible draft"), "{rendered}");
         assert!(overlay.cursor_pos_impl(area).is_some());
         insta::assert_snapshot!("request_user_input_constrained_freeform", rendered);
+    }
+
+    #[test]
+    fn two_row_freeform_layout_keeps_one_editable_text_row() {
+        let (tx, _rx) = test_sender();
+        let mut overlay = RequestUserInputOverlay::new(
+            request_event("turn-1", vec![question_without_options("q1", "Notes")]),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+        let sections = overlay.layout_sections(Rect::new(
+            /*x*/ 0,
+            /*y*/ 0,
+            /*width*/ 36,
+            /*height*/ MIN_COMPOSER_HEIGHT,
+        ));
+        assert_eq!(sections.notes_area.height, MIN_COMPOSER_HEIGHT);
+        assert_eq!(
+            overlay.freeform_input_visibility.get(),
+            FreeformInputVisibility::Editable,
+        );
+        assert!(overlay.handle_paste("visible draft".to_string()));
+
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 4,
+        );
+        let rendered = render_snapshot(&overlay, area);
+        assert!(rendered.contains("visible draft"), "{rendered}");
+        assert!(overlay.cursor_pos_impl(area).is_some());
+        insta::assert_snapshot!("request_user_input_two_row_freeform", rendered);
     }
 
     #[test]
