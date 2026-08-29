@@ -11,6 +11,11 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
 
+#[path = "execution_failure.rs"]
+mod execution_failure;
+use execution_failure::GoalExecutionStreak;
+use execution_failure::TurnExecutionEvidence;
+
 #[derive(Debug)]
 pub(crate) struct GoalAccountingState {
     inner: Mutex<GoalAccountingInner>,
@@ -25,6 +30,7 @@ struct GoalAccountingInner {
     wall_clock: GoalWallClockAccounting,
     budget_limit_reported_goal_id: Option<String>,
     continuation_failure: Option<String>,
+    execution_failure_streak: GoalExecutionStreak,
     last_accounted_descendant_token_usage: i64,
 }
 
@@ -34,6 +40,7 @@ struct GoalTurnAccounting {
     last_accounted_token_usage: TokenUsage,
     active_goal_id: Option<String>,
     account_tokens: bool,
+    execution_evidence: TurnExecutionEvidence,
 }
 
 #[derive(Debug)]
@@ -105,15 +112,16 @@ impl GoalAccountingState {
         self.progress_accounting_lock.acquire().await
     }
 
-    pub(crate) fn turn_is_current_active_goal(&self, turn_id: &str) -> bool {
+    pub(crate) fn current_active_goal_id_for_turn(&self, turn_id: &str) -> Option<String> {
         let inner = self.inner();
         if inner.current_turn_id.as_deref() != Some(turn_id) {
-            return false;
+            return None;
         }
-        let Some(turn) = inner.turns.get(turn_id) else {
-            return false;
-        };
-        turn.account_tokens && turn.active_goal_id.is_some()
+        let turn = inner.turns.get(turn_id)?;
+        if !turn.account_tokens {
+            return None;
+        }
+        turn.active_goal_id.clone()
     }
 
     pub(crate) fn record_token_usage(
@@ -155,12 +163,16 @@ impl GoalAccountingState {
             inner.budget_limit_reported_goal_id = None;
         }
         if let Some(turn) = inner.turns.get_mut(turn_id) {
+            if turn.active_goal_id.as_deref() != Some(goal_id.as_str()) {
+                turn.execution_evidence = TurnExecutionEvidence::NoSignal;
+            }
             turn.active_goal_id = Some(goal_id.clone());
             if inner.current_turn_id.as_deref() == Some(turn_id) {
                 if inner.wall_clock.active_goal_id.as_deref() != Some(goal_id.as_str()) {
                     inner.last_accounted_descendant_token_usage =
                         self.descendant_token_usage.load(Ordering::Relaxed);
                 }
+                inner.execution_failure_streak.align_goal(&goal_id);
                 inner.wall_clock.mark_active_goal(goal_id);
             }
         }
@@ -179,12 +191,16 @@ impl GoalAccountingState {
         }
         let goal_changed = inner.wall_clock.active_goal_id.as_deref() != Some(goal_id.as_str());
         let turn = inner.turns.get_mut(turn_id.as_str())?;
+        if turn.active_goal_id.as_deref() != Some(goal_id.as_str()) {
+            turn.execution_evidence = TurnExecutionEvidence::NoSignal;
+        }
         turn.active_goal_id = Some(goal_id.clone());
         if goal_changed {
             turn.reset_baseline_to_current();
             inner.last_accounted_descendant_token_usage =
                 self.descendant_token_usage.load(Ordering::Relaxed);
         }
+        inner.execution_failure_streak.align_goal(&goal_id);
         inner.wall_clock.mark_active_goal(goal_id);
         Some(turn_id)
     }
@@ -200,6 +216,7 @@ impl GoalAccountingState {
             inner.last_accounted_descendant_token_usage =
                 self.descendant_token_usage.load(Ordering::Relaxed);
         }
+        inner.execution_failure_streak.align_goal(&goal_id);
         inner.wall_clock.mark_active_goal(goal_id);
     }
 
@@ -211,6 +228,7 @@ impl GoalAccountingState {
         }
         inner.wall_clock.clear_active_goal();
         inner.budget_limit_reported_goal_id = None;
+        inner.execution_failure_streak = GoalExecutionStreak::Clear;
         Some(turn_id)
     }
 
@@ -223,6 +241,7 @@ impl GoalAccountingState {
         }
         inner.wall_clock.clear_active_goal();
         inner.budget_limit_reported_goal_id = None;
+        inner.execution_failure_streak = GoalExecutionStreak::Clear;
     }
 
     pub(crate) fn progress_snapshot(&self, turn_id: &str) -> Option<GoalProgressSnapshot> {
@@ -398,6 +417,7 @@ impl Default for GoalAccountingInner {
             wall_clock: GoalWallClockAccounting::new(),
             budget_limit_reported_goal_id: None,
             continuation_failure: None,
+            execution_failure_streak: GoalExecutionStreak::Clear,
             last_accounted_descendant_token_usage: 0,
         }
     }
@@ -421,6 +441,7 @@ impl GoalTurnAccounting {
             current_token_usage,
             active_goal_id: None,
             account_tokens,
+            execution_evidence: TurnExecutionEvidence::NoSignal,
         }
     }
 

@@ -56,7 +56,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
-- Current ledger: **72 backported, 1 already present, 283 pending**.
+- Current ledger: **73 backported, 1 already present, 282 pending**.
 - Source #41413 passed 322/322 protocol/composer tests and repeated release benchmarks. Retained large-history and Unicode gains, with operator-authorized small-turn tradeoffs, are recorded in [the history performance audit](upstream-history-performance-2026-09-04.md) and mirrored into the existing ignored `PERFORMANCE_LOG.md`.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - Notification-media filtering's default/opt-in JSON-RPC fixtures use the fork's WebSocket transport. Both passed in the entry-61 batch, which also completed config schema regeneration.
@@ -197,6 +197,19 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   prompt-normalization cases, and saved-limit/model-visible-delta agreement. The HTTP
   image-fixture enum variant used only by Unix tests has a Windows dead-code expectation;
   the live WebSocket discovery case passed again without that warning.
+- Entry 73 represents execution evidence as `NoSignal`, `Unavailable`, `Recovered`,
+  or `Counted`, with a separate goal-scoped `Clear`/`Tracking` streak. Only current,
+  accounting-enabled turns can contribute; success dominates same-turn failures, and
+  each qualifying turn is consumed once. Status-only turns preserve the streak, while
+  replacement/clear/Plan transitions retain their intended reset behavior.
+- Execution-block persistence failures now retain the fork's continuation suspension,
+  retire the accounting turn, and emit the existing accounting-error event. Expected
+  goal identity stays fenced in accounting, usage writes, persisted rereads, and the
+  final status compare-and-set. All **42/42** focused goal/backend/app-server cases
+  passed, including stale-goal usage protection, Plan reset, duplicate-stop cleanup,
+  stale-turn success, and the live three-failure blocking flow. Initial test-compilation
+  issues (macro import ambiguity and a borrowed event iterator) were corrected before
+  that successful run. Bazel compile data includes the new path-loaded state module.
 
 ## Source ledger
 
@@ -276,7 +289,7 @@ This ledger is in progress. “Pending” entries still require source review an
 | `a5c581e2476fd5309af0ea8065b92bdd91aaf26e` | Clarify question handling in Default collaboration mode (#41448) | backported | Preserved availability/mode gates; optional quality questions may use the tool, unanswered requests continue, required input uses concise direct text. Focused model-preset rendering test passed (1/1); prompt remains below 1K tokens. |
 | `75388bf321bffeda40e41dca2061c1cd72c2f4d4` | Rename the read-only Seatbelt platform defaults policy (#41449) | backported | Byte-preserving asset rename, with include_str and Bazel compile_data updated together; old filename has no remaining source references. All 53 Windows-available sandboxing tests passed; macOS Seatbelt execution remains unverified. |
 | `48e22a5fa08b03a9d8acc6a6577dd334c5319446` | Report code mode host request durations (#41452) | backported | Per-request host timing survives stdio/gRPC and generation remaps; model output and correlated telemetry agree while output bounds remain unchanged. New timing cases passed; shared WebSocket fixture and fork benchmark patterns adapted. Bazel toolchain label aligned with Cargo.lock; benchmark compilation blocked by Windows bootstrap linking. |
-| `62b458c93151595cdf2b5ef5e37aa3d8b5613aeb` | Block goals after repeated execution host failures (#41454) | pending | Prepared candidate: `ed2f26c84ba41aa3fc84e47217aeb2086723f515`. |
+| `62b458c93151595cdf2b5ef5e37aa3d8b5613aeb` | Block goals after repeated execution host failures (#41454) | backported | Adapted `ed2f26c84ba41aa3fc84e47217aeb2086723f515` into named, current-turn/goal-scoped evidence and idempotent streak accounting. Preserved continuation-error suspension and all expected-goal fences; 42 targeted cases passed with WebSocket app fixture and Bazel path-loaded module data. |
 | `2181224dad147a9ed37e698b66487aba54acdb65` | Support app targets in executor plugin hooks (#41456) | pending |  |
 | `03861e69ef549717c0fc7045abad56321d4a082b` | Source proactive multi-agent instructions from the model catalog (#41457) | pending | Prepared candidate: `b02ccf061477bc3edd152c238b46d29f11920713`. |
 | `3c062df036070ad5819a9a74160a448b414e9b92` | Source async user message descriptions from the model catalog (#41461) | pending | Prepared candidate: `0007a8b0817b4d2d11014faceca429aefcff2587`. |
