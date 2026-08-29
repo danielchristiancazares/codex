@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::io::Read;
 use std::io::Write;
 
@@ -9,9 +10,15 @@ pub fn main() -> ! {
 /// We would prefer to return `std::process::ExitCode`, but its `exit_process()`
 /// method is still a nightly API and we want main() to return !.
 pub fn run_main() -> i32 {
-    // Expect either one argument (the full apply_patch payload) or read it from stdin.
     let mut args = std::env::args_os();
     let _argv0 = args.next();
+    run_main_with_args(args)
+}
+
+/// Runs the standalone apply-patch contract over arguments after the executable name.
+#[doc(hidden)]
+pub fn run_main_with_args(mut args: impl Iterator<Item = OsString>) -> i32 {
+    // Expect either one argument (the full apply_patch payload) or read it from stdin.
 
     let patch_arg = match args.next() {
         Some(arg) => match arg.into_string() {

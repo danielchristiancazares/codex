@@ -42,6 +42,8 @@ pub use invocation::maybe_parse_apply_patch_verified_with_mode;
 pub use invocation::verify_apply_patch_args;
 pub use invocation::verify_apply_patch_args_with_mode;
 pub use standalone_executable::main;
+#[doc(hidden)]
+pub use standalone_executable::run_main_with_args;
 
 use crate::invocation::ExtractHeredocError;
 
