@@ -1,5 +1,9 @@
+use std::cell::Cell;
 use std::io;
 use std::sync::LazyLock;
+
+#[path = "oss_selection_layout.rs"]
+mod layout;
 
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
@@ -24,8 +28,6 @@ use crossterm::terminal::enable_raw_mode;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Direction;
 use ratatui::layout::HorizontalAlignment;
 use ratatui::layout::Layout;
 use ratatui::layout::Margin;
@@ -41,6 +43,9 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use std::time::Duration;
+
+use self::layout::ChoiceVisibility;
+use self::layout::OssSelectionLayout;
 
 #[derive(Clone)]
 struct ProviderOption {
@@ -106,6 +111,7 @@ pub struct OssSelectionWidget<'a> {
     done: bool,
 
     selection: Option<String>,
+    controls_visibility: Cell<ChoiceVisibility>,
 }
 
 impl OssSelectionWidget<'_> {
@@ -160,6 +166,7 @@ impl OssSelectionWidget<'_> {
             selected_option: 0,
             done: false,
             selection: None,
+            controls_visibility: Cell::new(ChoiceVisibility::Hidden),
         })
     }
 
@@ -195,14 +202,22 @@ impl OssSelectionWidget<'_> {
     }
 
     fn handle_select_key(&mut self, key_event: KeyEvent) {
-        match key_event {
+        if matches!(
+            key_event,
             KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers,
                 ..
-            } if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.send_decision("__CANCELLED__".to_string());
-            }
+            } if modifiers.contains(KeyModifiers::CONTROL)
+        ) {
+            self.send_decision("__CANCELLED__".to_string());
+            return;
+        }
+        if self.controls_visibility.get() == ChoiceVisibility::Hidden {
+            return;
+        }
+
+        match key_event {
             _ if MOVE_LEFT_KEYS.is_pressed(key_event) => {
                 self.selected_option = (self.selected_option + self.select_options.len() - 1)
                     % self.select_options.len();
@@ -248,17 +263,18 @@ impl OssSelectionWidget<'_> {
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
-        self.get_confirmation_prompt_height(width) + self.select_options.len() as u16
+        self.get_confirmation_prompt_height(width).saturating_add(5)
     }
 }
 
 impl WidgetRef for &OssSelectionWidget<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let prompt_height = self.get_confirmation_prompt_height(area.width);
-        let [prompt_chunk, response_chunk] = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(prompt_height), Constraint::Min(0)])
-            .areas(area);
+        let layout = OssSelectionLayout::new(area, prompt_height);
+        self.controls_visibility.set(layout.controls_visibility());
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let lines: Vec<Line> = self
             .select_options
@@ -277,31 +293,30 @@ impl WidgetRef for &OssSelectionWidget<'_> {
             })
             .collect();
 
-        let [title_area, button_area, description_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(response_chunk.inner(Margin::new(1, 0)));
-
-        Line::from("Select provider?").render(title_area, buf);
-
-        self.confirmation_prompt.clone().render(prompt_chunk, buf);
-        let areas = Layout::horizontal(
-            lines
-                .iter()
-                .map(|l| Constraint::Length(l.width() as u16 + 2)),
-        )
-        .spacing(1)
-        .split(button_area);
-        for (idx, area) in areas.iter().enumerate() {
-            let line = &lines[idx];
-            line.render(*area, buf);
+        self.confirmation_prompt
+            .clone()
+            .render(layout.prompt_area, buf);
+        if let Some(title_area) = layout.title_area {
+            Line::from("Select provider?").render(title_area, buf);
         }
-
-        Line::from(self.select_options[self.selected_option].description)
-            .style(Style::new().italic().fg(Color::DarkGray))
-            .render(description_area.inner(Margin::new(1, 0)), buf);
+        if let Some(button_area) = layout.button_area {
+            let areas = Layout::horizontal(
+                lines
+                    .iter()
+                    .map(|line| ratatui::layout::Constraint::Length(line.width() as u16 + 2)),
+            )
+            .spacing(1)
+            .split(button_area);
+            for (idx, area) in areas.iter().enumerate() {
+                let line = &lines[idx];
+                line.render(*area, buf);
+            }
+        }
+        if let Some(description_area) = layout.description_area {
+            Line::from(self.select_options[self.selected_option].description)
+                .style(Style::new().italic().fg(Color::DarkGray))
+                .render(description_area.inner(Margin::new(1, 0)), buf);
+        }
     }
 }
 
@@ -441,12 +456,65 @@ mod tests {
     fn ctrl_h_l_move_provider_selection() {
         let mut widget = OssSelectionWidget::new(ProviderStatus::Unknown, ProviderStatus::Unknown)
             .expect("widget should initialize");
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 3,
+        );
+        let mut buffer = Buffer::empty(area);
+        (&widget).render_ref(area, &mut buffer);
 
         assert_eq!(widget.selected_option, 0);
         widget.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
         assert_eq!(widget.selected_option, 1);
         widget.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
         assert_eq!(widget.selected_option, 0);
+    }
+
+    #[test]
+    fn hidden_controls_ignore_selection_keys_but_keep_ctrl_c() {
+        let mut widget = OssSelectionWidget::new(ProviderStatus::Unknown, ProviderStatus::Unknown)
+            .expect("widget should initialize");
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 0,
+        );
+        let mut buffer = Buffer::empty(area);
+        (&widget).render_ref(area, &mut buffer);
+
+        assert_eq!(
+            widget.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            None,
+        );
+        assert!(!widget.done);
+
+        assert_eq!(
+            widget.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some("__CANCELLED__".to_string()),
+        );
+    }
+
+    #[test]
+    fn constrained_provider_controls_remain_visible() {
+        let mut widget =
+            OssSelectionWidget::new(ProviderStatus::Running, ProviderStatus::NotRunning)
+                .expect("widget should initialize");
+        let render = |widget: &OssSelectionWidget<'_>, area: Rect| {
+            let mut buffer = Buffer::empty(area);
+            widget.render_ref(area, &mut buffer);
+            format!("{buffer:?}")
+        };
+
+        insta::assert_snapshot!(
+            "oss_selection_controls_at_80x12",
+            render(&widget, Rect::new(0, 0, 80, 12))
+        );
+        insta::assert_snapshot!(
+            "oss_selection_controls_at_height_1",
+            render(&widget, Rect::new(0, 0, 40, 1))
+        );
+        widget.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        insta::assert_snapshot!(
+            "oss_selection_controls_at_height_2_selected_right",
+            render(&widget, Rect::new(0, 0, 40, 2))
+        );
     }
 
     #[tokio::test]

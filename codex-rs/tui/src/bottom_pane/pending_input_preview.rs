@@ -485,7 +485,7 @@ mod tests {
 
         let width = 36;
         let height = queue.desired_height(width);
-        assert_eq!(height, 3);
+        assert_eq!(height, 4);
 
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
         queue.render(Rect::new(0, 0, width, height), &mut buf);

@@ -4,212 +4,222 @@ expression: "format!(\"empty query:\\n{empty_query}\\n\\nunicode query:\\n{unico
 ---
 empty query:
 24x4:
+                        
+  / ▏ Type a branch…    
+› 東 京 /修 正 -🦀           
+  ↵ ok · esc back       
+
+24x6:
+                        
+                        
   / ▏ Type a branch…    
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
 
 24x6:
+                        
+                        
   / ▏ Type a branch…    
 › 東 京 /修 正 -🦀           
-                        
-                        
-                        
-  ↵ ok · esc back       
-
-24x5:
-  / ▏ Type a branch…    
-› 東 京 /修 正 -🦀           
-                        
                         
   ↵ ok · esc back       
 
 40x4:
+                                        
+  / ▏ Type a branch name                
+› 東 京 /修 正 -🦀                           
+  ↵ ok · esc back                       
+
+40x6:
+                                        
+                                        
   / ▏ Type a branch name                
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
 
 40x6:
+                                        
+                                        
   / ▏ Type a branch name                
 › 東 京 /修 正 -🦀                           
-                                        
-                                        
-                                        
-  ↵ ok · esc back                       
-
-40x5:
-  / ▏ Type a branch name                
-› 東 京 /修 正 -🦀                           
-                                        
                                         
   ↵ ok · esc back                       
 
 80x4:
+                                                                                
+  / ▏ Type a branch name                                                        
+› 東 京 /修 正 -🦀                                                                   
+  ↵ ok · esc back                                                               
+
+80x6:
+                                                                                
+                                                                                
   / ▏ Type a branch name                                                        
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               
 
 80x6:
+                                                                                
+                                                                                
   / ▏ Type a branch name                                                        
 › 東 京 /修 正 -🦀                                                                   
-                                                                                
-                                                                                
-                                                                                
-  ↵ ok · esc back                                                               
-
-80x5:
-  / ▏ Type a branch name                                                        
-› 東 京 /修 正 -🦀                                                                   
-                                                                                
                                                                                 
   ↵ ok · esc back                                                               
 
 unicode query:
 24x4:
+                        
+  / 東 京 /修 正 -🦀 ▏       
+› 東 京 /修 正 -🦀           
+  ↵ ok · esc back       
+
+24x6:
+                        
+                        
   / 東 京 /修 正 -🦀 ▏       
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
 
 24x6:
+                        
+                        
   / 東 京 /修 正 -🦀 ▏       
 › 東 京 /修 正 -🦀           
-                        
-                        
-                        
-  ↵ ok · esc back       
-
-24x5:
-  / 東 京 /修 正 -🦀 ▏       
-› 東 京 /修 正 -🦀           
-                        
                         
   ↵ ok · esc back       
 
 40x4:
+                                        
+  / 東 京 /修 正 -🦀 ▏                       
+› 東 京 /修 正 -🦀                           
+  ↵ ok · esc back                       
+
+40x6:
+                                        
+                                        
   / 東 京 /修 正 -🦀 ▏                       
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
 
 40x6:
+                                        
+                                        
   / 東 京 /修 正 -🦀 ▏                       
 › 東 京 /修 正 -🦀                           
-                                        
-                                        
-                                        
-  ↵ ok · esc back                       
-
-40x5:
-  / 東 京 /修 正 -🦀 ▏                       
-› 東 京 /修 正 -🦀                           
-                                        
                                         
   ↵ ok · esc back                       
 
 80x4:
+                                                                                
+  / 東 京 /修 正 -🦀 ▏                                                               
+› 東 京 /修 正 -🦀                                                                   
+  ↵ ok · esc back                                                               
+
+80x6:
+                                                                                
+                                                                                
   / 東 京 /修 正 -🦀 ▏                                                               
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               
 
 80x6:
+                                                                                
+                                                                                
   / 東 京 /修 正 -🦀 ▏                                                               
 › 東 京 /修 正 -🦀                                                                   
-                                                                                
-                                                                                
-                                                                                
-  ↵ ok · esc back                                                               
-
-80x5:
-  / 東 京 /修 正 -🦀 ▏                                                               
-› 東 京 /修 正 -🦀                                                                   
-                                                                                
                                                                                 
   ↵ ok · esc back                                                               
 
 elided header:
 24x4:
-  Choose the execution  
-  policy for this    …  
+  Choose the executio…  
+                        
 › 1. Read only          
   ↵ ok · esc back       
 
 24x6:
   Choose the execution  
   policy for this       
-  carefully scoped      
-  workspace             
+  carefully scoped   …  
+                        
 › 1. Read only          
   ↵ ok · esc back       
 
-24x8:
+24x9:
                         
   Choose the execution  
   policy for this       
   carefully scoped      
   workspace             
+                        
 › 1. Read only          
                         
   ↵ ok · esc back       
 
 40x4:
-  Choose the execution policy for this  
-  carefully scoped workspace            
+  Choose the execution policy for thi…  
+                                        
 › 1. Read only                          
   ↵ ok · esc back                       
 
 40x6:
+                                        
   Choose the execution policy for this  
   carefully scoped workspace            
+                                        
 › 1. Read only                          
-                                        
-                                        
   ↵ ok · esc back                       
 
-40x6:
+40x7:
+                                        
   Choose the execution policy for this  
   carefully scoped workspace            
-› 1. Read only                          
                                         
+› 1. Read only                          
                                         
   ↵ ok · esc back                       
 
 80x4:
   Choose the execution policy for this carefully scoped workspace               
+                                                                                
+› 1. Read only                                                                  
+  ↵ ok · esc back                                                               
+
+80x6:
+                                                                                
+  Choose the execution policy for this carefully scoped workspace               
+                                                                                
 › 1. Read only                                                                  
                                                                                 
   ↵ ok · esc back                                                               
 
 80x6:
+                                                                                
   Choose the execution policy for this carefully scoped workspace               
+                                                                                
 › 1. Read only                                                                  
-                                                                                
-                                                                                
-                                                                                
-  ↵ ok · esc back                                                               
-
-80x5:
-  Choose the execution policy for this carefully scoped workspace               
-› 1. Read only                                                                  
-                                                                                
                                                                                 
   ↵ ok · esc back                                                               
 
 stacked header:
 24x4:
-  Critical: workspace   
-  Choose access      …  
+  Critical: workspace…  
+                        
 › 1. Read only          
   ↵ ok · esc back       
 
-24x7:
+24x8:
                         
   Critical: workspace   
   Choose access         
   Applies immediately   
+                        
 › 1. Read only          
                         
   ↵ ok · esc back

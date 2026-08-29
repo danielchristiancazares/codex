@@ -2,4 +2,4 @@
 source: tui/src/bottom_pane/chat_composer.rs
 expression: "buf[(2, 1)].style()"
 ---
-Style::new().fg(Color::Reset).bg(Color::Reset).underline_color(Color::Reset).bold()
+Style::new().fg(Color::Reset).bg(Color::Reset).underline_color(Color::Reset)

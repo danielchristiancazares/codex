@@ -1455,6 +1455,13 @@ impl BottomPane {
         self.view_stack.last().and_then(|view| view.view_id())
     }
 
+    pub(crate) fn active_view_is(&self, view_id: &str) -> bool {
+        self.view_stack
+            .last()
+            .and_then(|view| view.view_id())
+            .is_some_and(|active_view_id| active_view_id == view_id)
+    }
+
     /// Return true when the pane is in the regular composer state without any
     /// overlays or popups and not running a task. This is the safe context to
     /// use Esc-Esc for backtracking from the main view.
@@ -2153,7 +2160,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: String::new(),
+            placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2483,14 +2490,14 @@ mod tests {
             "expected Working header after denial on row 0: {row0:?}"
         );
 
-        // Composer placeholder should be visible somewhere below.
+        // Composer input row should be visible somewhere below.
         let mut found_composer = false;
         for y in 1..area.height {
             let mut row = String::new();
             for x in 0..area.width {
                 row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
             }
-            if row.contains("Ask Codex") {
+            if row.contains("│›") {
                 found_composer = true;
                 break;
             }

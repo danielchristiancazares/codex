@@ -8,10 +8,26 @@ use codex_utils_path_uri::LegacyAppPathString;
 
 impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+        self.defer_or_handle(
+            changes,
+            InterruptManager::push_patch_apply_begin,
+            Self::handle_patch_apply_begin_now,
+        );
+    }
+
+    pub(crate) fn handle_patch_apply_begin_now(&mut self, changes: HashMap<PathBuf, FileChange>) {
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
     pub(super) fn on_view_image_tool_call(&mut self, path: LegacyAppPathString) {
+        self.defer_or_handle(
+            path,
+            InterruptManager::push_view_image,
+            Self::handle_view_image_tool_call_now,
+        );
+    }
+
+    pub(crate) fn handle_view_image_tool_call_now(&mut self, path: LegacyAppPathString) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_view_image_tool_call(
             path,
@@ -21,6 +37,14 @@ impl ChatWidget {
     }
 
     pub(super) fn on_image_generation_begin(&mut self) {
+        self.defer_or_handle(
+            (),
+            |interrupts, ()| interrupts.push_image_generation_begin(),
+            |chat, ()| chat.handle_image_generation_begin_now(),
+        );
+    }
+
+    pub(crate) fn handle_image_generation_begin_now(&mut self) {
         self.flush_answer_stream_with_separator();
         if self.bottom_pane.is_task_running() {
             self.bottom_pane.ensure_status_indicator();
@@ -28,6 +52,24 @@ impl ChatWidget {
     }
 
     pub(super) fn on_image_generation_end(
+        &mut self,
+        call_id: String,
+        status: String,
+        revised_prompt: Option<String>,
+        saved_path: Option<AbsolutePathBuf>,
+    ) {
+        self.defer_or_handle(
+            (call_id, status, revised_prompt, saved_path),
+            |interrupts, (call_id, status, revised_prompt, saved_path)| {
+                interrupts.push_image_generation_end(call_id, status, revised_prompt, saved_path);
+            },
+            |chat, (call_id, status, revised_prompt, saved_path)| {
+                chat.handle_image_generation_end_now(call_id, status, revised_prompt, saved_path);
+            },
+        );
+    }
+
+    pub(crate) fn handle_image_generation_end_now(
         &mut self,
         call_id: String,
         status: String,
@@ -53,6 +95,10 @@ impl ChatWidget {
     }
 
     pub(super) fn on_mcp_tool_call_started(&mut self, item: ThreadItem) {
+        if self.interrupts.is_empty() && self.active_mcp_group_has_incomplete_members() {
+            self.handle_mcp_tool_call_started_now(item);
+            return;
+        }
         self.defer_or_handle(
             item,
             InterruptManager::push_item_started,
@@ -61,6 +107,15 @@ impl ChatWidget {
     }
 
     pub(super) fn on_mcp_tool_call_completed(&mut self, item: ThreadItem) {
+        let owned_by_active_group = match &item {
+            ThreadItem::McpToolCall { id, .. } => self.active_mcp_group_owns_call(id),
+            _ => false,
+        };
+        if owned_by_active_group {
+            self.handle_mcp_tool_call_completed_now(item);
+            self.flush_interrupt_queue();
+            return;
+        }
         self.defer_or_handle(
             item,
             InterruptManager::push_item_completed,
@@ -69,6 +124,14 @@ impl ChatWidget {
     }
 
     pub(super) fn on_web_search_begin(&mut self, call_id: String) {
+        self.defer_or_handle(
+            call_id,
+            InterruptManager::push_web_search_begin,
+            Self::handle_web_search_begin_now,
+        );
+    }
+
+    pub(crate) fn handle_web_search_begin_now(&mut self, call_id: String) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
         self.transcript.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
@@ -81,6 +144,23 @@ impl ChatWidget {
     }
 
     pub(super) fn on_web_search_end(
+        &mut self,
+        call_id: String,
+        query: String,
+        action: codex_app_server_protocol::WebSearchAction,
+    ) {
+        self.defer_or_handle(
+            (call_id, query, action),
+            |interrupts, (call_id, query, action)| {
+                interrupts.push_web_search_end(call_id, query, action);
+            },
+            |chat, (call_id, query, action)| {
+                chat.handle_web_search_end_now(call_id, query, action);
+            },
+        );
+    }
+
+    pub(crate) fn handle_web_search_end_now(
         &mut self,
         call_id: String,
         query: String,
@@ -109,6 +189,14 @@ impl ChatWidget {
     }
 
     pub(super) fn on_collab_event(&mut self, cell: PlainHistoryCell) {
+        self.defer_or_handle(
+            cell,
+            InterruptManager::push_collab_event,
+            Self::handle_collab_event_now,
+        );
+    }
+
+    pub(crate) fn handle_collab_event_now(&mut self, cell: PlainHistoryCell) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(cell);
         self.request_redraw();
@@ -176,18 +264,27 @@ impl ChatWidget {
             return;
         };
         self.flush_answer_stream_with_separator();
-        self.flush_active_cell();
-        self.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
-            id,
-            McpInvocation {
-                server,
-                tool,
-                arguments: Some(arguments),
-            },
-            self.config.animations,
-        )));
-        self.bump_active_cell_revision();
-        self.request_redraw();
+        let invocation = McpInvocation {
+            server,
+            tool,
+            arguments: Some(arguments),
+        };
+        let animations_enabled = self.config.animations;
+        if let Some(group) = self.active_mcp_group_mut() {
+            if group.add_started_call(id, invocation, animations_enabled) {
+                self.bump_active_cell_revision();
+                self.request_redraw();
+            }
+        } else {
+            self.flush_active_cell();
+            self.transcript.active_cell = Some(Box::new(history_cell::McpToolCallGroupCell::new(
+                id,
+                invocation,
+                animations_enabled,
+            )));
+            self.bump_active_cell_revision();
+            self.request_redraw();
+        }
     }
 
     pub(crate) fn handle_mcp_tool_call_completed_now(&mut self, item: ThreadItem) {
@@ -227,26 +324,30 @@ impl ChatWidget {
             (None, None) => Err("MCP tool call completed without a result".to_string()),
         };
 
-        let extra_cell = match self
-            .transcript
-            .active_cell
-            .as_mut()
-            .and_then(|cell| cell.as_any_mut().downcast_mut::<McpToolCallCell>())
-        {
-            Some(cell) if cell.call_id() == id => cell.complete(duration, result),
-            _ => {
-                self.flush_active_cell();
-                let mut cell =
-                    history_cell::new_active_mcp_tool_call(id, invocation, self.config.animations);
-                let extra_cell = cell.complete(duration, result);
-                self.transcript.active_cell = Some(Box::new(cell));
-                extra_cell
+        if self.active_mcp_group_owns_call(&id) {
+            let completed_active_member = self
+                .active_mcp_group_mut()
+                .is_some_and(|group| group.complete_call(&id, duration, result));
+            if !completed_active_member {
+                return;
             }
-        };
-
-        self.flush_active_cell();
-        if let Some(extra) = extra_cell {
-            self.add_boxed_history(extra);
+            if self.active_mcp_group_has_incomplete_members() {
+                self.bump_active_cell_revision();
+                self.request_redraw();
+            } else {
+                self.flush_active_cell();
+            }
+        } else {
+            self.flush_active_cell();
+            let mut group = history_cell::McpToolCallGroupCell::new(
+                id.clone(),
+                invocation,
+                self.config.animations,
+            );
+            let completed = group.complete_call(&id, duration, result);
+            debug_assert!(completed, "new MCP group should contain {id}");
+            self.transcript.active_cell = Some(Box::new(group));
+            self.flush_active_cell();
         }
         // Mark that actual work was done (MCP tool call)
         self.transcript.had_work_activity = true;
@@ -273,5 +374,34 @@ impl ChatWidget {
             item @ ThreadItem::McpToolCall { .. } => self.handle_mcp_tool_call_completed_now(item),
             _ => {}
         }
+    }
+
+    pub(super) fn active_mcp_group_has_incomplete_members(&self) -> bool {
+        self.transcript
+            .active_cell
+            .as_ref()
+            .and_then(|cell| {
+                cell.as_any()
+                    .downcast_ref::<history_cell::McpToolCallGroupCell>()
+            })
+            .is_some_and(history_cell::McpToolCallGroupCell::has_active_members)
+    }
+
+    pub(super) fn active_mcp_group_owns_call(&self, call_id: &str) -> bool {
+        self.transcript
+            .active_cell
+            .as_ref()
+            .and_then(|cell| {
+                cell.as_any()
+                    .downcast_ref::<history_cell::McpToolCallGroupCell>()
+            })
+            .is_some_and(|group| group.owns_call(call_id))
+    }
+
+    fn active_mcp_group_mut(&mut self) -> Option<&mut history_cell::McpToolCallGroupCell> {
+        self.transcript.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::McpToolCallGroupCell>()
+        })
     }
 }

@@ -141,20 +141,7 @@ impl Renderable for FeedbackNoteView {
     }
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        if area.height < 2 || area.width <= 2 {
-            return None;
-        }
-        let intro_height = self.intro_lines(area.width).len() as u16;
-        let text_area_height = self.input_height(area.width).saturating_sub(1);
-        if text_area_height == 0 {
-            return None;
-        }
-        let textarea_rect = Rect {
-            x: area.x.saturating_add(2),
-            y: area.y.saturating_add(intro_height).saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: text_area_height,
-        };
+        let textarea_rect = self.textarea_rect(area)?;
         let state = *self.textarea_state.borrow();
         self.textarea.cursor_pos_with_state(textarea_rect, state)
     }
@@ -169,10 +156,14 @@ impl Renderable for FeedbackNoteView {
         let input_height = self.input_height(area.width);
 
         for (offset, line) in intro_lines.iter().enumerate() {
+            let y = area.y.saturating_add(offset as u16);
+            if y >= area.bottom() {
+                break;
+            }
             Paragraph::new(line.clone()).render(
                 Rect {
                     x: area.x,
-                    y: area.y.saturating_add(offset as u16),
+                    y,
                     width: area.width,
                     height: 1,
                 },
@@ -181,12 +172,7 @@ impl Renderable for FeedbackNoteView {
         }
 
         // Input line
-        let input_area = Rect {
-            x: area.x,
-            y: area.y.saturating_add(intro_lines.len() as u16),
-            width: area.width,
-            height: input_height,
-        };
+        let input_area = self.input_area(area);
         if input_area.width >= 2 {
             for row in 0..input_area.height {
                 Paragraph::new(Line::from(vec![gutter()])).render(
@@ -200,8 +186,7 @@ impl Renderable for FeedbackNoteView {
                 );
             }
 
-            let text_area_height = input_area.height.saturating_sub(1);
-            if text_area_height > 0 {
+            if let Some(textarea_rect) = self.textarea_rect(area) {
                 if input_area.width > 2 {
                     let blank_rect = Rect {
                         x: input_area.x.saturating_add(2),
@@ -211,12 +196,6 @@ impl Renderable for FeedbackNoteView {
                     };
                     Clear.render(blank_rect, buf);
                 }
-                let textarea_rect = Rect {
-                    x: input_area.x.saturating_add(2),
-                    y: input_area.y.saturating_add(1),
-                    width: input_area.width.saturating_sub(2),
-                    height: text_area_height,
-                };
                 let mut state = self.textarea_state.borrow_mut();
                 StatefulWidgetRef::render_ref(&(&self.textarea), textarea_rect, buf, &mut state);
                 if self.textarea.text().is_empty() {
@@ -252,6 +231,26 @@ impl Renderable for FeedbackNoteView {
 }
 
 impl FeedbackNoteView {
+    fn input_area(&self, area: Rect) -> Rect {
+        let input_y = area
+            .y
+            .saturating_add(self.intro_lines(area.width).len() as u16);
+        Rect::new(area.x, input_y, area.width, self.input_height(area.width)).intersection(area)
+    }
+
+    fn textarea_rect(&self, area: Rect) -> Option<Rect> {
+        let input_area = self.input_area(area);
+        if input_area.width <= 2 || input_area.height <= 1 {
+            return None;
+        }
+        Some(Rect {
+            x: input_area.x.saturating_add(2),
+            y: input_area.y.saturating_add(1),
+            width: input_area.width.saturating_sub(2),
+            height: input_area.height.saturating_sub(1),
+        })
+    }
+
     fn input_height(&self, width: u16) -> u16 {
         let usable_width = width.saturating_sub(2);
         let text_height = self.textarea.desired_height(usable_width).clamp(1, 8);
@@ -710,6 +709,32 @@ mod tests {
         let rendered = render(&view, /*width*/ 60);
 
         insta::assert_snapshot!("feedback_view_with_connectivity_diagnostics", rendered);
+    }
+
+    #[test]
+    fn constrained_multiline_feedback_clips_render_and_cursor_to_area() {
+        let mut view = make_view(FeedbackCategory::Bug);
+        view.textarea
+            .insert_str("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 32, /*height*/ 3,
+        );
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        insta::assert_snapshot!(
+            "feedback_view_constrained_multiline",
+            render_buffer(area, &buf)
+        );
+        let (cursor_x, cursor_y) = view.cursor_pos(area).expect("visible textarea cursor");
+        assert!(
+            cursor_x >= area.x
+                && cursor_x < area.right()
+                && cursor_y >= area.y
+                && cursor_y < area.bottom(),
+            "cursor ({cursor_x}, {cursor_y}) escaped render area {area:?}",
+        );
     }
 
     #[test]

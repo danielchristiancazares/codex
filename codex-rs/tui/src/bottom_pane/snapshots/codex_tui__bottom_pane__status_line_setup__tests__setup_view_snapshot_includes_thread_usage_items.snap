@@ -18,4 +18,4 @@ expression: "render_lines(&view, 100)"
   [ ] Current directory      Current working directory                                              
                                                                                                     
   5.2 credits · ~$1.82                                                                              
-  ↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel
+  Press space to toggle; ←/→ to move; enter to confirm and close; esc to close

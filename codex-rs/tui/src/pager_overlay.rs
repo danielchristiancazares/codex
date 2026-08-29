@@ -15,11 +15,14 @@
 //! recomputed. `ChatWidget` is responsible for producing a key that changes when the active cell
 //! mutates in place or when its transcript output is time-dependent.
 
+#[path = "pager_overlay/layout.rs"]
+mod layout;
 mod scrolling;
 
 use std::io::Result;
 use std::sync::Arc;
 
+use self::layout::PagerFrameLayout;
 use crate::chatwidget::ActiveCellTranscriptKey;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::SessionInfoCell;
@@ -186,11 +189,18 @@ impl PagerView {
             .sum()
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        self.render_header(area, buf);
-        let content_area = self.content_area(area);
-        self.update_last_content_height(content_area.height);
+    fn render(&mut self, layout: PagerFrameLayout, buf: &mut Buffer) {
+        Clear.render(layout.frame_area, buf);
+        if let Some(title_area) = layout.title_area {
+            self.render_header(title_area, buf);
+        }
+        let content_area = layout.content_area;
+        let reported_content_height = if self.renderables.is_empty() {
+            0
+        } else {
+            content_area.height
+        };
+        self.update_last_content_height(reported_content_height);
         let content_height = self.content_height(content_area.width);
         self.last_rendered_height = Some(content_height);
         // If there is a pending request to scroll a specific chunk into view,
@@ -204,7 +214,9 @@ impl PagerView {
 
         self.render_content(content_area, buf);
 
-        self.render_bottom_bar(area, content_area, buf, content_height);
+        if let Some(separator_area) = layout.separator_area {
+            self.render_bottom_bar(separator_area, content_area, buf, content_height);
+        }
     }
 
     fn render_header(&self, area: Rect, buf: &mut Buffer) {
@@ -253,17 +265,14 @@ impl PagerView {
 
     fn render_bottom_bar(
         &self,
-        full_area: Rect,
+        separator_area: Rect,
         content_area: Rect,
         buf: &mut Buffer,
         total_len: usize,
     ) {
-        let sep_y = content_area.bottom();
-        let sep_rect = Rect::new(full_area.x, sep_y, full_area.width, 1);
-
-        Span::from("─".repeat(sep_rect.width as usize))
+        Span::from("─".repeat(separator_area.width as usize))
             .dim()
-            .render(sep_rect, buf);
+            .render(separator_area, buf);
         if !self.scroll_percentage_visible {
             return;
         }
@@ -280,10 +289,14 @@ impl PagerView {
         };
         let pct_text = format!(" {percent}% ");
         let pct_w = pct_text.chars().count() as u16;
-        let pct_x = sep_rect.x + sep_rect.width - pct_w - 1;
+        let required_width = pct_w.saturating_add(1);
+        let Some(pct_offset) = separator_area.width.checked_sub(required_width) else {
+            return;
+        };
+        let pct_x = separator_area.x.saturating_add(pct_offset);
         Span::from(pct_text)
             .dim()
-            .render(Rect::new(pct_x, sep_rect.y, pct_w, 1), buf);
+            .render(Rect::new(pct_x, separator_area.y, pct_w, 1), buf);
     }
 
     fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) -> Result<()> {
@@ -333,8 +346,13 @@ impl PagerView {
     /// if no render has occurred yet, falls back to the content area height
     /// computed from the given viewport.
     fn page_height(&self, viewport_area: Rect) -> usize {
-        self.last_content_height
-            .unwrap_or_else(|| self.content_area(viewport_area).height as usize)
+        self.last_content_height.unwrap_or_else(|| {
+            if self.renderables.is_empty() {
+                0
+            } else {
+                self.content_area(viewport_area).height as usize
+            }
+        })
     }
 
     fn update_last_content_height(&mut self, height: u16) {
@@ -342,10 +360,7 @@ impl PagerView {
     }
 
     fn content_area(&self, area: Rect) -> Rect {
-        let mut area = area;
-        area.y = area.y.saturating_add(1);
-        area.height = area.height.saturating_sub(2);
-        area
+        PagerFrameLayout::new(area).content_area
     }
 }
 
@@ -850,10 +865,15 @@ impl TranscriptOverlay {
         renderable
     }
 
-    fn render_hints(&self, area: Rect, buf: &mut Buffer) {
-        let line1 = Rect::new(area.x, area.y, area.width, 1);
-        let line2 = Rect::new(area.x, area.y.saturating_add(1), area.width, 1);
-        render_navigation_hints(line1, buf, &self.view.keymap);
+    fn render_hints(
+        &self,
+        navigation_area: Option<Rect>,
+        close_area: Option<Rect>,
+        buf: &mut Buffer,
+    ) {
+        if let Some(navigation_area) = navigation_area {
+            render_navigation_hints(navigation_area, buf, &self.view.keymap);
+        }
 
         let mut pairs: Vec<(Vec<ShortcutHint>, &str)> = vec![(
             first_or_empty(&self.view.keymap, "close", &self.view.keymap.close),
@@ -875,7 +895,9 @@ impl TranscriptOverlay {
         } else {
             pairs.push((vec![key_hint::plain(KeyCode::Esc).into()], "to edit prev"));
         }
-        render_key_hints(line2, buf, &pairs);
+        if let Some(close_area) = close_area {
+            render_key_hints(close_area, buf, &pairs);
+        }
     }
 
     pub(crate) fn render(&mut self, area: Rect, buf: &mut Buffer) {
@@ -883,18 +905,16 @@ impl TranscriptOverlay {
         if self.view.is_scrolled_to_bottom() {
             self.view.scroll_offset = usize::MAX;
         }
-        let top_h = area.height.saturating_sub(3);
-        let top = Rect::new(area.x, area.y, area.width, top_h);
-        let bottom = Rect::new(area.x, area.y + top_h, area.width, 3);
-        self.view.render(top, buf);
-        self.render_history_state(top, buf);
-        self.render_hints(bottom, buf);
+        let layout = PagerFrameLayout::new(area);
+        self.view.render(layout, buf);
+        self.render_history_state(layout.title_area, buf);
+        self.render_hints(layout.navigation_hint_area, layout.close_hint_area, buf);
     }
 
-    fn render_history_state(&self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 {
+    fn render_history_state(&self, area: Option<Rect>, buf: &mut Buffer) {
+        let Some(area) = area else {
             return;
-        }
+        };
         let label = match self.history_state {
             TranscriptHistoryState::Idle => return,
             TranscriptHistoryState::LoadingOlder | TranscriptHistoryState::LoadingBeginning => {
@@ -971,23 +991,28 @@ impl StaticOverlay {
         }
     }
 
-    fn render_hints(&self, area: Rect, buf: &mut Buffer) {
-        let line1 = Rect::new(area.x, area.y, area.width, 1);
-        let line2 = Rect::new(area.x, area.y.saturating_add(1), area.width, 1);
-        render_navigation_hints(line1, buf, &self.view.keymap);
+    fn render_hints(
+        &self,
+        navigation_area: Option<Rect>,
+        close_area: Option<Rect>,
+        buf: &mut Buffer,
+    ) {
+        if let Some(navigation_area) = navigation_area {
+            render_navigation_hints(navigation_area, buf, &self.view.keymap);
+        }
         let pairs: Vec<(Vec<ShortcutHint>, &str)> = vec![(
             first_or_empty(&self.view.keymap, "close", &self.view.keymap.close),
             "to quit",
         )];
-        render_key_hints(line2, buf, &pairs);
+        if let Some(close_area) = close_area {
+            render_key_hints(close_area, buf, &pairs);
+        }
     }
 
     pub(crate) fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let top_h = area.height.saturating_sub(3);
-        let top = Rect::new(area.x, area.y, area.width, top_h);
-        let bottom = Rect::new(area.x, area.y + top_h, area.width, 3);
-        self.view.render(top, buf);
-        self.render_hints(bottom, buf);
+        let layout = PagerFrameLayout::new(area);
+        self.view.render(layout, buf);
+        self.render_hints(layout.navigation_hint_area, layout.close_hint_area, buf);
     }
 }
 
@@ -1099,6 +1124,20 @@ mod tests {
         StaticOverlay::with_title(lines, title.to_string(), default_pager_keymap())
     }
 
+    fn render_static_overlay(lines: Vec<Line<'static>>, title: &str, area: Rect) -> String {
+        let mut overlay = static_overlay(lines, title);
+        let mut buffer = Buffer::empty(area);
+        overlay.render(area, &mut buffer);
+        buffer_to_text(&buffer, area)
+    }
+
+    fn render_transcript_overlay(lines: Vec<Line<'static>>, area: Rect) -> String {
+        let mut overlay = transcript_overlay(vec![Arc::new(TestCell { lines })]);
+        let mut buffer = Buffer::empty(area);
+        overlay.render(area, &mut buffer);
+        buffer_to_text(&buffer, area)
+    }
+
     fn pager_view(
         renderables: Vec<Box<dyn Renderable>>,
         title: &str,
@@ -1110,6 +1149,108 @@ mod tests {
             scroll_offset,
             default_pager_keymap(),
         )
+    }
+
+    #[test]
+    fn pager_percentage_is_omitted_until_indicator_and_separator_fit() {
+        let view = pager_view(Vec::new(), "T", /*scroll_offset*/ 0);
+        let render = |width| {
+            let full_area = Rect::new(/*x*/ 0, /*y*/ 0, width, /*height*/ 2);
+            let content_area = Rect::new(/*x*/ 0, /*y*/ 0, width, /*height*/ 1);
+            let separator_area = Rect::new(/*x*/ 0, /*y*/ 1, width, /*height*/ 1);
+            let mut buffer = Buffer::empty(full_area);
+            view.render_bottom_bar(
+                separator_area,
+                content_area,
+                &mut buffer,
+                /*total_len*/ 0,
+            );
+            buffer_to_text(&buffer, full_area)
+        };
+
+        let width_six = render(/*width*/ 6);
+        let width_seven = render(/*width*/ 7);
+
+        assert!(!width_six.contains('%'), "{width_six:?}");
+        assert!(width_seven.contains(" 100% "), "{width_seven:?}");
+        assert_snapshot!(
+            "pager_percentage_tiny_widths",
+            format!("width 6:\n{width_six}\nwidth 7:\n{width_seven}")
+        );
+    }
+
+    #[test]
+    fn compact_static_overlay_keeps_content_and_close_guidance() {
+        let height_five = render_static_overlay(
+            vec!["static sentinel".into(), "second row".into()],
+            "S T A T I C",
+            Rect::new(0, 0, 40, 5),
+        );
+        let height_three = render_static_overlay(
+            vec!["static sentinel".into(), "second row".into()],
+            "S T A T I C",
+            Rect::new(0, 0, 40, 3),
+        );
+
+        assert!(height_five.contains("static sentinel"), "{height_five}");
+        assert!(height_three.contains("static sentinel"), "{height_three}");
+        assert_snapshot!("static_overlay_compact_height_5", height_five);
+        assert_snapshot!("static_overlay_compact_height_3", height_three);
+    }
+
+    #[test]
+    fn compact_transcript_overlay_keeps_content_and_close_guidance() {
+        let height_five =
+            render_transcript_overlay(vec!["transcript sentinel".into()], Rect::new(0, 0, 40, 5));
+        let height_three =
+            render_transcript_overlay(vec!["transcript sentinel".into()], Rect::new(0, 0, 40, 3));
+
+        assert!(height_five.contains("transcript sentinel"), "{height_five}");
+        assert!(
+            height_three.contains("transcript sentinel"),
+            "{height_three}"
+        );
+        assert_snapshot!("transcript_overlay_compact_height_5", height_five);
+        assert_snapshot!("transcript_overlay_compact_height_3", height_three);
+    }
+
+    #[test]
+    fn compact_pager_uses_one_row_for_page_navigation() {
+        let mut view = pager_view(
+            vec![paragraph_block("line-", /*lines*/ 4)],
+            "T",
+            /*scroll_offset*/ 0,
+        );
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buffer = Buffer::empty(area);
+
+        view.render(PagerFrameLayout::new(area), &mut buffer);
+        let page_height = view.page_height(area);
+        assert_eq!(page_height, 1);
+
+        view.scroll_offset = view.scroll_offset.saturating_add(page_height);
+        buffer = Buffer::empty(area);
+        view.render(PagerFrameLayout::new(area), &mut buffer);
+        let next_page = buffer_to_text(&buffer, area);
+        assert!(next_page.contains("line-1"), "{next_page}");
+
+        view.scroll_offset = view.scroll_offset.saturating_sub(page_height);
+        buffer = Buffer::empty(area);
+        view.render(PagerFrameLayout::new(area), &mut buffer);
+        let previous_page = buffer_to_text(&buffer, area);
+        assert!(previous_page.contains("line-0"), "{previous_page}");
+    }
+
+    #[test]
+    fn empty_compact_pager_reserves_marker_without_scroll_height() {
+        let mut view = pager_view(Vec::new(), "T", /*scroll_offset*/ 0);
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buffer = Buffer::empty(area);
+
+        view.render(PagerFrameLayout::new(area), &mut buffer);
+
+        assert_eq!(view.last_content_height, Some(0));
+        assert_eq!(buffer_to_text(&buffer, area), "~\n");
     }
 
     #[test]
@@ -1671,9 +1812,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         overlay.render(area, &mut buf);
 
-        let top_h = area.height.saturating_sub(3);
-        let top = Rect::new(area.x, area.y, area.width, top_h);
-        let content_area = overlay.view.content_area(top);
+        let content_area = PagerFrameLayout::new(area).content_area;
 
         let mut nums = Vec::new();
         for y in content_area.y..content_area.bottom() {
@@ -1804,7 +1943,7 @@ mod tests {
         pv.ensure_chunk_visible(/*idx*/ 2, content_area);
 
         let mut buf = Buffer::empty(area);
-        pv.render(area, &mut buf);
+        pv.render(PagerFrameLayout::new(area), &mut buf);
         let rendered = buffer_to_text(&buf, area);
 
         assert!(
@@ -1850,7 +1989,7 @@ mod tests {
         let area = Rect::new(0, 0, 20, 8);
         let mut buf = Buffer::empty(area);
 
-        pv.render(area, &mut buf);
+        pv.render(PagerFrameLayout::new(area), &mut buf);
 
         assert!(
             !pv.is_scrolled_to_bottom(),
@@ -1858,7 +1997,7 @@ mod tests {
         );
 
         pv.scroll_offset = usize::MAX;
-        pv.render(area, &mut buf);
+        pv.render(PagerFrameLayout::new(area), &mut buf);
 
         assert!(
             pv.is_scrolled_to_bottom(),

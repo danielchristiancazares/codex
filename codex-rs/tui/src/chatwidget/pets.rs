@@ -86,17 +86,23 @@ impl ChatWidget {
         area: Rect,
         composer_bottom_y: u16,
     ) -> Option<crate::pets::AmbientPetDraw> {
-        if !self.bottom_pane.no_modal_or_popup_active() {
-            return None;
-        }
-
-        let anchor_bottom_y = match self.config.tui_pet_anchor {
-            TuiPetAnchor::Composer => composer_bottom_y,
-            TuiPetAnchor::ScreenBottom => area.bottom(),
+        let request = if self.bottom_pane.no_modal_or_popup_active() {
+            let anchor_bottom_y = match self.config.tui_pet_anchor {
+                TuiPetAnchor::Composer => composer_bottom_y,
+                TuiPetAnchor::ScreenBottom => area.bottom(),
+            };
+            self.ambient_pet
+                .as_ref()
+                .and_then(|pet| pet.draw_request(area, anchor_bottom_y))
+        } else {
+            None
         };
-        self.ambient_pet
-            .as_ref()?
-            .draw_request(area, anchor_bottom_y)
+        self.ambient_pet_image_visible.set(request.is_some());
+        request
+    }
+
+    pub(crate) fn should_clear_ambient_pet_image(&self) -> bool {
+        self.ambient_pet_image_visible.replace(false)
     }
 
     pub(super) fn ambient_pet_wrap_reserved_cols(&self) -> u16 {
@@ -194,22 +200,34 @@ impl ChatWidget {
     }
 
     /// Set the pet preselected by the TUI picker in the widget's config copy.
-    pub(crate) fn set_tui_pet(&mut self, pet: Option<String>) {
+    pub(crate) fn set_tui_pet(&mut self, pet: Option<String>) -> bool {
+        let previous_reserved_cols = self.ambient_pet_wrap_reserved_cols();
         self.config.tui_pet = pet;
         self.ambient_pet = load_ambient_pet(&self.config, self.frame_requester.clone());
         self.apply_ambient_pet_image_support_override_for_tests();
+        self.refresh_pet_dependent_widths();
         self.request_redraw();
+        self.ambient_pet_wrap_reserved_cols() != previous_reserved_cols
     }
 
     pub(crate) fn set_tui_pet_loaded(
         &mut self,
         pet: Option<String>,
         ambient_pet: Option<crate::pets::AmbientPet>,
-    ) {
+    ) -> bool {
+        let previous_reserved_cols = self.ambient_pet_wrap_reserved_cols();
         self.config.tui_pet = pet;
         self.ambient_pet = ambient_pet;
         self.apply_ambient_pet_image_support_override_for_tests();
+        self.refresh_pet_dependent_widths();
         self.request_redraw();
+        self.ambient_pet_wrap_reserved_cols() != previous_reserved_cols
+    }
+
+    fn refresh_pet_dependent_widths(&mut self) {
+        if let Some(width) = self.last_rendered_width.get() {
+            self.on_terminal_resize(width);
+        }
     }
 
     #[cfg(test)]
@@ -326,7 +344,7 @@ impl ChatWidget {
 
     #[cfg(test)]
     pub(crate) fn install_test_ambient_pet_for_tests(&mut self, animations_enabled: bool) {
-        self.set_tui_pet_loaded(
+        let _ = self.set_tui_pet_loaded(
             Some("test".to_string()),
             Some(crate::pets::test_ambient_pet(
                 self.frame_requester.clone(),

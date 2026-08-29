@@ -1,4 +1,4 @@
-//! Connects terminal resize events to source-backed transcript scrollback rebuilds.
+//! Connects terminal resize events to policy-aware transcript handling.
 //!
 //! The app stores conversation history as `HistoryCell`s, but it also writes finalized history into
 //! terminal scrollback for the normal chat view. When the terminal width changes, this module uses
@@ -12,7 +12,9 @@
 //!
 //! The row cap is enforced while rendering from `HistoryCell` source, not after writing to the
 //! terminal. Initial resume replay uses the same display-line buffering contract so large sessions
-//! do not write more retained rows than resize replay would later be willing to rebuild.
+//! do not write more retained rows than owned-buffer resize replay would later rebuild. Inline
+//! mode treats previously emitted terminal scrollback as immutable and updates only live geometry
+//! and future history insertion width.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -30,6 +32,7 @@ use crate::history_cell::HistoryCell;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 use crate::tui;
 
 /// Full terminal width before transcript-specific layout reservations.
@@ -292,6 +295,12 @@ impl App {
     /// source-backed reflow so terminal scrollback reflects the finalized cell instead of the
     /// transient stream rows.
     pub(super) fn maybe_finish_stream_reflow(&mut self, tui: &mut tui::Tui) -> Result<()> {
+        if self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback {
+            self.transcript_reflow
+                .acknowledge_inline_resize(tui.terminal.last_known_screen_size.width);
+            tui.frame_requester().schedule_frame();
+            return Ok(());
+        }
         if self.transcript_reflow.take_stream_finish_reflow_needed() {
             self.schedule_immediate_resize_reflow(tui);
             let screen_size = tui.terminal.last_known_screen_size;
@@ -313,6 +322,12 @@ impl App {
     /// replaced as one styled source-backed cell. If this reflow is skipped after a stream-time
     /// resize, the visible scrollback can keep the pre-consolidation wrapping.
     pub(super) fn finish_required_stream_reflow(&mut self, tui: &mut tui::Tui) -> Result<()> {
+        if self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback {
+            self.transcript_reflow
+                .acknowledge_inline_resize(tui.terminal.last_known_screen_size.width);
+            tui.frame_requester().schedule_frame();
+            return Ok(());
+        }
         // Capped initial replay normally buffers per-cell display rows. A live stream tail is
         // consolidated directly into `transcript_cells`, so any retained rows no longer describe
         // the canonical transcript. Let the replay-end event render the capped transcript tail
@@ -337,10 +352,10 @@ impl App {
 
     /// Record terminal size changes and schedule any resize-sensitive transcript work.
     ///
-    /// Width changes need a rebuild because transcript wrapping changes. Height changes can expose,
-    /// hide, or shift rows around the inline viewport, so they also rebuild from source-backed
-    /// cells. The first observed width initializes resize tracking without scheduling a rebuild,
-    /// because there is no previously emitted width to repair yet.
+    /// Owned buffers rebuild on width and height changes. Inline mode updates the active widget,
+    /// viewport budget, status surfaces, and stream width prospectively, then acknowledges the
+    /// resize without rewriting terminal-owned history. The first observed width initializes
+    /// tracking without scheduling a rebuild because no previous layout exists.
     pub(super) fn handle_draw_size_change(
         &mut self,
         size: ratatui::layout::Size,
@@ -358,22 +373,31 @@ impl App {
         if width.changed || width.initialized {
             self.chat_widget.on_terminal_resize(size.width);
         }
-        if should_rebuild_transcript {
-            if reflow_needed && self.should_mark_reflow_as_stream_time() {
-                self.transcript_reflow.mark_resize_requested_during_stream();
+        match self.transcript_replay_policy {
+            TranscriptReplayPolicy::OwnedBufferReplay if should_rebuild_transcript => {
+                if reflow_needed && self.should_mark_reflow_as_stream_time() {
+                    self.transcript_reflow.mark_resize_requested_during_stream();
+                }
+                let target_width = reflow_needed.then_some(size.width);
+                if self.schedule_resize_reflow(target_width) {
+                    frame_requester.schedule_frame();
+                } else {
+                    frame_requester.schedule_frame_in(TRANSCRIPT_REFLOW_DEBOUNCE);
+                }
             }
-            let target_width = reflow_needed.then_some(size.width);
-            if self.schedule_resize_reflow(target_width) {
+            TranscriptReplayPolicy::InlinePreserveScrollback if should_rebuild_transcript => {
+                self.transcript_reflow.acknowledge_inline_resize(size.width);
                 frame_requester.schedule_frame();
-            } else {
-                frame_requester.schedule_frame_in(TRANSCRIPT_REFLOW_DEBOUNCE);
             }
+            TranscriptReplayPolicy::OwnedBufferReplay
+            | TranscriptReplayPolicy::InlinePreserveScrollback => {}
         }
         if size != last_known_screen_size {
             self.refresh_status_line();
         }
         self.maybe_clear_resize_reflow_without_terminal();
         should_rebuild_transcript
+            && self.transcript_replay_policy == TranscriptReplayPolicy::OwnedBufferReplay
     }
 
     fn maybe_clear_resize_reflow_without_terminal(&mut self) {
@@ -420,6 +444,11 @@ impl App {
         tui: &mut tui::Tui,
         screen_size: ratatui::layout::Size,
     ) -> Result<()> {
+        if self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback {
+            self.transcript_reflow
+                .acknowledge_inline_resize(screen_size.width);
+            return Ok(());
+        }
         let Some(deadline) = self.transcript_reflow.pending_until() else {
             return Ok(());
         };

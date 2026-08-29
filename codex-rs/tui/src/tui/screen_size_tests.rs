@@ -130,6 +130,56 @@ async fn alternate_screen_resize_clears_saved_inline_history_tracking() {
 }
 
 #[tokio::test]
+async fn alternate_screen_height_resize_restores_bottom_docked_inline_viewport() {
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let initial_size = Size::new(/*width*/ 80, /*height*/ 24);
+    let resized_size = Size::new(/*width*/ 80, /*height*/ 30);
+    tui.terminal.last_known_screen_size = initial_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 19,
+        initial_size.width,
+        /*height*/ 5,
+    ));
+    tui.enter_alt_screen().expect("enter alternate screen");
+
+    tui.screen_size_for_event(&TuiEvent::Resize(resized_size))
+        .expect("resolve alternate-screen resize");
+    tui.draw(u16::MAX, |_| {})
+        .expect("draw resized alternate screen");
+    tui.leave_alt_screen().expect("leave alternate screen");
+    tui.draw_with_resize_reflow(/*height*/ 5, resized_size, |_| {})
+        .expect("draw restored inline viewport");
+
+    assert_eq!(
+        tui.terminal.viewport_area,
+        Rect::new(
+            /*x*/ 0,
+            /*y*/ 25,
+            resized_size.width,
+            /*height*/ 5,
+        )
+    );
+    insta::assert_debug_snapshot!(
+        (resized_size, tui.terminal.viewport_area),
+        @r"
+    (
+        Size {
+            width: 80,
+            height: 30,
+        },
+        Rect {
+            x: 0,
+            y: 25,
+            width: 80,
+            height: 5,
+        },
+    )
+    "
+    );
+}
+
+#[tokio::test]
 async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shrinks() {
     let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
     let screen_size = Size::new(/*width*/ 80, /*height*/ 24);
@@ -266,8 +316,9 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
             terminal.visible_history_rows(),
             terminal.docked_history_gap_rows(),
         ),
-        (Rect::new(0, 5, screen_size.width, 4), 3, 0)
+        (Rect::new(0, 8, screen_size.width, 4), 3, 3)
     );
+    assert_eq!(terminal.viewport_area.bottom(), screen_size.height);
 
     terminal.invalidate_viewport();
     let composer_area = terminal.viewport_area;
@@ -282,10 +333,26 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
             .render(composer_area, frame.buffer_mut());
         })
         .expect("redraw composer after history insert");
+    let needs_full_repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 4,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("repeat same-size viewport update");
+    assert!(!needs_full_repaint);
+    assert_eq!(
+        terminal.viewport_area,
+        Rect::new(0, 8, screen_size.width, 4)
+    );
 
     let contents = terminal.backend().vt100().screen().contents();
     insta::assert_snapshot!(contents, @r"
     shell-history-marker
+
+
+
 
     history-tail-one
     history-tail-two
@@ -295,6 +362,208 @@ fn full_screen_provider_popup_close_repaints_shorter_composer_viewport() {
     ────────────────
       ? shortcuts
     ");
+}
+
+#[test]
+fn full_screen_popup_regrow_discards_only_reclaimed_gap_rows() {
+    let screen_size = Size::new(/*width*/ 24, /*height*/ 12);
+    let backend = VT100Backend::with_scrollback(
+        screen_size.width,
+        screen_size.height,
+        /*scrollback_len*/ 32,
+    );
+    let mut terminal = CustomTerminal::with_options(backend).expect("terminal with scrollback");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 8,
+        screen_size.width,
+        /*height*/ 4,
+    ));
+    for row in 0..8u16 {
+        queue!(
+            terminal.backend_mut(),
+            MoveTo(/*x*/ 0, row),
+            Print(format!("history-row-{row}"))
+        )
+        .expect("seed terminal row");
+    }
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 8);
+
+    // A popup opens: the viewport grows and the screen scrolls up.
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 8,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("open popup viewport");
+    assert_eq!(
+        terminal.viewport_area,
+        Rect::new(
+            /*x*/ 0,
+            /*y*/ 4,
+            screen_size.width,
+            /*height*/ 8
+        )
+    );
+
+    // Filtering shrinks the popup: the tail docks and leaves a tracked gap.
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 5,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("shrink popup viewport");
+    assert_eq!(
+        (terminal.viewport_area, terminal.docked_history_gap_rows()),
+        (
+            Rect::new(
+                /*x*/ 0,
+                /*y*/ 7,
+                screen_size.width,
+                /*height*/ 5
+            ),
+            3
+        )
+    );
+
+    // Typing regrows the popup by two rows: only two gap rows are reclaimed, so the
+    // remaining gap row must stay tracked above a still-adjacent history tail.
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 7,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("regrow popup viewport");
+
+    assert_eq!(
+        (
+            terminal.viewport_area,
+            terminal.visible_history_rows(),
+            terminal.docked_history_gap_rows(),
+        ),
+        (
+            Rect::new(
+                /*x*/ 0,
+                /*y*/ 5,
+                screen_size.width,
+                /*height*/ 7
+            ),
+            4,
+            1
+        )
+    );
+    let rows: Vec<String> = terminal
+        .backend()
+        .vt100()
+        .screen()
+        .rows(/*start*/ 0, screen_size.width)
+        .collect();
+    assert_eq!(
+        rows[1..5]
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>(),
+        [
+            "history-row-4",
+            "history-row-5",
+            "history-row-6",
+            "history-row-7",
+        ],
+        "history tail must stay adjacent to the regrown viewport: {rows:?}"
+    );
+}
+
+#[test]
+fn full_height_viewport_collapse_keeps_flushed_history_adjacent() {
+    let width = 32;
+    let height = 12;
+    let screen_size = Size::new(width, height);
+    let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+    let mut terminal = CustomTerminal::with_options(backend).expect("terminal with scrollback");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0, /*y*/ 8, width, /*height*/ 4,
+    ));
+    queue!(
+        terminal.backend_mut(),
+        MoveTo(/*x*/ 0, /*y*/ 7),
+        Print("prior-commentary")
+    )
+    .expect("seed history tail");
+    terminal.note_history_rows_inserted(/*inserted_rows*/ 1);
+
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ height,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("expand live viewport to full height");
+    assert_eq!(terminal.viewport_area, Rect::new(0, 0, width, height));
+
+    insert_history_lines_with_mode_and_wrap_policy(
+        &mut terminal,
+        vec![Line::from("Ran 2 commands")],
+        InsertHistoryMode::FullScreen,
+        HistoryLineWrapPolicy::PreWrap,
+    )
+    .expect("flush completed command activity while expanded");
+
+    crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+        &mut terminal,
+        /*height*/ 4,
+        screen_size,
+        ScrollbackStrategy::FullScreen,
+        HistoryTailDock::Immediate,
+    )
+    .expect("collapse live viewport");
+    assert_eq!(terminal.viewport_area, Rect::new(0, 0, width, 4));
+
+    terminal.invalidate_viewport();
+    let composer_area = terminal.viewport_area;
+    terminal
+        .draw_with_size(screen_size, |frame| {
+            Paragraph::new(vec![
+                Line::from("composer-top"),
+                Line::from("│› ready"),
+                Line::from("────────────────"),
+                Line::from("  ? shortcuts"),
+            ])
+            .render(composer_area, frame.buffer_mut());
+        })
+        .expect("draw compact live viewport");
+
+    let visible = terminal.backend().vt100().screen().contents();
+    let mut scrollback_screen = terminal.backend().vt100().screen().clone();
+    scrollback_screen.set_scrollback(/*rows*/ usize::MAX);
+    let rows = scrollback_screen
+        .rows(/*start*/ 0, width)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>();
+    let [prior_commentary, completed_commands, composer] =
+        ["prior-commentary", "Ran 2 commands", "composer-top"].map(|needle| {
+            rows.iter()
+                .position(|row| row == needle)
+                .unwrap_or_else(|| panic!("missing {needle:?} in {rows:?}"))
+        });
+    assert_eq!(
+        [completed_commands, composer],
+        [prior_commentary + 1, completed_commands + 1],
+        "history and live viewport must remain adjacent: {rows:?}"
+    );
+    insta::assert_snapshot!(visible, @r"
+    composer-top
+    │› ready
+    ────────────────
+      ? shortcuts
+    "
+    );
 }
 
 #[test]

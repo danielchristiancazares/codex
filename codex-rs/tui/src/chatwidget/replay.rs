@@ -170,7 +170,7 @@ impl ChatWidget {
                     cell.as_any()
                         .downcast_ref::<ExecCell>()
                         .is_some_and(ExecCell::is_active)
-                        || cell.as_any().is::<McpToolCallCell>()
+                        || cell.as_any().is::<McpToolCallGroupCell>()
                 }) {
                     self.handle_command_execution_started_now(item.clone());
                 }

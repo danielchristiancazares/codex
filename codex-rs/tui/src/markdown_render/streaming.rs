@@ -50,11 +50,25 @@ pub(crate) fn render_streaming_markdown_lines_with_width_and_cwd(
         first_is_html: false,
     };
     let mut writer = Writer::new(input, parser, width, cwd, is_hidden_link_destination);
-    writer.run();
+    let mut observed_block_count = 0;
+    let mut stable_prefix_rendered_len = None;
+    writer.run_with_event_observer(|writer, _, _| {
+        let block_count = writer.iter.block_count;
+        if block_count == observed_block_count {
+            return;
+        }
+        observed_block_count = block_count;
+        if block_count > 1 {
+            // Match rendering the completed source prefix by itself: flush its final line before
+            // the next block inserts any separating row.
+            writer.flush_current_line();
+            stable_prefix_rendered_len = Some(writer.text.len());
+        }
+    });
     StreamingMarkdownRender {
         lines: writer.text,
         last_top_level_block_start: (writer.iter.block_count > 1).then_some(writer.iter.last_start),
-        stable_prefix_rendered_len: None,
+        stable_prefix_rendered_len,
         has_reference_link_definition,
         first_top_level_block_is_html: writer.iter.first_is_html,
     }

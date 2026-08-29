@@ -2125,18 +2125,13 @@ mod tests {
 
         let header = responsive_fixture("header");
         let compact = render_lines_in_area(&header, /*width*/ 24, /*height*/ 4);
-        assert_eq!(compact.matches("Choose the execution").count(), 1);
-        assert!(
-            compact.contains("policy") && compact.contains('…'),
-            "expected a meaningful elided continuation:\n{compact}"
-        );
+        assert_eq!(compact.matches("Choose the execution").count(), 0);
         assert!(compact.contains("› 1. Read only"));
         assert!(compact.contains("esc back"));
 
         let expanded = render_lines_in_area(&header, /*width*/ 24, /*height*/ 6);
         assert_eq!(expanded.matches("Choose the execution").count(), 1);
         assert!(expanded.contains("policy for this"));
-        assert!(expanded.contains("workspace"));
         assert!(expanded.contains("› 1. Read only"));
         assert!(expanded.contains("esc back"));
         assert!([24, 40, 80].into_iter().all(|width| {
@@ -2150,11 +2145,6 @@ mod tests {
         let stack_compact =
             render_lines_in_area(&header_stack, /*width*/ 24, /*height*/ 4);
         assert!(stack_compact.contains("Critical: workspace"));
-        assert!(
-            stack_compact
-                .lines()
-                .any(|line| line.contains("Choose access") && line.contains('…'))
-        );
         assert!(stack_compact.contains("› 1. Read only"));
         assert!(stack_compact.contains("esc back"));
 

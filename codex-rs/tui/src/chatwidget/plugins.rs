@@ -104,14 +104,7 @@ impl ChatWidget {
 
         let auth_flow_active = self.plugin_install_auth_flow.is_some();
         let should_refresh_plugins_popup = !auth_flow_active
-            && (self
-                .bottom_pane
-                .active_tab_id_for_active_view(PLUGINS_SELECTION_VIEW_ID)
-                .is_some()
-                || self
-                    .bottom_pane
-                    .selected_index_for_active_view(PLUGINS_SELECTION_VIEW_ID)
-                    .is_some()
+            && (self.bottom_pane.active_view_is(PLUGINS_SELECTION_VIEW_ID)
                 || !matches!(
                     self.plugins_cache_for_current_cwd(),
                     PluginsCacheState::Ready(_)

@@ -173,3 +173,34 @@ fn guardian_stdin_reviews_preserve_parent_command_history() {
         }
     }
 }
+
+#[test]
+fn update_rename_diff_keeps_patch_content_separate_from_destination() {
+    let unified_diff = "@@ -1 +1 @@\n-old\n+new\n";
+    let move_path = PathBuf::from("renamed.txt");
+    let converted = convert_patch_changes(&HashMap::from([(
+        PathBuf::from("original.txt"),
+        FileChange::Update {
+            unified_diff: unified_diff.to_string(),
+            move_path: Some(move_path.clone()),
+        },
+    )]));
+
+    assert_eq!(
+        converted,
+        vec![FileUpdateChange {
+            path: "original.txt".to_string(),
+            kind: PatchChangeKind::Update {
+                move_path: Some(move_path),
+            },
+            diff: unified_diff.to_string(),
+        }]
+    );
+    assert!(
+        converted[0]
+            .diff
+            .lines()
+            .any(|line| line.starts_with("@@ "))
+    );
+    assert!(!converted[0].diff.contains("Moved to:"));
+}

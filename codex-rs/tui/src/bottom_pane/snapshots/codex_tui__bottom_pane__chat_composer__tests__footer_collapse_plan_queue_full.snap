@@ -3,11 +3,11 @@ source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
 "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
-"│›Test                                                                                                                  "
+"│› Test                                                                                                                 "
 "│                                                                                                                       "
 "│                                                                                                                       "
 "│                                                                                                                       "
 "│                                                                                                                       "
 "│                                                                                                                       "
-"│                                                                                                                       "
-"  Tab queue this message · Plan mode                                                                       Context 98%  "
+"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"  Tab queue this message · Plan mode                                                                  Context 98% left  "

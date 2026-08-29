@@ -1,0 +1,7 @@
+---
+source: tui/src/app/resize_reflow_tests.rs
+expression: "reflowed.iter().map(rendered_line_text).collect::<Vec<_>>().join(\"\\n\")"
+---
+• alpha beta gamma delta
+  epsilon zeta eta theta iota
+  kappa lambda mu

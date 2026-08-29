@@ -21,11 +21,11 @@
 //!
 //! ## Resize handling
 //!
-//! On terminal width change, `StreamCore::set_width` re-renders at the new
-//! width and rebuilds the queued stable region from the current emitted line
-//! count. This intentionally avoids byte-level remap complexity while the
-//! stream is active; finalized content is canonicalized by transcript
-//! consolidation into source-backed markdown cells.
+//! On terminal width or render-mode change, `StreamCore` maps fully emitted
+//! source boundaries into the new render. If the change lands partway through
+//! a wrapped source line, its already-queued suffix stays in the old layout and
+//! only later source is rebuilt. Finalized content is canonicalized by
+//! transcript consolidation into source-backed markdown cells.
 //!
 //! ## Invariants
 //!
@@ -58,6 +58,9 @@ use super::table_holdback::TableHoldbackState;
 #[cfg(test)]
 use super::table_holdback::table_holdback_state;
 
+#[path = "remap.rs"]
+mod remap;
+
 // ---------------------------------------------------------------------------
 // StreamCore — shared bookkeeping for both stream controllers
 // ---------------------------------------------------------------------------
@@ -89,6 +92,14 @@ struct StreamCore {
     stable_prefix_len_cache: Option<StablePrefixLenCache>,
     /// Incremental holdback scanner state for append-only source updates.
     holdback_scanner: TableHoldbackScanner,
+    /// Queued rows from the old layout that finish a partially emitted source line.
+    layout_bound_queue_remaining: usize,
+    /// New-layout rendered boundary reached after the layout-bound rows drain.
+    layout_bound_target_emitted_len: Option<usize>,
+    /// Source line whose queued suffix remains bound to an older layout.
+    layout_bound_source_line: Option<remap::PartialSourceLine>,
+    /// Queued rows removed from animation by an interrupt but still owed at finalization.
+    deferred_queue: Vec<HyperlinkLine>,
 }
 
 struct StablePrefixLenCache {
@@ -121,6 +132,10 @@ impl StreamCore {
             render_mode,
             stable_prefix_len_cache: None,
             holdback_scanner: TableHoldbackScanner::new(),
+            layout_bound_queue_remaining: 0,
+            layout_bound_target_emitted_len: None,
+            layout_bound_source_line: None,
+            deferred_queue: Vec::new(),
         }
     }
 
@@ -159,28 +174,30 @@ impl StreamCore {
 
     /// Drain the collector, render the final source snapshot, and return lines not yet emitted.
     ///
-    /// This intentionally re-renders from the full raw source instead of
-    /// trying to stitch together queued stable lines and the current tail. The
-    /// final render is the canonical transcript representation used for
-    /// consolidation, so callers that skip `reset()` can accidentally replay a
-    /// finished stream into the next answer.
+    /// Pending stable rows retain the layout in which they were queued, while
+    /// the mutable tail is taken from one final source render. Consolidation
+    /// then replaces these transient rows with the canonical source-backed
+    /// transcript cell.
     fn finalize_remaining(&mut self) -> (Vec<HyperlinkLine>, String) {
+        let mut remaining = std::mem::take(&mut self.deferred_queue);
+        remaining.extend(self.state.drain_n(/*max_lines*/ usize::MAX));
         let source = self.state.collector.finalize_and_take_source();
-        let mut rendered = render_source(
+        let rendered = render_source(
             &source,
             self.width,
             self.cwd.as_path(),
             self.render_mode,
             self.inline_visualization_context.as_ref(),
         );
-        let remaining = rendered.split_off(self.emitted_stable_len.min(rendered.len()));
+        let tail_start = self.enqueued_stable_len.min(rendered.len());
+        remaining.extend(rendered.into_iter().skip(tail_start));
         (remaining, source)
     }
 
     /// Step animation: dequeue one line, update the emitted count.
     fn tick(&mut self) -> Vec<HyperlinkLine> {
         let step = self.state.step();
-        self.emitted_stable_len += step.len();
+        remap::account_emitted_step(self, step.len());
         step
     }
 
@@ -193,7 +210,7 @@ impl StreamCore {
         if step.is_empty() {
             return step;
         }
-        self.emitted_stable_len += step.len();
+        remap::account_emitted_step(self, step.len());
         step
     }
 
@@ -233,21 +250,12 @@ impl StreamCore {
         self.enqueued_stable_len < self.render.lines.len()
     }
 
-    /// Update rendering width and rebuild queued stable lines for the new layout.
-    ///
-    /// Re-renders once at the new width and rebuilds queue state from the
-    /// current emitted line count.
-    ///
-    /// Resize is the point where source-backed rendering matters most:
-    /// previously emitted prose must stay in scrollback order, while any live
-    /// table tail is free to reshape at the new width. This method preserves
-    /// that split without attempting byte-for-byte line remapping.
+    /// Update rendering width while preserving any partially emitted source line.
     fn set_width(&mut self, width: Option<usize>) {
         if self.width == width {
             return;
         }
-        let had_pending_queue = self.state.queued_len() > 0;
-        let had_live_tail = self.has_tail();
+        let remap = remap::RenderRemap::capture(self);
         self.width = width;
         self.state.collector.set_width(width);
         let source = self.state.collector.committed_source();
@@ -262,25 +270,7 @@ impl StreamCore {
             self.render_mode,
             self.inline_visualization_context.as_ref(),
         );
-        self.emitted_stable_len = self.emitted_stable_len.min(self.render.lines.len());
-        if had_pending_queue
-            && self.emitted_stable_len == self.render.lines.len()
-            && self.emitted_stable_len > 0
-        {
-            // If wrapped remainder compresses into fewer lines at the new width,
-            // keep at least one line un-emitted so pre-resize pending content is
-            // not skipped permanently.
-            self.emitted_stable_len -= 1;
-        }
-        self.state.clear_queue();
-        if self.emitted_stable_len > 0 && !had_pending_queue && !had_live_tail {
-            // Avoid replaying already-emitted content after resize when no
-            // stable lines were waiting in the queue and there was no mutable
-            // tail to preserve.
-            self.enqueued_stable_len = self.render.lines.len();
-            return;
-        }
-        self.rebuild_stable_queue_from_render();
+        remap.apply(self);
     }
 
     /// Clear all accumulated state for current stream.
@@ -291,6 +281,8 @@ impl StreamCore {
         self.emitted_stable_len = 0;
         self.stable_prefix_len_cache = None;
         self.holdback_scanner.reset();
+        remap::clear_layout_bound_queue(self);
+        self.deferred_queue.clear();
     }
 
     fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
@@ -298,8 +290,7 @@ impl StreamCore {
             return;
         }
 
-        let had_pending_queue = self.state.queued_len() > 0;
-        let had_live_tail = self.has_tail();
+        let remap = remap::RenderRemap::capture(self);
         self.render_mode = render_mode;
         let source = self.state.collector.committed_source();
         if source.is_empty() {
@@ -313,19 +304,7 @@ impl StreamCore {
             self.render_mode,
             self.inline_visualization_context.as_ref(),
         );
-        self.emitted_stable_len = self.emitted_stable_len.min(self.render.lines.len());
-        if had_pending_queue
-            && self.emitted_stable_len == self.render.lines.len()
-            && self.emitted_stable_len > 0
-        {
-            self.emitted_stable_len -= 1;
-        }
-        self.state.clear_queue();
-        if self.emitted_stable_len > 0 && !had_pending_queue && !had_live_tail {
-            self.enqueued_stable_len = self.render.lines.len();
-            return;
-        }
-        self.rebuild_stable_queue_from_render();
+        remap.apply(self);
     }
 
     /// Compute how many rendered lines should be in the stable region.
@@ -346,6 +325,7 @@ impl StreamCore {
         // A structural rewrite moved the stable boundary backward into enqueue-but-unemitted
         // lines. Rebuild queue from the latest snapshot.
         if target_stable_len < self.enqueued_stable_len {
+            remap::clear_layout_bound_queue(self);
             self.state.clear_queue();
             if self.emitted_stable_len < target_stable_len {
                 self.state.enqueue(
@@ -373,6 +353,7 @@ impl StreamCore {
     /// current render.
     fn rebuild_stable_queue_from_render(&mut self) {
         let target_stable_len = self.compute_target_stable_len();
+        remap::clear_layout_bound_queue(self);
         self.state.clear_queue();
         if self.emitted_stable_len < target_stable_len {
             self.state
@@ -564,7 +545,7 @@ impl StreamController {
     }
 
     pub(crate) fn clear_queue(&mut self) {
-        self.core.state.clear_queue();
+        remap::defer_queue_for_interruption(&mut self.core);
         self.core.enqueued_stable_len = self.core.emitted_stable_len;
     }
 
@@ -692,7 +673,7 @@ impl PlanStreamController {
     }
 
     pub(crate) fn clear_queue(&mut self) {
-        self.core.state.clear_queue();
+        remap::defer_queue_for_interruption(&mut self.core);
         self.core.enqueued_stable_len = self.core.emitted_stable_len;
     }
 
@@ -1949,12 +1930,14 @@ mod tests {
     }
 
     #[test]
-    fn controller_set_width_partial_wrapped_emit_keeps_wrapped_remainder() {
+    fn controller_set_width_partial_wrapped_emit_does_not_replay_prefix() {
         let mut ctrl = stream_controller(Some(18));
         ctrl.push("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\n");
 
         let (first_emit, idle) = ctrl.on_commit_tick();
-        assert!(first_emit.is_some(), "expected first wrapped line emission");
+        let first_emit = first_emit
+            .expect("expected first wrapped line emission")
+            .transcript_lines(u16::MAX);
         assert!(!idle, "expected remaining wrapped content after one tick");
         assert!(
             ctrl.queued_lines() > 0,
@@ -1968,9 +1951,74 @@ mod tests {
             .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
             .unwrap_or_default();
         let joined = remaining.join(" ");
+        let first_emit = lines_to_plain_strings(&first_emit).join(" ");
         assert!(
-            joined.contains("kappa") || joined.contains("lambda") || joined.contains("mu"),
+            !joined.contains("alpha beta"),
+            "resize replayed the already-visible prefix; emitted before resize: {first_emit:?}, remaining: {remaining:?}",
+        );
+        assert!(
+            joined.contains("lambda mu"),
             "wrapped remainder from partially emitted source line was lost after resize: {remaining:?}",
+        );
+    }
+
+    #[test]
+    fn controller_set_render_mode_partial_wrapped_emit_does_not_replay_prefix() {
+        let mut ctrl = stream_controller(Some(/*width*/ 18));
+        ctrl.push("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\n");
+
+        let (first_emit, idle) = ctrl.on_commit_tick();
+        let first_emit = first_emit
+            .expect("expected first wrapped line emission")
+            .transcript_lines(u16::MAX);
+        assert!(!idle, "expected remaining wrapped content after one tick");
+
+        ctrl.set_render_mode(HistoryRenderMode::Raw);
+
+        let (cell, _source) = ctrl.finalize();
+        let remaining = cell
+            .map(|c| lines_to_plain_strings(&c.transcript_lines(u16::MAX)))
+            .unwrap_or_default();
+        let joined = remaining.join(" ");
+        let first_emit = lines_to_plain_strings(&first_emit).join(" ");
+        assert!(
+            !joined.contains("alpha beta"),
+            "mode change replayed the already-visible prefix; emitted before toggle: {first_emit:?}, remaining: {remaining:?}",
+        );
+        assert!(
+            joined.contains("lambda mu"),
+            "mode change lost the un-emitted source suffix: {remaining:?}",
+        );
+    }
+
+    #[test]
+    fn controller_clear_queue_after_resize_defers_unemitted_suffix_to_finalize() {
+        let mut ctrl = stream_controller(Some(/*width*/ 18));
+        ctrl.push("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\n");
+
+        let (first_emit, idle) = ctrl.on_commit_tick();
+        let first_emit = first_emit
+            .expect("expected first wrapped line emission")
+            .transcript_lines(u16::MAX);
+        assert!(!idle, "expected remaining wrapped content after one tick");
+
+        ctrl.set_width(Some(/*width*/ 80));
+        ctrl.clear_queue();
+        assert_eq!(ctrl.queued_lines(), 0);
+
+        let (cell, _source) = ctrl.finalize();
+        let remaining = cell
+            .map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX)))
+            .unwrap_or_default();
+        let joined = remaining.join(" ");
+        let first_emit = lines_to_plain_strings(&first_emit).join(" ");
+        assert!(
+            !joined.contains("alpha beta"),
+            "clearing the animation queue replayed visible content; emitted: {first_emit:?}, remaining: {remaining:?}",
+        );
+        assert!(
+            joined.contains("lambda mu"),
+            "clearing the animation queue lost its deferred suffix: {remaining:?}",
         );
     }
 }

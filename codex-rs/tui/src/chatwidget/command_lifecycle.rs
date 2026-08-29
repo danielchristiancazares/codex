@@ -406,7 +406,7 @@ impl ChatWidget {
                 Some(exec_cell) if exec_cell.is_active() => {
                     ExecEndTarget::OrphanHistoryWhileActiveExec
                 }
-                None if cell.as_any().is::<McpToolCallCell>() => {
+                None if cell.as_any().is::<McpToolCallGroupCell>() => {
                     ExecEndTarget::OrphanHistoryWhileActiveExec
                 }
                 Some(_) | None => ExecEndTarget::NewCell,

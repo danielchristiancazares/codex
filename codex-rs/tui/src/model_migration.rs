@@ -22,6 +22,9 @@ use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use tokio_stream::StreamExt;
 
+use self::layout::ChoiceVisibility;
+use self::layout::ModelMigrationLayout;
+
 /// Outcome of the migration prompt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModelMigrationOutcome {
@@ -176,6 +179,7 @@ struct ModelMigrationScreen {
     done: bool,
     outcome: ModelMigrationOutcome,
     highlighted_option: MigrationMenuOption,
+    menu_visibility: Cell<ChoiceVisibility>,
 }
 
 impl ModelMigrationScreen {
@@ -186,6 +190,7 @@ impl ModelMigrationScreen {
             done: false,
             outcome: ModelMigrationOutcome::Accepted,
             highlighted_option: MigrationMenuOption::TryNewModel,
+            menu_visibility: Cell::new(ChoiceVisibility::Hidden),
         }
     }
 
@@ -236,6 +241,9 @@ impl ModelMigrationScreen {
         }
 
         if self.copy.can_opt_out {
+            if self.menu_visibility.get() == ChoiceVisibility::Hidden {
+                return;
+            }
             self.handle_menu_key(key_event.code);
         } else if matches!(key_event.code, KeyCode::Esc | KeyCode::Enter) {
             self.accept();
@@ -255,20 +263,17 @@ impl WidgetRef for &ModelMigrationScreen {
     fn render_ref(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
         Clear.render(area, buf);
 
-        let mut column = ColumnRenderable::new();
-        column.push("");
-        if let Some(markdown) = self.copy.markdown.as_ref() {
-            self.render_markdown_content(markdown, area.width, &mut column);
-        } else {
-            column.push(self.heading_line());
-            column.push(Line::from(""));
-            self.render_content(&mut column);
-        }
-        if self.copy.can_opt_out {
-            self.render_menu(&mut column);
+        let copy = self.copy_column(area.width);
+        if !self.copy.can_opt_out {
+            self.menu_visibility.set(ChoiceVisibility::Visible);
+            copy.render(area, buf);
+            return;
         }
 
-        column.render(area, buf);
+        let layout = ModelMigrationLayout::new(area, copy.desired_height(area.width));
+        self.menu_visibility.set(layout.choice_visibility());
+        copy.render(layout.copy_area, buf);
+        self.render_menu(layout, buf);
     }
 }
 
@@ -340,41 +345,90 @@ impl ModelMigrationScreen {
         }
     }
 
-    fn render_menu(&self, column: &mut ColumnRenderable) {
-        column.push(Line::from(""));
-        column.push(
-            Paragraph::new("Choose how you'd like Codex to proceed.")
-                .wrap(Wrap { trim: false })
-                .inset(Insets::tlbr(
-                    /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
-                )),
-        );
-        column.push(Line::from(""));
+    fn copy_column(&self, width: u16) -> ColumnRenderable<'static> {
+        let mut column = ColumnRenderable::new();
+        column.push("");
+        if let Some(markdown) = self.copy.markdown.as_ref() {
+            self.render_markdown_content(markdown, width, &mut column);
+        } else {
+            column.push(self.heading_line());
+            column.push(Line::from(""));
+            self.render_content(&mut column);
+        }
+        column
+    }
 
-        for (idx, option) in MigrationMenuOption::all().into_iter().enumerate() {
-            column.push(selection_option_row(
-                idx,
-                option.label().to_string(),
-                self.highlighted_option == option,
-            ));
+    fn render_menu(&self, layout: ModelMigrationLayout, buf: &mut ratatui::buffer::Buffer) {
+        if let Some(area) = layout.compact_options_area {
+            let spans = MigrationMenuOption::all()
+                .into_iter()
+                .enumerate()
+                .flat_map(|(idx, option)| {
+                    let separator = (idx > 0).then(|| Span::from("   "));
+                    let label = match option {
+                        MigrationMenuOption::TryNewModel => "1 Try new",
+                        MigrationMenuOption::UseExistingModel => "2 Use existing",
+                    };
+                    let option = if self.highlighted_option == option {
+                        Span::from(label).cyan().bold()
+                    } else {
+                        Span::from(label)
+                    };
+                    separator.into_iter().chain(std::iter::once(option))
+                })
+                .collect::<Vec<_>>();
+            Line::from(spans).render(area, buf);
+            return;
         }
 
-        column.push(Line::from(""));
-        column.push(
-            Line::from(vec![
-                "Use ".dim(),
-                key_hint::plain(KeyCode::Up).into(),
-                "/".dim(),
-                key_hint::plain(KeyCode::Down).into(),
-                " to move, press ".dim(),
-                key_hint::plain(KeyCode::Enter).into(),
-                " to confirm".dim(),
-            ])
-            .inset(Insets::tlbr(
-                /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
-            )),
-        );
+        if let Some(area) = layout.instruction_area {
+            Paragraph::new("Choose how you'd like Codex to proceed.")
+                .wrap(Wrap { trim: false })
+                .render(left_inset(area), buf);
+        }
+        for (idx, (option, area)) in MigrationMenuOption::all()
+            .into_iter()
+            .zip(layout.option_areas)
+            .enumerate()
+        {
+            if let Some(area) = area {
+                selection_option_row(
+                    idx,
+                    option.label().to_string(),
+                    self.highlighted_option == option,
+                )
+                .render(area, buf);
+            }
+        }
+        if let Some(area) = layout.guidance_area {
+            let guidance = if layout.full_guidance {
+                Line::from(vec![
+                    "Use ".dim(),
+                    key_hint::plain(KeyCode::Up).into(),
+                    "/".dim(),
+                    key_hint::plain(KeyCode::Down).into(),
+                    " to move, press ".dim(),
+                    key_hint::plain(KeyCode::Enter).into(),
+                    " to confirm".dim(),
+                ])
+            } else {
+                Line::from(vec![
+                    key_hint::plain(KeyCode::Enter).into(),
+                    " confirm".dim(),
+                ])
+            };
+            guidance.render(left_inset(area), buf);
+        }
     }
+}
+
+fn left_inset(area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    ratatui::layout::Rect::new(
+        area.x.saturating_add(2),
+        area.y,
+        area.width.saturating_sub(2),
+        area.height,
+    )
 }
 
 // Render the prompt on the terminal's alternate screen so exiting or cancelling
@@ -419,7 +473,21 @@ mod tests {
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use insta::assert_snapshot;
+    use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::widgets::WidgetRef;
+
+    fn render_screen(screen: &ModelMigrationScreen, width: u16, height: u16) -> String {
+        let backend = VT100Backend::new(width, height);
+        let mut terminal = Terminal::with_options(backend).expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, width, height));
+        {
+            let mut frame = terminal.get_frame();
+            frame.render_widget_ref(screen, frame.area());
+        }
+        terminal.flush().expect("flush");
+        terminal.backend().to_string()
+    }
 
     #[test]
     fn prompt_snapshot() {
@@ -552,6 +620,7 @@ mod tests {
             ),
         );
 
+        let _ = render_screen(&screen, /*width*/ 60, /*height*/ 10);
         // Simulate pressing Escape
         screen.handle_key(KeyEvent::new(
             KeyCode::Esc,
@@ -581,6 +650,7 @@ mod tests {
             ),
         );
 
+        let _ = render_screen(&screen, /*width*/ 60, /*height*/ 10);
         screen.handle_key(KeyEvent::new(
             KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
@@ -626,4 +696,92 @@ mod tests {
             "expected wrapped markdown URL tail to remain visible, got:\n{rendered}"
         );
     }
+
+    #[test]
+    fn hidden_menu_ignores_confirmation_keys_but_ctrl_c_exits() {
+        let mut screen = ModelMigrationScreen::new(
+            FrameRequester::test_dummy(),
+            migration_copy_for_models(
+                "gpt-old",
+                "gpt-new",
+                /*model_link*/ None,
+                /*migration_copy*/ None,
+                /*migration_markdown*/ None,
+                "gpt-new".to_string(),
+                /*target_description*/ None,
+                /*can_opt_out*/ true,
+            ),
+        );
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 60, /*height*/ 0,
+        );
+        let mut buffer = Buffer::empty(area);
+        (&screen).render_ref(area, &mut buffer);
+
+        for code in [
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Char('1'),
+            KeyCode::Char('2'),
+        ] {
+            screen.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE));
+            assert!(!screen.is_done());
+        }
+
+        screen.handle_key(KeyEvent::new(
+            KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        assert!(screen.is_done());
+        assert_eq!(screen.outcome(), super::ModelMigrationOutcome::Exit);
+    }
+
+    #[test]
+    fn constrained_opt_out_menu_keeps_both_choices_visible() {
+        let screen = ModelMigrationScreen::new(
+            FrameRequester::test_dummy(),
+            migration_copy_for_models(
+                "gpt-old",
+                "gpt-new",
+                /*model_link*/ None,
+                Some("A deliberately long migration explanation that must yield to both actionable outcomes even in a short terminal.".to_string()),
+                /*migration_markdown*/ None,
+                "gpt-new".to_string(),
+                /*target_description*/ None,
+                /*can_opt_out*/ true,
+            ),
+        );
+
+        let rendered = render_screen(&screen, /*width*/ 60, /*height*/ 10);
+
+        assert!(rendered.contains("Try new model"), "{rendered}");
+        assert!(rendered.contains("Use existing model"), "{rendered}");
+        assert_snapshot!("model_migration_constrained_opt_out", rendered);
+    }
+
+    #[test]
+    fn long_markdown_cannot_displace_opt_out_menu() {
+        let screen = ModelMigrationScreen::new(
+            FrameRequester::test_dummy(),
+            ModelMigrationCopy {
+                heading: Vec::new(),
+                content: Vec::new(),
+                can_opt_out: true,
+                markdown: Some(
+                    "Long migration copy ".repeat(40)
+                        + "\n\nAdditional details that should be clipped before the choices.",
+                ),
+            },
+        );
+
+        let rendered = render_screen(&screen, /*width*/ 60, /*height*/ 10);
+
+        assert!(rendered.contains("Try new model"), "{rendered}");
+        assert!(rendered.contains("Use existing model"), "{rendered}");
+        assert_snapshot!("model_migration_long_markdown_constrained", rendered);
+    }
 }
+use std::cell::Cell;
+
+#[path = "model_migration_layout.rs"]
+mod layout;

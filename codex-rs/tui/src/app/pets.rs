@@ -102,7 +102,7 @@ impl App {
         }));
     }
 
-    pub(super) async fn handle_pet_disabled(&mut self, tui: &mut tui::Tui) {
+    pub(super) async fn handle_pet_disabled(&mut self, tui: &mut tui::Tui) -> Result<()> {
         let edit = crate::legacy_core::config::edit::tui_pet_edit(crate::pets::DISABLED_PET_ID);
         let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
             .with_edits([edit])
@@ -110,14 +110,32 @@ impl App {
             .await;
         match apply_result {
             Ok(()) => {
-                self.sync_tui_pet_disabled();
-                tui.frame_requester().schedule_frame();
+                let layout_changed = self.sync_tui_pet_disabled();
+                if self.chat_widget.should_clear_ambient_pet_image()
+                    && let Err(clear_err) = tui.clear_ambient_pet_image()
+                {
+                    match clear_err {
+                        crate::pets::PetImageRenderError::Terminal(err) => return Err(err.into()),
+                        crate::pets::PetImageRenderError::Asset(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "failed to clear disabled ambient pet image"
+                            );
+                        }
+                    }
+                }
+                if layout_changed {
+                    self.refresh_layout_after_pet_change(tui)?;
+                } else {
+                    tui.frame_requester().schedule_frame();
+                }
             }
             Err(err) => {
                 self.chat_widget
                     .add_error_message(format!("Failed to disable pets: {err}"));
             }
         }
+        Ok(())
     }
 
     pub(super) fn handle_pet_preview_loaded(
@@ -154,8 +172,12 @@ impl App {
                 {
                     Ok(()) => {
                         self.config.tui_pet = Some(pet_id.clone());
-                        self.chat_widget
-                            .set_tui_pet_loaded(Some(pet_id), ambient_pet);
+                        if self
+                            .chat_widget
+                            .set_tui_pet_loaded(Some(pet_id), ambient_pet)
+                        {
+                            self.refresh_layout_after_pet_change(tui)?;
+                        }
                     }
                     Err(err) => {
                         self.chat_widget
@@ -177,21 +199,33 @@ impl App {
         tui: &mut tui::Tui,
         pet_id: String,
         result: Result<Option<crate::pets::AmbientPet>, String>,
-    ) {
+    ) -> Result<()> {
         if self.config.tui_pet.as_deref() != Some(pet_id.as_str()) {
-            return;
+            return Ok(());
         }
 
         match result {
             Ok(ambient_pet) => {
-                self.chat_widget
-                    .set_tui_pet_loaded(Some(pet_id), ambient_pet);
-                tui.frame_requester().schedule_frame();
+                if self
+                    .chat_widget
+                    .set_tui_pet_loaded(Some(pet_id), ambient_pet)
+                {
+                    self.refresh_layout_after_pet_change(tui)?;
+                } else {
+                    tui.frame_requester().schedule_frame();
+                }
             }
             Err(err) => {
                 self.chat_widget
                     .add_warning_message(format!("Failed to load configured pet: {err}"));
             }
         }
+        Ok(())
+    }
+
+    fn refresh_layout_after_pet_change(&mut self, tui: &mut tui::Tui) -> Result<()> {
+        self.schedule_immediate_resize_reflow(tui);
+        let screen_size = tui.terminal.last_known_screen_size;
+        self.maybe_run_resize_reflow(tui, screen_size)
     }
 }

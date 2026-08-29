@@ -772,7 +772,7 @@ impl ChatWidget {
                         "Fast off".to_string()
                     }
                 }),
-            StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
+            StatusLineItem::RawOutput => self.raw_output_mode().then(|| "Raw output".to_string()),
             StatusLineItem::ThreadTitle => self.thread_name.as_ref().map_or_else(
                 || self.thread_id.map(|id| id.to_string()),
                 |name| {

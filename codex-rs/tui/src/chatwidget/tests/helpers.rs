@@ -203,6 +203,8 @@ pub(super) async fn make_chatwidget_manual_with_auth(
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         session_telemetry,
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
     };
     let mut widget = ChatWidget::new_with_op_target(common, super::CodexOpTarget::Direct(op_tx));
     widget.transcript.active_cell = None;

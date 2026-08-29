@@ -19,9 +19,11 @@ fn changes() -> Vec<FileUpdateChange> {
             diff: "alpha\nbeta\n".to_string(),
         },
         FileUpdateChange {
-            path: "m-updated.txt".to_string(),
-            kind: PatchChangeKind::Update { move_path: None },
-            diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+            path: "m-before.txt".to_string(),
+            kind: PatchChangeKind::Update {
+                move_path: Some(PathBuf::from("m-after.txt")),
+            },
+            diff: "@@ -1 +1 @@\n-old\n+new\n\nMoved to: m-after.txt".to_string(),
         },
         FileUpdateChange {
             path: "z-deleted.txt".to_string(),
@@ -40,10 +42,10 @@ fn expected_changes() -> HashMap<PathBuf, FileChange> {
             },
         ),
         (
-            PathBuf::from("m-updated.txt"),
+            PathBuf::from("m-before.txt"),
             FileChange::Update {
-                unified_diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
-                move_path: None,
+                unified_diff: "@@ -1 +1 @@\n-old\n+new\n\nMoved to: m-after.txt".to_string(),
+                move_path: Some(PathBuf::from("m-after.txt")),
             },
         ),
         (

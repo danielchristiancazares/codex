@@ -10,6 +10,7 @@ mod account;
 mod card;
 mod format;
 mod helpers;
+mod rate_limit_block;
 mod rate_limits;
 pub(crate) mod remote_connection;
 mod thread_usage;
@@ -25,6 +26,9 @@ pub(crate) use helpers::compose_agents_summary;
 pub(crate) use helpers::format_directory_display;
 pub(crate) use helpers::format_tokens_compact;
 pub(crate) use helpers::plan_type_display_name;
+pub(crate) use rate_limit_block::WorkspaceAccessState;
+#[cfg(test)]
+pub(crate) use rate_limit_block::WorkspaceLimitBlockReason;
 pub(crate) use rate_limits::RateLimitSnapshotDisplay;
 pub(crate) use rate_limits::RateLimitWindowDisplay;
 #[cfg(test)]

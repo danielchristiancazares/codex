@@ -1,3 +1,4 @@
+use super::WorkspaceAccessState;
 use super::new_status_output;
 use super::new_status_output_with_rate_limits;
 use super::new_status_output_with_rate_limits_handle;
@@ -30,6 +31,7 @@ use chrono::TimeZone;
 use chrono::Utc;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::CreditsSnapshot;
+use codex_app_server_protocol::RateLimitReachedType;
 use codex_app_server_protocol::RateLimitSnapshot;
 use codex_app_server_protocol::RateLimitWindow;
 use codex_app_server_protocol::SpendControlLimitSnapshot;
@@ -81,6 +83,7 @@ fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
             limit: "25,000".to_string(),
             resets_at: Some("later".to_string()),
         }),
+        workspace_access: WorkspaceAccessState::Unknown,
     };
 
     assert!(matches!(
@@ -1792,6 +1795,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
             }),
             credits: None,
             individual_limit: None,
+            workspace_access: WorkspaceAccessState::Unknown,
         }],
         now,
     );
@@ -1888,6 +1892,71 @@ async fn status_snapshot_includes_credits_and_limits() {
     }
     let sanitized = sanitize_directory(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
+async fn status_snapshot_shows_workspace_hard_stop_before_capacity() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex".to_string());
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+
+    let usage = TokenUsage::default();
+    let captured_at = Local
+        .with_ymd_and_hms(2024, 7, 8, 9, 10, 11)
+        .single()
+        .expect("timestamp");
+    let snapshot = RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
+        primary: Some(RateLimitWindow {
+            used_percent: 95,
+            window_duration_mins: Some(300),
+            resets_at: Some(reset_at_from(&captured_at, /*seconds*/ 900)),
+        }),
+        secondary: None,
+        credits: Some(CreditsSnapshot {
+            has_credits: true,
+            unlimited: false,
+            balance: None,
+        }),
+        individual_limit: None,
+        spend_control_reached: Some(true),
+        plan_type: None,
+        rate_limit_reached_type: Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached),
+    };
+    let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+    let composite = new_status_output(
+        &config,
+        /*account_display*/ None,
+        /*token_info*/ None,
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        Some(&rate_display),
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+    );
+
+    let rendered =
+        sanitize_directory(render_lines(&composite.display_lines(/*width*/ 80))).join("\n");
+    let blocked_index = rendered
+        .find("Blocked - workspace usage limit reached")
+        .expect("blocked summary");
+    let capacity_index = rendered.find("5% left").expect("capacity row");
+
+    assert!(blocked_index < capacity_index, "{rendered}");
+    assert!(
+        rendered.contains("Ask a workspace owner to increase the limit."),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("Credits:"), "{rendered}");
+    assert_snapshot!("status_snapshot_shows_workspace_hard_stop", rendered);
 }
 
 #[tokio::test]

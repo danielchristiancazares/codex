@@ -31,6 +31,7 @@ impl ChatWidget {
             status_line_invalid_items_warned,
             terminal_title_invalid_items_warned,
             session_telemetry,
+            transcript_replay_policy,
         } = common;
         let model = model.filter(|m| !m.trim().is_empty());
         let mut config = config;
@@ -105,6 +106,8 @@ impl ChatWidget {
             }),
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: config.tui_raw_output_mode,
+            transcript_replay_policy,
+            pending_history_render_mode: PendingHistoryRenderMode::None,
             config,
             skills_all: Vec::new(),
             skills_initial_state: None,
@@ -188,6 +191,7 @@ impl ChatWidget {
             pet_picker_preview_state: crate::pets::PetPickerPreviewState::default(),
             pet_picker_preview_pet: None,
             pet_picker_preview_request_id: 0,
+            ambient_pet_image_visible: std::cell::Cell::new(/*value*/ false),
             pet_picker_preview_image_visible: std::cell::Cell::new(/*value*/ false),
             pet_selection_load_request_id: 0,
             #[cfg(test)]

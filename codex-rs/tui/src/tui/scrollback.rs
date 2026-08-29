@@ -163,7 +163,9 @@ impl ScrollbackStrategy {
             .backend_mut()
             .scroll_region_down(region, scroll_by)?;
         match self {
-            Self::FullScreen => terminal.note_docked_history_gap(scroll_by),
+            Self::FullScreen => {
+                terminal.note_docked_history_gap(scroll_by);
+            }
             Self::Standard | Self::Zellij => {}
         }
         Ok(true)

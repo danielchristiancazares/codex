@@ -906,12 +906,21 @@ impl Tui {
         self.pending_history_lines.clear();
     }
 
-    fn clear_inline_history_tracking_for_size_change(&mut self, screen_size: Size) {
-        if screen_size == self.terminal.last_known_screen_size {
+    fn update_inline_state_for_size_change(&mut self, screen_size: Size) {
+        let previous_screen_size = self.terminal.last_known_screen_size;
+        if screen_size == previous_screen_size {
             return;
         }
         self.terminal.clear_inline_history_tracking();
         if let Some(saved) = self.alt_saved_viewport.as_mut() {
+            // Alternate-screen drawing updates the cached terminal size before inline rendering
+            // resumes, so rebase the saved viewport while the previous size is still available.
+            let was_bottom_aligned = saved.area.bottom() == previous_screen_size.height;
+            saved.area.width = screen_size.width;
+            saved.area.height = saved.area.height.min(screen_size.height);
+            if was_bottom_aligned || saved.area.bottom() > screen_size.height {
+                saved.area.y = screen_size.height - saved.area.height;
+            }
             saved.visible_history_rows = 0;
             saved.docked_history_gap_rows = 0;
         }
@@ -935,9 +944,11 @@ impl Tui {
         let terminal_height_shrank = screen_size.height < terminal.last_known_screen_size.height;
         let terminal_size_changed = screen_size != terminal.last_known_screen_size;
         let viewport_was_empty = terminal.viewport_area.is_empty();
-        let viewport_was_bottom_aligned =
-            terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
         let previous_area = terminal.viewport_area;
+        // A full-height viewport also touches the bottom edge, but contracting it must keep the
+        // viewport at row zero so transcript already in terminal scrollback stays adjacent.
+        let viewport_was_bottom_docked = previous_area.top() > 0
+            && previous_area.bottom() == terminal.last_known_screen_size.height;
 
         if terminal_size_changed {
             terminal.clear_inline_history_tracking();
@@ -954,7 +965,7 @@ impl Tui {
                 scrollback.grow_viewport(terminal, area.top(), screen_size, scroll_by)?;
             }
             area.y = screen_size.height - area.height;
-        } else if viewport_was_empty || viewport_was_bottom_aligned {
+        } else if viewport_was_empty || viewport_was_bottom_docked {
             area.y = screen_size.height - area.height;
         }
 
@@ -1017,7 +1028,7 @@ impl Tui {
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
         let screen_size = self.take_event_screen_size()?;
-        self.clear_inline_history_tracking_for_size_change(screen_size);
+        self.update_inline_state_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -1157,7 +1168,7 @@ impl Tui {
         screen_size: Size,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
-        self.clear_inline_history_tracking_for_size_change(screen_size);
+        self.update_inline_state_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -1188,10 +1199,6 @@ impl Tui {
                 self.scrollback,
                 history_tail_dock,
             )?;
-            // A zero- or one-row history region cannot isolate raw history writes from the
-            // viewport, so replayed rows can leave stale cells inside the composer.
-            let history_can_overlap_viewport =
-                !self.pending_history_lines.is_empty() && terminal.viewport_area.top() <= 1;
             Self::flush_pending_history_lines(
                 terminal,
                 &mut self.pending_history_lines,
@@ -1199,7 +1206,7 @@ impl Tui {
                 screen_size,
             )?;
 
-            if needs_full_repaint || history_can_overlap_viewport {
+            if needs_full_repaint {
                 terminal.invalidate_viewport();
             }
 

@@ -5,6 +5,8 @@ use crate::history_cell::plain_lines;
 use crate::history_cell::with_border_with_inner_width;
 use crate::legacy_core::config::Config;
 use crate::line_truncation::line_width;
+use crate::style::StatusTone;
+use crate::style::status_style;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
 use crate::version::CODEX_CLI_VERSION;
@@ -562,6 +564,23 @@ impl StatusHistoryCell {
                     let spans =
                         formatter.full_spans(label.as_str(), vec![Span::from(text.clone())]);
                     lines.push(Line::from(spans));
+                }
+                StatusRateLimitValue::Blocked { summary, guidance } => {
+                    lines.push(Line::from(formatter.full_spans(
+                        row.label.as_str(),
+                        vec![
+                            Span::from(summary.clone()).style(status_style(StatusTone::Attention)),
+                        ],
+                    )));
+                    let guidance_width = formatter.value_width(available_inner_width).max(1);
+                    let wrap_options = textwrap::Options::new(guidance_width).break_words(false);
+                    lines.extend(
+                        textwrap::wrap(guidance.as_str(), wrap_options)
+                            .into_iter()
+                            .map(|wrapped| {
+                                formatter.continuation(vec![Span::from(wrapped.into_owned()).dim()])
+                            }),
+                    );
                 }
             }
         }

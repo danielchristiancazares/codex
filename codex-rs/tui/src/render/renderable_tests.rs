@@ -1,6 +1,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use std::cell::Cell;
+use std::cell::RefCell;
 
 struct HeightRenderable(u16);
 
@@ -109,4 +110,35 @@ fn flex_caches_child_height_across_frame_passes() {
 
     assert_eq!(flex.desired_height(/*width*/ 100), 1);
     assert_eq!(calls.get(), 2);
+}
+
+#[test]
+fn inset_desired_height_saturates_at_tiny_widths() {
+    struct WidthSensitiveRenderable<'a>(&'a RefCell<Vec<u16>>);
+
+    impl Renderable for WidthSensitiveRenderable<'_> {
+        fn render(&self, _area: Rect, _buf: &mut Buffer) {}
+
+        fn desired_height(&self, width: u16) -> u16 {
+            self.0.borrow_mut().push(width);
+            if width == 0 { u16::MAX } else { width }
+        }
+    }
+
+    let forwarded_widths = RefCell::new(Vec::new());
+    let child = WidthSensitiveRenderable(&forwarded_widths);
+    let inset = InsetRenderable::new(
+        RenderableItem::Borrowed(&child),
+        Insets::tlbr(
+            /*top*/ 1, /*left*/ 1, /*bottom*/ 1, /*right*/ 1,
+        ),
+    );
+
+    let heights = [0, 1, 2, 3]
+        .into_iter()
+        .map(|width| inset.desired_height(width))
+        .collect::<Vec<_>>();
+
+    assert_eq!(*forwarded_widths.borrow(), vec![0, 0, 0, 1]);
+    assert_eq!(heights, vec![u16::MAX, u16::MAX, u16::MAX, 3]);
 }

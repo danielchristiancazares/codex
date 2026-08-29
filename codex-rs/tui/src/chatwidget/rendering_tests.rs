@@ -139,8 +139,23 @@ fn active_transcript_preserves_clipped_markdown_hyperlinks() {
         .draw_with_size(size, |frame| renderable.render(area, frame.buffer_mut()))
         .expect("render terminal frame");
     let output = String::from_utf8(terminal.backend().writer().clone()).expect("UTF-8 output");
-    assert!(output.contains("\x1b]8;;https://example.com/\x07OSC8 label\x1b]8;;\x07"));
-    assert!(output.contains("\x1b]8;;https://example.com/\x07https://example.com/\x1b]8;;\x07"));
+    let destination_open = "\x1b]8;;https://example.com/\x07";
+    let linked_text = output
+        .split(destination_open)
+        .skip(1)
+        .filter_map(|fragment| fragment.split("\x1b]8;;\x07").next())
+        .map(codex_ansi_escape::ansi_escape_line)
+        .map(|line| {
+            line.spans
+                .into_iter()
+                .map(|span| span.content.into_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        linked_text,
+        ["OSC8 label".to_string(), "https://example.com/".to_string()]
+    );
 }
 
 #[tokio::test]

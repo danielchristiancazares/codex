@@ -311,7 +311,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryRenderMode;
 use crate::history_cell::HookCell;
 use crate::history_cell::McpInvocation;
-use crate::history_cell::McpToolCallCell;
+use crate::history_cell::McpToolCallGroupCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::WebSearchCell;
 use crate::key_hint;
@@ -327,6 +327,7 @@ use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
+use crate::status::WorkspaceAccessState;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
@@ -360,6 +361,7 @@ mod input_restore;
 mod input_submission;
 mod interrupts;
 use self::interrupts::InterruptManager;
+use self::interrupts::QueuedInterrupt;
 mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
@@ -476,6 +478,7 @@ use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
 use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 use crate::workspace_command::WorkspaceCommandRunner;
 
 use chrono::Local;
@@ -528,6 +531,14 @@ pub(crate) struct ChatWidgetInit {
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     pub(crate) terminal_title_invalid_items_warned: Arc<AtomicBool>,
     pub(crate) session_telemetry: SessionTelemetry,
+    pub(crate) transcript_replay_policy: TranscriptReplayPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PendingHistoryRenderMode {
+    #[default]
+    None,
+    ApplyAfterCurrentStream(HistoryRenderMode),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -557,6 +568,8 @@ pub(crate) struct ChatWidget {
     transcript: TranscriptState,
     config: Config,
     raw_output_mode: bool,
+    transcript_replay_policy: TranscriptReplayPolicy,
+    pending_history_render_mode: PendingHistoryRenderMode,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     /// The unmasked collaboration mode settings (always Default mode).
     ///
@@ -665,6 +678,7 @@ pub(crate) struct ChatWidget {
     pet_picker_preview_state: crate::pets::PetPickerPreviewState,
     pet_picker_preview_pet: Option<crate::pets::AmbientPet>,
     pet_picker_preview_request_id: u64,
+    ambient_pet_image_visible: std::cell::Cell<bool>,
     pet_picker_preview_image_visible: std::cell::Cell<bool>,
     pet_selection_load_request_id: u64,
     #[cfg(test)]
@@ -1211,6 +1225,9 @@ impl ChatWidget {
     }
 
     fn flush_active_cell(&mut self) {
+        if self.active_mcp_group_has_incomplete_members() {
+            return;
+        }
         if let Some(active) = self.transcript.take_active_cell() {
             self.transcript.needs_final_message_separator = true;
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
@@ -1401,8 +1418,8 @@ impl ChatWidget {
             // Insert finalized cell into history and keep grouping consistent.
             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
                 exec.mark_failed();
-            } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
-                tool.mark_failed();
+            } else if let Some(group) = cell.as_any_mut().downcast_mut::<McpToolCallGroupCell>() {
+                group.mark_all_incomplete_failed();
             }
             self.add_boxed_history(cell);
             self.request_pending_usage_output_insertion();
@@ -1621,6 +1638,14 @@ impl ChatWidget {
         self.raw_output_mode
     }
 
+    pub(crate) fn requested_raw_output_mode(&self) -> bool {
+        match self.pending_history_render_mode {
+            PendingHistoryRenderMode::None => self.raw_output_mode,
+            PendingHistoryRenderMode::ApplyAfterCurrentStream(HistoryRenderMode::Rich) => false,
+            PendingHistoryRenderMode::ApplyAfterCurrentStream(HistoryRenderMode::Raw) => true,
+        }
+    }
+
     pub(crate) fn history_render_mode(&self) -> HistoryRenderMode {
         if self.raw_output_mode {
             HistoryRenderMode::Raw
@@ -1629,7 +1654,50 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn transcript_replay_policy(&self) -> TranscriptReplayPolicy {
+        self.transcript_replay_policy
+    }
+
+    pub(crate) fn history_stream_active(&self) -> bool {
+        self.stream_controller.is_some()
+            || self.plan_stream_controller.is_some()
+            || self.pending_stream_consolidations > 0
+    }
+
+    pub(crate) fn raw_output_mode_request_will_delay(&self, enabled: bool) -> bool {
+        self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback
+            && self.history_stream_active()
+            && enabled != self.raw_output_mode
+    }
+
+    pub(crate) fn defer_raw_output_mode_until_stream_boundary(&mut self, enabled: bool) {
+        let requested_mode = if enabled {
+            HistoryRenderMode::Raw
+        } else {
+            HistoryRenderMode::Rich
+        };
+        self.pending_history_render_mode = if requested_mode == self.history_render_mode() {
+            PendingHistoryRenderMode::None
+        } else {
+            PendingHistoryRenderMode::ApplyAfterCurrentStream(requested_mode)
+        };
+    }
+
+    pub(crate) fn take_pending_raw_output_mode_after_stream(&mut self) -> Option<bool> {
+        if self.history_stream_active() {
+            return None;
+        }
+        match std::mem::take(&mut self.pending_history_render_mode) {
+            PendingHistoryRenderMode::None => None,
+            PendingHistoryRenderMode::ApplyAfterCurrentStream(HistoryRenderMode::Rich) => {
+                Some(false)
+            }
+            PendingHistoryRenderMode::ApplyAfterCurrentStream(HistoryRenderMode::Raw) => Some(true),
+        }
+    }
+
     pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
+        self.pending_history_render_mode = PendingHistoryRenderMode::None;
         let streams_were_idle = self.stream_controllers_idle();
         self.raw_output_mode = enabled;
         self.config.tui_raw_output_mode = enabled;
@@ -1671,6 +1739,15 @@ impl ChatWidget {
         let enabled = !self.raw_output_mode;
         self.set_raw_output_mode_and_notify(enabled);
         enabled
+    }
+
+    pub(crate) fn acknowledge_raw_output_mode_request(&mut self, enabled: bool) {
+        let message = if self.raw_output_mode_request_will_delay(enabled) {
+            "Raw output will apply after the current response."
+        } else {
+            Self::raw_output_mode_notice(enabled)
+        };
+        self.add_info_message(message.to_string(), /*hint*/ None);
     }
 
     /// Update resize-sensitive chat widget state after the terminal width changes.

@@ -209,6 +209,19 @@ impl ChatWidget {
                 } else {
                     None
                 };
+            let previous_workspace_access = self
+                .rate_limit_snapshots_by_limit_id
+                .get(&limit_id)
+                .map(|display| display.workspace_access)
+                .unwrap_or(WorkspaceAccessState::Unknown);
+            let workspace_access = match source {
+                RateLimitSnapshotSource::AccountUsage => {
+                    WorkspaceAccessState::from_snapshot(&snapshot)
+                }
+                RateLimitSnapshotSource::RollingUpdate => {
+                    previous_workspace_access.merge_rolling(&snapshot)
+                }
+            };
             self.plan_type = snapshot.plan_type.or(self.plan_type);
 
             let is_codex_limit = limit_id.eq_ignore_ascii_case("codex");
@@ -303,6 +316,7 @@ impl ChatWidget {
             if display.individual_limit.is_none() {
                 display.individual_limit = preserved_individual_limit;
             }
+            display.workspace_access = workspace_access;
             self.rate_limit_snapshots_by_limit_id
                 .insert(limit_id, display);
 

@@ -1,0 +1,16 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: "format!(\"BEFORE:\\n{}\\n\\nAFTER:\\n{}\", before.join(\"\\n\"), after.join(\"\\n\"))"
+---
+BEFORE:
+ Feature    Details
+━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ resize     this deliberately long table cell must wrap differently when the
+            terminal pet reserves transcript columns
+
+AFTER:
+ Feature    Details
+━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ resize     this deliberately long table cell must wrap
+            differently when the terminal pet reserves transcript
+            columns

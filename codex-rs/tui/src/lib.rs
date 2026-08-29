@@ -1605,6 +1605,11 @@ async fn run_ratatui_app(
     let images = shared.into_inner().images;
 
     let use_alt_screen = determine_alt_screen_mode(no_alt_screen, config.tui_alternate_screen);
+    let transcript_replay_policy = if use_alt_screen {
+        crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay
+    } else {
+        crate::transcript_reflow::TranscriptReplayPolicy::InlinePreserveScrollback
+    };
     tui.set_alt_screen_enabled(use_alt_screen);
     if config.model_provider_id != startup_model_provider {
         startup_account = None;
@@ -1775,6 +1780,7 @@ async fn run_ratatui_app(
         startup_resume_response,
         startup_hooks_browser,
         startup_draft,
+        transcript_replay_policy,
     )
     .await;
 

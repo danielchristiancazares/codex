@@ -1,4 +1,17 @@
 use codex_tui::ComposerInput;
+use crossterm::event::KeyEvent;
+
+pub(crate) struct NewTaskSubmission {
+    pub(crate) env_id: String,
+    pub(crate) prompt: String,
+    pub(crate) best_of_n: usize,
+}
+
+pub(crate) enum NewTaskInput {
+    None,
+    MissingEnvironment,
+    Submitted(NewTaskSubmission),
+}
 
 pub struct NewTaskPage {
     pub composer: ComposerInput,
@@ -25,7 +38,24 @@ impl NewTaskPage {
         }
     }
 
-    // Additional helpers can be added as usage evolves.
+    pub(crate) fn input(&mut self, key: KeyEvent) -> NewTaskInput {
+        if self.submitting {
+            return NewTaskInput::None;
+        }
+        let codex_tui::ComposerAction::Submitted(prompt) = self.composer.input(key) else {
+            return NewTaskInput::None;
+        };
+        let Some(env_id) = self.env_id.clone() else {
+            return NewTaskInput::MissingEnvironment;
+        };
+
+        self.submitting = true;
+        NewTaskInput::Submitted(NewTaskSubmission {
+            env_id,
+            prompt,
+            best_of_n: self.best_of_n,
+        })
+    }
 }
 
 impl Default for NewTaskPage {
@@ -33,3 +63,7 @@ impl Default for NewTaskPage {
         Self::new(/*env_id*/ None, /*best_of_n*/ 1)
     }
 }
+
+#[cfg(test)]
+#[path = "new_task_tests.rs"]
+mod tests;

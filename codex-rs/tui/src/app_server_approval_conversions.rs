@@ -92,6 +92,39 @@ mod tests {
     }
 
     #[test]
+    fn preserves_current_and_legacy_update_diff_payloads() {
+        let current_diff = "@@ -1 +1 @@\n-old\n+new\n";
+        for (move_path, diff) in [
+            (PathBuf::from("renamed/file.txt"), current_diff.to_string()),
+            (
+                PathBuf::from("renamed/file.txt"),
+                format!("{current_diff}\n\nMoved to: renamed/file.txt"),
+            ),
+            (
+                PathBuf::from(r"C:\repo\renamed\file.txt"),
+                format!("{current_diff}\n\nMoved to: C:\\repo\\renamed\\file.txt"),
+            ),
+        ] {
+            assert_eq!(
+                file_update_changes_to_display(vec![FileUpdateChange {
+                    path: "original.txt".to_string(),
+                    kind: PatchChangeKind::Update {
+                        move_path: Some(move_path.clone()),
+                    },
+                    diff: diff.clone(),
+                }]),
+                HashMap::from([(
+                    PathBuf::from("original.txt"),
+                    FileChange::Update {
+                        unified_diff: diff,
+                        move_path: Some(move_path),
+                    },
+                )])
+            );
+        }
+    }
+
+    #[test]
     fn converts_request_permissions_into_granted_permissions() {
         let request = RequestPermissionProfile {
             network: Some(AdditionalNetworkPermissions {

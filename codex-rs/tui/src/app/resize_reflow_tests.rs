@@ -1,8 +1,14 @@
 use super::*;
 use crate::app::test_support::make_test_app;
+use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
+use std::path::Path;
 
 fn plain_history_cells(count: usize) -> Vec<Arc<dyn HistoryCell>> {
     (0..count)
@@ -229,6 +235,44 @@ async fn one_row_history_cap_preserves_conversation_instead_of_notice() {
 }
 
 #[tokio::test]
+async fn configured_pet_load_reflows_existing_transcript_before_next_draw() -> Result<()> {
+    let mut app = make_test_app().await;
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    app.config.tui_pet = Some("test".to_string());
+    app.transcript_cells = vec![Arc::new(AgentMarkdownCell::new(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu".to_string(),
+        Path::new("/tmp"),
+    ))];
+    app.chat_widget
+        .set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
+            crate::pets::ImageProtocol::Kitty,
+        ));
+    let screen_size = Size::new(/*width*/ 40, /*height*/ 12);
+    let before = app.render_transcript_lines_for_reflow(screen_size.width);
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.terminal.last_known_screen_size = screen_size;
+    let pet =
+        crate::pets::test_ambient_pet(tui.frame_requester(), /*animations_enabled*/ false);
+
+    app.handle_configured_pet_loaded(&mut tui, "test".to_string(), Ok(Some(pet)))?;
+
+    let reflowed = tui.pending_history_lines_for_test();
+    assert!(
+        reflowed.len() > before.lines.len(),
+        "pet load should reflow existing transcript before the image is drawn"
+    );
+    insta::assert_snapshot!(
+        "configured_pet_load_reflows_existing_transcript",
+        reflowed
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn paginated_resize_reflow_prepends_transcript_notice_for_unloaded_history() {
     let mut app = make_test_app().await;
     app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(32);
@@ -268,4 +312,63 @@ async fn scrollback_refill_only_loads_older_pages_for_an_underfilled_row_cap() {
     app.scrollback_has_older_history = true;
     app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
     assert!(!app.scrollback_history_needs_top_up(/*rendered_rows*/ 31));
+}
+
+#[tokio::test]
+async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<()> {
+    let mut app = make_test_app().await;
+    let presets = app
+        .model_catalog
+        .try_list_models()
+        .expect("test model catalog");
+    let reasoning_model = presets
+        .iter()
+        .find(|preset| preset.model == "gpt-5.6-sol")
+        .cloned()
+        .expect("reasoning model");
+    app.chat_widget.open_model_popup_with_presets(presets);
+
+    let screen_size = Size::new(/*width*/ 80, /*height*/ 10);
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.terminal.last_known_screen_size = screen_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 6,
+        screen_size.width,
+        /*height*/ 4,
+    ));
+
+    let model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+    app.chat_widget.open_reasoning_popup(reasoning_model);
+    let reasoning_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+    app.chat_widget
+        .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let restored_model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+    app.chat_widget
+        .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let composer_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+
+    assert_eq!(
+        [
+            model_area.bottom(),
+            reasoning_area.bottom(),
+            restored_model_area.bottom(),
+            composer_area.bottom(),
+        ],
+        [screen_size.height; 4]
+    );
+    assert!(
+        model_area.top() > 0,
+        "model picker must preserve its bottom-docked viewport provenance: {model_area:?}"
+    );
+    insta::assert_debug_snapshot!(
+        "model_selection_stages_keep_inline_viewport_bottom_docked",
+        [
+            model_area,
+            reasoning_area,
+            restored_model_area,
+            composer_area,
+        ]
+    );
+    Ok(())
 }

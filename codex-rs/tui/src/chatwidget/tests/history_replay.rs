@@ -10,6 +10,7 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use pretty_assertions::assert_eq;
+use pretty_assertions::assert_ne;
 
 #[tokio::test]
 async fn resumed_initial_messages_render_history() {
@@ -1355,6 +1356,237 @@ async fn deferred_mcp_lifecycle_events_keep_fifo_after_stream_finishes() {
         .map(|lines| lines_to_single_string(&lines))
         .collect::<String>();
     assert!(rendered.contains("deferred result"), "{rendered}");
+}
+
+fn mcp_call_started(id: &str, title: &str) -> AppServerThreadItem {
+    AppServerThreadItem::McpToolCall {
+        id: id.to_string(),
+        server: "server".to_string(),
+        tool: "lookup".to_string(),
+        status: codex_app_server_protocol::McpToolCallStatus::InProgress,
+        arguments: json!({"title": title}),
+        app_context: None,
+        mcp_app_resource_uri: None,
+        plugin_id: None,
+        read_only_hint: None,
+        result: None,
+        error: None,
+        duration_ms: None,
+    }
+}
+
+fn mcp_call_completed(id: &str, title: &str) -> AppServerThreadItem {
+    AppServerThreadItem::McpToolCall {
+        id: id.to_string(),
+        server: "server".to_string(),
+        tool: "lookup".to_string(),
+        status: codex_app_server_protocol::McpToolCallStatus::Completed,
+        arguments: json!({"title": title}),
+        app_context: None,
+        mcp_app_resource_uri: None,
+        plugin_id: None,
+        read_only_hint: None,
+        result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
+            content: vec![json!({"type": "text", "text": format!("result {title}")})],
+            structured_content: None,
+            meta: None,
+        })),
+        error: None,
+        duration_ms: Some(5),
+    }
+}
+
+async fn assert_parallel_mcp_completion_order(first: &str, second: &str) {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-b", "B"));
+    let first_title = first
+        .strip_prefix("mcp-")
+        .expect("MCP test call id prefix")
+        .to_uppercase();
+    chat.on_mcp_tool_call_completed(mcp_call_completed(first, &first_title));
+    let second_title = second
+        .strip_prefix("mcp-")
+        .expect("MCP test call id prefix")
+        .to_uppercase();
+    chat.on_mcp_tool_call_completed(mcp_call_completed(second, &second_title));
+
+    let cells = drain_insert_history(&mut rx);
+    let [lines] = cells.as_slice() else {
+        panic!("expected one grouped MCP history cell, got {}", cells.len());
+    };
+    let rendered = lines_to_single_string(lines);
+    assert_eq!(rendered.matches("server.lookup").count(), 2, "{rendered}");
+    assert_eq!(rendered.matches("result A").count(), 1, "{rendered}");
+    assert_eq!(rendered.matches("result B").count(), 1, "{rendered}");
+    assert_eq!(rendered.matches("Called").count(), 2, "{rendered}");
+    assert!(!rendered.contains("Calling"), "{rendered}");
+    assert!(chat.transcript.active_cell.is_none());
+}
+
+#[tokio::test]
+async fn parallel_mcp_calls_complete_once_in_both_orders() {
+    assert_parallel_mcp_completion_order("mcp-b", "mcp-a").await;
+    assert_parallel_mcp_completion_order("mcp-a", "mcp-b").await;
+}
+
+#[tokio::test]
+async fn mixed_mcp_exec_lifecycle_preserves_fifo() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    let _exec = begin_exec(&mut chat, "exec-a", "printf exec-a");
+    assert!(!chat.interrupts.is_empty());
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+
+    let cells = drain_insert_history(&mut rx);
+    let [mcp_lines] = cells.as_slice() else {
+        panic!("expected only settled MCP A in history");
+    };
+    assert!(lines_to_single_string(mcp_lines).contains("result A"));
+    assert!(active_blob(&chat).contains("printf exec-a"));
+    assert!(chat.interrupts.is_empty());
+}
+
+#[tokio::test]
+async fn mixed_mcp_exec_drain_opens_later_mcp_group_without_event_loss() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    let _exec = begin_exec(&mut chat, "exec-a", "printf exec-a");
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-b", "B"));
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+
+    let cells = drain_insert_history(&mut rx);
+    let [mcp_lines, exec_lines] = cells.as_slice() else {
+        panic!("expected MCP A then exec start, got {}", cells.len());
+    };
+    assert!(lines_to_single_string(mcp_lines).contains("result A"));
+    assert!(lines_to_single_string(exec_lines).contains("printf exec-a"));
+    let active = active_blob(&chat);
+    assert!(active.contains("Calling"), "{active}");
+    assert!(active.contains("\"B\""), "{active}");
+    assert!(chat.interrupts.is_empty());
+}
+
+#[tokio::test]
+async fn mcp_lifecycle_queued_behind_answer_stream_drains_reentrantly() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+    let cwd = chat.config.cwd.to_path_buf();
+    chat.stream_controller = Some(crate::streaming::controller::StreamController::new(
+        /*width*/ Some(80),
+        cwd.as_path(),
+        chat.history_render_mode(),
+    ));
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-b", "B"));
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-b", "B"));
+    chat.stream_controller = None;
+    chat.flush_interrupt_queue();
+
+    assert!(chat.interrupts.is_empty());
+    assert!(chat.transcript.active_cell.is_none());
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<String>();
+    assert_eq!(rendered.matches("result A").count(), 1, "{rendered}");
+    assert_eq!(rendered.matches("result B").count(), 1, "{rendered}");
+}
+
+#[tokio::test]
+async fn answer_stream_drain_retains_blocked_exec_until_mcp_settles() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+    let cwd = chat.config.cwd.to_path_buf();
+    chat.stream_controller = Some(crate::streaming::controller::StreamController::new(
+        /*width*/ Some(80),
+        cwd.as_path(),
+        chat.history_render_mode(),
+    ));
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    let _exec = begin_exec(&mut chat, "exec-a", "printf retained");
+    chat.stream_controller = None;
+    chat.flush_interrupt_queue();
+
+    assert!(active_blob(&chat).contains("\"A\""));
+    assert!(!chat.interrupts.is_empty());
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+
+    let cells = drain_insert_history(&mut rx);
+    let [mcp_lines] = cells.as_slice() else {
+        panic!("expected settled MCP A before retained exec");
+    };
+    assert!(lines_to_single_string(mcp_lines).contains("result A"));
+    assert!(active_blob(&chat).contains("printf retained"));
+    assert!(chat.interrupts.is_empty());
+}
+
+#[tokio::test]
+async fn web_search_lifecycle_waits_for_active_mcp_group() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    chat.on_web_search_begin("search-a".to_string());
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+    chat.on_web_search_end(
+        "search-a".to_string(),
+        "rust".to_string(),
+        codex_app_server_protocol::WebSearchAction::Search {
+            query: Some("rust".to_string()),
+            queries: None,
+        },
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    let [mcp_lines, search_lines] = cells.as_slice() else {
+        panic!("expected MCP group then web search, got {}", cells.len());
+    };
+    assert!(lines_to_single_string(mcp_lines).contains("result A"));
+    assert!(lines_to_single_string(search_lines).contains("Searched the web"));
+    assert!(chat.transcript.active_cell.is_none());
+    assert!(chat.interrupts.is_empty());
+}
+
+#[tokio::test]
+async fn partial_mcp_completion_refreshes_transcript_when_animations_are_disabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+    chat.config.animations = false;
+
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
+    chat.on_mcp_tool_call_started(mcp_call_started("mcp-b", "B"));
+    let before = chat
+        .active_cell_transcript_key()
+        .expect("active MCP transcript key")
+        .revision;
+    chat.on_mcp_tool_call_completed(mcp_call_completed("mcp-a", "A"));
+    let after = chat
+        .active_cell_transcript_key()
+        .expect("remaining active MCP transcript key")
+        .revision;
+    assert_ne!(before, after);
+
+    let live_tail = chat
+        .active_cell_transcript_hyperlink_lines(/*width*/ 80)
+        .expect("active MCP transcript tail")
+        .into_iter()
+        .map(|line| line.line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(live_tail.contains("Called"), "{live_tail}");
+    assert!(live_tail.contains("result A"), "{live_tail}");
+    assert!(live_tail.contains("Calling"), "{live_tail}");
+    assert!(live_tail.contains("\"B\""), "{live_tail}");
 }
 
 #[tokio::test]

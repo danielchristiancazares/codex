@@ -185,9 +185,9 @@
 //! # Input Disabled Mode
 //!
 //! The composer can be temporarily read-only (`input_enabled = false`). In that mode it ignores
-//! edits and renders a placeholder prompt instead of the editable textarea. This is part of the
-//! overall state machine, since it affects which transitions are even possible from a given UI
-//! state.
+//! edits, measures a single prompt row while retaining the draft, and renders a placeholder prompt
+//! instead of the editable textarea. This is part of the overall state machine, since it affects
+//! which transitions are even possible from a given UI state.
 //!
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
@@ -592,6 +592,7 @@ impl ChatComposer {
         }
     }
 
+    #[cfg(test)]
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
@@ -4577,7 +4578,12 @@ impl ChatComposer {
             .try_into()
             .unwrap_or(u16::MAX);
         let remote_images_separator = u16::from(remote_images_height > 0);
-        self.draft.textarea.desired_height(inner_width)
+        let textarea_height = if self.draft.input_enabled {
+            self.draft.textarea.desired_height(inner_width)
+        } else {
+            1
+        };
+        textarea_height
             + remote_images_height
             + remote_images_separator
             + 2
@@ -7829,7 +7835,9 @@ mod tests {
                         let area = Rect::new(0, 0, 40, 5);
                         let mut buf = Buffer::empty(area);
                         composer.render(area, &mut buf);
-                        assert_eq!(buf[(2, 1)].style().fg, Some(Color::Cyan));
+                        assert!(buf.content.iter().any(|cell| {
+                            cell.symbol() == "@" && cell.style().fg == Some(Color::Cyan)
+                        }));
                     }
                 },
             );
@@ -13133,22 +13141,25 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        composer.set_text_content("hello".to_string(), Vec::new(), Vec::new());
+        let draft = "one\ntwo\nthree\nfour";
+        composer.set_text_content(draft.to_string(), Vec::new(), Vec::new());
         composer.show_shutdown_in_progress();
 
         assert!(!composer.input_enabled());
-        assert_eq!(composer.current_text(), "hello");
+        assert_eq!(composer.current_text(), draft);
         assert_eq!(composer.custom_footer_height(), Some(0));
+        let desired_height = composer.desired_height(/*width*/ 40);
+        assert_eq!(desired_height, 3);
 
         let area = Rect {
             x: 0,
             y: 0,
             width: 40,
-            height: 5,
+            height: desired_height,
         };
         assert_eq!(composer.cursor_pos(area), None);
 
-        let mut terminal = Terminal::new(TestBackend::new(40, 5)).expect("terminal");
+        let mut terminal = Terminal::new(TestBackend::new(40, desired_height)).expect("terminal");
         terminal
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
             .unwrap();

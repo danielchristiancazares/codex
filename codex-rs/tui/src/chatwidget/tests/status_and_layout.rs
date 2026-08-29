@@ -542,6 +542,8 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         session_telemetry,
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
     };
 
     let chat = ChatWidget::new_with_app_event(init);
@@ -2464,6 +2466,36 @@ async fn ambient_pet_can_be_disabled() {
 }
 
 #[tokio::test]
+#[serial]
+async fn disabling_visible_ambient_pet_requests_terminal_image_clear() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    enable_test_ambient_pet(&mut chat);
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 60, /*height*/ 20,
+    );
+    let mut request = chat
+        .ambient_pet_draw(area, area.bottom())
+        .expect("ambient pet draw request");
+    let frame_dir = tempfile::tempdir().expect("temporary pet frame directory");
+    request.frame = frame_dir.path().join("frame.png");
+    std::fs::write(&request.frame, b"png").expect("write pet frame");
+    let mut image_state = crate::pets::PetImageRenderState::default();
+    let mut output = Vec::new();
+    crate::pets::render_ambient_pet_image(&mut output, &mut image_state, Some(request))
+        .expect("draw ambient pet image");
+    output.clear();
+
+    chat.set_tui_pet(Some(crate::pets::DISABLED_PET_ID.to_string()));
+
+    assert!(chat.should_clear_ambient_pet_image());
+    crate::pets::render_ambient_pet_image(&mut output, &mut image_state, /*request*/ None)
+        .expect("clear ambient pet image");
+    let clear_output = String::from_utf8(output).expect("terminal output should be UTF-8");
+    assert!(clear_output.contains("Ga=d,d=I,i=49374,q=2;"));
+    assert!(!chat.should_clear_ambient_pet_image());
+}
+
+#[tokio::test]
 async fn added_history_uses_pet_adjusted_terminal_width() {
     #[derive(Debug)]
     struct WidthCell(std::sync::Arc<std::sync::atomic::AtomicU16>);
@@ -2586,6 +2618,58 @@ async fn ambient_pet_reduces_stream_width_and_composer_text_width() {
 
     assert!(row_tail_is_blank(&pet_row, /*start_col*/ 69));
     assert!(!row_tail_is_blank(&disabled_row, /*start_col*/ 69));
+}
+
+#[tokio::test]
+#[serial]
+async fn loading_ambient_pet_reflows_active_stream_width() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
+        crate::pets::ImageProtocol::Kitty,
+    ));
+    chat.last_rendered_width.set(Some(80));
+    chat.handle_streaming_delta(
+        "| Feature | Details |\n| --- | --- |\n| resize | this deliberately long table cell must wrap differently when the terminal pet reserves transcript columns |\n"
+            .to_string(),
+    );
+    let line_text = |line: &crate::terminal_hyperlinks::HyperlinkLine| {
+        line.line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let before = chat
+        .stream_controller
+        .as_ref()
+        .expect("active stream controller")
+        .current_tail_lines()
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+
+    chat.install_test_ambient_pet_for_tests(/*animations_enabled*/ false);
+
+    let after = chat
+        .stream_controller
+        .as_ref()
+        .expect("active stream controller")
+        .current_tail_lines()
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    assert!(
+        after.len() > before.len(),
+        "pet load should reflow the active stream to its narrower width: before={before:?}, after={after:?}",
+    );
+    insta::assert_snapshot!(
+        "ambient_pet_reflows_active_stream_width",
+        format!(
+            "BEFORE:\n{}\n\nAFTER:\n{}",
+            before.join("\n"),
+            after.join("\n")
+        )
+    );
 }
 
 fn buffer_row_containing(buffer: &ratatui::buffer::Buffer, text: &str) -> Option<String> {
@@ -3985,8 +4069,8 @@ async fn status_line_and_terminal_title_reasoning_render_only_effort() {
     chat.refresh_status_line();
     chat.refresh_terminal_title();
 
-    assert_eq!(status_line_text(&chat), Some("xhigh".to_string()));
-    assert_eq!(chat.last_terminal_title, Some("xhigh".to_string()));
+    assert_eq!(status_line_text(&chat), Some("XHigh".to_string()));
+    assert_eq!(chat.last_terminal_title, Some("XHigh".to_string()));
 }
 
 #[tokio::test]

@@ -152,7 +152,10 @@ impl ChatWidget {
         }
         self.transcript.plan_delta_buffer.push_str(&delta);
         if self.plan_stream_controller.is_none() {
-            // Before starting a plan stream, flush any active exec cell group.
+            // Protocol ordering settles tool calls before plan output begins, so an incomplete MCP
+            // group cannot be the active cell here. Lifecycle callbacks are queued to enforce that
+            // invariant; refusing to flush the group is the final safety net.
+            debug_assert!(!self.active_mcp_group_has_incomplete_members());
             self.flush_unified_exec_wait_streak();
             self.flush_active_cell();
             self.plan_stream_controller = Some(PlanStreamController::new(
@@ -427,9 +430,29 @@ impl ChatWidget {
     }
 
     pub(super) fn flush_interrupt_queue(&mut self) {
-        let mut mgr = std::mem::take(&mut self.interrupts);
-        mgr.flush_all(self);
-        self.interrupts = mgr;
+        loop {
+            let Some(interrupt) = self.interrupts.pop_front() else {
+                break;
+            };
+            if !self.can_handle_queued_interrupt_now(&interrupt) {
+                self.interrupts.push_front(interrupt);
+                break;
+            }
+            interrupt.handle_now(self);
+        }
+    }
+
+    fn can_handle_queued_interrupt_now(&self, interrupt: &QueuedInterrupt) -> bool {
+        if self.stream_controller.is_some() || self.plan_stream_controller.is_some() {
+            return false;
+        }
+        if !self.active_mcp_group_has_incomplete_members() {
+            return true;
+        }
+        interrupt.is_mcp_start()
+            || interrupt
+                .mcp_completion_call_id()
+                .is_some_and(|call_id| self.active_mcp_group_owns_call(call_id))
     }
 
     /// Move a lifecycle payload into the interrupt queue or its immediate handler.
@@ -443,7 +466,11 @@ impl ChatWidget {
         // Preserve deterministic FIFO across queued interrupts: once anything
         // is queued due to an active write cycle, continue queueing until the
         // queue is flushed to avoid reordering (e.g., ExecEnd before ExecBegin).
-        if self.stream_controller.is_some() || !self.interrupts.is_empty() {
+        if self.stream_controller.is_some()
+            || self.plan_stream_controller.is_some()
+            || !self.interrupts.is_empty()
+            || self.active_mcp_group_has_incomplete_members()
+        {
             push(&mut self.interrupts, payload);
         } else {
             handle(self, payload);
@@ -465,7 +492,10 @@ impl ChatWidget {
             self.mark_safety_buffering_agent_message_started();
         }
         if self.stream_controller.is_none() {
-            // Before starting an agent stream, flush any active exec cell group.
+            // Protocol ordering settles tool calls before assistant output resumes, so an
+            // incomplete MCP group cannot be the active cell here. Lifecycle callbacks are queued
+            // to enforce that invariant; refusing to flush the group is the final safety net.
+            debug_assert!(!self.active_mcp_group_has_incomplete_members());
             self.flush_unified_exec_wait_streak();
             self.flush_active_cell();
             // The final assistant message follows the work cells directly. Turn completion owns

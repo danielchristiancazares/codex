@@ -12,6 +12,7 @@ use std::time::Duration;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ChatComposer;
+use crate::bottom_pane::ChatComposerConfig;
 use crate::bottom_pane::InputResult;
 use crate::bottom_pane::QueuedInputAction;
 use crate::render::renderable::Renderable;
@@ -38,12 +39,13 @@ impl ComposerInput {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let sender = AppEventSender::new(tx.clone());
         // `enhanced_keys_supported=true` enables Shift+Enter newline hint/behavior.
-        let inner = ChatComposer::new(
+        let inner = ChatComposer::new_with_config(
             /*has_input_focus*/ true,
             sender,
             /*enhanced_keys_supported*/ true,
             "Compose new task".to_string(),
             /*disable_paste_burst*/ false,
+            ChatComposerConfig::plain_text(),
         );
         Self { inner, _tx: tx, rx }
     }
@@ -142,3 +144,7 @@ impl Default for ComposerInput {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "composer_input_tests.rs"]
+mod tests;

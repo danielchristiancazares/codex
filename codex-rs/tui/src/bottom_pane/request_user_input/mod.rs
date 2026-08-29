@@ -6,6 +6,8 @@
 //! - Typing while focused on options jumps into notes to keep freeform input fast.
 //! - The composer submit binding advances to the next question; the last question submits all answers.
 //! - Freeform-only questions submit an empty answer list when empty.
+//! - Freeform input is suspended with resize guidance when fewer than two editor rows are visible.
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -74,6 +76,12 @@ const AUTO_RESOLUTION_VISIBLE_COUNTDOWN: Duration = Duration::from_secs(/*secs*/
 enum Focus {
     Options,
     Notes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FreeformInputVisibility {
+    Editable,
+    ResizeRequired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +186,7 @@ pub(crate) struct RequestUserInputOverlay {
     interrupt_turn_keys: Vec<KeyBinding>,
     interrupt_turn_hint: Option<ShortcutHint>,
     list_keymap: ListKeymap,
+    freeform_input_visibility: Cell<FreeformInputVisibility>,
 }
 
 impl RequestUserInputOverlay {
@@ -238,6 +247,7 @@ impl RequestUserInputOverlay {
             interrupt_turn_keys: keymap.chat.interrupt_turn.clone(),
             interrupt_turn_hint: keymap.primary_hint(KeymapContext::Chat, "interrupt_turn"),
             list_keymap: keymap.list,
+            freeform_input_visibility: Cell::new(FreeformInputVisibility::ResizeRequired),
         };
         overlay.reset_for_request();
         overlay.ensure_focus_available();
@@ -1244,6 +1254,12 @@ impl BottomPaneView for RequestUserInputOverlay {
             return;
         }
 
+        if !self.has_options()
+            && self.freeform_input_visibility.get() == FreeformInputVisibility::ResizeRequired
+        {
+            return;
+        }
+
         if self.focus_is_notes() && self.composer_submit_keys.is_pressed(key_event) {
             self.ensure_selected_for_notes();
             self.pending_submission_draft = Some(self.capture_composer_draft());
@@ -1502,7 +1518,10 @@ impl BottomPaneView for RequestUserInputOverlay {
     }
 
     fn handle_paste(&mut self, pasted: String) -> bool {
-        if pasted.is_empty() {
+        if pasted.is_empty()
+            || (!self.has_options()
+                && self.freeform_input_visibility.get() == FreeformInputVisibility::ResizeRequired)
+        {
             return false;
         }
         self.snooze_auto_resolution();
@@ -1518,6 +1537,11 @@ impl BottomPaneView for RequestUserInputOverlay {
     }
 
     fn flush_paste_burst_if_due(&mut self) -> bool {
+        if !self.has_options()
+            && self.freeform_input_visibility.get() == FreeformInputVisibility::ResizeRequired
+        {
+            return false;
+        }
         self.composer.flush_paste_burst_if_due()
     }
 
@@ -4131,6 +4155,113 @@ mod tests {
             "request_user_input_unanswered_confirmation",
             render_snapshot(&overlay, area)
         );
+    }
+
+    #[test]
+    fn constrained_freeform_layout_keeps_editor_visible() {
+        let (tx, _rx) = test_sender();
+        let mut question = question_without_options("q1", "Notes");
+        question.question = "Describe the expected behavior, constraints, and validation details for this implementation.".to_string();
+        let mut overlay = RequestUserInputOverlay::new(
+            request_event("turn-1", vec![question]),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+        let content_area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 36, /*height*/ 6,
+        );
+        let sections = overlay.layout_sections(content_area);
+
+        assert!(sections.notes_area.height >= MIN_COMPOSER_HEIGHT);
+        assert_eq!(
+            overlay.freeform_input_visibility.get(),
+            FreeformInputVisibility::Editable,
+        );
+        assert!(overlay.handle_paste("visible draft".to_string()));
+
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 8,
+        );
+        let rendered = render_snapshot(&overlay, area);
+        assert!(rendered.contains("visible draft"), "{rendered}");
+        assert!(overlay.cursor_pos_impl(area).is_some());
+        insta::assert_snapshot!("request_user_input_constrained_freeform", rendered);
+    }
+
+    #[test]
+    fn hidden_freeform_editor_ignores_input_but_allows_cancellation() {
+        for content_height in [0, 1] {
+            let (tx, _rx) = test_sender();
+            let mut overlay = RequestUserInputOverlay::new(
+                request_event("turn-1", vec![question_without_options("q1", "Notes")]),
+                tx,
+                /*has_input_focus*/ true,
+                /*enhanced_keys_supported*/ false,
+                /*disable_paste_burst*/ false,
+            );
+            overlay.layout_sections(Rect::new(
+                /*x*/ 0,
+                /*y*/ 0,
+                /*width*/ 36,
+                content_height,
+            ));
+
+            overlay.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+            overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(!overlay.handle_paste("hidden".to_string()));
+            assert_eq!(overlay.composer.current_text_with_pending(), "");
+            assert!(!overlay.done);
+
+            assert!(matches!(overlay.on_ctrl_c(), CancellationEvent::Handled));
+            assert!(overlay.done);
+        }
+
+        let (tx, _rx) = test_sender();
+        let overlay = RequestUserInputOverlay::new(
+            request_event("turn-1", vec![question_without_options("q1", "Notes")]),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+        let rendered = render_snapshot(
+            &overlay,
+            Rect::new(
+                /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 3,
+            ),
+        );
+        assert!(rendered.contains("Resize terminal to answer"), "{rendered}");
+    }
+
+    #[test]
+    fn freeform_editor_recovers_after_resize_without_losing_draft() {
+        let (tx, _rx) = test_sender();
+        let mut overlay = RequestUserInputOverlay::new(
+            request_event("turn-1", vec![question_without_options("q1", "Notes")]),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+        overlay.layout_sections(Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 36, /*height*/ 6,
+        ));
+        assert!(overlay.handle_paste("draft".to_string()));
+
+        overlay.layout_sections(Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 36, /*height*/ 1,
+        ));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!overlay.handle_paste("hidden".to_string()));
+
+        overlay.layout_sections(Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 36, /*height*/ 6,
+        ));
+        assert!(overlay.handle_paste("!".to_string()));
+
+        assert_eq!(overlay.composer.current_text_with_pending(), "draft!");
     }
 
     #[test]

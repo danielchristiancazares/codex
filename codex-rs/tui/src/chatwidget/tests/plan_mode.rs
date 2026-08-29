@@ -1636,6 +1636,8 @@ async fn make_startup_chat_with_cli_overrides(
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         session_telemetry,
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
     };
 
     ChatWidget::new_with_app_event(init)

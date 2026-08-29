@@ -41,6 +41,7 @@ pub(super) async fn make_test_app() -> App {
         deferred_history_lines: Vec::new(),
         has_emitted_history_lines: false,
         transcript_reflow: TranscriptReflowState::default(),
+        transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
         initial_history_replay_buffer: None,
         scrollback_has_older_history: false,
         enhanced_keys_supported: false,

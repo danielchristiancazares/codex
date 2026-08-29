@@ -20,11 +20,12 @@ use codex_app_server_protocol::RateLimitWindow;
 use codex_app_server_protocol::SpendControlLimitSnapshot as CoreSpendControlLimitSnapshot;
 use codex_protocol::num_format::format_with_separators;
 
+use super::rate_limit_block::WorkspaceAccessState;
 const STATUS_LIMIT_BAR_SEGMENTS: usize = 20;
 const STATUS_LIMIT_BAR_FILLED: &str = "█";
 const STATUS_LIMIT_BAR_EMPTY: &str = "░";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StatusRateLimitRow {
     /// Human-readable row label, such as `"5h limit"`, `"Monthly limit"`, or `"Credits"`.
     pub label: String,
@@ -33,7 +34,7 @@ pub(crate) struct StatusRateLimitRow {
 }
 
 /// Display value variants for a single rate-limit row.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum StatusRateLimitValue {
     /// Percent-based usage window with optional reset timestamp text.
     Window {
@@ -44,12 +45,14 @@ pub(crate) enum StatusRateLimitValue {
         /// Optional detail line rendered beneath the progress bar.
         details: Option<String>,
     },
+    /// High-priority workspace access failure with actionable guidance.
+    Blocked { summary: String, guidance: String },
     /// Plain text value used for non-window rows.
     Text(String),
 }
 
 /// Availability state for rate-limit data shown in status output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum StatusRateLimitData {
     /// Snapshot data is recent enough for normal rendering.
     Available(Vec<StatusRateLimitRow>),
@@ -65,7 +68,7 @@ pub(crate) enum StatusRateLimitData {
 pub(crate) const RATE_LIMIT_STALE_THRESHOLD_MINUTES: i64 = 15;
 
 /// Display-friendly representation of one usage window from a snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RateLimitWindowDisplay {
     /// Percent used for the window.
     pub used_percent: f64,
@@ -91,7 +94,7 @@ impl RateLimitWindowDisplay {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RateLimitSnapshotDisplay {
     /// Canonical limit identifier (for example: `codex` or `codex_other`).
     pub limit_name: String,
@@ -105,10 +108,12 @@ pub(crate) struct RateLimitSnapshotDisplay {
     pub credits: Option<CreditsSnapshotDisplay>,
     /// Optional effective monthly credit limit from workspace spend controls.
     pub individual_limit: Option<SpendControlLimitSnapshotDisplay>,
+    /// Authoritative workspace access state carried independently of capacity rows.
+    pub workspace_access: WorkspaceAccessState,
 }
 
 /// Display-ready credits state extracted from protocol snapshots.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CreditsSnapshotDisplay {
     /// Whether credits tracking is enabled for the account.
     pub has_credits: bool,
@@ -119,7 +124,7 @@ pub(crate) struct CreditsSnapshotDisplay {
 }
 
 /// Display-ready effective monthly limit extracted from spend controls.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SpendControlLimitSnapshotDisplay {
     /// Local timestamp representing when this monthly usage value was captured.
     pub captured_at: DateTime<Local>,
@@ -162,6 +167,7 @@ pub(crate) fn rate_limit_snapshot_display_for_limit(
             .individual_limit
             .as_ref()
             .and_then(|limit| SpendControlLimitSnapshotDisplay::from_limit(limit, captured_at)),
+        workspace_access: WorkspaceAccessState::from_snapshot(snapshot),
     }
 }
 
@@ -246,6 +252,16 @@ pub(crate) fn compose_rate_limit_data_many(
             usize::from(snapshot.primary.is_some()) + usize::from(snapshot.secondary.is_some());
         let combine_non_codex_single_limit = show_limit_prefix && window_count == 1;
 
+        if let WorkspaceAccessState::Blocked(reason) = snapshot.workspace_access {
+            rows.push(StatusRateLimitRow {
+                label: "Access".to_string(),
+                value: StatusRateLimitValue::Blocked {
+                    summary: reason.summary().to_string(),
+                    guidance: reason.guidance().to_string(),
+                },
+            });
+        }
+
         if show_limit_prefix && !combine_non_codex_single_limit {
             rows.push(StatusRateLimitRow {
                 label: format!("{limit_bucket_label} limit"),
@@ -307,10 +323,16 @@ pub(crate) fn compose_rate_limit_data_many(
             });
         }
 
-        if let Some(credits) = snapshot.credits.as_ref()
-            && let Some(row) = credit_status_row(credits)
-        {
-            rows.push(row);
+        if let Some(credits) = snapshot.credits.as_ref() {
+            let credit_row =
+                if matches!(snapshot.workspace_access, WorkspaceAccessState::Blocked(_)) {
+                    blocked_credit_status_row(credits)
+                } else {
+                    credit_status_row(credits)
+                };
+            if let Some(row) = credit_row {
+                rows.push(row);
+            }
         }
         if let Some(individual_limit) = snapshot.individual_limit.as_ref() {
             rows.push(StatusRateLimitRow {
@@ -384,24 +406,42 @@ fn credit_status_row(credits: &CreditsSnapshotDisplay) -> Option<StatusRateLimit
     })
 }
 
+fn blocked_credit_status_row(credits: &CreditsSnapshotDisplay) -> Option<StatusRateLimitRow> {
+    let balance = credits
+        .balance
+        .as_deref()
+        .and_then(parse_credit_balance)
+        .filter(|balance| *balance >= 0)?;
+    Some(StatusRateLimitRow {
+        label: "Credits balance".to_string(),
+        value: StatusRateLimitValue::Text(format!("{balance} credits")),
+    })
+}
+
 fn format_credit_balance(raw: &str) -> Option<String> {
+    parse_credit_balance(raw)
+        .filter(|balance| *balance > 0)
+        .map(|balance| balance.to_string())
+}
+
+fn parse_credit_balance(raw: &str) -> Option<i64> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
 
     if let Ok(int_value) = trimmed.parse::<i64>()
-        && int_value > 0
+        && int_value >= 0
     {
-        return Some(int_value.to_string());
+        return Some(int_value);
     }
 
     if let Ok(value) = trimmed.parse::<f64>()
         && value.is_finite()
-        && value > 0.0
+        && value >= 0.0
     {
         let rounded = value.round() as i64;
-        return Some(rounded.to_string());
+        return Some(rounded);
     }
 
     None
@@ -421,7 +461,11 @@ mod tests {
     use super::RateLimitSnapshotDisplay;
     use super::RateLimitWindowDisplay;
     use super::StatusRateLimitData;
+    use super::StatusRateLimitValue;
+    use super::WorkspaceAccessState;
     use super::compose_rate_limit_data_many;
+    use crate::status::WorkspaceLimitBlockReason;
+    use chrono::Duration as ChronoDuration;
     use chrono::Local;
     use pretty_assertions::assert_eq;
 
@@ -447,6 +491,7 @@ mod tests {
                 balance: Some("25".to_string()),
             }),
             individual_limit: None,
+            workspace_access: WorkspaceAccessState::Unknown,
         };
         let other = RateLimitSnapshotDisplay {
             limit_name: "codex-other".to_string(),
@@ -459,6 +504,7 @@ mod tests {
                 balance: Some("99".to_string()),
             }),
             individual_limit: None,
+            workspace_access: WorkspaceAccessState::Unknown,
         };
 
         let rows = match compose_rate_limit_data_many(&[codex, other], now) {
@@ -497,6 +543,7 @@ mod tests {
             }),
             credits: None,
             individual_limit: None,
+            workspace_access: WorkspaceAccessState::Unknown,
         };
 
         let rows = match compose_rate_limit_data_many(&[other], now) {
@@ -511,6 +558,78 @@ mod tests {
                 "Usage limit".to_string(),
                 "Secondary usage limit".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn blocked_snapshot_keeps_block_state_when_stale() {
+        let now = Local::now();
+        let snapshot = RateLimitSnapshotDisplay {
+            limit_name: "codex".to_string(),
+            captured_at: now - ChronoDuration::minutes(20),
+            primary: Some(window(/*used_percent*/ 95.0)),
+            secondary: None,
+            credits: None,
+            individual_limit: None,
+            workspace_access: WorkspaceAccessState::Blocked(
+                WorkspaceLimitBlockReason::MemberUsageLimitReached,
+            ),
+        };
+
+        let StatusRateLimitData::Stale(rows) = compose_rate_limit_data_many(&[snapshot], now)
+        else {
+            panic!("expected stale rate limit rows");
+        };
+
+        assert!(matches!(
+            rows.first().map(|row| &row.value),
+            Some(StatusRateLimitValue::Blocked { .. })
+        ));
+    }
+
+    #[test]
+    fn blocked_snapshot_only_shows_concrete_credit_balance() {
+        let now = Local::now();
+        let snapshot = |balance: Option<&str>| RateLimitSnapshotDisplay {
+            limit_name: "codex".to_string(),
+            captured_at: now,
+            primary: None,
+            secondary: None,
+            credits: Some(CreditsSnapshotDisplay {
+                has_credits: true,
+                unlimited: true,
+                balance: balance.map(str::to_string),
+            }),
+            individual_limit: None,
+            workspace_access: WorkspaceAccessState::Blocked(
+                WorkspaceLimitBlockReason::OwnerCreditsDepleted,
+            ),
+        };
+
+        let StatusRateLimitData::Available(hidden_rows) =
+            compose_rate_limit_data_many(&[snapshot(None)], now)
+        else {
+            panic!("expected available rate limit rows");
+        };
+        let StatusRateLimitData::Available(balance_rows) =
+            compose_rate_limit_data_many(&[snapshot(Some("5"))], now)
+        else {
+            panic!("expected available rate limit rows");
+        };
+
+        assert_eq!(
+            hidden_rows
+                .iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Access"],
+        );
+        assert_eq!(
+            balance_rows
+                .iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Access", "Credits balance"],
         );
     }
 }

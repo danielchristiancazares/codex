@@ -126,6 +126,41 @@ fn vim_prompt_hint_tracks_escape_behavior() {
 }
 
 #[test]
+fn constrained_multiline_prompt_clips_render_and_cursor_to_area() {
+    let (mut view, _submitted_rx) = custom_prompt_view();
+    view.textarea
+        .set_text_clearing_elements("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+    view.textarea.set_cursor(view.textarea.text().len());
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 24, /*height*/ 3,
+    );
+    let mut buf = Buffer::empty(area);
+
+    view.render(area, &mut buf);
+
+    let rendered = (0..area.height)
+        .map(|row| {
+            (0..area.width)
+                .map(|col| buf[(area.x + col, area.y + row)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("custom_prompt_view_constrained_multiline", rendered);
+
+    let (cursor_x, cursor_y) = view.cursor_pos(area).expect("visible textarea cursor");
+    assert!(
+        cursor_x >= area.x
+            && cursor_x < area.right()
+            && cursor_y >= area.y
+            && cursor_y < area.bottom(),
+        "cursor ({cursor_x}, {cursor_y}) escaped render area {area:?}",
+    );
+}
+
+#[test]
 fn vim_insert_cursor_tracks_mode_and_normal_mode_commands() {
     let (mut view, _submitted_rx) = custom_prompt_view();
     let area = Rect::new(0, 0, 80, 10);

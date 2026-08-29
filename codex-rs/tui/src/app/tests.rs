@@ -575,6 +575,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
         session_telemetry: app.session_telemetry.clone(),
+        transcript_replay_policy: app.transcript_replay_policy,
     });
 
     app.enqueue_primary_thread_session(
@@ -3659,7 +3660,8 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
     };
     let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
     assert!(rendered.contains("• Added README.md (+1 -0)"));
-    assert!(rendered.contains("1 +hello"));
+    let transcript = lines_to_single_string(&cell.transcript_lines(/*width*/ 80));
+    assert!(transcript.contains("1 +hello"));
 }
 
 #[tokio::test]
@@ -5429,6 +5431,7 @@ async fn make_test_app() -> App {
         deferred_history_lines: Vec::new(),
         has_emitted_history_lines: false,
         transcript_reflow: TranscriptReflowState::default(),
+        transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
         initial_history_replay_buffer: None,
         scrollback_has_older_history: false,
         enhanced_keys_supported: false,
@@ -5511,6 +5514,7 @@ async fn make_test_app_with_channels() -> (
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
+            transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
             initial_history_replay_buffer: None,
             scrollback_has_older_history: false,
             enhanced_keys_supported: false,
@@ -7503,6 +7507,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
         session_telemetry: app.session_telemetry.clone(),
+        transcript_replay_policy: app.transcript_replay_policy,
     });
     app.replace_chat_widget(replacement);
 

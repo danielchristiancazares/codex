@@ -17,4 +17,4 @@ expression: status_line_popup_snapshot(&mut chat)
   [ ] Current directory      Current working directory
 
   Monthly 65% left · Weekly 50% left
-  ↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel
+  Press space to toggle; ←/→ to move; enter to confirm and close; esc to close

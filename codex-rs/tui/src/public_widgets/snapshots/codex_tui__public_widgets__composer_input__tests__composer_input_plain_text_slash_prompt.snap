@@ -1,0 +1,8 @@
+---
+source: tui/src/public_widgets/composer_input_tests.rs
+expression: rendered
+---
+────────────────────────────────────────
+│› /diff
+────────────────────────────────────────
+                     Context 100% left

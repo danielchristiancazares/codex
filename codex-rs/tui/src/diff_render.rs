@@ -32,7 +32,6 @@
 //! preserved across the split so that no color information is lost.
 
 use crossterm::event::KeyCode;
-use diffy::Hunk;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -51,6 +50,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use unicode_width::UnicodeWidthChar;
 
 mod preview;
+mod update_parse;
 
 /// Replacement for a tab character in rendered diff content.
 const TAB_REPLACEMENT: &str = "    ";
@@ -95,6 +95,8 @@ use crate::render::line_utils::prefix_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
+use crate::style::StatusTone;
+use crate::style::status_style;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::XTERM_COLORS;
 use crate::terminal_palette::default_bg;
@@ -104,6 +106,9 @@ use crate::terminal_palette::stdout_color_level;
 use codex_git_utils::get_git_repo_root;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
+use update_parse::PreparedUpdateDiff;
+use update_parse::RAW_FALLBACK_WARNING;
+use update_parse::UpdateDiffMode;
 
 /// Classifies a diff line for gutter sign rendering and style selection.
 ///
@@ -348,10 +353,20 @@ impl From<DiffSummary> for Box<dyn Renderable> {
                 rows.push(Box::new(RtLine::from("")));
             }
             let (added, removed) = line_counts(&change);
-            let mut path = RtLine::from(display_path_for(&path, val.cwd.as_path()));
-            path.push_span(" ");
-            path.extend(render_line_count_summary(added, removed));
-            rows.push(Box::new(path));
+            let mut path_line = RtLine::from(display_path_for(&path, val.cwd.as_path()));
+            if let FileChange::Update {
+                move_path: Some(move_path),
+                ..
+            } = &change
+            {
+                path_line.push_span(format!(
+                    " → {}",
+                    display_path_for(move_path, val.cwd.as_path())
+                ));
+            }
+            path_line.push_span(" ");
+            path_line.extend(render_line_count_summary(added, removed));
+            rows.push(Box::new(path_line));
             rows.push(Box::new(RtLine::from("")));
             rows.push(Box::new(InsetRenderable::new(
                 Box::new(change) as Box<dyn Renderable>,
@@ -438,7 +453,13 @@ fn line_counts(change: &FileChange) -> (usize, usize) {
     match change {
         FileChange::Add { content } => (content.lines().count(), 0),
         FileChange::Delete { content } => (0, content.lines().count()),
-        FileChange::Update { unified_diff, .. } => calculate_add_remove_from_diff(unified_diff),
+        FileChange::Update {
+            unified_diff,
+            move_path,
+        } => {
+            let prepared = PreparedUpdateDiff::new(unified_diff, move_path.as_deref());
+            calculate_add_remove_from_diff(&prepared)
+        }
     }
 }
 
@@ -713,8 +734,19 @@ fn render_change(
                 }
             }
         }
-        FileChange::Update { unified_diff, .. } => {
-            if let Ok(patch) = diffy::Patch::from_str(unified_diff) {
+        FileChange::Update {
+            unified_diff,
+            move_path,
+        } => {
+            let prepared = PreparedUpdateDiff::new(unified_diff, move_path.as_deref());
+            let patch = match prepared.mode() {
+                UpdateDiffMode::Unified => Some(
+                    diffy::Patch::from_str(prepared.source())
+                        .expect("prepared unified diff must remain parseable"),
+                ),
+                UpdateDiffMode::RawFallback => None,
+            };
+            if let Some(patch) = patch {
                 let mut max_line_number = 0;
                 let mut total_diff_bytes: usize = 0;
                 let mut total_diff_lines: usize = 0;
@@ -941,10 +973,42 @@ fn render_change(
                         break;
                     }
                 }
+            } else {
+                if !push_wrapped_text_line(
+                    out,
+                    RAW_FALLBACK_WARNING,
+                    width,
+                    max_rows,
+                    status_style(StatusTone::Attention),
+                ) {
+                    return true;
+                }
+                for raw in prepared.source().split_terminator('\n') {
+                    if !push_wrapped_text_line(out, raw, width, max_rows, Style::default()) {
+                        return true;
+                    }
+                }
             }
         }
     }
     omitted
+}
+
+fn push_wrapped_text_line(
+    out: &mut Vec<RtLine<'static>>,
+    text: &str,
+    width: usize,
+    max_rows: usize,
+    style: Style,
+) -> bool {
+    let spans = [RtSpan::styled(text.to_string(), style)];
+    for wrapped in wrap_styled_spans(&spans, width.max(1)) {
+        if out.len() >= max_rows {
+            return false;
+        }
+        out.push(RtLine::from(wrapped));
+    }
+    true
 }
 
 /// Format a path for display relative to the current working directory when
@@ -973,21 +1037,8 @@ pub(crate) fn display_path_for(path: &Path, cwd: &Path) -> String {
     chosen.display().to_string()
 }
 
-pub(crate) fn calculate_add_remove_from_diff(diff: &str) -> (usize, usize) {
-    if let Ok(patch) = diffy::Patch::from_str(diff) {
-        patch
-            .hunks()
-            .iter()
-            .flat_map(Hunk::lines)
-            .fold((0, 0), |(a, d), l| match l {
-                diffy::Line::Insert(_) => (a + 1, d),
-                diffy::Line::Delete(_) => (a, d + 1),
-                diffy::Line::Context(_) => (a, d),
-            })
-    } else {
-        // For unparsable diffs, return 0 for both counts.
-        (0, 0)
-    }
+fn calculate_add_remove_from_diff(prepared: &PreparedUpdateDiff<'_>) -> (usize, usize) {
+    prepared.line_counts()
 }
 
 /// Render a single plain-text (non-syntax-highlighted) diff line, wrapped to

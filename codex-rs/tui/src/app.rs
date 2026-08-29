@@ -83,6 +83,7 @@ use crate::test_support::test_path_buf;
 use crate::test_support::test_path_display;
 use crate::token_usage::TokenUsage;
 use crate::transcript_reflow::TranscriptReflowState;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
@@ -568,6 +569,7 @@ pub(crate) struct App {
     pub(crate) deferred_history_lines: Vec<crate::terminal_hyperlinks::HyperlinkLine>,
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
+    transcript_replay_policy: TranscriptReplayPolicy,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
     pub(crate) scrollback_has_older_history: bool,
 
@@ -758,6 +760,7 @@ impl App {
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),
             session_telemetry: self.session_telemetry.clone(),
+            transcript_replay_policy: self.transcript_replay_policy,
         }
     }
 
@@ -858,6 +861,10 @@ impl App {
                         ) {
                             self.handle_ambient_pet_image_render_error(tui, err)?;
                         }
+                    } else if self.chat_widget.should_clear_ambient_pet_image()
+                        && let Err(err) = tui.clear_ambient_pet_image()
+                    {
+                        self.handle_ambient_pet_image_render_error(tui, err)?;
                     }
                     if let Some(request) = self.chat_widget.pet_picker_preview_draw() {
                         if let Err(err) = tui.draw_pet_picker_preview_image(Some(request)) {
@@ -895,6 +902,7 @@ impl App {
             .chat_widget
             .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
             .is_some();
+        let interactive_view_visible = self.chat_widget.has_active_view();
         if std::mem::replace(
             &mut self.agents_overview.rendered_full_screen,
             dashboard_visible,
@@ -906,6 +914,10 @@ impl App {
         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
             let desired_height = if dashboard_visible {
                 screen_size.height
+            } else if interactive_view_visible {
+                // Keep one row above an inline view so its geometry continues to identify it as
+                // bottom-docked when a shorter selection stage or the composer replaces it.
+                desired_height.min(screen_size.height.saturating_sub(1).max(1))
             } else {
                 desired_height
             };

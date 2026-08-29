@@ -39,6 +39,9 @@
 //! .build();
 //! ```
 
+#[path = "multi_select_footer.rs"]
+mod multi_select_footer;
+
 use codex_utils_fuzzy_match::fuzzy_match;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -60,10 +63,8 @@ use crate::bottom_pane::bottom_pane_view::BottomPaneView;
 use crate::bottom_pane::popup_consts::MAX_POPUP_ROWS;
 use crate::bottom_pane::scroll_state::ScrollState;
 use crate::bottom_pane::selection_popup_common::render_rows_single_line;
-use crate::key_hint;
 use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::is_plain_text_key_event;
-use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
 use crate::keymap::RuntimeKeymap;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
@@ -73,6 +74,8 @@ use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 use crate::text_formatting::truncate_text;
+
+use self::multi_select_footer::MultiSelectFooter;
 
 /// Maximum display length for item names before truncation.
 const ITEM_NAME_TRUNCATE_LEN: usize = 21;
@@ -175,8 +178,8 @@ pub(crate) struct MultiSelectPicker {
     /// Header widget displaying title and subtitle.
     header: Box<dyn Renderable>,
 
-    /// Footer line showing keyboard hints.
-    footer_hint: Line<'static>,
+    /// Footer line showing custom or width-aware generated keyboard hints.
+    footer_hint: MultiSelectFooter,
 
     /// Current search/filter query entered by the user.
     search_query: String,
@@ -699,7 +702,9 @@ impl Renderable for MultiSelectPicker {
             width: hint_area.width.saturating_sub(2),
             height: hint_area.height,
         };
-        self.footer_hint.clone().dim().render(hint_area, buf);
+        if let Some(footer_hint) = self.footer_hint.line_for_width(hint_area.width) {
+            footer_hint.clone().dim().render(hint_area, buf);
+        }
     }
 }
 
@@ -824,38 +829,8 @@ impl MultiSelectPickerBuilder {
             header.push(Line::from(subtitle.dim()));
         }
 
-        let instructions = if self.instructions.is_empty() {
-            let mut spans = vec![
-                "Press ".into(),
-                key_hint::plain(KeyCode::Char(' ')).into(),
-                " to toggle".into(),
-            ];
-            if self.ordering_enabled
-                && let (Some(move_left), Some(move_right)) = (
-                    self.keymap.primary_hint(ListAction::MoveLeft),
-                    self.keymap.primary_hint(ListAction::MoveRight),
-                )
-            {
-                spans.push("; ".into());
-                spans.push(move_left.into());
-                spans.push("/".into());
-                spans.push(move_right.into());
-                spans.push(" to move".into());
-            }
-            if let Some(accept) = self.keymap.primary_hint(ListAction::Accept) {
-                spans.push("; ".into());
-                spans.push(accept.into());
-                spans.push(" to confirm and close".into());
-            }
-            if let Some(cancel) = self.keymap.primary_hint(ListAction::Cancel) {
-                spans.push("; ".into());
-                spans.push(cancel.into());
-                spans.push(" to close".into());
-            }
-            spans
-        } else {
-            self.instructions
-        };
+        let footer_hint =
+            MultiSelectFooter::new(self.instructions, &self.keymap, self.ordering_enabled);
 
         let mut view = MultiSelectPicker {
             items: self.items,
@@ -863,7 +838,7 @@ impl MultiSelectPickerBuilder {
             complete: false,
             app_event_tx: self.app_event_tx,
             header: Box::new(header),
-            footer_hint: Line::from(instructions),
+            footer_hint,
             ordering_enabled: self.ordering_enabled,
             keymap: self.keymap,
             search_query: String::new(),
@@ -916,6 +891,7 @@ pub(crate) fn match_item(
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use crate::key_hint;
     use pretty_assertions::assert_eq;
     use tokio::sync::mpsc::unbounded_channel;
 

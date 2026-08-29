@@ -1,0 +1,31 @@
+---
+source: tui/src/insert_history.rs
+expression: "snapshots.join(\"\\n---\\n\")"
+---
+top=0
+SCROLLBACK:
+finalized-at-top-0
+live viewport
+ 
+ 
+ 
+ 
+VISIBLE:
+live viewport
+ 
+ 
+ 
+ 
+ 
+---
+top=1
+SCROLLBACK:
+
+finalized-at-top-1
+live viewport
+ 
+ 
+ 
+VISIBLE:
+finalized-at-top-1
+live viewport

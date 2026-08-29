@@ -17,4 +17,4 @@ expression: status_line_popup_snapshot(&mut chat)
   [ ] Reasoning            Current reasoning level
 
   preview-live-root · feature/live-preview-branch · Live preview thread
-  ↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel
+  Press space to toggle; ←/→ to move; enter to confirm and close; esc to close

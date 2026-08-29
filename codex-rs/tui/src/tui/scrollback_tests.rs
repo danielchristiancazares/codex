@@ -393,7 +393,7 @@ fn full_history_band_stays_adjacent_to_bottom_docked_viewport_after_shrink() {
             terminal.visible_history_rows(),
             terminal.docked_history_gap_rows(),
         ),
-        (Rect::new(0, 5, width, 2), 5, 0)
+        (Rect::new(0, 6, width, 2), 5, 1)
     );
     let visible = terminal.backend().vt100().screen().contents();
     let mut scrollback_screen = terminal.backend().vt100().screen().clone();

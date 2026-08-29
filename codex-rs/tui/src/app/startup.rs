@@ -104,6 +104,7 @@ impl App {
         mut startup_resume_response: Option<Result<ThreadResumeResponse>>,
         startup_hooks_browser: Option<HooksListEntry>,
         mut startup_draft: StartupDraftPump,
+        transcript_replay_policy: TranscriptReplayPolicy,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
 
@@ -324,6 +325,7 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    transcript_replay_policy,
                 };
                 let mut chat_widget = ChatWidget::new_with_app_event(init);
                 chat_widget.set_queue_submissions_until_session_configured(
@@ -426,6 +428,7 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    transcript_replay_policy,
                 };
                 (ChatWidget::new_with_app_event(init), Some(resumed))
             }
@@ -505,6 +508,7 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    transcript_replay_policy,
                 };
                 (ChatWidget::new_with_app_event(init), Some(forked))
             }
@@ -554,6 +558,7 @@ See the Codex keymap documentation for supported actions and examples."
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
+            transcript_replay_policy,
             initial_history_replay_buffer: None,
             scrollback_has_older_history: false,
             commit_animation_ticker: CommitAnimationTicker::default(),

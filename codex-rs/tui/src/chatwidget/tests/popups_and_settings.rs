@@ -54,6 +54,8 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         session_telemetry,
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
     };
 
     let chat = ChatWidget::new_with_app_event(init);
@@ -1223,17 +1225,18 @@ async fn plugins_popup_remote_section_fallback_states_when_remote_plugin_disable
         panic!("expected plugins tab containing {visible_text:?}, got:\n{popup}");
     };
     let remote_section_state = |popup: &str| -> String {
-        let header = popup
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .nth(1)
-            .expect("expected remote section header");
+        let mut lines = popup.lines().map(str::trim).filter(|line| !line.is_empty());
+        let _title = lines.next().expect("expected plugins title");
+        let header = lines.next().expect("expected remote section header");
         let item = popup
             .lines()
-            .find_map(|line| line.trim_start().strip_prefix('›'))
-            .expect("expected selected remote section item")
-            .trim();
+            .map(str::trim)
+            .find(|line| {
+                line.contains("This updates when")
+                    || line.contains("Sign in to ChatGPT")
+                    || line.matches("No OpenAI Curated plugins available").count() > 1
+            })
+            .expect("expected remote section item");
         format!("{header}\n{item}")
     };
 

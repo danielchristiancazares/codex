@@ -114,6 +114,13 @@ where
     B: Backend<Error = io::Error> + Write,
 {
     let mut area = terminal.viewport_area;
+    let mode = if mode == InsertHistoryMode::Standard && area.top() <= 1 {
+        // A partial scroll region needs at least two rows. Fall back to the full-screen strategy
+        // so finalized output is pushed into terminal scrollback before the live viewport repaints.
+        InsertHistoryMode::FullScreen
+    } else {
+        mode
+    };
     let mut should_update_area = false;
     let last_cursor_pos = terminal.last_known_cursor_pos;
 
@@ -501,7 +508,10 @@ mod tests {
     use crate::markdown_render::render_markdown_text;
     use crate::test_backend::VT100Backend;
     use ratatui::layout::Rect;
+    use ratatui::layout::Size;
     use ratatui::style::Color;
+    use ratatui::widgets::Paragraph;
+    use ratatui::widgets::Widget;
 
     #[test]
     fn writes_bold_then_regular_spans() {
@@ -625,6 +635,71 @@ mod tests {
         assert!(
             saw_colored,
             "expected at least one colored cell in vt100 output"
+        );
+    }
+
+    #[test]
+    fn standard_insert_preserves_history_when_viewport_leaves_at_most_one_row() {
+        let width = 28;
+        let height = 6;
+        let screen_size = Size::new(width, height);
+        let mut snapshots = Vec::new();
+
+        for viewport_top in [0, 1] {
+            let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 16);
+            let mut terminal =
+                crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+            let viewport = Rect::new(
+                /*x*/ 0,
+                /*y*/ viewport_top,
+                width,
+                /*height*/ height - viewport_top,
+            );
+            terminal.set_viewport_area(viewport);
+
+            insert_history_lines_with_mode_and_wrap_policy(
+                &mut terminal,
+                vec![Line::from(format!("finalized-at-top-{viewport_top}"))],
+                InsertHistoryMode::Standard,
+                HistoryLineWrapPolicy::PreWrap,
+            )
+            .expect("insert constrained history");
+
+            terminal.invalidate_viewport();
+            terminal
+                .draw_with_size(screen_size, |frame| {
+                    Paragraph::new("live viewport").render(viewport, frame.buffer_mut());
+                })
+                .expect("redraw live viewport");
+
+            let visible = terminal.backend().vt100().screen().contents();
+            let visible_rows = terminal
+                .backend()
+                .vt100()
+                .screen()
+                .rows(/*start*/ 0, width)
+                .collect::<Vec<_>>();
+            let live_viewport = visible_rows[usize::from(viewport_top)..].join("\n");
+            let mut screen_with_scrollback = terminal.backend().vt100().screen().clone();
+            screen_with_scrollback.set_scrollback(/*rows*/ usize::MAX);
+            let scrollback = screen_with_scrollback.contents();
+            let finalized = format!("finalized-at-top-{viewport_top}");
+            assert!(
+                scrollback.contains(&finalized),
+                "finalized row was erased for viewport top {viewport_top}: {scrollback:?}",
+            );
+            assert!(
+                !live_viewport.contains(&finalized),
+                "finalized row remained inside the live viewport: {live_viewport:?}",
+            );
+            snapshots.push(format!(
+                "top={viewport_top}\nSCROLLBACK:\n{scrollback}\nVISIBLE:\n{visible}"
+            ));
+        }
+
+        insta::assert_snapshot!(
+            "history_insert_with_constrained_viewport",
+            snapshots.join("\n---\n")
         );
     }
 

@@ -3,11 +3,11 @@ source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
 "──────────────────────────"
-"│›Ask Codex…              "
+"│›                        "
 "│                         "
 "│                         "
 "│                         "
 "│                         "
 "│                         "
-"│                         "
-"            Context 100%  "
+"──────────────────────────"
+"       Context 100% left  "

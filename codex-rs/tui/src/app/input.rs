@@ -156,23 +156,38 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
-    pub(super) fn apply_raw_output_mode(
-        &mut self,
-        tui: &mut tui::Tui,
-        enabled: bool,
-        notify: bool,
-    ) {
-        if notify {
-            self.chat_widget.set_raw_output_mode_and_notify(enabled);
-        } else {
-            self.chat_widget.set_raw_output_mode(enabled);
-        }
-        let terminal_width = tui.terminal.last_known_screen_size.into();
-        if let Err(err) = self.reflow_transcript_now(tui, terminal_width) {
-            tracing::warn!(error = %err, "failed to reflow transcript after raw output mode toggle");
+    pub(super) fn apply_raw_output_mode(&mut self, tui: &mut tui::Tui, enabled: bool) {
+        if self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback
+            && self.chat_widget.history_stream_active()
+        {
             self.chat_widget
-                .add_error_message(format!("Failed to redraw transcript: {err}"));
+                .defer_raw_output_mode_until_stream_boundary(enabled);
+            tui.frame_requester().schedule_frame();
+            return;
         }
+
+        self.config.tui_raw_output_mode = enabled;
+        self.chat_widget.set_raw_output_mode(enabled);
+        if self.transcript_replay_policy == TranscriptReplayPolicy::OwnedBufferReplay {
+            let terminal_width = tui.terminal.last_known_screen_size.into();
+            if let Err(err) = self.reflow_transcript_now(tui, terminal_width) {
+                tracing::warn!(
+                    error = %err,
+                    "failed to reflow transcript after raw output mode toggle"
+                );
+                self.chat_widget
+                    .add_error_message(format!("Failed to redraw transcript: {err}"));
+            }
+        }
+        tui.frame_requester().schedule_frame();
+    }
+
+    pub(super) fn apply_pending_raw_output_mode_after_stream(&mut self, tui: &mut tui::Tui) {
+        let Some(enabled) = self.chat_widget.take_pending_raw_output_mode_after_stream() else {
+            return;
+        };
+        self.config.tui_raw_output_mode = enabled;
+        self.chat_widget.set_raw_output_mode(enabled);
         tui.frame_requester().schedule_frame();
     }
 
@@ -337,8 +352,8 @@ impl App {
 
         if app_keymap_shortcuts_available && self.keymap.app.toggle_raw_output.is_pressed(key_event)
         {
-            let enabled = !self.chat_widget.raw_output_mode();
-            self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+            let enabled = !self.chat_widget.requested_raw_output_mode();
+            self.apply_raw_output_mode(tui, enabled);
             return;
         }
 

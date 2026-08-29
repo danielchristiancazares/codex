@@ -249,10 +249,25 @@ pub(crate) async fn read_remote_project_trust(
     let disabled_reason = disabled_project
         .and_then(|layer| layer.get("disabledReason"))
         .and_then(JsonValue::as_str);
-    let trust_target = disabled_reason
-        .and_then(|reason| reason.split_once(", add "))
-        .and_then(|(_, reason)| reason.rsplit_once(" as a trusted project in "))
-        .map(|(trust_target, _)| trust_target)
+    let projects = response["config"]["projects"].as_object();
+    let configured_trust_target = projects
+        .into_iter()
+        .flatten()
+        .filter(|(_, project)| project.get("trust_level").is_none())
+        .filter(|(path, _)| {
+            LegacyAppPathString::from_string((*path).clone())
+                .to_inferred_path_uri()
+                .is_some_and(|project_uri| cwd_uri.starts_with(&project_uri))
+        })
+        .max_by_key(|(path, _)| path.len())
+        .map(|(path, _)| path.as_str());
+    let trust_target = configured_trust_target
+        .or_else(|| {
+            disabled_reason
+                .and_then(|reason| reason.split_once(", add "))
+                .and_then(|(_, reason)| reason.rsplit_once(" as a trusted project in "))
+                .map(|(trust_target, _)| trust_target)
+        })
         .or_else(|| {
             disabled_project
                 .and_then(|layer| layer["name"]["dotCodexFolder"].as_str())
@@ -262,12 +277,16 @@ pub(crate) async fn read_remote_project_trust(
                 })
         })
         .unwrap_or(&cwd);
-    let projects = response["config"]["projects"].as_object();
-    let has_trust_decision = projects
-        .and_then(|projects| projects.get(trust_target))
-        .and_then(|project| project.get("trust_level"))
-        .and_then(JsonValue::as_str)
-        .is_some_and(|level| matches!(level, "trusted" | "untrusted"));
+    let has_trust_decision = !project_layers.is_empty()
+        && projects.into_iter().flatten().any(|(path, project)| {
+            project
+                .get("trust_level")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|level| matches!(level, "trusted" | "untrusted"))
+                && LegacyAppPathString::from_string(path.clone())
+                    .to_inferred_path_uri()
+                    .is_some_and(|project_uri| cwd_uri.starts_with(&project_uri))
+        });
     let explicitly_untrusted = disabled_reason.is_some_and(|reason| {
         projects.into_iter().flatten().any(|(path, project)| {
             project.get("trust_level").and_then(JsonValue::as_str) == Some("untrusted")

@@ -22,7 +22,6 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Stylize;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -41,8 +40,6 @@ use crate::keymap::ListKeymap;
 use crate::render::renderable::Renderable;
 
 const STATUS_LINE_USE_THEME_COLORS_ITEM_ID: &str = "status-line-use-theme-colors";
-const STATUS_LINE_SETUP_FOOTER_HINT: &str =
-    "↑/↓ select · Space toggle · ←/→ reorder · Enter save · Esc cancel";
 
 /// Available items that can be displayed in the status line.
 ///
@@ -424,22 +421,6 @@ impl BottomPaneView for StatusLineSetupView {
 impl Renderable for StatusLineSetupView {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.picker.render(area, buf);
-        if area.is_empty() {
-            return;
-        }
-        let footer_area = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
-        ratatui::widgets::Widget::render(ratatui::widgets::Clear, footer_area, buf);
-        let hint_area = Rect::new(
-            footer_area.x.saturating_add(2),
-            footer_area.y,
-            footer_area.width.saturating_sub(2),
-            footer_area.height,
-        );
-        ratatui::widgets::Widget::render(
-            ratatui::text::Line::from(STATUS_LINE_SETUP_FOOTER_HINT).dim(),
-            hint_area,
-            buf,
-        );
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -731,7 +712,12 @@ mod tests {
             crate::keymap::RuntimeKeymap::defaults().list,
         );
 
-        assert_snapshot!(render_lines(&view, /*width*/ 72));
+        let rendered = render_lines(&view, /*width*/ 72);
+        let footer = rendered.lines().last().unwrap_or_default();
+
+        assert!(footer.contains("enter confirm"), "{footer:?}");
+        assert!(footer.contains("esc close"), "{footer:?}");
+        assert_snapshot!(rendered);
     }
 
     #[test]
@@ -790,6 +776,32 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+    }
+
+    #[test]
+    fn setup_view_footer_uses_resolved_list_keymap() {
+        let mut list_keymap = crate::keymap::RuntimeKeymap::defaults().list;
+        list_keymap.move_left = vec![crate::key_hint::ctrl(crossterm::event::KeyCode::Char('z'))];
+        list_keymap.move_right = vec![crate::key_hint::ctrl(crossterm::event::KeyCode::Char('x'))];
+        list_keymap.accept = vec![crate::key_hint::plain(crossterm::event::KeyCode::F(12))];
+        list_keymap.cancel.clear();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let view = StatusLineSetupView::new(
+            Some(&[StatusLineItem::ModelName.to_string()]),
+            /*use_theme_colors*/ true,
+            StatusSurfacePreviewData::default(),
+            AppEventSender::new(tx_raw),
+            list_keymap,
+        );
+
+        let rendered = render_lines(&view, /*width*/ 100);
+        let footer = rendered.lines().last().unwrap_or_default().trim_end();
+
+        insta::assert_snapshot!("status_line_setup_custom_keymap_footer", footer);
+        assert!(footer.contains("ctrl + z/ctrl + x"), "{footer:?}");
+        assert!(footer.contains("f12"), "{footer:?}");
+        assert!(!footer.contains("Enter"), "{footer:?}");
+        assert!(!footer.contains("Esc"), "{footer:?}");
     }
 
     fn render_lines(view: &StatusLineSetupView, width: u16) -> String {

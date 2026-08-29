@@ -200,7 +200,7 @@ impl App {
                 .await;
             }
             AppEvent::RawOutputModeChanged { enabled } => {
-                self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+                self.apply_raw_output_mode(tui, enabled);
             }
             AppEvent::ClearUiAndSubmitUserMessage { text } => {
                 self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
@@ -584,6 +584,7 @@ impl App {
                     deferred_history_cell,
                 )?;
                 self.chat_widget.note_stream_consolidation_completed();
+                self.apply_pending_raw_output_mode_after_stream(tui);
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::ConsolidateProposedPlan(source) => {
@@ -620,6 +621,7 @@ impl App {
                     self.maybe_finish_stream_reflow(tui)?;
                 }
                 self.chat_widget.note_stream_consolidation_completed();
+                self.apply_pending_raw_output_mode_after_stream(tui);
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::StartCommitAnimation => {
@@ -870,7 +872,7 @@ impl App {
                 self.handle_pet_selected(tui, pet_id);
             }
             AppEvent::PetDisabled => {
-                self.handle_pet_disabled(tui).await;
+                self.handle_pet_disabled(tui).await?;
             }
             AppEvent::PetPreviewRequested { pet_id } => {
                 self.chat_widget.start_pet_picker_preview(pet_id);
@@ -888,7 +890,7 @@ impl App {
                     .await;
             }
             AppEvent::ConfiguredPetLoaded { pet_id, result } => {
-                self.handle_configured_pet_loaded(tui, pet_id, result);
+                self.handle_configured_pet_loaded(tui, pet_id, result)?;
             }
             AppEvent::RefreshConnectors { force_refetch } => {
                 self.chat_widget.refresh_connectors(force_refetch);

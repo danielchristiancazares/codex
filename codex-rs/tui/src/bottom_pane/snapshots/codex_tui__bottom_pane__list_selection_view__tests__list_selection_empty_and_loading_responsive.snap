@@ -60,17 +60,17 @@ loading:
 
 80x6:
                                                                                 
+                                                                                
   ·  Local provider  Loading…                                                   
   ·  Cloud catalog   Unavailable: Account offline                               
-                                                                                
                                                                                 
   esc back                                                                      
 
 80x6:
                                                                                 
+                                                                                
   ·  Local provider  Loading…                                                   
   ·  Cloud catalog   Unavailable: Account offline                               
-                                                                                
                                                                                 
   esc back                                                                      
 
@@ -83,17 +83,17 @@ empty:
 
 24x6:
                         
+                        
   / ▏ Search…           
   no options available  
-                        
                         
   Press esc to go back  
 
 24x6:
                         
+                        
   / ▏ Search…           
   no options available  
-                        
                         
   Press esc to go back  
 
@@ -105,17 +105,17 @@ empty:
 
 40x6:
                                         
+                                        
   / ▏ Search workspaces                 
   no options available                  
-                                        
                                         
   Press esc to go back                  
 
 40x6:
                                         
+                                        
   / ▏ Search workspaces                 
   no options available                  
-                                        
                                         
   Press esc to go back                  
 
@@ -127,17 +127,17 @@ empty:
 
 80x6:
                                                                                 
+                                                                                
   / ▏ Search workspaces                                                         
   no options available                                                          
-                                                                                
                                                                                 
   Press esc to go back                                                          
 
 80x6:
                                                                                 
+                                                                                
   / ▏ Search workspaces                                                         
   no options available                                                          
-                                                                                
                                                                                 
   Press esc to go back                                                          
 
@@ -150,17 +150,17 @@ zero result:
 
 24x6:
                         
+                        
   / no-result▏          
   no matches            
-                        
                         
   Press esc to go back  
 
 24x6:
                         
+                        
   / no-result▏          
   no matches            
-                        
                         
   Press esc to go back  
 
@@ -172,17 +172,17 @@ zero result:
 
 40x6:
                                         
+                                        
   / no-result▏                          
   no matches                            
-                                        
                                         
   Press esc to go back                  
 
 40x6:
                                         
+                                        
   / no-result▏                          
   no matches                            
-                                        
                                         
   Press esc to go back                  
 
@@ -194,17 +194,17 @@ zero result:
 
 80x6:
                                                                                 
+                                                                                
   / no-result▏                                                                  
   no matches                                                                    
-                                                                                
                                                                                 
   Press esc to go back                                                          
 
 80x6:
                                                                                 
+                                                                                
   / no-result▏                                                                  
   no matches                                                                    
-                                                                                
                                                                                 
   Press esc to go back                                                          
 
@@ -217,10 +217,10 @@ disabled:
 
 24x6:
                         
+                        
      Cloud catalog      
      Unavailable:       
      Access required    
-                        
   esc back              
 
 24x7:
@@ -240,37 +240,37 @@ disabled:
 
 40x6:
                                         
+                                        
      Cloud catalog                      
      Unavailable: Access required       
-                                        
                                         
   esc back                              
 
 40x6:
                                         
+                                        
      Cloud catalog                      
      Unavailable: Access required       
-                                        
                                         
   esc back                              
 
 80x4:
                                                                                 
-     Cloud catalog  Unavailable: Access required                                
                                                                                 
+     Cloud catalog  Unavailable: Access required                                
   esc back                                                                      
 
 80x6:
                                                                                 
-     Cloud catalog  Unavailable: Access required                                
                                                                                 
+     Cloud catalog  Unavailable: Access required                                
                                                                                 
                                                                                 
   esc back                                                                      
 
 80x5:
                                                                                 
-     Cloud catalog  Unavailable: Access required                                
                                                                                 
+     Cloud catalog  Unavailable: Access required                                
                                                                                 
   esc back

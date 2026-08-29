@@ -1495,36 +1495,36 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                     needs_redraw = true;
                                 }
                                 _ => {
-                                    if page.submitting {
-                                        // Ignore input while submitting
-                                    } else if let codex_tui::ComposerAction::Submitted(text) =
-                                        page.composer.input(key)
-                                    {
-                                            // Submit only if we have an env id
-                                            if let Some(env) = page.env_id.clone() {
+                                    match page.input(key) {
+                                        new_task::NewTaskInput::None => {}
+                                        new_task::NewTaskInput::MissingEnvironment => {
+                                            app.status = "No environment selected".to_string();
+                                        }
+                                        new_task::NewTaskInput::Submitted(submission) => {
+                                            let new_task::NewTaskSubmission {
+                                                env_id,
+                                                prompt,
+                                                best_of_n,
+                                            } = submission;
                                                 append_error_log(format!(
                                                     "new-task: submit env={} size={}",
-                                                    env,
-                                                    text.chars().count()
+                                                    env_id,
+                                                    prompt.chars().count()
                                                 ));
-                                                page.submitting = true;
                                                 app.status = "Submitting new task…".to_string();
                                                 let tx = tx.clone();
                                                 let backend = Arc::clone(&backend);
-                                                let best_of_n = page.best_of_n;
                                                 tokio::spawn(async move {
                                                     let git_ref = resolve_git_ref(/*branch_override*/ None).await;
 
-                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env, &text, &git_ref, /*qa_mode*/ false, best_of_n).await;
+                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env_id, &prompt, &git_ref, /*qa_mode*/ false, best_of_n).await;
                                                     let evt = match result {
                                                         Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
                                                         Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
                                                     };
                                                     let _ = tx.send(evt);
                                                 });
-                                            } else {
-                                                app.status = "No environment selected".to_string();
-                                            }
+                                        }
                                     }
                                     needs_redraw = true;
                                     // If paste‑burst is active, schedule a micro‑flush frame.
