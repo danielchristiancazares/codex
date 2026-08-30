@@ -62,6 +62,58 @@ fn response_item_rollout_line_preserves_shape() -> Result<()> {
 }
 
 #[test]
+fn cf_027_rollout_budget_checkpoint_is_rollout_only_and_round_trips() -> Result<()> {
+    use codex_protocol::protocol::RolloutBudgetCheckpoint;
+    use codex_protocol::protocol::TokenCountEvent;
+
+    let event = EventMsg::TokenCount(TokenCountEvent {
+        info: None,
+        rate_limits: None,
+        rollout_budget: Some(RolloutBudgetCheckpoint {
+            weighted_tokens_used: 80.5,
+        }),
+    });
+    assert_eq!(
+        serde_json::to_value(&event)?,
+        json!({
+            "type": "token_count",
+            "info": null,
+            "rate_limits": null,
+        })
+    );
+
+    let line = RolloutLine {
+        timestamp: "2025-01-03T12:00:00.000Z".to_string(),
+        ordinal: Some(7),
+        item: RolloutItem::EventMsg(event),
+    };
+    let serialized = serde_json::to_value(&line)?;
+    assert_eq!(
+        serialized["rollout_budget"],
+        json!({ "weighted_tokens_used": 80.5 })
+    );
+    assert_eq!(serialized["payload"].get("rollout_budget"), None);
+
+    let restored = serde_json::from_value::<RolloutLine>(serialized)?;
+    let RolloutItem::EventMsg(EventMsg::TokenCount(event)) = restored.item else {
+        panic!("expected token-count rollout item");
+    };
+    assert_eq!(
+        event.rollout_budget,
+        Some(RolloutBudgetCheckpoint {
+            weighted_tokens_used: 80.5,
+        })
+    );
+    assert!(
+        InitialHistory::Forked(vec![RolloutItem::EventMsg(EventMsg::TokenCount(event))])
+            .get_event_msgs()
+            .expect("forked history has event messages")
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 /// Keeps harness metadata beside, rather than inside, response-item payloads.
 fn response_item_envelope_stores_metadata_beside_rollout_payload() -> Result<()> {
     let response_item = response_message("developer");

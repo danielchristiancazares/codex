@@ -6,13 +6,16 @@ use super::RealtimeOutbound;
 use super::RealtimePendingOutbound;
 use super::RealtimeSessionKind;
 use super::RealtimeStreamedItem;
+use super::RealtimeTranscriptTailFlush;
 use super::classify_realtime_input_error;
 use super::classify_realtime_input_error_with_pending;
+use super::flush_realtime_transcript_tail;
 use super::realtime_delegation_from_handoff;
 use super::realtime_request_headers;
 use super::realtime_text_from_handoff_request;
 use super::wrap_realtime_delegation_input;
 use crate::context::RealtimeDelegationSource;
+use async_channel::TryRecvError;
 use async_channel::bounded;
 use codex_api::ApiError;
 use codex_api::RealtimeEventParser;
@@ -89,6 +92,67 @@ fn wraps_handoff_with_transcript_delta() {
         realtime_delegation_from_handoff(&handoff),
         Some(
             "<realtime_delegation>\n  <input>delegate this</input>\n  <transcript_delta>user: hello\nassistant: hi there</transcript_delta>\n</realtime_delegation>"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn handoff_transcript_delta_excludes_the_final_user_input() {
+    let handoff = RealtimeHandoffRequested {
+        handoff_id: "handoff_1".to_string(),
+        item_id: "item_1".to_string(),
+        input_transcript: "delegate this".to_string(),
+        active_transcript: vec![
+            RealtimeTranscriptEntry {
+                role: "assistant".to_string(),
+                text: "earlier context".to_string(),
+            },
+            RealtimeTranscriptEntry {
+                role: "user".to_string(),
+                text: "delegate this".to_string(),
+            },
+        ],
+    };
+
+    assert_eq!(
+        realtime_delegation_from_handoff(&handoff),
+        Some(
+            "<realtime_delegation>\n  <input>delegate this</input>\n  <transcript_delta>assistant: earlier context</transcript_delta>\n</realtime_delegation>"
+                .to_string()
+        )
+    );
+}
+
+#[tokio::test]
+async fn transcript_tail_flush_requires_new_user_speech() {
+    let (tx, rx) = bounded(1);
+    let flush = RealtimeTranscriptTailFlush { enabled: true, tx };
+    let assistant_tail = vec![RealtimeTranscriptEntry {
+        role: "assistant".to_string(),
+        text: "closing response".to_string(),
+    }];
+
+    flush_realtime_transcript_tail(&flush, &assistant_tail).await;
+
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+
+    let user_tail = vec![
+        RealtimeTranscriptEntry {
+            role: "assistant".to_string(),
+            text: "closing response".to_string(),
+        },
+        RealtimeTranscriptEntry {
+            role: "user".to_string(),
+            text: "one more thing".to_string(),
+        },
+    ];
+    flush_realtime_transcript_tail(&flush, &user_tail).await;
+
+    assert_eq!(
+        rx.try_recv(),
+        Ok(
+            "<realtime_delegation>\n  <source>transcript_tail_flush</source>\n  <input>The user just ended their realtime session. Here is the remaining handoff/transcript tail. You probably do not have to do anything; acknowledge the handoff unless the transcript itself asks for something.</input>\n  <transcript_delta>assistant: closing response\nuser: one more thing</transcript_delta>\n</realtime_delegation>"
                 .to_string()
         )
     );

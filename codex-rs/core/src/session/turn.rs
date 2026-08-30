@@ -370,9 +370,10 @@ pub(crate) async fn run_turn(
 
             // Construct the input that we will send to the model.
             let sampling_request_input: Vec<ResponseItem> = async {
-                sess.clone_history()
-                    .await
-                    .for_prompt(&step_context.settings.model_info.input_modalities)
+                sess.clone_history().await.for_prompt_with_policy(
+                    &step_context.settings.model_info.input_modalities,
+                    step_context.settings.model_info.truncation_policy.into(),
+                )
             }
             .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
             .await;
@@ -416,6 +417,7 @@ pub(crate) async fn run_turn(
                     let token_status = super::context_window::context_window_token_status(
                         sess.as_ref(),
                         turn_context.as_ref(),
+                        step_context.settings.model_info.as_ref(),
                     )
                     .await;
                     (has_pending_input, token_status)
@@ -1033,9 +1035,13 @@ async fn run_pre_sampling_compact(
 ) -> CodexResult<()> {
     maybe_run_previous_model_inline_compact(sess, turn_context, client_session, cancellation_token)
         .await?;
-    let token_status =
-        super::context_window::context_window_token_status(sess.as_ref(), turn_context.as_ref())
-            .await;
+    let settings = turn_context.current_settings.load_full();
+    let token_status = super::context_window::context_window_token_status(
+        sess.as_ref(),
+        turn_context.as_ref(),
+        settings.model_info.as_ref(),
+    )
+    .await;
     // Compact if the configured auto-compaction budget or usable context window is exhausted.
     if token_status.token_limit_reached {
         // Pre-turn compaction runs before run_turn creates the normal sampling step.
@@ -1074,13 +1080,14 @@ async fn capture_current_model_fallback_step_context(
     previous_model: &str,
     cancellation_token: &CancellationToken,
 ) -> CodexResult<Option<Arc<StepContext>>> {
+    let current_settings = turn_context.current_settings.load_full();
     let uses_codex_backend = turn_context
         .auth_manager
         .as_deref()
         .is_some_and(codex_login::AuthManager::current_auth_uses_codex_backend);
     if !uses_codex_backend
         || !turn_context.provider.info().is_openai()
-        || previous_model == turn_context.model_info().slug
+        || previous_model == current_settings.model_info.slug
     {
         return Ok(None);
     }
@@ -1102,9 +1109,11 @@ async fn maybe_run_previous_model_inline_compact(
     let Some(previous_turn_settings) = sess.previous_turn_settings().await else {
         return Ok(());
     };
+    let current_settings = turn_context.current_settings.load_full();
+    let current_model_info = current_settings.model_info.as_ref();
     let should_compact_for_comp_hash_change = comp_hash_changed(
         previous_turn_settings.comp_hash.as_deref(),
-        turn_context.model_info().comp_hash.as_deref(),
+        current_model_info.comp_hash.as_deref(),
     );
     let previous_model = previous_turn_settings.model;
     let previous_model_turn_context = Arc::new(
@@ -1140,17 +1149,16 @@ async fn maybe_run_previous_model_inline_compact(
     let Some(old_context_window) = previous_model_turn_context.model_context_window() else {
         return Ok(());
     };
-    let Some(new_context_window) = turn_context.model_context_window() else {
+    let Some(new_context_window) = current_model_info.usable_context_window() else {
         return Ok(());
     };
-    let active_context_tokens = sess.get_total_token_usage().await;
+    let active_context_tokens = sess.get_model_visible_token_usage(current_model_info).await;
     let previous_model_limit_reached = match turn_context
         .config
         .model_auto_compact_token_limit_scope
     {
         AutoCompactTokenLimitScope::Total => {
-            let new_auto_compact_limit = turn_context
-                .model_info()
+            let new_auto_compact_limit = current_model_info
                 .auto_compact_token_limit()
                 .unwrap_or(i64::MAX);
             active_context_tokens > new_auto_compact_limit
@@ -1159,7 +1167,7 @@ async fn maybe_run_previous_model_inline_compact(
         AutoCompactTokenLimitScope::BodyAfterPrefix => active_context_tokens >= new_context_window,
     };
     let should_run = previous_model_limit_reached
-        && previous_model_turn_context.model_info().slug != turn_context.model_info().slug
+        && previous_model_turn_context.model_info().slug != current_model_info.slug
         && old_context_window > new_context_window;
     if should_run {
         let step_context = sess
@@ -1386,9 +1394,10 @@ async fn run_sampling_request(
         let prompt_input = if let Some(input) = initial_input.take() {
             input
         } else {
-            sess.clone_history()
-                .await
-                .for_prompt(&step_context.settings.model_info.input_modalities)
+            sess.clone_history().await.for_prompt_with_policy(
+                &step_context.settings.model_info.input_modalities,
+                step_context.settings.model_info.truncation_policy.into(),
+            )
         };
         let mut prompt_input = prompt_input;
         if let Some(executed_tool_calls) = sess.services.executed_tool_calls.as_ref()

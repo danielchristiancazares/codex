@@ -2825,24 +2825,28 @@ async fn record_initial_history_seeds_token_info_from_rollout() {
         TokenCountEvent {
             info: Some(info1),
             rate_limits: None,
+            rollout_budget: None,
         },
     )));
     rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
         TokenCountEvent {
             info: None,
             rate_limits: None,
+            rollout_budget: None,
         },
     )));
     rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
         TokenCountEvent {
             info: Some(info2.clone()),
             rate_limits: None,
+            rollout_budget: None,
         },
     )));
     rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
         TokenCountEvent {
             info: None,
             rate_limits: None,
+            rollout_budget: None,
         },
     )));
 
@@ -3814,6 +3818,92 @@ async fn thread_rollback_drops_last_turn_from_history() {
             RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback))
             if rollback.num_turns == 1
         )
+    }));
+}
+
+#[tokio::test]
+async fn thread_rollback_discards_buffered_async_hook_result_from_removed_turn() {
+    let (mut sess, tc, rx) = make_session_and_context_with_rx().await;
+    attach_thread_persistence(
+        Arc::get_mut(&mut sess).expect("session should not have additional references"),
+    )
+    .await;
+    let (result_sender, result_receiver) = async_channel::unbounded();
+    Arc::get_mut(&mut sess)
+        .expect("session should remain uniquely owned")
+        .async_hook_results = result_receiver;
+
+    let initial_context = build_initial_context(&sess, &tc).await;
+    let mut retained_turn = vec![
+        user_message("retained user turn"),
+        assistant_message("retained assistant turn"),
+    ];
+    for item in &mut retained_turn {
+        item.set_turn_id_if_missing("retained-turn");
+    }
+    let mut removed_turn = vec![
+        user_message("removed user turn"),
+        assistant_message("removed assistant turn"),
+    ];
+    for item in &mut removed_turn {
+        item.set_turn_id_if_missing("removed-turn");
+    }
+    let full_history = initial_context
+        .into_iter()
+        .chain(retained_turn)
+        .chain(removed_turn)
+        .collect::<Vec<_>>();
+    sess.replace_history(full_history.clone(), Some(tc.to_turn_context_item()))
+        .await;
+    sess.persist_rollout_items(
+        &full_history
+            .into_iter()
+            .map(ResponseItemEnvelope::new)
+            .map(RolloutItem::ResponseItem)
+            .collect::<Vec<_>>(),
+    )
+    .await;
+    result_sender
+        .try_send(
+            serde_json::from_value::<codex_protocol::protocol::HookCompletedEvent>(json!({
+                "turn_id": "removed-turn",
+                "run": {
+                    "id": "user_prompt_submit:0:hooks.json",
+                    "event_name": "user_prompt_submit",
+                    "handler_type": "command",
+                    "execution_mode": "async",
+                    "scope": "turn",
+                    "source_path": tc
+                        .environments
+                        .local_environment_cwd()
+                        .expect("local turn environment")
+                        .join("hooks.json"),
+                    "source": "user",
+                    "display_order": 0,
+                    "status": "completed",
+                    "status_message": null,
+                    "started_at": 0,
+                    "completed_at": 1,
+                    "duration_ms": 1,
+                    "entries": [{
+                        "kind": "context",
+                        "text": "stale async context from removed turn"
+                    }]
+                }
+            }))
+            .expect("valid buffered async hook result"),
+        )
+        .expect("buffer async hook result");
+
+    handlers::thread_rollback(&sess, "rollback".to_string(), /*num_turns*/ 1).await;
+    let rollback_event = wait_for_thread_rolled_back(&rx).await;
+
+    assert_eq!(rollback_event.num_turns, 1);
+    assert!(sess.async_hook_results.is_empty());
+    assert!(sess.clone_history().await.raw_items().all(|item| {
+        !serde_json::to_string(item)
+            .expect("serialize history item")
+            .contains("stale async context from removed turn")
     }));
 }
 
@@ -9554,9 +9644,10 @@ async fn record_context_updates_emits_environment_item_for_time_changes() {
         .into_iter()
         .find(|text| text.contains("<environment_context>"))
         .expect("environment update item should be emitted");
-    let current_date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    assert!(environment_update.contains(&format!("<current_date>{current_date}</current_date>")));
-    assert!(environment_update.contains("<timezone>Europe/Berlin</timezone>"));
+    assert_eq!(
+        environment_update,
+        "<environment_context>\n  <timezone>Europe/Berlin</timezone>\n</environment_context>"
+    );
 }
 
 #[tokio::test]

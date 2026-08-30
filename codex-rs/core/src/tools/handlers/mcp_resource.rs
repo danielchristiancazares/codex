@@ -101,22 +101,26 @@ struct ReadResourceArgs {
 }
 
 #[derive(Debug, Serialize)]
-struct ResourceWithServer<T> {
-    server: String,
+struct ResourceListingEntry<T> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server: Option<String>,
     #[serde(flatten)]
     resource: T,
 }
 
-impl<T> ResourceWithServer<T> {
-    fn new(server: String, resource: T) -> Self {
-        Self { server, resource }
+impl<T> ResourceListingEntry<T> {
+    fn without_server(resource: T) -> Self {
+        Self {
+            server: None,
+            resource,
+        }
     }
 
-    fn from_server(server: &str, resources: Vec<T>) -> Vec<Self> {
-        resources
-            .into_iter()
-            .map(|resource| Self::new(server.to_string(), resource))
-            .collect()
+    fn with_server(server: String, resource: T) -> Self {
+        Self {
+            server: Some(server),
+            resource,
+        }
     }
 
     fn from_all_servers(resources_by_server: HashMap<String, Vec<T>>) -> Vec<Self> {
@@ -124,7 +128,11 @@ impl<T> ResourceWithServer<T> {
         entries.sort_by(|(left, _), (right, _)| left.cmp(right));
         entries
             .into_iter()
-            .flat_map(|(server, resources)| Self::from_server(&server, resources))
+            .flat_map(|(server, resources)| {
+                resources
+                    .into_iter()
+                    .map(move |resource| Self::with_server(server.clone(), resource))
+            })
             .collect()
     }
 }
@@ -134,7 +142,7 @@ impl<T> ResourceWithServer<T> {
 struct ListResourcesPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
-    resources: Vec<ResourceWithServer<Resource>>,
+    resources: Vec<ResourceListingEntry<Resource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     next_cursor: Option<String>,
 }
@@ -142,7 +150,11 @@ struct ListResourcesPayload {
 impl ListResourcesPayload {
     fn from_single_server(server: String, result: ListResourcesResult) -> Self {
         Self {
-            resources: ResourceWithServer::from_server(&server, result.resources),
+            resources: result
+                .resources
+                .into_iter()
+                .map(ResourceListingEntry::without_server)
+                .collect(),
             server: Some(server),
             next_cursor: result.next_cursor,
         }
@@ -151,7 +163,7 @@ impl ListResourcesPayload {
     fn from_all_servers(resources_by_server: HashMap<String, Vec<Resource>>) -> Self {
         Self {
             server: None,
-            resources: ResourceWithServer::from_all_servers(resources_by_server),
+            resources: ResourceListingEntry::from_all_servers(resources_by_server),
             next_cursor: None,
         }
     }
@@ -162,7 +174,7 @@ impl ListResourcesPayload {
 struct ListResourceTemplatesPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
-    resource_templates: Vec<ResourceWithServer<ResourceTemplate>>,
+    resource_templates: Vec<ResourceListingEntry<ResourceTemplate>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     next_cursor: Option<String>,
 }
@@ -170,7 +182,11 @@ struct ListResourceTemplatesPayload {
 impl ListResourceTemplatesPayload {
     fn from_single_server(server: String, result: ListResourceTemplatesResult) -> Self {
         Self {
-            resource_templates: ResourceWithServer::from_server(&server, result.resource_templates),
+            resource_templates: result
+                .resource_templates
+                .into_iter()
+                .map(ResourceListingEntry::without_server)
+                .collect(),
             server: Some(server),
             next_cursor: result.next_cursor,
         }
@@ -179,17 +195,16 @@ impl ListResourceTemplatesPayload {
     fn from_all_servers(templates_by_server: HashMap<String, Vec<ResourceTemplate>>) -> Self {
         Self {
             server: None,
-            resource_templates: ResourceWithServer::from_all_servers(templates_by_server),
+            resource_templates: ResourceListingEntry::from_all_servers(templates_by_server),
             next_cursor: None,
         }
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct ReadResourcePayload {
     server: String,
     uri: String,
-    #[serde(flatten)]
     result: ReadResourceResult,
 }
 
@@ -283,15 +298,13 @@ async fn run_resource_operation<T>(
     call_id: &str,
     invocation: McpInvocation,
     operation: impl Future<Output = Result<T, FunctionCallError>>,
-) -> Result<Box<dyn ToolOutput>, FunctionCallError>
-where
-    T: Serialize,
-{
+    project_output: impl FnOnce(T, TruncationPolicy) -> Result<FunctionToolOutput, FunctionCallError>,
+) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
     emit_tool_call_begin(session, turn, call_id, invocation.clone()).await;
     let start = Instant::now();
-    let result = operation.await.and_then(|payload| {
-        serialize_function_output(payload, turn.model_info().truncation_policy.into())
-    });
+    let result = operation
+        .await
+        .and_then(|payload| project_output(payload, turn.model_info().truncation_policy.into()));
 
     match result {
         Ok(output) => {
@@ -306,7 +319,7 @@ where
                 Ok(call_tool_result_from_content(&content, output.success)),
             )
             .await;
-            Ok(boxed_tool_output(output))
+            Ok(boxed_tool_output(output.with_external_context()))
         }
         Err(error) => {
             emit_tool_call_end(
@@ -357,7 +370,7 @@ where
     })?;
     // Match regular MCP tool outputs by bounding the copy persisted to the
     // rollout and injected into model context.
-    let content = truncate_text(&content, truncation_policy * 1.2);
+    let content = truncate_text(&content, truncation_policy);
 
     Ok(FunctionToolOutput::from_text(content, Some(true)))
 }

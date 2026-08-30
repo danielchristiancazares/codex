@@ -477,7 +477,11 @@ fn exec_command_tool_output_reserves_metadata_budget_and_preserves_policy_units(
             .to_text()
             .expect("exec output should serialize as text");
 
-        assert!(text.len() <= (policy * 1.2).byte_budget());
+        assert_eq!(
+            truncate_function_output_payload(&output, policy),
+            output,
+            "producer output should already satisfy the final history policy"
+        );
         assert_eq!(text.matches(marker).count(), 1);
         assert!(text.contains("Original token count: 123"));
         assert!(text.contains("Total output lines: 150"));

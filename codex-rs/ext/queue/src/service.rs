@@ -17,6 +17,9 @@ use codex_extension_api::ThreadIdleCause;
 use codex_extension_api::ThreadIdleInput;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadResumeInput;
+use codex_extension_api::TurnAbortInput;
+use codex_extension_api::TurnLifecycleContributor;
+use codex_extension_api::TurnStopInput;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::snapshot_local_user_input;
@@ -30,6 +33,7 @@ use codex_protocol::user_input::UserInput;
 use codex_thread_store::MAX_QUEUE_ITEMS;
 use codex_thread_store::QueueStore;
 use codex_thread_store::QueuedUserSubmissionRecord;
+use codex_thread_store::QueuedUserSubmissionState;
 use codex_thread_store::ThreadStoreError;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -388,16 +392,42 @@ impl QueuedItemService {
         let input @ TurnInput::UserInput { .. } = item.input else {
             return Err(QueueServiceError::InvalidInput);
         };
+        let turn_id = Uuid::now_v7().to_string();
+        let Some(claimed) = self
+            .queue
+            .claim(thread_id, queued_item_id.clone(), turn_id.clone())
+            .await?
+        else {
+            return Err(ThreadStoreError::InvalidRequest {
+                message: format!("queued submission is no longer pending: {queued_item_id}"),
+            }
+            .into());
+        };
+        debug_assert_eq!(
+            claimed.state,
+            QueuedUserSubmissionState::Claimed {
+                turn_id: turn_id.clone()
+            }
+        );
+        self.emit_changed(thread_id);
         let submission = thread
-            .start_turn_if_idle(TurnInputRequest::new(input).with_trace(trace).on_start(
-                TurnStartOptions {
-                    turn_trigger: Some("queue".to_string()),
-                    ..Default::default()
-                },
-            ))
+            .start_turn_if_idle_with_id(
+                TurnInputRequest::new(input)
+                    .with_trace(trace)
+                    .on_start(TurnStartOptions {
+                        turn_trigger: Some("queue".to_string()),
+                        ..Default::default()
+                    }),
+                turn_id.clone(),
+            )
             .await?;
-        if matches!(submission, StartIfIdleSubmission::Started { .. }) {
-            self.delete_locked(thread_id, queued_item_id).await?;
+        if matches!(submission, StartIfIdleSubmission::NotSubmitted { .. })
+            && self
+                .queue
+                .release_claim(thread_id, queued_item_id, turn_id)
+                .await?
+        {
+            self.emit_changed(thread_id);
         }
         Ok(submission)
     }
@@ -436,18 +466,41 @@ impl QueuedItemService {
                 continue;
             }
 
+            let turn_id = Uuid::now_v7().to_string();
+            let Some(claimed) = self
+                .queue
+                .claim(thread_id, queued_item_id.clone(), turn_id.clone())
+                .await?
+            else {
+                continue;
+            };
+            debug_assert_eq!(
+                claimed.state,
+                QueuedUserSubmissionState::Claimed {
+                    turn_id: turn_id.clone()
+                }
+            );
+            self.emit_changed(thread_id);
+
             match thread
-                .start_turn_if_idle(TurnInputRequest::new(input).on_start(TurnStartOptions {
-                    turn_trigger: Some("queue".to_string()),
-                    ..Default::default()
-                }))
+                .start_turn_if_idle_with_id(
+                    TurnInputRequest::new(input).on_start(TurnStartOptions {
+                        turn_trigger: Some("queue".to_string()),
+                        ..Default::default()
+                    }),
+                    turn_id.clone(),
+                )
                 .await
             {
-                Ok(StartIfIdleSubmission::Started { .. }) => {
-                    self.delete_locked(thread_id, queued_item_id).await?;
-                    return Ok(());
-                }
+                Ok(StartIfIdleSubmission::Started { .. }) => return Ok(()),
                 Ok(StartIfIdleSubmission::NotSubmitted { reason }) => {
+                    if self
+                        .queue
+                        .release_claim(thread_id, queued_item_id.clone(), turn_id)
+                        .await?
+                    {
+                        self.emit_changed(thread_id);
+                    }
                     tracing::warn!(
                         %thread_id,
                         %queued_item_id,
@@ -487,6 +540,17 @@ impl QueuedItemService {
             id: Uuid::now_v7().to_string(),
             msg: EventMsg::ThreadQueueChanged(ThreadQueueChangedEvent { thread_id }),
         });
+    }
+
+    async fn complete_turn_claim(&self, thread_id: ThreadId, turn_id: String) {
+        let _dispatch_guard = self.dispatch_guard(thread_id).await;
+        match self.queue.complete_claim(thread_id, turn_id.clone()).await {
+            Ok(true) => self.emit_changed(thread_id),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%thread_id, %turn_id, %error, "failed to complete queued user input")
+            }
+        }
     }
 }
 
@@ -537,12 +601,25 @@ where
 {
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) {
-                self.resumed_threads
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(thread_id);
+            let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
+                tracing::warn!(
+                    level_id = input.thread_store.level_id(),
+                    "queue extension received an invalid thread id"
+                );
+                return;
+            };
+            let _dispatch_guard = self.dispatch_guard(thread_id).await;
+            match self.queue.complete_claims(thread_id).await {
+                Ok(true) => self.emit_changed(thread_id),
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%thread_id, %error, "failed to reconcile claimed queued input")
+                }
             }
+            self.resumed_threads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(thread_id);
         })
     }
 
@@ -566,9 +643,32 @@ where
     }
 }
 
+impl TurnLifecycleContributor for QueuedItemService {
+    fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
+                return;
+            };
+            self.complete_turn_claim(thread_id, input.turn_store.level_id().to_string())
+                .await;
+        })
+    }
+
+    fn on_turn_abort<'a>(&'a self, input: TurnAbortInput<'a>) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
+                return;
+            };
+            self.complete_turn_claim(thread_id, input.turn_store.level_id().to_string())
+                .await;
+        })
+    }
+}
+
 fn queued_item_from_record(
     record: QueuedUserSubmissionRecord,
 ) -> Result<QueuedItem, QueueServiceError> {
+    debug_assert_eq!(record.state, QueuedUserSubmissionState::Pending);
     Ok(QueuedItem {
         id: record.id,
         input: serde_json::from_str::<TurnInput>(&record.payload)?,

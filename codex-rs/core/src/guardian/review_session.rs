@@ -57,6 +57,7 @@ use crate::context::GuardianNodeReplPolicy;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::image_preparation::ImagePreparationMode;
 use crate::image_preparation::ImageResizeNoticeMode;
+use crate::image_preparation::ToolOutputRetention;
 use crate::image_preparation::prepare_response_items;
 use crate::image_preparation::unified_image_budget_enabled;
 use crate::session::GitEnrichmentPolicy;
@@ -1067,6 +1068,7 @@ async fn run_review_on_session(
                             &mut prepared,
                             mode,
                             ImageResizeNoticeMode::Disabled,
+                            ToolOutputRetention::Preserve,
                         );
                         let Some(ResponseItem::Message { content, .. }) = prepared.first() else {
                             return false;

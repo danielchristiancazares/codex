@@ -15,11 +15,14 @@ use std::io::Cursor;
 use std::io::Read;
 use std::num::NonZeroUsize;
 use std::sync::LazyLock;
+use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::formats::TrackType;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
+use symphonia::core::units::TimeBase;
+use symphonia::core::units::Timestamp;
 use tracing::warn;
 
 const AUDIO_PROCESSING_ERROR_PLACEHOLDER: &str =
@@ -32,6 +35,7 @@ const UNSUPPORTED_AUDIO_FORMAT_PLACEHOLDER: &str =
 const MAX_PROMPT_AUDIO_BASE64_BYTES: usize = MAX_PROMPT_AUDIO_INPUT_BYTES.div_ceil(3) * 4;
 const AUDIO_TOKEN_ESTIMATE_CACHE_SIZE: usize = 32;
 const AUDIO_TOKENS_PER_SECOND: f64 = 10.0;
+const MAX_AUDIO_DURATION_PROBE_PACKETS: usize = 4_096;
 const SMALL_AUDIO_TOKEN_ESTIMATE_CACHE_MAX_BYTES: usize = 16 * 1024;
 const WAV_HEADER_PREFIX_BYTES: [usize; 4] = [256, 4 * 1024, 64 * 1024, 256 * 1024];
 
@@ -146,7 +150,10 @@ fn canonical_audio_mime(mime: &str) -> Option<&'static str> {
     }
 }
 
-/// Estimates audio tokens from decoded duration, falling back to the data URL size.
+/// Estimates audio tokens from declared or bounded packet-derived duration.
+///
+/// Inputs that cannot be fully demuxed within the packet bound retain the conservative data-URL
+/// size fallback.
 pub fn estimate_audio_token_count(audio_url: &str) -> usize {
     let parsed = parse_base64_audio_data_url(audio_url);
     if audio_url.len() <= SMALL_AUDIO_TOKEN_ESTIMATE_CACHE_MAX_BYTES {
@@ -276,7 +283,7 @@ fn audio_duration_seconds(canonical_mime: &str, payload: &str) -> Option<f64> {
     let media_source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let mut hint = Hint::new();
     hint.mime_type(canonical_mime);
-    let format = match symphonia::default::get_probe().probe(
+    let mut format = match symphonia::default::get_probe().probe(
         &hint,
         media_source,
         FormatOptions::default(),
@@ -289,15 +296,63 @@ fn audio_duration_seconds(canonical_mime: &str, payload: &str) -> Option<f64> {
         }
     };
     let track = format.default_track(TrackType::Audio)?;
-    let timing = track.time_base.zip(track.duration).or_else(|| {
-        format
-            .media_info()
-            .time_base
-            .zip(format.media_info().duration)
-    });
-    let (time_base, duration) = timing?;
-    let duration_seconds =
-        duration.get() as f64 * f64::from(time_base.numer.get()) / f64::from(time_base.denom.get());
+    let track_id = track.id;
+    let track_start = track.start_ts;
+    let track_timing = track.time_base.zip(track.duration);
+    let media_timing = format
+        .media_info()
+        .time_base
+        .zip(format.media_info().duration);
+    if let Some((time_base, duration)) = track_timing.or(media_timing) {
+        return duration_seconds(
+            time_base,
+            Timestamp::new(i64::try_from(duration.get()).ok()?),
+        );
+    }
+    let time_base = track.time_base.or_else(|| format.media_info().time_base)?;
+    packet_duration_seconds(format.as_mut(), track_id, track_start, time_base)
+}
+
+fn packet_duration_seconds(
+    format: &mut dyn symphonia::core::formats::FormatReader,
+    track_id: u32,
+    track_start: Timestamp,
+    time_base: TimeBase,
+) -> Option<f64> {
+    let mut packet_count = 0usize;
+    let mut max_end: Option<Timestamp> = None;
+    let reached_eof = loop {
+        if packet_count >= MAX_AUDIO_DURATION_PROBE_PACKETS {
+            break false;
+        }
+        let packet = match format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break true,
+            Err(SymphoniaError::IoError(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break true;
+            }
+            Err(error) => {
+                tracing::trace!(%error, "failed to read audio packets for token estimation");
+                break false;
+            }
+        };
+        packet_count = packet_count.saturating_add(1);
+        if packet.track_id == track_id {
+            let packet_end = packet.pts.saturating_add(packet.dur);
+            max_end = Some(max_end.map_or(packet_end, |end: Timestamp| end.max(packet_end)));
+        }
+    };
+    if !reached_eof {
+        return None;
+    }
+    let elapsed = max_end?.get().saturating_sub(track_start.get()).max(0);
+    duration_seconds(time_base, Timestamp::new(elapsed))
+}
+
+fn duration_seconds(time_base: TimeBase, duration: Timestamp) -> Option<f64> {
+    let duration_seconds = time_base.calc_time(duration)?.as_secs_f64();
     duration_seconds.is_finite().then_some(duration_seconds)
 }
 

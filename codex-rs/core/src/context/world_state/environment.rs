@@ -110,23 +110,41 @@ impl WorldStateSection for EnvironmentsState {
             PreviousSectionState::Known(previous) => previous,
             PreviousSectionState::Absent | PreviousSectionState::Unknown => &empty,
         };
-        let turn_context_values_changed = current.current_date != previous.current_date
-            || current.timezone != previous.timezone
-            || current.network != previous.network
-            || current.filesystem != previous.filesystem;
+        let current_date_changed = current.current_date != previous.current_date;
+        let timezone_changed = current.timezone != previous.timezone;
+        let network_changed = current.network != previous.network;
+        let filesystem_changed = current.filesystem != previous.filesystem;
+        let subagents_changed = current.subagents != previous.subagents;
+        let turn_context_values_changed = current_date_changed
+            || timezone_changed
+            || network_changed
+            || filesystem_changed
+            || subagents_changed;
         let multiple_environments = self.environments.len() > 1;
         let previous_multiple_environments = previous.environments.len() > 1;
         let mut updates = self
             .environments
             .iter()
-            .filter(|(id, _)| {
-                let environment = &current.environments[*id];
-                previous.environments.get(*id).is_none_or(|previous| {
-                    multiple_environments != previous_multiple_environments
-                        || !environment.has_same_diff_value(previous)
-                })
+            .filter_map(|(id, environment)| {
+                let update = match previous.environments.get(id) {
+                    None => EnvironmentUpdate::Current(environment.clone()),
+                    Some(_) if multiple_environments != previous_multiple_environments => {
+                        EnvironmentUpdate::Current(environment.clone())
+                    }
+                    Some(previous) => {
+                        let delta = EnvironmentDelta::between(
+                            environment,
+                            &current.environments[id],
+                            previous,
+                        );
+                        if delta.is_empty() {
+                            return None;
+                        }
+                        EnvironmentUpdate::Changed(delta)
+                    }
+                };
+                Some((id.clone(), update))
             })
-            .map(|(id, environment)| (id.clone(), EnvironmentUpdate::Current(environment.clone())))
             .collect::<BTreeMap<_, _>>();
         updates.extend(
             previous
@@ -138,17 +156,21 @@ impl WorldStateSection for EnvironmentsState {
         let legacy_single = is_legacy_single(&self.environments)
             && updates
                 .values()
-                .all(|update| matches!(update, EnvironmentUpdate::Current(_)));
+                .all(|update| !matches!(update, EnvironmentUpdate::Unavailable));
         (!updates.is_empty() || turn_context_values_changed).then(|| {
             Box::new(RenderedEnvironments {
                 updates,
                 legacy_single,
                 include_primary: multiple_environments || previous_multiple_environments,
-                current_date: self.current_date.clone(),
-                timezone: self.timezone.clone(),
-                network: self.network.clone(),
-                filesystem: self.filesystem.clone(),
-                subagents: self.subagents.clone(),
+                current_date: current_date_changed
+                    .then(|| self.current_date.clone())
+                    .flatten(),
+                timezone: timezone_changed.then(|| self.timezone.clone()).flatten(),
+                network: network_changed.then(|| self.network.clone()).flatten(),
+                filesystem: filesystem_changed
+                    .then(|| self.filesystem.clone())
+                    .flatten(),
+                subagents: subagents_changed.then(|| self.subagents.clone()).flatten(),
             }) as Box<dyn ContextualUserFragment>
         })
     }
@@ -189,7 +211,38 @@ struct RenderedEnvironments {
 
 enum EnvironmentUpdate {
     Current(EnvironmentState),
+    Changed(EnvironmentDelta),
     Unavailable,
+}
+
+struct EnvironmentDelta {
+    cwd: Option<PathUri>,
+    status: Option<EnvironmentStatus>,
+    shell: Option<Option<String>>,
+    is_primary: Option<bool>,
+}
+
+impl EnvironmentDelta {
+    fn between(
+        current: &EnvironmentState,
+        current_snapshot: &EnvironmentSnapshot,
+        previous: &EnvironmentSnapshot,
+    ) -> Self {
+        Self {
+            cwd: (current_snapshot.cwd != previous.cwd).then(|| current.cwd.clone()),
+            status: (current_snapshot.status != previous.status).then_some(current.status),
+            shell: (current_snapshot.shell != previous.shell).then(|| current.shell.clone()),
+            is_primary: (current_snapshot.is_primary != previous.is_primary)
+                .then_some(current_snapshot.is_primary),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.cwd.is_none()
+            && self.status.is_none()
+            && self.shell.is_none()
+            && self.is_primary.is_none()
+    }
 }
 
 impl ContextualUserFragment for RenderedEnvironments {
@@ -212,8 +265,16 @@ impl ContextualUserFragment for RenderedEnvironments {
     fn body(&self) -> String {
         let mut rendered = "\n".to_string();
         if self.legacy_single {
-            if let Some(EnvironmentUpdate::Current(environment)) = self.updates.values().next() {
-                push_environment_values(&mut rendered, environment, "  ");
+            if let Some(update) = self.updates.values().next() {
+                match update {
+                    EnvironmentUpdate::Current(environment) => {
+                        push_environment_values(&mut rendered, environment, "  ");
+                    }
+                    EnvironmentUpdate::Changed(delta) => {
+                        push_environment_delta(&mut rendered, delta, "  ");
+                    }
+                    EnvironmentUpdate::Unavailable => {}
+                }
             }
         } else if !self.updates.is_empty() {
             rendered.push_str("  <environments>\n");
@@ -232,6 +293,23 @@ impl ContextualUserFragment for RenderedEnvironments {
                         }
                         rendered.push_str(">\n");
                         push_environment_values(&mut rendered, environment, "      ");
+                        rendered.push_str("    </environment>\n");
+                    }
+                    EnvironmentUpdate::Changed(delta) => {
+                        rendered.push_str("    <environment id=\"");
+                        push_xml_escaped_text(&mut rendered, id);
+                        rendered.push('"');
+                        if self.include_primary
+                            && let Some(is_primary) = delta.is_primary
+                        {
+                            rendered.push_str(if is_primary {
+                                " primary=\"true\""
+                            } else {
+                                " primary=\"false\""
+                            });
+                        }
+                        rendered.push_str(">\n");
+                        push_environment_delta(&mut rendered, delta, "      ");
                         rendered.push_str("    </environment>\n");
                     }
                     EnvironmentUpdate::Unavailable => {
@@ -285,6 +363,34 @@ fn push_environment_values(rendered: &mut String, environment: &EnvironmentState
     }
 }
 
+fn push_environment_delta(rendered: &mut String, delta: &EnvironmentDelta, indent: &str) {
+    if let Some(cwd) = &delta.cwd {
+        rendered.push_str(indent);
+        rendered.push_str("<cwd>");
+        push_xml_escaped_text(rendered, &cwd.inferred_native_path_string());
+        rendered.push_str("</cwd>\n");
+    }
+    if let Some(status) = delta.status {
+        rendered.push_str(indent);
+        rendered.push_str("<status>");
+        rendered.push_str(match status {
+            EnvironmentStatus::Starting => "starting",
+            EnvironmentStatus::Available => "available",
+        });
+        rendered.push_str("</status>\n");
+    }
+    if let Some(shell) = &delta.shell {
+        rendered.push_str(indent);
+        if let Some(shell) = shell {
+            rendered.push_str("<shell>");
+            push_xml_escaped_text(rendered, shell);
+            rendered.push_str("</shell>\n");
+        } else {
+            rendered.push_str("<shell status=\"unavailable\" />\n");
+        }
+    }
+}
+
 fn push_optional_element(rendered: &mut String, name: &str, value: Option<&str>) {
     let Some(value) = value else {
         return;
@@ -323,19 +429,6 @@ struct EnvironmentSnapshot {
     shell: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     is_primary: bool,
-}
-
-impl EnvironmentSnapshot {
-    fn has_same_diff_value(&self, other: &Self) -> bool {
-        self.cwd == other.cwd
-            && self.status == other.status
-            && self.is_primary == other.is_primary
-            && self
-                .shell
-                .as_ref()
-                .zip(other.shell.as_ref())
-                .is_none_or(|(current, previous)| current == previous)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]

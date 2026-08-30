@@ -3,6 +3,7 @@ use crate::context::ContextualUserFragment;
 use crate::context::ImageResizeNotice;
 use crate::context::ImageResizeNoticeSource;
 use crate::context::ResizedImage;
+use crate::context_manager::truncate_function_output_payload;
 use crate::original_image_detail::can_request_original_image_detail;
 use codex_analytics::ImageDetailSetting;
 use codex_analytics::ImagePreparationMetadata;
@@ -21,6 +22,7 @@ use codex_utils_image::ImageProcessingError;
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::PromptImageResizeLimits;
 use codex_utils_image::load_data_url_for_prompt;
+use codex_utils_output_truncation::TruncationPolicy;
 use tracing::warn;
 
 pub(crate) const IMAGE_PROCESSING_ERROR_PLACEHOLDER: &str =
@@ -74,11 +76,33 @@ pub(crate) enum ImageResizeNoticeMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolOutputRetention {
+    Preserve,
+    Canonicalize(TruncationPolicy),
+}
+
+impl ToolOutputRetention {
+    fn apply(self, output: &mut FunctionCallOutputPayload) {
+        if let Self::Canonicalize(policy) = self {
+            *output = truncate_function_output_payload(output, policy);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PreparedImageResize {
     source_width: u32,
     source_height: u32,
     prepared_width: u32,
     prepared_height: u32,
+}
+
+#[derive(Debug)]
+struct PreparedToolImage {
+    image_url: String,
+    image_number: usize,
+    image_count: usize,
+    resize: Option<PreparedImageResize>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -108,6 +132,7 @@ pub(crate) fn prepare_response_items(
     items: &mut Vec<ResponseItem>,
     mode: ImagePreparationMode,
     resize_notice_mode: ImageResizeNoticeMode,
+    tool_output_retention: ToolOutputRetention,
 ) -> Vec<ImagePreparationMetadata> {
     let mut metadata = Vec::new();
     let mut prepared_items = Vec::with_capacity(items.len());
@@ -115,8 +140,8 @@ pub(crate) fn prepare_response_items(
         |output: &mut FunctionCallOutputPayload,
          item_id: Option<&str>,
          metadata: &mut Vec<ImagePreparationMetadata>| {
-            output.content_items_mut().and_then(|content| {
-                let resized_images = prepare_tool_output_content(
+            let prepared_images = output.content_items_mut().map_or_else(Vec::new, |content| {
+                prepare_tool_output_content(
                     content,
                     ImageOrigin {
                         message_role: None,
@@ -125,10 +150,29 @@ pub(crate) fn prepare_response_items(
                     resize_notice_mode,
                     metadata,
                     mode,
-                );
-                (!resized_images.is_empty()).then(|| {
-                    ImageResizeNotice::new(ImageResizeNoticeSource::ToolOutput, resized_images)
-                })
+                )
+            });
+            tool_output_retention.apply(output);
+            let resized_images = match tool_output_retention {
+                ToolOutputRetention::Preserve => prepared_images
+                    .iter()
+                    .filter_map(|prepared| {
+                        prepared.resize.map(|resize| ResizedImage {
+                            image_number: prepared.image_number,
+                            image_count: prepared.image_count,
+                            source_width: resize.source_width,
+                            source_height: resize.source_height,
+                            prepared_width: resize.prepared_width,
+                            prepared_height: resize.prepared_height,
+                        })
+                    })
+                    .collect(),
+                ToolOutputRetention::Canonicalize(_) => {
+                    retained_tool_image_resizes(output, &prepared_images)
+                }
+            };
+            (!resized_images.is_empty()).then(|| {
+                ImageResizeNotice::new(ImageResizeNoticeSource::ToolOutput, resized_images)
             })
         };
     for mut item in std::mem::take(items) {
@@ -241,19 +285,19 @@ fn prepare_tool_output_content(
     resize_notice_mode: ImageResizeNoticeMode,
     metadata: &mut Vec<ImagePreparationMetadata>,
     mode: ImagePreparationMode,
-) -> Vec<ResizedImage> {
+) -> Vec<PreparedToolImage> {
     let image_count = items
         .iter()
         .filter(|item| matches!(item, FunctionCallOutputContentItem::InputImage { .. }))
         .count();
-    let mut image_number = 0;
-    let mut resized_images = Vec::new();
+    let mut image_number = 0usize;
+    let mut prepared_images = Vec::new();
     let mut remaining_patches = MAX_FUNCTION_OUTPUT_IMAGE_PATCHES;
     let mut omitted_images = 0usize;
     let mut prepared_items = Vec::with_capacity(items.len());
     for mut item in std::mem::take(items) {
         if let FunctionCallOutputContentItem::InputImage { image_url, detail } = &mut item {
-            image_number += 1;
+            image_number = image_number.saturating_add(1);
             if remaining_patches == 0 {
                 omitted_images += 1;
                 continue;
@@ -267,17 +311,16 @@ fn prepare_tool_output_content(
                 mode,
                 ImagePatchLimit::Shared(remaining_patches),
             ) {
-                Ok(Some(resize)) if resize_notice_mode == ImageResizeNoticeMode::Enabled => {
-                    resized_images.push(ResizedImage {
-                        image_number,
-                        image_count,
-                        source_width: resize.source_width,
-                        source_height: resize.source_height,
-                        prepared_width: resize.prepared_width,
-                        prepared_height: resize.prepared_height,
-                    });
+                Ok(resize) => {
+                    if resize_notice_mode == ImageResizeNoticeMode::Enabled {
+                        prepared_images.push(PreparedToolImage {
+                            image_url: image_url.clone(),
+                            image_number,
+                            image_count,
+                            resize,
+                        });
+                    }
                 }
-                Ok(_) => {}
                 Err(error) => {
                     warn!(%error, "failed to prepare tool output image");
                     item = FunctionCallOutputContentItem::InputText {
@@ -300,7 +343,47 @@ fn prepare_tool_output_content(
         });
     }
     *items = prepared_items;
-    resized_images
+    prepared_images
+}
+
+fn retained_tool_image_resizes(
+    output: &FunctionCallOutputPayload,
+    prepared_images: &[PreparedToolImage],
+) -> Vec<ResizedImage> {
+    let Some(content) = output.content_items() else {
+        return Vec::new();
+    };
+    let retained_urls = content
+        .iter()
+        .filter_map(|item| match item {
+            FunctionCallOutputContentItem::InputImage { image_url, .. } => Some(image_url.as_str()),
+            FunctionCallOutputContentItem::InputText { .. }
+            | FunctionCallOutputContentItem::InputAudio { .. }
+            | FunctionCallOutputContentItem::EncryptedContent { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let image_count = retained_urls.len();
+    let mut prepared_index = 0usize;
+    retained_urls
+        .into_iter()
+        .enumerate()
+        .filter_map(|(retained_index, image_url)| {
+            let relative_index = prepared_images[prepared_index..]
+                .iter()
+                .position(|prepared| prepared.image_url == image_url)?;
+            prepared_index = prepared_index.saturating_add(relative_index);
+            let prepared = &prepared_images[prepared_index];
+            prepared_index = prepared_index.saturating_add(1);
+            prepared.resize.map(|resize| ResizedImage {
+                image_number: retained_index.saturating_add(1),
+                image_count,
+                source_width: resize.source_width,
+                source_height: resize.source_height,
+                prepared_width: resize.prepared_width,
+                prepared_height: resize.prepared_height,
+            })
+        })
+        .collect()
 }
 
 fn is_remote_image_url(image_url: &str) -> bool {

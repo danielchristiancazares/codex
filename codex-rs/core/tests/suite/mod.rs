@@ -8,30 +8,47 @@ use codex_test_binary_support::TestBinaryDispatchGuard;
 use codex_test_binary_support::TestBinaryDispatchMode;
 use codex_test_binary_support::configure_test_binary_dispatch;
 use ctor::ctor;
+use std::sync::Mutex;
 
 // This code runs before any other tests are run.
 // It allows the test binary to behave like codex and dispatch to apply_patch and codex-linux-sandbox
 // based on the arg0.
 // NOTE: this doesn't work on ARM
 #[ctor]
-pub static CODEX_ALIASES_TEMP_DIR: Option<TestBinaryDispatchGuard> = {
-    configure_test_binary_dispatch("codex-core-tests", |exe_name, argv1| {
-        if argv1 == Some(CODEX_CORE_APPLY_PATCH_ARG1) {
-            return TestBinaryDispatchMode::DispatchArg0Only;
-        }
-        #[cfg(unix)]
-        if argv1 == Some(CODEX_ARG0_EXEC_HELPER_ARG1) {
-            return TestBinaryDispatchMode::DispatchArg0Only;
-        }
-        if argv1 == Some(CODEX_FS_HELPER_ARG1) {
-            return TestBinaryDispatchMode::DispatchArg0Only;
-        }
-        if exe_name == CODEX_LINUX_SANDBOX_ARG0 {
-            return TestBinaryDispatchMode::DispatchArg0Only;
-        }
-        TestBinaryDispatchMode::InstallAliases
-    })
+pub static CODEX_ALIASES_TEMP_DIR: Mutex<Option<TestBinaryDispatchGuard>> = {
+    let guard = Mutex::new(configure_test_binary_dispatch(
+        "codex-core-tests",
+        |exe_name, argv1| {
+            if argv1 == Some(CODEX_CORE_APPLY_PATCH_ARG1) {
+                return TestBinaryDispatchMode::DispatchArg0Only;
+            }
+            #[cfg(unix)]
+            if argv1 == Some(CODEX_ARG0_EXEC_HELPER_ARG1) {
+                return TestBinaryDispatchMode::DispatchArg0Only;
+            }
+            if argv1 == Some(CODEX_FS_HELPER_ARG1) {
+                return TestBinaryDispatchMode::DispatchArg0Only;
+            }
+            if exe_name == CODEX_LINUX_SANDBOX_ARG0 {
+                return TestBinaryDispatchMode::DispatchArg0Only;
+            }
+            TestBinaryDispatchMode::InstallAliases
+        },
+    ));
+    // Register directly from this live constructor. A standalone destructor constructor can be
+    // discarded by the Windows test-binary linker before it registers its exit callback.
+    let registration = unsafe { libc::atexit(cleanup_codex_aliases_temp_dir) };
+    assert_eq!(registration, 0, "failed to register test-home cleanup");
+    guard
 };
+
+extern "C" fn cleanup_codex_aliases_temp_dir() {
+    let guard = CODEX_ALIASES_TEMP_DIR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    drop(guard);
+}
 
 #[cfg(not(target_os = "windows"))]
 mod abort_tasks;
@@ -69,6 +86,7 @@ mod exec_policy;
 #[cfg(not(target_os = "windows"))]
 mod extension_sandbox;
 mod external_auth;
+mod final_payload_cap;
 mod fork_thread;
 mod git_enrichment;
 mod guardian_mcp_elicitation;
@@ -91,10 +109,12 @@ mod interrupt_hooks;
 mod items;
 mod json_result;
 mod live_cli;
+mod local_compaction;
 mod mcp_auth_elicitation;
 mod mcp_auth_refresh;
 #[cfg(unix)]
 mod mcp_refresh_cleanup;
+mod mcp_resource;
 mod mcp_startup_refresh_http_proxy;
 mod mcp_tool_cache;
 mod mcp_tool_exposure;
@@ -126,6 +146,7 @@ mod realtime_initial_items;
 mod remote_env;
 mod remote_models;
 mod request_compression;
+mod request_fit;
 #[cfg(not(target_os = "windows"))]
 mod request_permissions;
 #[cfg(not(target_os = "windows"))]
@@ -163,6 +184,7 @@ mod subagent_notifications;
 mod token_budget;
 mod tool_harness;
 mod tool_lifecycle;
+mod tool_output_retention;
 mod tool_parallelism;
 mod tools;
 mod truncation;

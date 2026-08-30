@@ -10,11 +10,14 @@ use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_protocol::items::TurnItem;
 use codex_protocol::mcp::ClientMcpExtensions;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSettingsAppliedEvent;
 use codex_protocol::protocol::ThreadSettingsSnapshot;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::CompactedItem;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::sse;
@@ -170,6 +173,151 @@ async fn fork_thread_from_history_does_not_require_source_rollout_path() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn copied_paginated_fork_persists_inherited_history() {
     assert_copied_fork_persists_inherited_history(ThreadHistoryMode::Paginated).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compacted_prefix_fork_reuses_initial_context_without_user_boundary() {
+    skip_if_no_network!();
+
+    const SEED_USER: &str = "seed canonical context";
+    const FORK_USER: &str = "continue from the compacted prefix";
+    const ENVIRONMENT_CONTEXT: &str = "<environment_context>";
+
+    let server = MockServer::start().await;
+    let response = sse(vec![ev_response_created("resp"), ev_completed("resp")]);
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(response, "text/event-stream"),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let mut builder = test_codex().with_history_mode(ThreadHistoryMode::Paginated);
+    let test = builder.build(&server).await.expect("create conversation");
+    test.codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: SEED_USER.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .expect("submit seed turn");
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let source_path = test.codex.rollout_path().expect("source rollout path");
+    let source_items = read_rollout_items(&source_path);
+    let source_meta = codex_rollout::read_session_meta_line(source_path.as_path())
+        .await
+        .expect("read source session metadata");
+    let user_position = source_items
+        .iter()
+        .position(|item| {
+            matches!(
+                item,
+                RolloutItem::ResponseItem(envelope)
+                    if matches!(
+                        &envelope.item,
+                        ResponseItem::Message { role, content, .. }
+                            if role == "user"
+                                && content.iter().any(|item| {
+                                    matches!(item, ContentItem::InputText { text } if text == SEED_USER)
+                                })
+                    )
+            )
+        })
+        .expect("source rollout should contain the seed user message");
+    let replacement_history = source_items[..user_position]
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::ResponseItem(envelope) => Some(envelope.clone()),
+            RolloutItem::Compacted(_)
+            | RolloutItem::EventMsg(_)
+            | RolloutItem::TurnContext(_)
+            | RolloutItem::WorldState(_)
+            | RolloutItem::RealtimeItem(_)
+            | RolloutItem::SessionMeta(_)
+            | RolloutItem::InterAgentCommunication(_)
+            | RolloutItem::InterAgentCommunicationMetadata { .. }
+            | RolloutItem::SecurityRiskScore(_) => None,
+        })
+        .collect();
+    let turn_context = source_items
+        .iter()
+        .find_map(|item| match item {
+            RolloutItem::TurnContext(context) => Some(context.clone()),
+            _ => None,
+        })
+        .expect("source rollout should contain a turn context");
+    let world_state = source_items
+        .iter()
+        .find_map(|item| match item {
+            RolloutItem::WorldState(world_state) if world_state.full => Some(world_state.clone()),
+            _ => None,
+        })
+        .expect("source rollout should contain a full world-state snapshot");
+    let supplied_history = vec![
+        RolloutItem::SessionMeta(source_meta),
+        RolloutItem::Compacted(CompactedItem {
+            message: String::new(),
+            replacement_history: Some(replacement_history),
+            mcp_resource_origins: None,
+            window_number: None,
+            first_window_id: None,
+            previous_window_id: None,
+            window_id: None,
+        }),
+        RolloutItem::TurnContext(turn_context),
+        RolloutItem::WorldState(world_state),
+    ];
+
+    let NewThread { thread: forked, .. } = test
+        .thread_manager
+        .fork_thread_from_history(
+            ForkSnapshot::Interrupted,
+            test.config.clone(),
+            InitialHistory::Resumed(ResumedHistory {
+                conversation_id: test.session_configured.thread_id,
+                history: Arc::new(supplied_history),
+                rollout_path: None,
+            }),
+            /*thread_source*/ None,
+            /*parent_trace*/ None,
+            ClientMcpExtensions::default(),
+            /*reserved_thread_id*/ None,
+        )
+        .await
+        .expect("fork compacted prefix");
+    forked
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: FORK_USER.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .expect("submit fork turn");
+    wait_for_event(&forked, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+
+    let requests = server.received_requests().await.expect("response requests");
+    let fork_request = requests.last().expect("fork model request");
+    let body = fork_request
+        .body_json::<serde_json::Value>()
+        .expect("response request body");
+    let environment_context_count = body["input"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["role"].as_str() == Some("user"))
+        .filter_map(|item| item["content"].as_array())
+        .flatten()
+        .filter_map(|item| item["text"].as_str())
+        .filter(|text| text.contains(ENVIRONMENT_CONTEXT))
+        .count();
+    assert_eq!(environment_context_count, 1);
 }
 
 async fn assert_copied_fork_persists_inherited_history(history_mode: ThreadHistoryMode) {

@@ -387,7 +387,7 @@ async fn omitted_additional_context_preserves_the_current_projection() -> Result
     let third_request_bytes = third_request.body_json().to_string().len();
     eprintln!("additional_context_final_serialized_request_bytes={third_request_bytes}");
     assert_eq!(
-        context_texts(&third_request, "user", "<external_browser_info>").len(),
+        context_texts(third_request, "user", "<external_browser_info>").len(),
         1,
         "third request serialized bytes: {third_request_bytes}"
     );

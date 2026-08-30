@@ -1775,6 +1775,22 @@ fn guardian_output_schema_requires_only_outcome_and_allows_optional_details() {
     );
 }
 
+#[test]
+fn guardian_prompt_leaves_output_shape_to_structured_schema() {
+    let prompt = guardian_policy_prompt_with_config_and_template("", "{{ tenant_policy_config }}");
+
+    assert!(prompt.contains("read-only tool checks"));
+    assert!(prompt.contains("smallest schema-valid allow decision"));
+    for schema_field in [
+        "risk_level",
+        "user_authorization",
+        "outcome",
+        "rationale",
+    ] {
+        assert!(!prompt.contains(schema_field));
+    }
+}
+
 enum GuardianTestCatalog {
     Bundled,
     ParentOnly,

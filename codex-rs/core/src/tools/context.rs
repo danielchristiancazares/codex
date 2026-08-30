@@ -1,3 +1,4 @@
+use crate::context_manager::function_output_payload_cost;
 use crate::context_manager::truncate_function_output_payload;
 use crate::original_image_detail::sanitize_original_image_detail;
 use crate::session::session::Session;
@@ -168,10 +169,7 @@ impl McpToolOutput {
         // This is the context-injection form, so keep it aligned with the
         // function-call output truncation that conversation history already
         // applies. Code-mode consumers still get the raw `CallToolResult`.
-        //
-        // The text is serialized again inside the Responses payload, so allow
-        // a small buffer for JSON escaping and wrapper overhead.
-        truncate_function_output_payload(&payload, self.truncation_policy * 1.2)
+        truncate_function_output_payload(&payload, self.truncation_policy)
     }
 }
 
@@ -218,6 +216,7 @@ pub struct FunctionToolOutput {
     pub body: Vec<FunctionCallOutputContentItem>,
     pub success: Option<bool>,
     pub post_tool_use_response: Option<JsonValue>,
+    contains_external_context: bool,
 }
 
 impl FunctionToolOutput {
@@ -226,6 +225,7 @@ impl FunctionToolOutput {
             body: vec![FunctionCallOutputContentItem::InputText { text }],
             success,
             post_tool_use_response: None,
+            contains_external_context: false,
         }
     }
 
@@ -237,7 +237,13 @@ impl FunctionToolOutput {
             body: content,
             success,
             post_tool_use_response: None,
+            contains_external_context: false,
         }
+    }
+
+    pub fn with_external_context(mut self) -> Self {
+        self.contains_external_context = true;
+        self
     }
 
     pub fn into_text(self) -> String {
@@ -252,6 +258,10 @@ impl ToolOutput for FunctionToolOutput {
 
     fn success_for_logging(&self) -> bool {
         self.success.unwrap_or(true)
+    }
+
+    fn contains_external_context(&self) -> bool {
+        self.contains_external_context
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
@@ -508,29 +518,56 @@ impl ExecCommandToolOutput {
 
     fn response_text(&self) -> String {
         let header = self.response_header();
-        let output_budget = (self.truncation_policy * 1.2)
-            .byte_budget()
-            .saturating_sub(header.len().saturating_add(/*rhs*/ 1));
-        let mut policy = self.model_output_policy();
-        let mut output = self.truncated_output_with_policy(policy);
-
-        // History applies this same serialization budget to the complete response.
-        // Reserve room for metadata, warning headers, and the truncation marker so
-        // it does not truncate an already-truncated output a second time.
-        while output.len() > output_budget && policy.byte_budget() > 0 {
-            let excess_bytes = output.len() - output_budget;
-            policy = match policy {
-                TruncationPolicy::Bytes(bytes) => {
-                    TruncationPolicy::Bytes(bytes.saturating_sub(excess_bytes))
-                }
-                TruncationPolicy::Tokens(tokens) => TruncationPolicy::Tokens(
-                    tokens.saturating_sub(TruncationPolicy::Bytes(excess_bytes).token_budget()),
-                ),
-            };
-            output = self.truncated_output_with_policy(policy);
+        let output_policy = self.model_output_policy();
+        let budget = match self.truncation_policy {
+            TruncationPolicy::Bytes(limit) | TruncationPolicy::Tokens(limit) => limit,
+        };
+        let output = self.truncated_output_with_policy(output_policy);
+        let text = format!("{header}\n{output}");
+        let payload = FunctionCallOutputPayload {
+            body: FunctionCallOutputBody::Text(text.clone()),
+            success: Some(true),
+        };
+        if function_output_payload_cost(&payload, self.truncation_policy) <= budget {
+            return text;
         }
 
-        format!("{header}\n{output}")
+        let mut lower = 0usize;
+        let mut upper = match output_policy {
+            TruncationPolicy::Bytes(limit) | TruncationPolicy::Tokens(limit) => limit,
+        };
+        let mut fitted = None;
+        while lower <= upper {
+            let candidate_budget = lower + (upper - lower) / 2;
+            let candidate_policy = match output_policy {
+                TruncationPolicy::Bytes(_) => TruncationPolicy::Bytes(candidate_budget),
+                TruncationPolicy::Tokens(_) => TruncationPolicy::Tokens(candidate_budget),
+            };
+            let output = self.truncated_output_with_policy(candidate_policy);
+            let text = format!("{header}\n{output}");
+            let payload = FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(text.clone()),
+                success: Some(true),
+            };
+            if function_output_payload_cost(&payload, self.truncation_policy) <= budget {
+                fitted = Some(text);
+                lower = candidate_budget.saturating_add(1);
+            } else if candidate_budget == 0 {
+                break;
+            } else {
+                upper = candidate_budget - 1;
+            }
+        }
+
+        fitted.unwrap_or_else(|| {
+            format!(
+                "{header}\n{}",
+                self.truncated_output_with_policy(match output_policy {
+                    TruncationPolicy::Bytes(_) => TruncationPolicy::Bytes(0),
+                    TruncationPolicy::Tokens(_) => TruncationPolicy::Tokens(0),
+                })
+            )
+        })
     }
 }
 

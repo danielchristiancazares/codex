@@ -35,7 +35,6 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-use super::CLASSIFICATION_TOKEN_USAGE_METRIC;
 use super::INITIAL_WEBSOCKET_CONNECTIONS;
 use super::LunaSampler;
 use super::LunaSamplerConfig;
@@ -196,7 +195,7 @@ impl ExtensionMetrics for RecordingMetrics {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sampler_records_token_usage_after_returning_an_early_classification() -> Result<()> {
+async fn sampler_stops_before_post_classification_usage_event() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let events = vec![
@@ -215,30 +214,7 @@ async fn sampler_records_token_usage_after_returning_an_early_classification() -
     let sampler = connect_sampler(config).await?;
 
     assert_eq!(sampler.sample(sample_request("turn-1")).await?, "low");
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while metrics.0.lock().unwrap().len() < 7 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await?;
-
-    assert_eq!(
-        *metrics.0.lock().unwrap(),
-        [
-            ("total", 37),
-            ("input", 37),
-            ("cached_input", 0),
-            ("cache_write_input", 0),
-            ("non_cached_input", 37),
-            ("output", 0),
-            ("reasoning_output", 0),
-        ]
-        .map(|(token_type, value)| (
-            CLASSIFICATION_TOKEN_USAGE_METRIC.to_owned(),
-            value,
-            vec![("token_type".to_owned(), token_type.to_owned())],
-        ))
-    );
+    assert_eq!(*metrics.0.lock().unwrap(), Vec::<RecordedMetric>::new());
 
     Ok(())
 }
@@ -761,109 +737,6 @@ async fn sampler_grows_its_pool_for_overlapping_requests() -> Result<()> {
             "turn-3".to_owned()
         ])
     );
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn sampler_replaces_scored_drains_before_unfinished_classifications() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let incomplete_response = WebSocketConnectionConfig {
-        requests: vec![vec![ev_output_text_delta("low")]],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: false,
-    };
-    let scored_response = WebSocketConnectionConfig {
-        requests: vec![vec![ev_assistant_message("scored", "low")]],
-        ..incomplete_response.clone()
-    };
-    let stalled_response = WebSocketConnectionConfig {
-        requests: vec![Vec::new()],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: false,
-    };
-    let mut servers = Vec::with_capacity(MAX_WEBSOCKET_CONNECTIONS + 2);
-    servers.push(responses::start_websocket_server_with_headers(vec![scored_response]).await);
-    servers.push(responses::start_websocket_server_with_headers(vec![stalled_response]).await);
-    for _ in 2..=MAX_WEBSOCKET_CONNECTIONS {
-        servers.push(
-            responses::start_websocket_server_with_headers(vec![incomplete_response.clone()]).await,
-        );
-    }
-    servers.push(
-        responses::start_websocket_server(vec![vec![vec![
-            ev_assistant_message("newest", "high"),
-            ev_completed("newest"),
-        ]]])
-        .await,
-    );
-    let server_refs = servers[2..INITIAL_WEBSOCKET_CONNECTIONS]
-        .iter()
-        .chain(servers[..2].iter())
-        .chain(servers[INITIAL_WEBSOCKET_CONNECTIONS..].iter())
-        .collect::<Vec<_>>();
-    let sampler = Arc::new(
-        connect_sampler(sampler_config(proxy_websocket_servers(&server_refs).await?)).await?,
-    );
-
-    let oldest_sampler = Arc::clone(&sampler);
-    let oldest = tokio::spawn(async move { oldest_sampler.sample(sample_request("oldest")).await });
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        servers[1].wait_for_request(/*connection_index*/ 0, /*request_index*/ 0),
-    )
-    .await?;
-
-    let scored_sampler = Arc::clone(&sampler);
-    let scored_request =
-        tokio::spawn(async move { scored_sampler.sample(sample_request("scored")).await });
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        servers[0].wait_for_request(/*connection_index*/ 0, /*request_index*/ 0),
-    )
-    .await?;
-
-    for index in 0..MAX_WEBSOCKET_CONNECTIONS - 2 {
-        assert_eq!(
-            sampler
-                .sample(sample_request(&format!("turn-{index}")))
-                .await?,
-            "low"
-        );
-    }
-
-    assert_eq!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            sampler.sample(sample_request("replace-oldest")),
-        )
-        .await??,
-        "low"
-    );
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(2), scored_request).await???,
-        "low"
-    );
-    assert!(!oldest.is_finished());
-
-    assert_eq!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            sampler.sample(sample_request("replace-oldest-drain")),
-        )
-        .await??,
-        "high"
-    );
-
-    assert!(!oldest.is_finished());
-    oldest.abort();
-    let _ = oldest.await;
-    drop(sampler);
-    for server in servers {
-        server.shutdown().await;
-    }
     Ok(())
 }
 

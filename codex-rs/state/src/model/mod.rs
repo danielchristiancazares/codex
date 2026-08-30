@@ -25,6 +25,7 @@ pub use project::Project;
 pub use project::ProjectRoot;
 pub use project::ProjectsPage;
 pub use queued_item::QueuedUserSubmissionRecord;
+pub use queued_item::QueuedUserSubmissionState;
 pub use rollout_migration_state::RolloutMigrationCursor;
 pub use rollout_migration_state::RolloutMigrationSkippedRollout;
 pub use rollout_migration_state::RolloutMigrationState;

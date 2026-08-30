@@ -2309,31 +2309,20 @@ fn append_interrupted_boundary(
         duration_ms: None,
     }));
 
-    match history {
-        InitialHistory::New | InitialHistory::Cleared => {
-            let mut history = Vec::new();
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                history.push(RolloutItem::ResponseItem(marker.into()));
-            }
-            history.push(aborted_event);
-            InitialHistory::Forked(history)
-        }
-        InitialHistory::Forked(mut history) => {
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                history.push(RolloutItem::ResponseItem(marker.into()));
-            }
-            history.push(aborted_event);
-            InitialHistory::Forked(history)
-        }
-        InitialHistory::Resumed(resumed) => {
-            let mut history = Arc::unwrap_or_clone(resumed.history);
-            if let Some(marker) = interrupted_turn_history_marker(interrupted_marker) {
-                history.push(RolloutItem::ResponseItem(marker.into()));
-            }
-            history.push(aborted_event);
-            InitialHistory::Forked(history)
-        }
+    let mut history = match history {
+        InitialHistory::New | InitialHistory::Cleared => Vec::new(),
+        InitialHistory::Forked(history) => history,
+        InitialHistory::Resumed(resumed) => Arc::unwrap_or_clone(resumed.history),
+    };
+    if let Some(marker) = interrupted_turn_history_marker(interrupted_marker)
+        && !history.last().is_some_and(
+            |item| matches!(item, RolloutItem::ResponseItem(envelope) if envelope.item == marker),
+        )
+    {
+        history.push(RolloutItem::ResponseItem(marker.into()));
     }
+    history.push(aborted_event);
+    InitialHistory::Forked(history)
 }
 
 #[cfg(test)]

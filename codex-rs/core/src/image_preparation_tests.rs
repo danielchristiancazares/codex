@@ -67,6 +67,7 @@ fn preparation_preserves_small_image_bytes_and_replaces_remote_urls() {
         &mut items,
         ImagePreparationMode::DetailBased,
         ImageResizeNoticeMode::Disabled,
+        ToolOutputRetention::Preserve,
     );
 
     let ResponseItem::Message { content, .. } = &items[0] else {
@@ -144,6 +145,7 @@ fn detail_policies_apply_the_expected_budgets() {
             &mut items,
             ImagePreparationMode::DetailBased,
             ImageResizeNoticeMode::Disabled,
+            ToolOutputRetention::Preserve,
         );
 
         let ResponseItem::Message { content, .. } = &items[0] else {
@@ -189,6 +191,7 @@ fn preparation_reports_tool_output_item_id() {
         &mut items,
         ImagePreparationMode::DetailBased,
         ImageResizeNoticeMode::Disabled,
+        ToolOutputRetention::Preserve,
     );
 
     assert_eq!(
@@ -229,6 +232,7 @@ fn tool_output_images_share_one_patch_budget() {
         &mut items,
         ImagePreparationMode::DetailBased,
         ImageResizeNoticeMode::Disabled,
+        ToolOutputRetention::Preserve,
     );
 
     let ResponseItem::FunctionCallOutput { output, .. } = &items[0] else {
@@ -319,6 +323,7 @@ fn resize_notices_preserve_original_image_positions_and_skip_failed_images() {
         &mut items,
         ImagePreparationMode::DetailBased,
         ImageResizeNoticeMode::Enabled,
+        ToolOutputRetention::Preserve,
     );
     let expected_user_notice = concat!(
         "<image_resize_notice>\n",
@@ -476,6 +481,7 @@ fn preparation_replaces_only_failed_tool_images_and_preserves_metadata() {
         &mut items,
         ImagePreparationMode::DetailBased,
         ImageResizeNoticeMode::Disabled,
+        ToolOutputRetention::Preserve,
     );
 
     assert_eq!(

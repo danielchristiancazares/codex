@@ -1035,7 +1035,11 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
     let expected_env_update_text = expected_env_update_msg["content"][0]["text"]
         .as_str()
         .expect("environment context text");
-    assert_env_context_fragment(expected_env_update_text);
+    assert!(
+        expected_env_update_text.starts_with(ENVIRONMENT_CONTEXT_OPEN_TAG)
+            && expected_env_update_text.ends_with("</environment_context>"),
+        "expected environment context fragment: {expected_env_update_text}"
+    );
     assert!(
         expected_env_update_text.contains(
             "<permission_profile type=\"disabled\"><file_system type=\"unrestricted\" /></permission_profile>",

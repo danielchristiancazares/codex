@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use codex_code_mode::CellId;
 use codex_code_mode::CodeModeNestedToolCall;
@@ -25,25 +28,36 @@ use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
 
 pub(super) struct CodeModeDispatchBroker {
-    dispatch_tx: async_channel::Sender<DispatchMessage>,
-    dispatch_rx: async_channel::Receiver<DispatchMessage>,
     dispatch_gates: Arc<Mutex<HashMap<CellId, CellDispatchGate>>>,
+    turn_workers: Arc<Mutex<HashMap<String, TurnDispatchWorker>>>,
+    next_worker_generation: AtomicU64,
     executed_tool_calls: Option<Arc<ExecutedToolCallRecorder>>,
 }
 
 struct CellDispatchGate {
-    ready: watch::Sender<bool>,
+    owner: watch::Sender<Option<CellOwner>>,
     // Keep the original exec item when later waits resume this cell.
     originating_item_id: Option<ResponseItemId>,
 }
 
+#[derive(Clone)]
+struct CellOwner {
+    turn_id: String,
+    session: Weak<crate::session::session::Session>,
+}
+
+#[derive(Clone)]
+struct TurnDispatchWorker {
+    generation: u64,
+    dispatch_tx: async_channel::Sender<DispatchMessage>,
+}
+
 impl CodeModeDispatchBroker {
     pub(super) fn new(executed_tool_calls: Option<Arc<ExecutedToolCallRecorder>>) -> Self {
-        let (dispatch_tx, dispatch_rx) = async_channel::unbounded();
         Self {
-            dispatch_tx,
-            dispatch_rx,
             dispatch_gates: Arc::new(Mutex::new(HashMap::new())),
+            turn_workers: Arc::new(Mutex::new(HashMap::new())),
+            next_worker_generation: AtomicU64::new(0),
             executed_tool_calls,
         }
     }
@@ -51,9 +65,11 @@ impl CodeModeDispatchBroker {
     pub(super) fn mark_cell_ready_for_dispatch(
         &self,
         cell_id: &CellId,
+        session: &Arc<crate::session::session::Session>,
+        turn_id: &str,
         originating_item_id: Option<ResponseItemId>,
-    ) {
-        let ready = {
+    ) -> Result<(), String> {
+        let owner = {
             let mut dispatch_gates = self
                 .dispatch_gates
                 .lock()
@@ -61,13 +77,25 @@ impl CodeModeDispatchBroker {
             let gate = dispatch_gates
                 .entry(cell_id.clone())
                 .or_insert_with(|| CellDispatchGate {
-                    ready: watch::channel(false).0,
+                    owner: watch::channel(None).0,
                     originating_item_id: None,
                 });
+            if let Some(existing_owner) = gate.owner.borrow().as_ref()
+                && existing_owner.turn_id != turn_id
+            {
+                return Err(format!(
+                    "code mode cell {cell_id} is already owned by turn {}",
+                    existing_owner.turn_id
+                ));
+            }
             gate.originating_item_id = originating_item_id;
-            gate.ready.clone()
+            gate.owner.clone()
         };
-        ready.send_replace(true);
+        owner.send_replace(Some(CellOwner {
+            turn_id: turn_id.to_string(),
+            session: Arc::downgrade(session),
+        }));
+        Ok(())
     }
 
     pub(super) fn cell_originating_item_id(&self, cell_id: &CellId) -> Option<ResponseItemId> {
@@ -89,12 +117,18 @@ impl CodeModeDispatchBroker {
         }
     }
 
-    pub(super) fn active_cell_ids(&self) -> Vec<CellId> {
+    pub(super) fn active_cell_ids_for_turn(&self, turn_id: &str) -> Vec<CellId> {
         self.dispatch_gates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .keys()
-            .cloned()
+            .iter()
+            .filter(|&(_cell_id, gate)| {
+                gate.owner
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|owner| owner.turn_id == turn_id)
+            })
+            .map(|(cell_id, _gate)| cell_id.clone())
             .collect()
     }
 
@@ -111,7 +145,19 @@ impl CodeModeDispatchBroker {
             .enabled(codex_features::Feature::ExecutedToolCallMetadata);
         let tool_runtime = ToolCallRuntime::new(Arc::clone(&exec.session), step_context, tracker);
         let host = Arc::new(CoreTurnHost { exec, tool_runtime });
-        let dispatch_rx = self.dispatch_rx.clone();
+        let turn_id = host.exec.turn.sub_id.clone();
+        let generation = self.next_worker_generation.fetch_add(1, Ordering::Relaxed);
+        let (dispatch_tx, dispatch_rx) = async_channel::unbounded();
+        self.turn_workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                turn_id.clone(),
+                TurnDispatchWorker {
+                    generation,
+                    dispatch_tx,
+                },
+            );
         let dispatch_gates = Arc::clone(&self.dispatch_gates);
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         tokio::spawn(async move {
@@ -131,17 +177,10 @@ impl CodeModeDispatchBroker {
                         cancellation_token,
                         response_tx,
                     } => {
-                        let response = if wait_until_cell_ready_for_dispatch(
-                            &dispatch_gates,
-                            &cell_id,
-                            &cancellation_token,
-                        )
-                        .await
-                        {
-                            host.notify(call_id, cell_id, text).await
-                        } else {
-                            remove_dispatch_gate(&dispatch_gates, &cell_id);
+                        let response = if cancellation_token.is_cancelled() {
                             Err("code mode notification cancelled".to_string())
+                        } else {
+                            host.notify(call_id, cell_id, text).await
                         };
                         let _ = response_tx.send(response);
                     }
@@ -152,16 +191,6 @@ impl CodeModeDispatchBroker {
                         span,
                     } => {
                         let cell_id = invocation.cell_id.clone();
-                        if !wait_until_cell_ready_for_dispatch(
-                            &dispatch_gates,
-                            &cell_id,
-                            &cancellation_token,
-                        )
-                        .await
-                        {
-                            remove_dispatch_gate(&dispatch_gates, &cell_id);
-                            continue;
-                        }
                         let host = Arc::clone(&host);
                         let dispatch_gates = Arc::clone(&dispatch_gates);
                         tokio::spawn(async move {
@@ -197,14 +226,43 @@ impl CodeModeDispatchBroker {
         });
         CodeModeDispatchWorker {
             shutdown_tx: Some(shutdown_tx),
+            turn_workers: Arc::clone(&self.turn_workers),
+            turn_id,
+            generation,
         }
+    }
+
+    async fn dispatch_sender_for_owner(
+        &self,
+        owner: &CellOwner,
+    ) -> Result<async_channel::Sender<DispatchMessage>, String> {
+        let Some(session) = owner.session.upgrade() else {
+            return Err("code mode cell owner session is unavailable".to_string());
+        };
+        if !session.is_turn_running(owner.turn_id.as_str()).await {
+            return Err(format!(
+                "code mode cell owner turn {} is no longer active",
+                owner.turn_id
+            ));
+        }
+        self.turn_workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&owner.turn_id)
+            .map(|worker| worker.dispatch_tx.clone())
+            .ok_or_else(|| {
+                format!(
+                    "code mode dispatcher for owner turn {} is unavailable",
+                    owner.turn_id
+                )
+            })
     }
 }
 
 fn dispatch_gate(
     dispatch_gates: &Mutex<HashMap<CellId, CellDispatchGate>>,
     cell_id: &CellId,
-) -> watch::Sender<bool> {
+) -> watch::Sender<Option<CellOwner>> {
     let mut dispatch_gates = match dispatch_gates.lock() {
         Ok(dispatch_gates) => dispatch_gates,
         Err(poisoned) => poisoned.into_inner(),
@@ -212,10 +270,10 @@ fn dispatch_gate(
     dispatch_gates
         .entry(cell_id.clone())
         .or_insert_with(|| CellDispatchGate {
-            ready: watch::channel(false).0,
+            owner: watch::channel(None).0,
             originating_item_id: None,
         })
-        .ready
+        .owner
         .clone()
 }
 
@@ -234,22 +292,22 @@ async fn wait_until_cell_ready_for_dispatch(
     dispatch_gates: &Mutex<HashMap<CellId, CellDispatchGate>>,
     cell_id: &CellId,
     cancellation_token: &CancellationToken,
-) -> bool {
+) -> Option<CellOwner> {
     if cancellation_token.is_cancelled() {
-        return false;
+        return None;
     }
-    let mut ready_rx = dispatch_gate(dispatch_gates, cell_id).subscribe();
+    let mut owner_rx = dispatch_gate(dispatch_gates, cell_id).subscribe();
     loop {
-        if *ready_rx.borrow_and_update() {
-            return true;
+        if let Some(owner) = owner_rx.borrow_and_update().clone() {
+            return Some(owner);
         }
         tokio::select! {
-            changed = ready_rx.changed() => {
+            changed = owner_rx.changed() => {
                 if changed.is_err() {
-                    return false;
+                    return None;
                 }
             }
-            _ = cancellation_token.cancelled() => return false,
+            _ = cancellation_token.cancelled() => return None,
         }
     }
 }
@@ -264,8 +322,20 @@ impl CodeModeSessionDelegate for CodeModeDispatchBroker {
             if cancellation_token.is_cancelled() {
                 return Err("code mode nested tool call cancelled".to_string());
             }
+            let cell_id = invocation.cell_id.clone();
+            let Some(owner) = wait_until_cell_ready_for_dispatch(
+                &self.dispatch_gates,
+                &cell_id,
+                &cancellation_token,
+            )
+            .await
+            else {
+                remove_dispatch_gate(&self.dispatch_gates, &cell_id);
+                return Err("code mode nested tool call cancelled".to_string());
+            };
+            let dispatch_tx = self.dispatch_sender_for_owner(&owner).await?;
             let (response_tx, response_rx) = oneshot::channel();
-            self.dispatch_tx
+            dispatch_tx
                 .send(DispatchMessage::InvokeTool {
                     invocation,
                     cancellation_token: cancellation_token.clone(),
@@ -295,8 +365,19 @@ impl CodeModeSessionDelegate for CodeModeDispatchBroker {
             if cancellation_token.is_cancelled() {
                 return Err("code mode notification cancelled".to_string());
             }
+            let Some(owner) = wait_until_cell_ready_for_dispatch(
+                &self.dispatch_gates,
+                &cell_id,
+                &cancellation_token,
+            )
+            .await
+            else {
+                remove_dispatch_gate(&self.dispatch_gates, &cell_id);
+                return Err("code mode notification cancelled".to_string());
+            };
+            let dispatch_tx = self.dispatch_sender_for_owner(&owner).await?;
             let (response_tx, response_rx) = oneshot::channel();
-            self.dispatch_tx
+            dispatch_tx
                 .send(DispatchMessage::Notify {
                     call_id,
                     cell_id,
@@ -339,12 +420,25 @@ enum DispatchMessage {
 
 pub(crate) struct CodeModeDispatchWorker {
     shutdown_tx: Option<oneshot::Sender<()>>,
+    turn_workers: Arc<Mutex<HashMap<String, TurnDispatchWorker>>>,
+    turn_id: String,
+    generation: u64,
 }
 
 impl Drop for CodeModeDispatchWorker {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
+        }
+        let mut turn_workers = self
+            .turn_workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if turn_workers
+            .get(&self.turn_id)
+            .is_some_and(|worker| worker.generation == self.generation)
+        {
+            turn_workers.remove(&self.turn_id);
         }
     }
 }
@@ -376,13 +470,16 @@ impl CoreTurnHost {
         }
         self.exec
             .session
-            .inject_if_running(vec![ResponseItem::CustomToolCallOutput {
-                id: None,
-                call_id,
-                name: Some(PUBLIC_TOOL_NAME.to_string()),
-                output: FunctionCallOutputPayload::from_text(text),
-                internal_chat_message_metadata_passthrough: None,
-            }])
+            .inject_if_turn_running(
+                self.exec.turn.sub_id.as_str(),
+                vec![ResponseItem::CustomToolCallOutput {
+                    id: None,
+                    call_id,
+                    name: Some(PUBLIC_TOOL_NAME.to_string()),
+                    output: FunctionCallOutputPayload::from_text(text),
+                    internal_chat_message_metadata_passthrough: None,
+                }],
+            )
             .await
             .map_err(|_| {
                 format!("failed to inject exec notify message for cell {cell_id}: no active turn")

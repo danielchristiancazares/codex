@@ -4,10 +4,12 @@ use std::sync::Weak;
 use codex_analytics::AnalyticsEventsClient;
 use codex_core::ThreadManager;
 use codex_extension_api::ConfigContributor;
+use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionEventSink;
 use codex_extension_api::ExtensionFuture;
 use codex_extension_api::ExtensionRegistryBuilder;
+use codex_extension_api::ThreadIdleCause;
 use codex_extension_api::ThreadIdleInput;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadResumeInput;
@@ -24,6 +26,8 @@ use codex_extension_api::TurnErrorInput;
 use codex_extension_api::TurnLifecycleContributor;
 use codex_extension_api::TurnStartInput;
 use codex_extension_api::TurnStopInput;
+use codex_extension_api::WorldStateContributionInput;
+use codex_extension_api::WorldStateSectionContribution;
 use codex_otel::MetricsClient;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::CodexErrorInfo;
@@ -43,6 +47,7 @@ use crate::runtime::GoalRuntimeConfig;
 use crate::runtime::GoalRuntimeHandle;
 use crate::spec::UPDATE_GOAL_TOOL_NAME;
 use crate::steering::budget_limit_steering_item;
+use crate::steering::goal_context_world_state_section;
 use crate::tool::GoalToolExecutor;
 
 #[derive(Clone, Debug)]
@@ -147,6 +152,10 @@ where
 
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            match input.cause {
+                ThreadIdleCause::Completed => {}
+                ThreadIdleCause::Interrupted | ThreadIdleCause::Failed => return,
+            }
             let Some(runtime) = goal_runtime_handle(input.thread_store) else {
                 return;
             };
@@ -186,6 +195,44 @@ where
         if let Some(runtime) = goal_runtime_handle(thread_store) {
             runtime.set_enabled(enabled);
         }
+    }
+}
+
+impl<C> ContextContributor for GoalExtension<C>
+where
+    C: Send + Sync + 'static,
+{
+    fn contribute_world_state<'a>(
+        &'a self,
+        input: WorldStateContributionInput<'a>,
+    ) -> ExtensionFuture<'a, Vec<WorldStateSectionContribution>> {
+        Box::pin(async move {
+            let Some(runtime) = goal_runtime_handle(input.thread_store) else {
+                return Vec::new();
+            };
+            if !runtime.tools_visible() {
+                return Vec::new();
+            }
+
+            match self
+                .state_dbs
+                .thread_goals()
+                .get_thread_goal(input.thread_id)
+                .await
+            {
+                Ok(Some(goal)) if goal.status != codex_state::ThreadGoalStatus::Complete => {
+                    vec![goal_context_world_state_section(&goal)]
+                }
+                Ok(Some(_)) | Ok(None) => Vec::new(),
+                Err(err) => {
+                    tracing::warn!(
+                        thread_id = %input.thread_id,
+                        "failed to read thread goal for world state: {err}"
+                    );
+                    Vec::new()
+                }
+            }
+        })
     }
 }
 
@@ -263,6 +310,15 @@ where
                 )
                 .await
             {
+                let message = format!(
+                    "failed to persist goal progress; automatic continuation stopped: {err}"
+                );
+                runtime
+                    .accounting_state()
+                    .mark_continuation_failure(err.clone());
+                runtime.accounting_state().finish_turn(turn_id);
+                self.event_emitter
+                    .accounting_error(format!("{turn_id}:goal-accounting-error"), message);
                 tracing::warn!(
                     "failed to account active goal progress at turn stop for {turn_id}: {err}"
                 );
@@ -291,6 +347,15 @@ where
                 )
                 .await
             {
+                let message = format!(
+                    "failed to persist goal progress; automatic continuation stopped: {err}"
+                );
+                runtime
+                    .accounting_state()
+                    .mark_continuation_failure(err.clone());
+                runtime.accounting_state().finish_turn(turn_id);
+                self.event_emitter
+                    .accounting_error(format!("{turn_id}:goal-accounting-error"), message);
                 tracing::warn!(
                     "failed to account active goal progress after turn abort for {turn_id}: {err}"
                 );
@@ -480,6 +545,7 @@ pub fn install_with_backend<C>(
     ));
     registry.thread_lifecycle_contributor(extension.clone());
     registry.config_contributor(extension.clone());
+    registry.prompt_contributor(extension.clone());
     registry.turn_lifecycle_contributor(extension.clone());
     registry.token_usage_contributor(extension.clone());
     registry.tool_lifecycle_contributor(extension.clone());

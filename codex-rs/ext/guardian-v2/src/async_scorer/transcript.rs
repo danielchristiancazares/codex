@@ -96,6 +96,11 @@ impl TranscriptConfig {
         let mut image_bytes = 0usize;
         let mut omitted_bytes = 0usize;
         let mut include_image = |image_url: &str, detail: Option<ImageDetail>| {
+            if images.iter().any(|item| {
+                matches!(item, ContentItem::InputImage { image_url: retained, .. } if retained == image_url)
+            }) {
+                return;
+            }
             if image_url.len() > MAX_TRANSCRIPT_IMAGE_BYTES {
                 omitted_bytes = omitted_bytes.saturating_add(image_url.len());
                 return;
@@ -162,6 +167,22 @@ impl TranscriptConfig {
         &self,
         items: impl IntoIterator<Item = &'a ResponseItem>,
     ) -> RenderedTranscript {
+        self.build_with_filter(items, /*excluded_call_id*/ None)
+    }
+
+    pub(crate) fn build_excluding_call<'a>(
+        &self,
+        items: impl IntoIterator<Item = &'a ResponseItem>,
+        excluded_call_id: &str,
+    ) -> RenderedTranscript {
+        self.build_with_filter(items, Some(excluded_call_id))
+    }
+
+    fn build_with_filter<'a>(
+        &self,
+        items: impl IntoIterator<Item = &'a ResponseItem>,
+        excluded_call_id: Option<&str>,
+    ) -> RenderedTranscript {
         let mut entries = Vec::new();
         let mut tool_names_by_call_id = HashMap::new();
 
@@ -219,6 +240,9 @@ impl TranscriptConfig {
                     call_id,
                     ..
                 } => {
+                    if excluded_call_id == Some(call_id.as_str()) {
+                        continue;
+                    }
                     tool_names_by_call_id.insert(call_id.as_str(), name.as_str());
                     if !self.sources.contains(&TranscriptSource::ToolCalls) {
                         continue;

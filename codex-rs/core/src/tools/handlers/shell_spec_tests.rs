@@ -66,7 +66,7 @@ fn exec_command_tool_matches_expected_spec() {
         (
             "tty".to_string(),
             JsonSchema::boolean(Some(
-                    "True allocates a PTY for the command; false or omitted uses plain pipes."
+                    "True allocates a PTY and keeps interactive stdin available for later non-empty write_stdin calls; false or omitted uses plain pipes."
                         .to_string(),
                 )),
         ),
@@ -154,9 +154,8 @@ fn write_stdin_tool_matches_expected_spec() {
         tool,
         ToolSpec::Function(ResponsesApiTool {
             name: "write_stdin".to_string(),
-            description:
-                "Writes characters to an existing unified exec session and returns recent output."
-                    .to_string(),
+            description: "Writes characters to an existing unified exec session and returns recent output. Non-empty writes require a session launched with tty=true; empty writes can poll any running session."
+                .to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(

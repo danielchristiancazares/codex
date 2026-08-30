@@ -2,8 +2,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::Prompt;
-use crate::client::ModelClientSession;
-use crate::client_common::ResponseEvent;
 use crate::context::CompactionSummary;
 use crate::context::ContextualUserFragment;
 use crate::context::world_state::WorldState;
@@ -11,7 +9,6 @@ use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
-use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_metadata::CompactionTurnMetadata;
 #[cfg(test)]
@@ -46,16 +43,18 @@ use codex_protocol::models::InternalChatMessageMetadataPassthrough;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RawResponseCompletedEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
-use codex_rollout_trace::InferenceTraceContext;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
-use futures::prelude::*;
 use tracing::error;
+
+#[path = "compact/local_plan.rs"]
+mod local_plan;
+use local_plan::LocalCompactionPlan;
+use local_plan::drain_to_completed;
 
 pub use codex_prompts::SUMMARIZATION_PROMPT;
 pub use codex_prompts::SUMMARY_PREFIX;
@@ -253,10 +252,10 @@ async fn run_compact_task_inner_impl(
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-
-    let mut history = sess.clone_history().await;
-    history.record_items(
-        &[initial_input_for_turn.into()],
+    let base_instructions = sess.get_base_instructions().await;
+    let mut plan = LocalCompactionPlan::new(
+        sess.clone_history().await,
+        initial_input_for_turn.into(),
         turn_context.model_info().truncation_policy.into(),
     );
 
@@ -273,15 +272,14 @@ async fn run_compact_task_inner_impl(
         )
         .await;
 
-    loop {
-        // Clone is required because of the loop
-        let turn_input = history
-            .clone()
-            .for_prompt(&turn_context.model_info().input_modalities);
-        let turn_input_len = turn_input.len();
+    let compaction_output = loop {
+        let turn_input = plan.prompt_input(
+            &turn_context.model_info().input_modalities,
+            turn_context.model_info().truncation_policy.into(),
+        );
         let prompt = Prompt {
             input: turn_input,
-            base_instructions: sess.get_base_instructions().await,
+            base_instructions: base_instructions.clone(),
             ..Default::default()
         };
         let attempt_result = drain_to_completed(
@@ -294,9 +292,7 @@ async fn run_compact_task_inner_impl(
         .await;
 
         match attempt_result {
-            Ok(()) => {
-                break;
-            }
+            Ok(output) => break output,
             Err(err)
                 if matches!(
                     err.details(),
@@ -312,12 +308,19 @@ async fn run_compact_task_inner_impl(
                 return Err(e);
             }
             Err(e) if matches!(e.details(), CodexErrorDetails::ContextWindowExceeded) => {
-                if turn_input_len > 1 {
-                    // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
+                if let Some(reduction) = plan.reduce_after_context_error(
+                    &base_instructions,
+                    turn_context.model_context_window(),
+                ) {
                     error!(
-                        "Context window exceeded while compacting; removing oldest history item. Error: {e}"
+                        removed_groups = reduction.removed_groups,
+                        removed_items = reduction.removed_items,
+                        estimated_tokens_before = reduction.estimated_tokens_before,
+                        estimated_tokens_after = reduction.estimated_tokens_after,
+                        target_tokens = reduction.target_tokens,
+                        error = %e,
+                        "Context window exceeded while compacting; retrying one reduced history plan"
                     );
-                    history.remove_first_item();
                     retries = 0;
                     continue;
                 }
@@ -347,16 +350,29 @@ async fn run_compact_task_inner_impl(
                 }
             }
         }
-    }
+    };
 
-    let history_snapshot = sess.clone_history().await;
-    let history_items = history_snapshot.annotated_items();
     let summary_suffix =
-        get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default();
+        get_last_assistant_message_from_turn(compaction_output.items.iter()).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_annotated_user_messages(history_items);
 
-    let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
+    let (initial_context, world_state_baseline) =
+        build_compaction_initial_context(sess.as_ref(), &initial_context_injection).await;
+    let replacement = plan
+        .build_replacement(
+            initial_context,
+            &summary_text,
+            &base_instructions,
+            turn_context.model_context_window(),
+        )
+        .ok_or_else(|| {
+            CodexErr::Fatal(
+                "local compaction replacement cannot fit within the model context window"
+                    .to_string(),
+            )
+        })?;
+    let mut new_history = replacement.items;
+    let summary_text = replacement.summary_text;
     if let Some(summary_item) = new_history.last_mut() {
         // This replacement history skips `record_conversation_items`; only the appended summary
         // belongs to this compaction turn.
@@ -364,12 +380,6 @@ async fn run_compact_task_inner_impl(
     }
     let (window_number, window_ids) = sess.advance_auto_compact_window().await;
 
-    let (initial_context, world_state_baseline) =
-        build_compaction_initial_context(sess.as_ref(), &initial_context_injection).await;
-    if !initial_context.is_empty() {
-        new_history =
-            insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
-    }
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage { .. } => {
@@ -667,7 +677,7 @@ fn build_compacted_history_with_limit(
             if remaining == 0 {
                 break;
             }
-            let tokens = approx_token_count(&message.message);
+            let tokens = approx_token_count(&message.message).max(1);
             if tokens <= remaining {
                 selected_messages.push(message.clone());
                 remaining = remaining.saturating_sub(tokens);
@@ -719,11 +729,7 @@ fn build_compacted_history_with_limit(
         });
     }
 
-    let summary_text = if summary_text.is_empty() {
-        "(no summary available)".to_string()
-    } else {
-        summary_text.to_string()
-    };
+    let summary_text = canonical_compaction_summary_text(summary_text);
 
     history.push(ResponseItemEnvelope::new(ContextualUserFragment::into(
         CompactionSummary::new(summary_text),
@@ -732,67 +738,11 @@ fn build_compacted_history_with_limit(
     history
 }
 
-async fn drain_to_completed(
-    sess: &Session,
-    turn_context: &TurnContext,
-    client_session: &mut ModelClientSession,
-    responses_metadata: &CodexResponsesMetadata,
-    prompt: &Prompt,
-) -> CodexResult<()> {
-    let mut stream = client_session
-        .stream(
-            prompt,
-            turn_context.model_info(),
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort().cloned(),
-            turn_context.reasoning_summary(),
-            turn_context.config.service_tier,
-            responses_metadata,
-            // Rollout tracing currently models remote compaction only; local compaction streams
-            // are left untraced until the reducer has a first-class local compaction lifecycle.
-            &InferenceTraceContext::disabled(),
-        )
-        .await?;
-    loop {
-        let maybe_event = stream.next().await;
-        let Some(event) = maybe_event else {
-            return Err(CodexErr::Stream(
-                "stream closed before response.completed".into(),
-            ));
-        };
-        match event {
-            Ok(ResponseEvent::OutputItemDone(item)) => {
-                sess.record_conversation_items(turn_context, std::slice::from_ref(&item))
-                    .await;
-            }
-            Ok(ResponseEvent::ServerReasoningIncluded(included)) => {
-                sess.set_server_reasoning_included(included).await;
-            }
-            Ok(ResponseEvent::RateLimits(snapshot)) => {
-                sess.update_rate_limits(turn_context, snapshot).await;
-            }
-            Ok(ResponseEvent::Completed {
-                response_id,
-                token_usage,
-                usage_metadata,
-                ..
-            }) => {
-                sess.send_event(
-                    turn_context,
-                    EventMsg::RawResponseCompleted(RawResponseCompletedEvent {
-                        response_id,
-                        token_usage: token_usage.clone(),
-                        usage_metadata,
-                    }),
-                )
-                .await;
-                sess.update_token_usage_info(turn_context, token_usage.as_ref())
-                    .await?;
-                return Ok(());
-            }
-            Ok(_) => continue,
-            Err(e) => return Err(e),
-        }
+fn canonical_compaction_summary_text(summary_text: &str) -> String {
+    if summary_text.is_empty() {
+        "(no summary available)".to_string()
+    } else {
+        summary_text.to_string()
     }
 }
 

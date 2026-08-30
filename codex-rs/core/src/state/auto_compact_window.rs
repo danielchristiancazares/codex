@@ -88,6 +88,10 @@ impl AutoCompactWindow {
         !std::mem::replace(&mut self.token_budget_reminder_delivered, true)
     }
 
+    pub(super) fn restore_token_budget_reminder_delivered(&mut self) {
+        self.token_budget_reminder_delivered = true;
+    }
+
     pub(super) fn claim_auto_compact_fallback(&mut self) -> bool {
         !std::mem::replace(&mut self.auto_compact_fallback_delivered, true)
     }

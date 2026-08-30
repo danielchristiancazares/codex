@@ -16,7 +16,9 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tokio::sync::Semaphore;
 
+use crate::catalog_prompt::SKILLS_COMMON_USAGE_INSTRUCTIONS;
 use crate::catalog_prompt::render_available_skills_body;
+use crate::fragments::SkillUsageInstructions;
 use crate::loader::HostSkillRoot;
 use crate::loader::load_and_merge_host_skill_roots;
 
@@ -188,6 +190,54 @@ fn description_selection_follows_render_policy() {
                 "- fallback: fallback description (file: /skills/fallback/SKILL.md)".to_string(),
             ],
         )
+    );
+}
+
+#[test]
+fn cf_063_multi_authority_catalog_renders_common_usage_guidance_once() {
+    let catalogs = render_combined_available_skills(
+        &SkillCatalog {
+            entries: vec![entry("executor", "Executor skill.", None)],
+            warnings: Vec::new(),
+        },
+        &SkillCatalog {
+            entries: vec![entry("orchestrator", "Orchestrator skill.", None)],
+            warnings: Vec::new(),
+        },
+        &SkillCatalog {
+            entries: vec![entry("host", "Host skill.", None)],
+            warnings: Vec::new(),
+        },
+        SkillMetadataBudget::Characters(usize::MAX),
+        /*include_skills_usage_instructions*/ true,
+    );
+    let bodies = [
+        catalogs
+            .executor
+            .expect("executor catalog")
+            .into_fragment_with_usage(SkillUsageInstructions::CommonAndSourceSpecific)
+            .expect("executor fragment")
+            .body(),
+        catalogs
+            .orchestrator
+            .expect("orchestrator catalog")
+            .into_fragment_with_usage(SkillUsageInstructions::SourceSpecific)
+            .expect("orchestrator fragment")
+            .body(),
+        catalogs
+            .host
+            .expect("host catalog")
+            .into_fragment_with_usage(SkillUsageInstructions::SourceSpecific)
+            .expect("host fragment")
+            .body(),
+    ];
+
+    assert_eq!(
+        bodies
+            .iter()
+            .filter(|body| body.contains(SKILLS_COMMON_USAGE_INSTRUCTIONS))
+            .count(),
+        1
     );
 }
 

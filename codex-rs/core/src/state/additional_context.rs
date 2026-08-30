@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind;
@@ -55,33 +56,44 @@ impl AdditionalContextStore {
         &self,
         values: BTreeMap<String, AdditionalContextEntry>,
     ) -> (Vec<ResponseItem>, AdditionalContextSnapshot) {
-        let next = AdditionalContextSnapshot {
-            entries: values
-                .iter()
-                .map(|(key, entry)| {
-                    (
-                        key.clone(),
-                        AdditionalContextSnapshotEntry {
-                            treatment: AdditionalContextTreatment::from_kind(entry.kind),
-                            value_fingerprint: value_fingerprint(&entry.value),
-                        },
-                    )
-                })
-                .collect(),
-        };
-        let fragments = values
-            .into_iter()
-            .filter(|(key, _)| self.snapshot.entries.get(key) != next.entries.get(key))
-            .map(|(key, entry)| match entry.kind {
-                AdditionalContextKind::Untrusted => ContextualUserFragment::into(
-                    AdditionalContextUserFragment::new(key, entry.value),
-                ),
-                AdditionalContextKind::Application => ContextualUserFragment::into(
-                    AdditionalContextDeveloperFragment::new(key, entry.value),
-                ),
-            })
-            .collect();
-        (fragments, next)
+        let mut fragments = Vec::new();
+        let mut next_entries = BTreeMap::new();
+
+        for (key, entry) in values {
+            let treatment = AdditionalContextTreatment::from_kind(entry.kind);
+            let rendered = match entry.kind {
+                AdditionalContextKind::Untrusted => {
+                    AdditionalContextUserFragment::new(key.clone(), entry.value).render_fragment()
+                }
+                AdditionalContextKind::Application => {
+                    AdditionalContextDeveloperFragment::new(key.clone(), entry.value)
+                        .render_fragment()
+                }
+            };
+            let value_fingerprint = match rendered.annotated_content().content() {
+                ContentItem::InputText { text } => value_fingerprint(text),
+                ContentItem::InputImage { .. }
+                | ContentItem::InputAudio { .. }
+                | ContentItem::OutputText { .. } => {
+                    unreachable!("additional context fragments always render as input text")
+                }
+            };
+            let next_entry = AdditionalContextSnapshotEntry {
+                treatment,
+                value_fingerprint,
+            };
+            if self.snapshot.entries.get(&key) != Some(&next_entry) {
+                fragments.push(ResponseItem::from(rendered));
+            }
+            next_entries.insert(key, next_entry);
+        }
+
+        (
+            fragments,
+            AdditionalContextSnapshot {
+                entries: next_entries,
+            },
+        )
     }
 
     pub(crate) fn commit(&mut self, snapshot: AdditionalContextSnapshot) {
@@ -107,7 +119,7 @@ impl AdditionalContextStore {
 
 fn value_fingerprint(value: &str) -> String {
     let mut hasher = Sha1::new();
-    hasher.update(b"codex-additional-context-v1\0");
+    hasher.update(b"codex-additional-context-v2\0");
     hasher.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())

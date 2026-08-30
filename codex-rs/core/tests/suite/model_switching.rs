@@ -81,7 +81,11 @@ struct RequestRoutingSnapshot {
     service_tier: RequestRouting,
 }
 
-fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> TurnInputRequest {
+pub(super) fn read_only_user_turn(
+    test: &TestCodex,
+    items: Vec<UserInput>,
+    model: String,
+) -> TurnInputRequest {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::read_only(), test.cwd_path());
     TurnInputRequest::user_input(items).with_thread_settings(ThreadSettingsOverrides {
@@ -120,7 +124,7 @@ async fn submit_model_turn(
     Ok(())
 }
 
-fn test_model_info(
+pub(super) fn test_model_info(
     slug: &str,
     display_name: &str,
     description: &str,
@@ -468,7 +472,11 @@ async fn model_change_appends_model_instructions_developer_message() -> Result<(
             RolloutItem::WorldState(item) => item
                 .state
                 .get("model")
-                .and_then(serde_json::Value::as_str)
+                .and_then(|snapshot| {
+                    snapshot
+                        .as_str()
+                        .or_else(|| snapshot.get("model").and_then(serde_json::Value::as_str))
+                })
                 .map(str::to_string),
             _ => None,
         })

@@ -33,6 +33,7 @@ use codex_plugin::ExecutorPluginHookSource;
 use codex_plugin::PluginHookSource;
 use codex_protocol::ThreadId;
 use codex_protocol::shell_environment::scrub_non_inheritable_env_vars;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::time::Duration;
@@ -139,6 +140,11 @@ impl Hooks {
     /// Abort and join outstanding async hooks during session shutdown.
     pub async fn shutdown(&self) {
         self.engine.command_runtime.shutdown().await;
+    }
+
+    /// Aborts asynchronous hooks originating from turns removed by rollback.
+    pub async fn abort_turns(&self, turn_ids: &HashSet<String>) {
+        self.engine.command_runtime.abort_turns(turn_ids).await;
     }
 
     pub fn startup_warnings(&self) -> &[String] {

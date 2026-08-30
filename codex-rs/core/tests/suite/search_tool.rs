@@ -837,6 +837,98 @@ async fn tool_search_returns_deferred_tools_without_follow_up_tool_injection() -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_tool_search_retains_each_output_envelope_and_one_schema() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let apps_server = AppsTestServer::mount_searchable(&server).await?;
+    let first_call_id = "tool-search-dedupe-1";
+    let second_call_id = "tool-search-dedupe-2";
+    let search_arguments = json!({
+        "query": "create calendar event",
+        "limit": 1,
+    });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_tool_search_call(first_call_id, &search_arguments),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "first search complete"),
+                ev_completed("resp-2"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-3"),
+                ev_tool_search_call(second_call_id, &search_arguments),
+                ev_completed("resp-3"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-4"),
+                ev_assistant_message("msg-2", "second search complete"),
+                ev_completed("resp-4"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut builder = configured_builder(apps_server.chatgpt_base_url.clone());
+    let test = builder.build_with_auto_env(&server).await?;
+    test.submit_turn("Find the calendar create tool").await?;
+    test.submit_turn("Find the same calendar create tool again")
+        .await?;
+
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 4);
+    let final_request = requests
+        .last()
+        .expect("the second search should issue a follow-up request");
+    assert_eq!(
+        tool_search_output_tools(final_request, first_call_id).len(),
+        1
+    );
+    let second_output = tool_search_output_item(final_request, second_call_id);
+    let output_id = second_output
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("the second search output should have a canonical ID");
+    assert!(output_id.starts_with("tso_"));
+    let output_metadata = second_output
+        .get("internal_chat_message_metadata_passthrough")
+        .cloned()
+        .expect("the second search output should retain turn metadata");
+    assert_eq!(
+        second_output,
+        json!({
+            "id": output_id,
+            "type": "tool_search_output",
+            "call_id": second_call_id,
+            "status": "completed",
+            "execution": "client",
+            "tools": [],
+            "internal_chat_message_metadata_passthrough": output_metadata,
+        })
+    );
+    let retained_schema_count = final_request
+        .inputs_of_type("tool_search_output")
+        .iter()
+        .flat_map(|output| output.get("tools").and_then(Value::as_array))
+        .flatten()
+        .flat_map(|namespace| namespace.get("tools").and_then(Value::as_array))
+        .flatten()
+        .filter(|tool| {
+            tool.get("name").and_then(Value::as_str) == Some(SEARCH_CALENDAR_CREATE_TOOL)
+        })
+        .count();
+    assert_eq!(retained_schema_count, 1);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_search_returns_deferred_v1_multi_agent_tools() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

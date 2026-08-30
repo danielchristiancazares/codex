@@ -75,6 +75,7 @@ async fn recap_generation_uses_bounded_structured_request_and_inserts_result() -
             r#"
 model = "{MODEL}"
 model_provider = "{MODEL_PROVIDER_ID}"
+model_reasoning_summary = "detailed"
 
 [model_providers.{MODEL_PROVIDER_ID}]
 name = "Recap generation test"
@@ -185,6 +186,7 @@ stream_max_retries = 0
     assert!(prompt.len() <= recap::RECAP_PROMPT_MAX_BYTES);
     assert_eq!(request["text"]["format"]["type"], "json_schema");
     assert_eq!(request["tools"], serde_json::json!([]));
+    assert_eq!(request["reasoning"].get("summary"), None);
 
     app_server.shutdown().await?;
     model_server.shutdown().await;

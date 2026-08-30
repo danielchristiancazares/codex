@@ -235,6 +235,46 @@ async fn current_time_reminders_follow_time_interval_and_persist_in_history() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cf_028_same_window_resume_preserves_current_time_delivery() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+            sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
+        ],
+    )
+    .await;
+    let time_provider = Arc::new(TestTimeProvider::default());
+    let initial = test_codex()
+        .with_config(|config| {
+            enable_current_time_reminder(config, /*interval*/ 120, CurrentTimeSource::External)
+        })
+        .with_external_time_provider(time_provider.clone())
+        .build(&server)
+        .await?;
+    initial.submit_turn("deliver the reminder").await?;
+    time_provider
+        .current_time
+        .store(FIRST_TIME_UNIX_SECONDS, Ordering::Relaxed);
+
+    let mut resume_builder = test_codex()
+        .with_config(|config| {
+            enable_current_time_reminder(config, /*interval*/ 120, CurrentTimeSource::External)
+        })
+        .with_external_time_provider(time_provider);
+    let resumed = resume_builder.restart(&server, &initial).await?;
+    resumed.submit_turn("resume in the same window").await?;
+
+    let requests = responses.requests();
+    assert_eq!(current_time_reminders(&requests[0]), vec![FIRST_REMINDER]);
+    assert_eq!(current_time_reminders(&requests[1]), vec![FIRST_REMINDER]);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn zero_current_time_reminder_interval_delivers_when_time_moves_backward() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

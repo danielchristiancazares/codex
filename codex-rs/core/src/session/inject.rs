@@ -7,6 +7,15 @@ use codex_history::ResponseItemEnvelope;
 use codex_protocol::models::ResponseItem;
 
 impl Session {
+    pub(crate) async fn is_turn_running(&self, turn_id: &str) -> bool {
+        self.active_turn
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|active_turn| active_turn.task.as_ref())
+            .is_some_and(|task| task.turn_context.sub_id == turn_id)
+    }
+
     /// Returns the input if there is no active turn to inject into.
     #[expect(
         clippy::await_holding_invalid_type,
@@ -32,6 +41,40 @@ impl Session {
                 Ok(())
             }
             None => Err(input),
+        }
+    }
+
+    /// Returns the input unless the identified turn is still active.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
+    pub(crate) async fn inject_if_turn_running(
+        &self,
+        turn_id: &str,
+        input: Vec<ResponseItem>,
+    ) -> Result<(), Vec<ResponseItem>> {
+        let mut active = self.active_turn.lock().await;
+        match active.as_mut() {
+            Some(active_turn)
+                if active_turn
+                    .task
+                    .as_ref()
+                    .is_some_and(|task| task.turn_context.sub_id == turn_id) =>
+            {
+                self.input_queue
+                    .extend_pending_input_and_accept_mailbox_delivery_for_turn_state(
+                        active_turn.turn_state.as_ref(),
+                        input
+                            .into_iter()
+                            .map(ResponseItemEnvelope::new)
+                            .map(PendingTurnInput::ResponseItem)
+                            .collect(),
+                    )
+                    .await;
+                Ok(())
+            }
+            Some(_) | None => Err(input),
         }
     }
 

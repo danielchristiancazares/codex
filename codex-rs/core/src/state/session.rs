@@ -180,6 +180,11 @@ impl SessionState {
         self.auto_compact_window.claim_token_budget_reminder()
     }
 
+    pub(crate) fn restore_token_budget_reminder_delivered(&mut self) {
+        self.auto_compact_window
+            .restore_token_budget_reminder_delivered();
+    }
+
     pub(crate) fn claim_auto_compact_fallback(&mut self) -> bool {
         self.auto_compact_window.claim_auto_compact_fallback()
     }

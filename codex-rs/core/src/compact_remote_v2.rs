@@ -16,6 +16,7 @@ use crate::compact_model_fallback::should_retry_with_current_model;
 use crate::compact_remote::should_keep_compacted_history_item;
 use crate::compact_remote_history::HistoryItemGroup;
 use crate::compact_remote_history::history_item_groups;
+use crate::context::CompactionSummary;
 use crate::context_manager::estimate_item_token_count;
 use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
@@ -300,7 +301,9 @@ async fn run_remote_compact_task_inner_impl(
         owned_client_session: _owned_client_session,
     } = attempt;
     if let Some(token_usage) = token_usage {
-        sess.record_rollout_budget_usage(&token_usage)?;
+        let budget_result = sess.record_rollout_budget_usage(&token_usage).await;
+        sess.persist_current_rollout_budget_checkpoint().await;
+        budget_result?;
         analytics_details.active_context_tokens_before = Some(token_usage.input_tokens);
         analytics_details.compaction_summary_tokens = Some(token_usage.output_tokens);
         analytics_details.cached_input_tokens = Some(token_usage.cached_input_tokens);
@@ -492,6 +495,7 @@ fn build_v2_compacted_history(
         .collect::<Vec<_>>();
     let retained = v2_history_item_groups(prompt_input)
         .filter(|group| is_retained_for_remote_compaction_v2(&group.source.item))
+        .filter(|group| !CompactionSummary::is_summary_item(&group.source.item))
         .filter(|group| {
             should_keep_compacted_history_item(&group.source.item)
                 || (retain_client_developer_messages
@@ -599,23 +603,17 @@ fn truncate_retained_messages(
         }
 
         let client_developer = is_client_authored_developer_message(&group.source);
-        let charge_images = image_budget == RetainedImageBudget::Enabled && !client_developer;
+        let source_image_budget =
+            if image_budget == RetainedImageBudget::Enabled && !client_developer {
+                RetainedImageBudget::Enabled
+            } else {
+                RetainedImageBudget::Disabled
+            };
         let notice_tokens = group
             .attached_notice
             .as_ref()
-            .map_or(0, |notice| message_text_token_count(&notice.item).max(1));
-        // Client-authored developer messages already charge non-text content via
-        // the serialized estimate. Preserve their text-only boundary correction.
-        let content_tokens = if charge_images {
-            message_content_token_count(&group.source.item)
-        } else {
-            message_text_token_count(&group.source.item)
-        };
-        let source_tokens = if client_developer {
-            usize::try_from(estimate_item_token_count(&group.source.item)).unwrap_or(usize::MAX)
-        } else {
-            content_tokens.max(1)
-        };
+            .map_or(0, |notice| retained_item_token_count(&notice.item));
+        let source_tokens = retained_item_token_count(&group.source.item);
         let token_count = source_tokens.saturating_add(notice_tokens);
         if token_count <= remaining {
             if let Some(notice) = group.attached_notice {
@@ -625,52 +623,29 @@ fn truncate_retained_messages(
             remaining = remaining.saturating_sub(token_count);
         } else if remaining > notice_tokens {
             let available_tokens = remaining - notice_tokens;
-            let content_budget = if client_developer {
-                available_tokens.saturating_sub(source_tokens.saturating_sub(content_tokens))
-            } else {
-                available_tokens
-            };
             let image_count = retained_input_image_count(&group.source.item);
-            if charge_images && image_count > 0 {
+            if source_image_budget == RetainedImageBudget::Enabled && image_count > 0 {
                 // An oversized image can leave no boundary content. Do not backfill
                 // the remaining budget with older messages in that case.
                 remaining = 0;
             }
-            let truncated_item = if charge_images && image_count > 0 {
-                images::truncate_message_to_token_budget(group.source, content_budget)
-            } else {
-                truncate_message_text_to_token_budget(group.source, content_budget)
-            };
-            let Some(mut truncated_item) = truncated_item else {
+            let source = group.source;
+            let Some(truncated_item) = truncate_retained_source_to_fit(
+                source,
+                available_tokens,
+                available_tokens,
+                source_image_budget,
+            ) else {
                 continue;
             };
-            if client_developer {
-                let item_tokens = usize::try_from(estimate_item_token_count(&truncated_item.item))
-                    .unwrap_or(usize::MAX);
-                if item_tokens > available_tokens {
-                    let adjusted_budget = content_budget
-                        .saturating_sub(item_tokens - available_tokens)
-                        .saturating_sub(1);
-                    let Some(adjusted) =
-                        truncate_message_text_to_token_budget(truncated_item, adjusted_budget)
-                    else {
-                        continue;
-                    };
-                    if usize::try_from(estimate_item_token_count(&adjusted.item))
-                        .unwrap_or(usize::MAX)
-                        > available_tokens
-                    {
-                        continue;
-                    }
-                    truncated_item = adjusted;
-                }
-            }
             if let Some(notice) = group.attached_notice {
                 truncated_reversed.push(notice);
             }
             truncated_reversed.push(truncated_item);
             remaining = 0;
-        } else if charge_images && retained_input_image_count(&group.source.item) > 0 {
+        } else if source_image_budget == RetainedImageBudget::Enabled
+            && retained_input_image_count(&group.source.item) > 0
+        {
             remaining = 0;
         }
     }
@@ -678,6 +653,7 @@ fn truncate_retained_messages(
     truncated_reversed
 }
 
+#[cfg(test)]
 fn message_content_token_count(item: &ResponseItem) -> usize {
     let ResponseItem::Message { content, .. } = item else {
         return usize::try_from(estimate_item_token_count(item)).unwrap_or(usize::MAX);
@@ -686,20 +662,45 @@ fn message_content_token_count(item: &ResponseItem) -> usize {
     content.iter().map(images::content_item_token_count).sum()
 }
 
-fn message_text_token_count(item: &ResponseItem) -> usize {
-    let ResponseItem::Message { content, .. } = item else {
-        return usize::try_from(estimate_item_token_count(item)).unwrap_or(usize::MAX);
-    };
+fn retained_item_token_count(item: &ResponseItem) -> usize {
+    usize::try_from(estimate_item_token_count(item))
+        .unwrap_or(usize::MAX)
+        .max(1)
+}
 
-    content
-        .iter()
-        .map(|item| match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
-                approx_token_count(text)
+fn truncate_retained_source_to_fit(
+    source: ResponseItemEnvelope,
+    max_content_budget: usize,
+    available_tokens: usize,
+    image_budget: RetainedImageBudget,
+) -> Option<ResponseItemEnvelope> {
+    let mut lower = 0usize;
+    let mut upper = max_content_budget;
+    let mut fitted = None;
+    while lower <= upper {
+        let content_budget = lower + (upper - lower) / 2;
+        let candidate = match image_budget {
+            RetainedImageBudget::Disabled => {
+                truncate_message_text_to_token_budget(source.clone(), content_budget)
             }
-            ContentItem::InputImage { .. } | ContentItem::InputAudio { .. } => 0,
-        })
-        .sum()
+            RetainedImageBudget::Enabled => {
+                images::truncate_message_to_token_budget(source.clone(), content_budget)
+            }
+        };
+        let Some(candidate) = candidate else {
+            lower = content_budget.saturating_add(1);
+            continue;
+        };
+        if retained_item_token_count(&candidate.item) <= available_tokens {
+            fitted = Some(candidate);
+            lower = content_budget.saturating_add(1);
+        } else if content_budget == 0 {
+            break;
+        } else {
+            upper = content_budget - 1;
+        }
+    }
+    fitted
 }
 
 fn truncate_message_text_to_token_budget(
@@ -745,6 +746,9 @@ fn truncate_message_text_to_token_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::ContextualUserFragment;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ContentItemKind;
     use codex_protocol::models::InternalChatMessageMetadataPassthrough;
@@ -797,6 +801,24 @@ mod tests {
         ))
     }
 
+    fn pcm_wav_data_url(sample_count: u32) -> String {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + sample_count).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&8_000u32.to_le_bytes());
+        bytes.extend_from_slice(&8_000u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&8u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&sample_count.to_le_bytes());
+        bytes.resize(bytes.len().saturating_add(sample_count as usize), 0);
+        format!("data:audio/wav;base64,{}", BASE64_STANDARD.encode(bytes))
+    }
+
     fn response_stream(events: Vec<CodexResult<ResponseEvent>>) -> ResponseStream {
         let (tx_event, rx_event) = mpsc::channel(events.len().max(1));
         for event in events {
@@ -846,6 +868,25 @@ mod tests {
             raw(history),
             vec![message("user", "user", /*phase*/ None), output]
         );
+    }
+
+    #[test]
+    fn build_v2_compacted_history_replaces_prior_local_compaction_summary() {
+        let prior_summary =
+            ContextualUserFragment::into(CompactionSummary::new("old local summary"));
+        let user = message("user", "current request", /*phase*/ None);
+        let output = ResponseItem::Compaction {
+            id: None,
+            encrypted_content: "new remote summary".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+
+        let (history, _) = build_without_metadata(
+            vec![prior_summary, user.clone()],
+            output.clone(),
+        );
+
+        assert_eq!(raw(history), vec![user, output]);
     }
 
     #[test]
@@ -917,9 +958,9 @@ mod tests {
             item: message("user", "word ".repeat(200).as_str(), /*phase*/ None),
             metadata: Some(CodexHarnessMetadata::default()),
         };
+        let max_tokens = retained_item_token_count(&item.item);
 
-        let truncated =
-            truncate_retained_messages_for_remote_compaction(vec![item], /*max_tokens*/ 4);
+        let truncated = truncate_retained_messages_for_remote_compaction(vec![item], max_tokens);
 
         assert_eq!(truncated.len(), 1);
         assert_eq!(truncated[0].metadata, Some(CodexHarnessMetadata::default()));
@@ -987,34 +1028,17 @@ mod tests {
     fn retained_history_truncation_keeps_newest_messages_first() {
         let middle = message("user", "middle1234", /*phase*/ None);
         let new = message("user", "new", /*phase*/ None);
+        let max_tokens =
+            retained_item_token_count(&middle).saturating_add(retained_item_token_count(&new));
         let retained = vec![
             message("user", "old-old", /*phase*/ None),
-            middle,
+            middle.clone(),
             new.clone(),
         ];
 
-        let truncated = truncate_without_metadata(retained, /*max_tokens*/ 3);
+        let truncated = truncate_without_metadata(retained, max_tokens);
 
-        assert_eq!(
-            truncated,
-            vec![
-                ResponseItem::Message {
-                    id: None,
-                    role: "user".to_string(),
-                    content: vec![ContentItem::InputText {
-                        text: "midd…1 tokens truncated…1234".to_string(),
-                    }],
-                    phase: None,
-                    internal_chat_message_metadata_passthrough: Some(
-                        InternalChatMessageMetadataPassthrough {
-                            content_item_kinds: Some(vec![ContentItemKind("unknown".to_string())]),
-                            ..Default::default()
-                        },
-                    ),
-                },
-                new,
-            ]
-        );
+        assert_eq!(truncated, vec![middle, new]);
     }
 
     #[test]
@@ -1057,43 +1081,69 @@ mod tests {
             ),
         };
 
-        let truncated = truncate_without_metadata(vec![item], /*max_tokens*/ 3);
+        let expected = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![
+                ContentItem::InputText {
+                    text: "abcdef".to_string(),
+                },
+                ContentItem::InputImage {
+                    image_url: "data:image/png;base64,abc".to_string(),
+                    detail: None,
+                },
+                ContentItem::OutputText {
+                    text: "uv…1 tokens truncated…yz".to_string(),
+                },
+                ContentItem::InputImage {
+                    image_url: "data:image/png;base64,def".to_string(),
+                    detail: None,
+                },
+            ],
+            phase: None,
+            internal_chat_message_metadata_passthrough: Some(
+                InternalChatMessageMetadataPassthrough {
+                    turn_id: Some("turn-1".to_string()),
+                    content_item_kinds: Some(vec![
+                        ContentItemKind("user.text".to_string()),
+                        ContentItemKind("user.image".to_string()),
+                        ContentItemKind("user.text".to_string()),
+                        ContentItemKind("user.image".to_string()),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+        };
+        let max_tokens = retained_item_token_count(&expected);
 
+        let truncated = truncate_without_metadata(vec![item], max_tokens);
+
+        let [retained] = truncated.as_slice() else {
+            panic!("expected one retained message");
+        };
+        assert!(retained_item_token_count(retained) <= max_tokens);
+        let ResponseItem::Message {
+            content,
+            internal_chat_message_metadata_passthrough: Some(metadata),
+            ..
+        } = retained
+        else {
+            panic!("expected annotated retained message");
+        };
         assert_eq!(
-            truncated,
-            vec![ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![
-                    ContentItem::InputText {
-                        text: "abcdef".to_string(),
-                    },
-                    ContentItem::InputImage {
-                        image_url: "data:image/png;base64,abc".to_string(),
-                        detail: None,
-                    },
-                    ContentItem::OutputText {
-                        text: "uv…1 tokens truncated…yz".to_string(),
-                    },
-                    ContentItem::InputImage {
-                        image_url: "data:image/png;base64,def".to_string(),
-                        detail: None,
-                    },
-                ],
-                phase: None,
-                internal_chat_message_metadata_passthrough: Some(
-                    InternalChatMessageMetadataPassthrough {
-                        turn_id: Some("turn-1".to_string()),
-                        content_item_kinds: Some(vec![
-                            ContentItemKind("user.text".to_string()),
-                            ContentItemKind("user.image".to_string()),
-                            ContentItemKind("user.text".to_string()),
-                            ContentItemKind("user.image".to_string()),
-                        ]),
-                        ..Default::default()
-                    },
-                ),
-            }]
+            content
+                .iter()
+                .filter(|item| matches!(item, ContentItem::InputImage { .. }))
+                .count(),
+            2
+        );
+        assert!(!content.iter().any(|item| {
+            matches!(item, ContentItem::InputText { text }
+                if text.contains("discarded after the text budget is exhausted"))
+        }));
+        assert_eq!(
+            metadata.content_item_kinds.as_ref().map(Vec::len),
+            Some(content.len())
         );
     }
 
@@ -1110,13 +1160,15 @@ mod tests {
             internal_chat_message_metadata_passthrough: None,
         };
         let newest = message("user", "new", /*phase*/ None);
+        let max_tokens = retained_item_token_count(&image_only_message)
+            .saturating_add(retained_item_token_count(&newest));
         let retained = vec![
             message("user", "old", /*phase*/ None),
             image_only_message.clone(),
             newest.clone(),
         ];
 
-        let truncated = truncate_without_metadata(retained, /*max_tokens*/ 2);
+        let truncated = truncate_without_metadata(retained, max_tokens);
 
         assert_eq!(truncated, vec![image_only_message, newest]);
     }
@@ -1134,11 +1186,69 @@ mod tests {
             internal_chat_message_metadata_passthrough: None,
         };
         let newest = message("user", "new", /*phase*/ None);
+        let max_tokens = retained_item_token_count(&newest);
         let retained = vec![image_only_message, newest.clone()];
 
-        let truncated = truncate_without_metadata(retained, /*max_tokens*/ 1);
+        let truncated = truncate_without_metadata(retained, max_tokens);
 
         assert_eq!(truncated, vec![newest]);
+    }
+
+    #[test]
+    fn retained_history_charges_audio_with_the_full_item_estimator() {
+        let audio = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputAudio {
+                audio_url: pcm_wav_data_url(/*sample_count*/ 8_000),
+            }],
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let full_item_tokens = retained_item_token_count(&audio);
+        let content_tokens = message_content_token_count(&audio);
+
+        assert!(full_item_tokens > content_tokens);
+        assert_eq!(
+            truncate_without_metadata(vec![audio.clone()], full_item_tokens),
+            vec![audio.clone()]
+        );
+        assert_eq!(
+            truncate_without_metadata(vec![audio], full_item_tokens.saturating_sub(1)),
+            Vec::<ResponseItem>::new()
+        );
+    }
+
+    #[test]
+    fn retained_tiny_metadata_heavy_messages_stay_within_full_item_budget() {
+        let items = (0..200)
+            .map(|index| ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "x".to_string(),
+                }],
+                phase: None,
+                internal_chat_message_metadata_passthrough: Some(
+                    codex_protocol::models::InternalChatMessageMetadataPassthrough {
+                        turn_id: Some(format!("turn-{index}-{}", "m".repeat(80))),
+                        ..Default::default()
+                    },
+                ),
+            })
+            .collect::<Vec<_>>();
+        let newest = items.last().cloned().expect("newest message");
+        let max_tokens = 1_000;
+
+        let retained = truncate_without_metadata(items.clone(), max_tokens);
+        let retained_tokens = retained
+            .iter()
+            .map(retained_item_token_count)
+            .sum::<usize>();
+
+        assert!(retained_tokens <= max_tokens);
+        assert!(retained.len() < items.len());
+        assert_eq!(retained.last(), Some(&newest));
     }
 
     #[tokio::test]

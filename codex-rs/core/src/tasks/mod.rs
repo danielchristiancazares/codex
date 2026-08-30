@@ -915,7 +915,7 @@ impl Session {
         {
             self.services
                 .code_mode_service
-                .interrupt_active_cells()
+                .interrupt_active_cells(sub_id.as_str())
                 .await;
         }
         task.turn_context

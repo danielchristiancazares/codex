@@ -51,7 +51,9 @@ const SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 const APP_ONLY_CWD_MARKER_FILE_ENV: &str = "MCP_TEST_APP_ONLY_CWD_MARKER_FILE";
 const DYNAMIC_SERVER_METADATA_ENV: &str = "MCP_TEST_DYNAMIC_SERVER_METADATA";
+const HIGH_CARDINALITY_OUTPUT_ENV: &str = "MCP_TEST_HIGH_CARDINALITY_OUTPUT";
 const INITIALIZE_BARRIER_FILE_ENV: &str = "MCP_TEST_INITIALIZE_BARRIER_FILE";
+const RESOURCE_CONTENT_KIND_ENV: &str = "MCP_TEST_RESOURCE_CONTENT_KIND";
 const SERVER_INSTRUCTIONS_ENV: &str = "MCP_TEST_SERVER_INSTRUCTIONS";
 
 fn dynamic_server_process_label() -> Option<String> {
@@ -159,6 +161,22 @@ impl TestToolServer {
             let mut tool = Tool::new(
                 Cow::Borrowed("js"),
                 Cow::Borrowed("Run JavaScript in the test Node REPL."),
+                Arc::new(schema),
+            );
+            tool.annotations = Some(ToolAnnotations::new().read_only(true));
+            tools.push(tool);
+        }
+        if std::env::var_os(HIGH_CARDINALITY_OUTPUT_ENV).is_some() {
+            #[expect(clippy::expect_used)]
+            let schema: JsonObject = serde_json::from_value(json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }))
+            .expect("high_cardinality_output tool schema should deserialize");
+            let mut tool = Tool::new(
+                Cow::Borrowed("high_cardinality_output"),
+                Cow::Borrowed("Return many small content blocks for output-budget tests."),
                 Arc::new(schema),
             );
             tool.annotations = Some(ToolAnnotations::new().read_only(true));
@@ -386,6 +404,7 @@ impl TestToolServer {
                         "invalid_image_bytes_then_image",
                         "multiple_valid_images",
                         "image_then_text",
+                        "embedded_image_resource",
                         "text_only"
                     ]
                 },
@@ -492,6 +511,7 @@ enum ImageScenario {
     InvalidImageBytesThenImage,
     MultipleValidImages,
     ImageThenText,
+    EmbeddedImageResource,
     TextOnly,
 }
 
@@ -619,15 +639,21 @@ impl ServerHandler for TestToolServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<rmcp::model::ReadResourceResponse, McpError> {
         if uri == MEMO_URI {
-            Ok(
-                ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+            let content = match std::env::var(RESOURCE_CONTENT_KIND_ENV).as_deref() {
+                Ok("image") => ResourceContents::BlobResourceContents {
+                    uri,
+                    mime_type: Some("image/png".to_string()),
+                    blob: SMALL_PNG_BASE64.to_string(),
+                    meta: None,
+                },
+                _ => ResourceContents::TextResourceContents {
                     uri,
                     mime_type: Some("text/plain".to_string()),
                     text: Self::memo_text().to_string(),
                     meta: None,
-                }])
-                .into(),
-            )
+                },
+            };
+            Ok(ReadResourceResult::new(vec![content]).into())
         } else {
             Err(McpError::resource_not_found(
                 "resource_not_found",
@@ -749,6 +775,11 @@ impl ServerHandler for TestToolServer {
                 result.structured_content = Some(json!({"encrypted_output": "ignored"}));
                 Ok(result)
             }
+            "high_cardinality_output" => Ok(CallToolResult::success(
+                (0..12_000)
+                    .map(|_| rmcp::model::ContentBlock::text("x"))
+                    .collect(),
+            )),
             "image" => {
                 // Read a data URL (e.g. data:image/png;base64,AAA...) from env and convert to
                 // an MCP image content block. Tests set MCP_TEST_IMAGE_DATA_URL.
@@ -876,6 +907,16 @@ impl TestToolServer {
             ImageScenario::ImageThenText => {
                 content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
                 content.push(rmcp::model::ContentBlock::text(caption));
+            }
+            ImageScenario::EmbeddedImageResource => {
+                content.push(rmcp::model::ContentBlock::resource(
+                    ResourceContents::BlobResourceContents {
+                        uri: "image://embedded-example".to_string(),
+                        mime_type: Some(mime_type),
+                        blob: valid_data_b64,
+                        meta: None,
+                    },
+                ));
             }
             ImageScenario::TextOnly => {
                 content.push(rmcp::model::ContentBlock::text(caption));

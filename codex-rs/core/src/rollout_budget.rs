@@ -2,6 +2,7 @@ use crate::config::RolloutBudgetConfig;
 use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::protocol::RolloutBudgetCheckpoint;
 use codex_protocol::protocol::TokenUsage;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -40,6 +41,29 @@ impl RolloutBudget {
                 deliveries: HashMap::new(),
             })
         });
+    }
+
+    pub(crate) fn checkpoint(&self) -> Option<RolloutBudgetCheckpoint> {
+        let state = self.lock()?;
+        Some(RolloutBudgetCheckpoint {
+            weighted_tokens_used: state.weighted_tokens_used,
+        })
+    }
+
+    pub(crate) fn restore(&self, checkpoint: RolloutBudgetCheckpoint) {
+        if !checkpoint.weighted_tokens_used.is_finite() || checkpoint.weighted_tokens_used < 0.0 {
+            tracing::warn!(
+                weighted_tokens_used = checkpoint.weighted_tokens_used,
+                "ignored invalid rollout budget checkpoint"
+            );
+            return;
+        }
+        let Some(mut state) = self.lock() else {
+            return;
+        };
+        state.weighted_tokens_used = state
+            .weighted_tokens_used
+            .max(checkpoint.weighted_tokens_used);
     }
 
     /// Returns true once the configured budget is exhausted, including on later calls.

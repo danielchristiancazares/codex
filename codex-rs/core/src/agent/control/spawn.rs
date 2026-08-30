@@ -9,7 +9,9 @@ use crate::context::DeveloperInstructions;
 use crate::context::ManagedDeveloperInstructions;
 use crate::context::MultiAgentModeInstructions;
 use crate::context::MultiAgentRoleInstructions;
+use crate::context::is_contextual_user_fragment;
 use crate::context::world_state::PersistentModeState;
+use crate::event_mapping::is_contextual_dev_fragment;
 use crate::session::multi_agents::resolve_usage_hints;
 use crate::tools::handlers::multi_agents_common::build_agent_resume_config;
 use codex_context_fragments::set_annotated_content;
@@ -913,6 +915,28 @@ impl AgentControl {
         let retain_forked_item = |response_item: &mut ResponseItem, replaced: &mut bool| {
             if matches!(response_item, ResponseItem::AgentMessage { .. }) {
                 return false;
+            }
+            if !preserve_reference_context_item {
+                let role = match response_item {
+                    ResponseItem::Message { role, .. } => Some(role.clone()),
+                    _ => None,
+                };
+                if let Some(role) = role {
+                    let Some(mut content) = to_annotated_content(response_item) else {
+                        return false;
+                    };
+                    content.retain(|content_item| match role.as_str() {
+                        "user" => !is_contextual_user_fragment(content_item.content()),
+                        "developer" => !is_contextual_dev_fragment(content_item.content()),
+                        "system" | "assistant" => true,
+                        _ => true,
+                    });
+                    if content.is_empty()
+                        || set_annotated_content(response_item, content).is_none()
+                    {
+                        return false;
+                    }
+                }
             }
             if !retain_forked_developer_message(
                 response_item,

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 #[cfg(windows)]
@@ -22,6 +23,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tempfile::tempdir;
+use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio::time::timeout;
 
@@ -347,6 +349,28 @@ async fn schedule(runtime: &CommandHookRuntime, handler: ConfiguredHandler, cwd:
             prompt: "test prompt".to_string(),
         })
         .await;
+}
+
+#[tokio::test]
+async fn abort_turns_cancels_matching_async_tasks() {
+    let (runtime, _results) = runtime();
+    let (started_tx, started_rx) = oneshot::channel();
+    let (finished_tx, finished_rx) = oneshot::channel::<()>();
+    runtime.schedule_async_task(Some("rolled-back-turn"), async move {
+        let _ = started_tx.send(());
+        let _finished_tx = finished_tx;
+        std::future::pending::<()>().await;
+    });
+    started_rx.await.expect("async task should start");
+
+    runtime
+        .abort_turns(&HashSet::from(["rolled-back-turn".to_string()]))
+        .await;
+
+    assert!(
+        finished_rx.await.is_err(),
+        "aborting a turn should drop its pending async hook task"
+    );
 }
 
 #[tokio::test]

@@ -147,9 +147,7 @@ impl ToolCall<'_> {
     /// Callers must include serialization overhead when fitting a response to this budget.
     pub fn response_byte_budget(&self, max_response_bytes: usize) -> usize {
         match &self.source {
-            ToolCallSource::Direct => {
-                max_response_bytes.min((self.truncation_policy * 1.2).byte_budget())
-            }
+            ToolCallSource::Direct => max_response_bytes.min(self.truncation_policy.byte_budget()),
             ToolCallSource::CodeMode {
                 cell_id: _,
                 runtime_tool_call_id: _,

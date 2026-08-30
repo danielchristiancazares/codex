@@ -12,6 +12,7 @@ use crate::catalog::SkillSourceKind;
 use crate::catalog_prompt::SkillPromptKind;
 use crate::catalog_prompt::render_available_skills_body;
 use crate::fragments::AvailableSkillsInstructions;
+use crate::fragments::SkillUsageInstructions;
 use crate::host_aliases::shared_host_alias_roots;
 
 const DEFAULT_SKILL_METADATA_CHAR_BUDGET: usize = 8_000;
@@ -455,8 +456,8 @@ struct RenderedCatalog {
 
 pub(crate) struct AvailableSkillsRender {
     prompt_kind: SkillPromptKind,
-    skill_root_lines: Vec<String>,
-    skill_lines: Vec<String>,
+    pub(crate) skill_root_lines: Vec<String>,
+    pub(crate) skill_lines: Vec<String>,
     preserve_empty_fragment: bool,
     pub(crate) report: SkillRenderReport,
 }
@@ -473,12 +474,24 @@ impl AvailableSkillsRender {
         self,
         include_skills_usage_instructions: bool,
     ) -> Option<AvailableSkillsInstructions> {
+        let usage_instructions = if include_skills_usage_instructions {
+            SkillUsageInstructions::CommonAndSourceSpecific
+        } else {
+            SkillUsageInstructions::Omitted
+        };
+        self.into_fragment_with_usage(usage_instructions)
+    }
+
+    pub(crate) fn into_fragment_with_usage(
+        self,
+        usage_instructions: SkillUsageInstructions,
+    ) -> Option<AvailableSkillsInstructions> {
         (self.preserve_empty_fragment || !self.skill_lines.is_empty()).then(|| {
             AvailableSkillsInstructions::from_skill_lines(
                 self.prompt_kind,
                 self.skill_root_lines,
                 self.skill_lines,
-                include_skills_usage_instructions,
+                usage_instructions,
             )
         })
     }

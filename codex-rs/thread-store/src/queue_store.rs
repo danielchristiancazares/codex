@@ -44,6 +44,34 @@ pub trait QueueStore: Send + Sync {
 
     fn delete(&self, thread_id: ThreadId, item_id: String) -> ThreadStoreFuture<'_, bool>;
 
+    fn get(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>>;
+
+    /// Atomically reserve one pending item for the supplied Core turn.
+    fn claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>>;
+
+    /// Return a claim to the pending queue after Core explicitly declines it.
+    fn release_claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, bool>;
+
+    /// Complete the item claimed by one terminal Core turn.
+    fn complete_claim(&self, thread_id: ThreadId, turn_id: String) -> ThreadStoreFuture<'_, bool>;
+
+    /// Conservatively retire claims left behind by an earlier process.
+    fn complete_claims(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, bool>;
+
     /// Atomically replace queue order with every current item ID exactly once.
     ///
     /// Returns [`ThreadStoreError::InvalidRequest`] when `item_ids` is not a
@@ -136,6 +164,44 @@ impl QueueStore for LocalQueueStore {
 
     fn delete(&self, thread_id: ThreadId, item_id: String) -> ThreadStoreFuture<'_, bool> {
         queue_future(async move { self.queue().delete(thread_id, &item_id).await })
+    }
+
+    fn get(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>> {
+        queue_future(async move { self.queue().get(thread_id, &item_id).await })
+    }
+
+    fn claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>> {
+        queue_future(async move { self.queue().claim(thread_id, &item_id, &turn_id).await })
+    }
+
+    fn release_claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, bool> {
+        queue_future(async move {
+            self.queue()
+                .release_claim(thread_id, &item_id, &turn_id)
+                .await
+        })
+    }
+
+    fn complete_claim(&self, thread_id: ThreadId, turn_id: String) -> ThreadStoreFuture<'_, bool> {
+        queue_future(async move { self.queue().complete_claim(thread_id, &turn_id).await })
+    }
+
+    fn complete_claims(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, bool> {
+        queue_future(self.queue().complete_claims(thread_id))
     }
 
     fn reorder(&self, thread_id: ThreadId, item_ids: Vec<String>) -> ThreadStoreFuture<'_, ()> {

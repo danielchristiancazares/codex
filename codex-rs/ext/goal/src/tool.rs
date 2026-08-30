@@ -67,6 +67,18 @@ struct GoalToolResponse {
     completion_budget_report: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GoalOperationResult {
+    goal_id: String,
+    status: ThreadGoalStatus,
+    token_budget: Option<i64>,
+    tokens_used: i64,
+    time_used_seconds: i64,
+    remaining_tokens: Option<i64>,
+    completion_budget_report: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 enum CompletionBudgetReport {
     Include,
@@ -226,9 +238,10 @@ impl GoalToolExecutor {
             &goal,
             GoalEventAttribution::Turn(invocation.turn_id.as_str()),
         );
+        let goal_id = goal.goal_id.clone();
         let goal = protocol_goal_from_state(goal);
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
-        goal_response(Some(goal), CompletionBudgetReport::Omit)
+        goal_operation_response(goal_id, &goal, CompletionBudgetReport::Omit)
     }
 
     async fn handle_update(
@@ -290,11 +303,13 @@ impl GoalToolExecutor {
             previous_status,
             GoalEventAttribution::Turn(invocation.turn_id.as_str()),
         );
+        let goal_id = goal.goal_id.clone();
         let goal = protocol_goal_from_state(goal);
         let turn_id = self.accounting_state.clear_current_turn_goal();
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
-        goal_response(
-            Some(goal),
+        goal_operation_response(
+            goal_id,
+            &goal,
             if args.status == ThreadGoalStatus::Complete {
                 CompletionBudgetReport::Include
             } else {
@@ -439,6 +454,20 @@ fn goal_response(
     Ok(Box::new(JsonToolOutput::new(value)))
 }
 
+fn goal_operation_response(
+    goal_id: String,
+    goal: &ThreadGoal,
+    completion_budget_report: CompletionBudgetReport,
+) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
+    let value = serde_json::to_value(GoalOperationResult::new(
+        goal_id,
+        goal,
+        completion_budget_report,
+    ))
+    .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+    Ok(Box::new(JsonToolOutput::new(value)))
+}
+
 impl GoalToolResponse {
     fn new(goal: Option<ThreadGoal>, report_mode: CompletionBudgetReport) -> Self {
         let remaining_tokens = goal.as_ref().and_then(|goal| {
@@ -456,6 +485,27 @@ impl GoalToolResponse {
             goal,
             remaining_tokens,
             completion_budget_report,
+        }
+    }
+}
+
+impl GoalOperationResult {
+    fn new(goal_id: String, goal: &ThreadGoal, report_mode: CompletionBudgetReport) -> Self {
+        Self {
+            goal_id,
+            status: goal.status,
+            token_budget: goal.token_budget,
+            tokens_used: goal.tokens_used,
+            time_used_seconds: goal.time_used_seconds,
+            remaining_tokens: goal
+                .token_budget
+                .map(|budget| (budget - goal.tokens_used).max(0)),
+            completion_budget_report: match report_mode {
+                CompletionBudgetReport::Include if goal.status == ThreadGoalStatus::Complete => {
+                    completion_budget_report(goal)
+                }
+                CompletionBudgetReport::Include | CompletionBudgetReport::Omit => None,
+            },
         }
     }
 }
@@ -517,7 +567,7 @@ fn completion_budget_report(goal: &ThreadGoal) -> Option<String> {
         None
     } else {
         Some(
-            "Goal achieved. Report final usage from this tool result's structured goal fields. If `goal.tokenBudget` is present, include token usage from `goal.tokensUsed` and `goal.tokenBudget`. If `goal.timeUsedSeconds` is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language."
+            "Goal achieved. Report final usage from this tool result's structured fields. If `tokenBudget` is present, include token usage from `tokensUsed` and `tokenBudget`. If `timeUsedSeconds` is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language."
                 .to_string(),
         )
     }

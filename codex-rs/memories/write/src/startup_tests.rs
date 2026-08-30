@@ -687,6 +687,91 @@ async fn memories_startup_phase1_provider_default_drives_request_model() -> anyh
 }
 
 #[tokio::test]
+async fn cf_038_reclaimed_ninth_phase1_job_never_reaches_sampling() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let home = Arc::new(TempDir::new()?);
+    let mut memories = startup_test_memories_config();
+    memories.max_rollouts_per_startup = 9;
+    let test = build_test_codex_with_memories_config(&server, Arc::clone(&home), memories).await?;
+    let db = test
+        .codex
+        .state_db()
+        .ok_or_else(|| anyhow::anyhow!("state db should be enabled for memory startup test"))?;
+    for index in 0..9 {
+        seed_stage1_candidate(
+            db.as_ref(),
+            home.path(),
+            chrono::Utc::now() - chrono::Duration::hours(2),
+            &format!("lease-candidate-{index}"),
+        )
+        .await?;
+    }
+    let allowed_sources = vec!["cli".to_string()];
+    let claims = db
+        .memories()
+        .claim_stage1_jobs_for_startup(
+            test.session_configured.thread_id,
+            codex_state::Stage1StartupClaimParams {
+                scan_limit: 32,
+                max_claimed: 9,
+                max_age_days: 30,
+                min_rollout_idle_hours: 0,
+                allowed_sources: &allowed_sources,
+                lease_seconds: 0,
+            },
+        )
+        .await?;
+    assert_eq!(claims.len(), 9);
+    let stale_claim = claims.into_iter().nth(8).expect("ninth claim");
+    let replacement = db
+        .memories()
+        .try_claim_stage1_job(
+            stale_claim.thread.id,
+            ThreadId::new(),
+            stale_claim.thread.updated_at.timestamp(),
+            /*lease_seconds*/ 3_600,
+            /*max_running_jobs*/ 64,
+        )
+        .await?;
+    assert!(matches!(
+        replacement,
+        codex_state::Stage1JobClaimOutcome::Claimed { .. }
+    ));
+    let response = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("unexpected-stale-owner"),
+            ev_completed("unexpected-stale-owner"),
+        ]),
+    )
+    .await;
+    let provider = Arc::new(MockMemoryModelProvider::new(
+        test.config.model_provider.clone(),
+        Some(test.thread_manager.auth_manager()),
+    ));
+    let (context, config) = memory_startup_context_with_provider(&test, provider).await;
+    let request_context = context
+        .stage_one_request_context(
+            config.as_ref(),
+            MOCK_PROVIDER_PHASE_ONE_MODEL,
+            ReasoningEffort::Low,
+        )
+        .await;
+
+    let _ = phase1::job::run(
+        context.as_ref(),
+        config.as_ref(),
+        stale_claim,
+        &request_context,
+    )
+    .await;
+
+    assert!(response.requests().is_empty());
+    shutdown_test_codex(&test).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn memories_startup_phase2_provider_default_drives_request_model() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);

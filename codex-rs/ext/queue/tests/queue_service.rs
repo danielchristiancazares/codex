@@ -23,6 +23,9 @@ use codex_extension_api::ThreadIdleCause;
 use codex_extension_api::ThreadIdleInput;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadResumeInput;
+use codex_extension_api::TurnAbortInput;
+use codex_extension_api::TurnLifecycleContributor;
+use codex_extension_api::TurnStopInput;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ImageDetail;
@@ -37,7 +40,10 @@ use codex_state::SqliteConfig;
 use codex_state::StateRuntime;
 use codex_thread_store::LocalQueueStore;
 use codex_thread_store::QueueStore;
+use codex_thread_store::QueuedUserSubmissionRecord;
+use codex_thread_store::QueuedUserSubmissionState;
 use codex_thread_store::ThreadStoreError;
+use codex_thread_store::ThreadStoreFuture;
 use codex_utils_absolute_path::test_support::PathExt;
 use core_test_support::hooks::trust_discovered_hooks;
 use core_test_support::responses;
@@ -81,6 +87,104 @@ struct InstalledQueue {
     skip_next_idle: Mutex<Option<ThreadId>>,
 }
 
+struct CompletionFailingQueue {
+    inner: Arc<dyn QueueStore>,
+}
+
+impl CompletionFailingQueue {
+    fn new(inner: Arc<dyn QueueStore>) -> Self {
+        Self { inner }
+    }
+}
+
+impl QueueStore for CompletionFailingQueue {
+    fn change_version(&self) -> ThreadStoreFuture<'_, i64> {
+        self.inner.change_version()
+    }
+
+    fn changes_since<'a>(
+        &'a self,
+        revision: i64,
+        thread_ids: &'a [ThreadId],
+    ) -> ThreadStoreFuture<'a, Vec<(ThreadId, i64)>> {
+        self.inner.changes_since(revision, thread_ids)
+    }
+
+    fn enqueue(
+        &self,
+        thread_id: ThreadId,
+        payload: String,
+    ) -> ThreadStoreFuture<'_, QueuedUserSubmissionRecord> {
+        self.inner.enqueue(thread_id, payload)
+    }
+
+    fn list_page(
+        &self,
+        thread_id: ThreadId,
+        offset: usize,
+        limit: usize,
+    ) -> ThreadStoreFuture<'_, Vec<QueuedUserSubmissionRecord>> {
+        self.inner.list_page(thread_id, offset, limit)
+    }
+
+    fn update(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        payload: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>> {
+        self.inner.update(thread_id, item_id, payload)
+    }
+
+    fn delete(&self, thread_id: ThreadId, item_id: String) -> ThreadStoreFuture<'_, bool> {
+        self.inner.delete(thread_id, item_id)
+    }
+
+    fn get(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>> {
+        self.inner.get(thread_id, item_id)
+    }
+
+    fn claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, Option<QueuedUserSubmissionRecord>> {
+        self.inner.claim(thread_id, item_id, turn_id)
+    }
+
+    fn release_claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: String,
+        turn_id: String,
+    ) -> ThreadStoreFuture<'_, bool> {
+        self.inner.release_claim(thread_id, item_id, turn_id)
+    }
+
+    fn complete_claim(&self, thread_id: ThreadId, turn_id: String) -> ThreadStoreFuture<'_, bool> {
+        let _thread_id = thread_id;
+        let _turn_id = turn_id;
+        Box::pin(async {
+            Err(ThreadStoreError::Internal {
+                message: "injected queued completion failure".to_string(),
+            })
+        })
+    }
+
+    fn complete_claims(&self, thread_id: ThreadId) -> ThreadStoreFuture<'_, bool> {
+        self.inner.complete_claims(thread_id)
+    }
+
+    fn reorder(&self, thread_id: ThreadId, item_ids: Vec<String>) -> ThreadStoreFuture<'_, ()> {
+        self.inner.reorder(thread_id, item_ids)
+    }
+}
+
 impl ThreadLifecycleContributor<codex_core::config::Config> for InstalledQueue {
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         match self.service.get() {
@@ -110,12 +214,29 @@ impl ThreadLifecycleContributor<codex_core::config::Config> for InstalledQueue {
     }
 }
 
+impl TurnLifecycleContributor for InstalledQueue {
+    fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
+        match self.service.get() {
+            Some(service) => TurnLifecycleContributor::on_turn_stop(service.as_ref(), input),
+            None => Box::pin(async {}),
+        }
+    }
+
+    fn on_turn_abort<'a>(&'a self, input: TurnAbortInput<'a>) -> ExtensionFuture<'a, ()> {
+        match self.service.get() {
+            Some(service) => TurnLifecycleContributor::on_turn_abort(service.as_ref(), input),
+            None => Box::pin(async {}),
+        }
+    }
+}
+
 fn registered_queue_extensions() -> (
     Arc<InstalledQueue>,
     Arc<ExtensionRegistry<codex_core::config::Config>>,
 ) {
     let installed = Arc::new(InstalledQueue::default());
     let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_lifecycle_contributor(installed.clone());
     extensions.thread_lifecycle_contributor(installed.clone());
     (installed, Arc::new(extensions.build()))
 }
@@ -124,8 +245,16 @@ fn install_registered_queue(
     test: &TestCodex,
     installed: &InstalledQueue,
 ) -> anyhow::Result<Arc<QueuedItemService>> {
+    install_registered_queue_with_store(test, installed, loaded_thread_queue(test)?)
+}
+
+fn install_registered_queue_with_store(
+    test: &TestCodex,
+    installed: &InstalledQueue,
+    queue: Arc<dyn QueueStore>,
+) -> anyhow::Result<Arc<QueuedItemService>> {
     let service = Arc::new(QueuedItemService::new(
-        loaded_thread_queue(test)?,
+        queue,
         Arc::downgrade(&test.thread_manager),
         Arc::new(NoopExtensionEventSink),
     ));
@@ -506,6 +635,92 @@ async fn registered_queue_lifecycle_starts_messages_in_fifo_order() -> anyhow::R
         .collect::<anyhow::Result<Vec<_>>>()?;
     assert_eq!(vec!["A", "B", "C"], prompts);
     assert!(queue.list(thread_id).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cf_025_completion_failure_leaves_a_claim_and_idle_does_not_redispatch_it()
+-> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let response =
+        responses::mount_sse_once(&server, responses::sse_completed("queued-turn")).await;
+    let (installed, extensions) = registered_queue_extensions();
+    let test = test_codex()
+        .with_extensions(extensions)
+        .with_config(|config| config.include_environment_context = false)
+        .build_with_auto_env(&server)
+        .await?;
+    let thread_id = test.session_configured.thread_id;
+    let durable_queue = loaded_thread_queue(&test)?;
+    let failing_queue: Arc<dyn QueueStore> =
+        Arc::new(CompletionFailingQueue::new(Arc::clone(&durable_queue)));
+    let service =
+        install_registered_queue_with_store(&test, installed.as_ref(), Arc::clone(&failing_queue))?;
+    let queued = service
+        .enqueue(thread_id, user_input("execute exactly once"))
+        .await?;
+
+    emit_idle(service.as_ref(), thread_id).await;
+    let turn_id = wait_for_event_match(test.codex.as_ref(), |event| match event {
+        EventMsg::TurnComplete(event) => Some(event.turn_id.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        Some(QueuedUserSubmissionRecord {
+            id: queued.id.clone(),
+            thread_id,
+            payload: serde_json::to_string(&queued.input)?,
+            state: QueuedUserSubmissionState::Claimed {
+                turn_id: turn_id.clone(),
+            },
+        }),
+        durable_queue.get(thread_id, queued.id).await?
+    );
+    assert!(service.list(thread_id).await?.is_empty());
+
+    emit_idle(service.as_ref(), thread_id).await;
+    assert_eq!(1, response.requests().len());
+    assert_eq!(
+        vec!["execute exactly once"],
+        response.single_request().message_input_texts("user")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cf_025_resume_reconciles_claims_without_removing_pending_items() -> anyhow::Result<()> {
+    let (queue, _home) = test_queue().await?;
+    let service = QueuedItemService::new(
+        Arc::clone(&queue),
+        Weak::new(),
+        Arc::new(NoopExtensionEventSink),
+    );
+    let thread_id = ThreadId::new();
+    let claimed = service.enqueue(thread_id, user_input("claimed")).await?;
+    let pending = service.enqueue(thread_id, user_input("pending")).await?;
+    queue
+        .claim(
+            thread_id,
+            claimed.id.clone(),
+            "interrupted-process-turn".to_string(),
+        )
+        .await?
+        .context("queued item was not claimed")?;
+    let session_store = ExtensionData::new("session");
+    let thread_store = ExtensionData::new(thread_id.to_string());
+
+    <QueuedItemService as ThreadLifecycleContributor<()>>::on_thread_resume(
+        &service,
+        ThreadResumeInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+        },
+    )
+    .await;
+
+    assert_eq!(None, queue.get(thread_id, claimed.id).await?);
+    assert_eq!(vec![pending], service.list(thread_id).await?);
     Ok(())
 }
 

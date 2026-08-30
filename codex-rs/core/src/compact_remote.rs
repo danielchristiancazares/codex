@@ -401,52 +401,92 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
     turn_context: &TurnContext,
     base_instructions: &BaseInstructions,
 ) -> (usize, i64) {
-    let Some(context_window) = turn_context.model_context_window() else {
-        return (0, 0);
-    };
+    trim_function_call_history_for_context_window(
+        history,
+        turn_context.model_context_window(),
+        base_instructions,
+    )
+}
+
+fn trim_function_call_history_for_context_window(
+    history: &mut ContextManager,
+    context_window: Option<i64>,
+    base_instructions: &BaseInstructions,
+) -> (usize, i64) {
     // Keep the unclamped total so replacing an item cannot lose an overflow hidden by i64
     // saturation in the normal history estimator.
     let base_tokens =
         i128::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i128::MAX);
     let original_items = history.annotated_items();
-    let mut estimated_tokens = history_item_groups(original_items.iter().map(|item| &item.item))
+    let initial_estimated_tokens =
+        history_item_groups(original_items.iter().map(|item| &item.item))
+            .map(|group| group.estimated_token_count())
+            .fold(base_tokens, i128::saturating_add);
+    let initial_estimated_tokens = i64::try_from(initial_estimated_tokens).unwrap_or(i64::MAX);
+    let mut projected_items = original_items.to_vec();
+    let mut rewritten = vec![false; projected_items.len()];
+    for (index, envelope) in projected_items.iter_mut().enumerate() {
+        if let ResponseItem::ToolSearchOutput { tools, .. } = &mut envelope.item
+            && !tools.is_empty()
+        {
+            tools.clear();
+            rewritten[index] = true;
+        }
+    }
+    let mut estimated_tokens = history_item_groups(projected_items.iter().map(|item| &item.item))
         .map(|group| group.estimated_token_count())
         .fold(base_tokens, i128::saturating_add);
-    let initial_estimated_tokens = i64::try_from(estimated_tokens).unwrap_or(i64::MAX);
-    let mut rewritten_items = Vec::new();
-    let mut consumed_items: usize = 0;
+    let mut replacements = Vec::new();
+    let mut removed = vec![false; projected_items.len()];
+    let mut traversed_items: usize = 0;
 
-    for group in history_item_groups(original_items.iter().map(|item| &item.item))
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-    {
-        if i64::try_from(estimated_tokens).unwrap_or(i64::MAX) <= context_window {
-            break;
+    if let Some(context_window) = context_window {
+        for group in history_item_groups(projected_items.iter().map(|item| &item.item))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            if i64::try_from(estimated_tokens).unwrap_or(i64::MAX) <= context_window {
+                break;
+            }
+            let group_item_count = 1 + usize::from(group.attached_notice.is_some());
+            let source_index = projected_items
+                .len()
+                .saturating_sub(traversed_items.saturating_add(group_item_count));
+            traversed_items = traversed_items.saturating_add(group_item_count);
+            let Some(source) = projected_items.get(source_index) else {
+                break;
+            };
+            let Some(rewritten_item) = rewritten_output_for_context_window(source) else {
+                continue;
+            };
+            estimated_tokens = estimated_tokens
+                .saturating_sub(group.estimated_token_count())
+                .saturating_add(i128::from(estimate_item_token_count(&rewritten_item.item)));
+            if rewritten_item.item != source.item || group.attached_notice.is_some() {
+                rewritten[source_index] = true;
+            }
+            if group.attached_notice.is_some()
+                && let Some(removed_notice) = removed.get_mut(source_index.saturating_add(1))
+            {
+                *removed_notice = true;
+            }
+            replacements.push((source_index, rewritten_item));
         }
-        let group_item_count = 1 + usize::from(group.attached_notice.is_some());
-        let source_index = original_items
-            .len()
-            .saturating_sub(consumed_items.saturating_add(group_item_count));
-        let Some(rewritten_item) = original_items
-            .get(source_index)
-            .and_then(rewritten_output_for_context_window)
-        else {
-            break;
-        };
-        estimated_tokens = estimated_tokens
-            .saturating_sub(group.estimated_token_count())
-            .saturating_add(i128::from(estimate_item_token_count(&rewritten_item.item)));
-        consumed_items += group_item_count;
-        rewritten_items.push(rewritten_item);
     }
 
-    let rewritten_outputs = rewritten_items.len();
+    let rewritten_outputs = rewritten.into_iter().filter(|rewritten| *rewritten).count();
     if rewritten_outputs > 0 {
-        let retained_len = original_items.len() - consumed_items;
-        let mut items = original_items[..retained_len].to_vec();
-        items.extend(rewritten_items.into_iter().rev());
-        history.replace_annotated(items);
+        for (index, replacement) in replacements {
+            projected_items[index] = replacement;
+        }
+        history.replace_annotated(
+            projected_items
+                .into_iter()
+                .zip(removed)
+                .filter_map(|(item, removed)| (!removed).then_some(item))
+                .collect(),
+        );
     }
 
     let final_estimated_tokens = i64::try_from(estimated_tokens).unwrap_or(i64::MAX);

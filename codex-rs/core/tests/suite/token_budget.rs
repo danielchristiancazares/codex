@@ -709,6 +709,55 @@ async fn token_budget_reminder_emits_after_crossing_compaction_threshold() -> Re
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cf_028_same_window_resume_preserves_token_budget_delivery() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_completed_with_tokens("resp-1", /*total_tokens*/ 8_000),
+            ]),
+            sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
+            sse(vec![ev_response_created("resp-3"), ev_completed("resp-3")]),
+        ],
+    )
+    .await;
+    let configure = |config: &mut codex_core::config::Config| {
+        config.model_context_window = Some(10_000);
+        config.token_budget = Some(TokenBudgetConfig {
+            reminder_threshold_tokens: Some(2_000),
+            ..TokenBudgetConfig::default()
+        });
+        config
+            .features
+            .enable(Feature::TokenBudget)
+            .expect("test config should allow token budget");
+    };
+    let initial = test_codex().with_config(configure).build(&server).await?;
+    initial.submit_turn("cross threshold").await?;
+    initial.submit_turn("deliver reminder").await?;
+
+    let mut resume_builder = test_codex().with_config(configure);
+    let resumed = resume_builder.restart(&server, &initial).await?;
+    resumed.submit_turn("resume in the same window").await?;
+
+    let reminder = "Your context window is nearly exhausted (only 1000 tokens remaining) and will be automatically reset for you soon. Once reset, message items in current context window will be cleared in the new window, but notes and history items will be persistent across windows.";
+    let requests = responses.requests();
+    assert_eq!(
+        requests[2]
+            .message_input_texts("developer")
+            .into_iter()
+            .filter(|text| text == reminder)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn token_budget_reminder_uses_body_after_prefix_window() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

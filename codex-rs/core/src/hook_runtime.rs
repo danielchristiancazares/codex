@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +40,7 @@ use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
+use codex_protocol::protocol::HookScope;
 use codex_protocol::protocol::HookSource;
 use codex_protocol::protocol::HookStartedEvent;
 use codex_protocol::protocol::InternalSessionSource;
@@ -699,7 +701,39 @@ pub(crate) async fn drain_async_hook_results(
     turn_context: &Arc<TurnContext>,
     before_user_prompt: bool,
 ) {
+    drain_async_hook_results_excluding(sess, turn_context, before_user_prompt, &HashSet::new())
+        .await;
+}
+
+pub(crate) async fn drain_async_hook_results_after_rollback(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    rolled_back_turn_ids: &HashSet<String>,
+) {
+    drain_async_hook_results_excluding(
+        sess,
+        turn_context,
+        /*before_user_prompt*/ true,
+        rolled_back_turn_ids,
+    )
+    .await;
+}
+
+async fn drain_async_hook_results_excluding(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    before_user_prompt: bool,
+    discarded_turn_ids: &HashSet<String>,
+) {
     while let Ok(result) = sess.async_hook_results.try_recv() {
+        if result
+            .turn_id
+            .as_ref()
+            .is_some_and(|turn_id| discarded_turn_ids.contains(turn_id))
+            && result.run.scope == HookScope::Turn
+        {
+            continue;
+        }
         let additional_contexts = result
             .run
             .entries

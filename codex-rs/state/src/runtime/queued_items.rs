@@ -88,8 +88,11 @@ impl SqliteQueueStore {
              SELECT ?, ?, ?,
                     COALESCE((SELECT MAX(queue_order) FROM queued_items WHERE thread_id = ?), -1) + 1,
                     ?, ?
-             WHERE (SELECT COUNT(*) FROM queued_items WHERE thread_id = ?) < ?
-             RETURNING id, thread_id, payload_json",
+             WHERE (
+                 SELECT COUNT(*) FROM queued_items
+                 WHERE thread_id = ? AND claimed_turn_id IS NULL
+             ) < ?
+             RETURNING id, thread_id, payload_json, claimed_turn_id",
         )
         .bind(Uuid::now_v7().to_string())
         .bind(thread_id.to_string())
@@ -111,9 +114,9 @@ impl SqliteQueueStore {
         limit: usize,
     ) -> anyhow::Result<Vec<QueuedUserSubmissionRecord>> {
         let rows = sqlx::query(
-            "SELECT id, thread_id, payload_json
+            "SELECT id, thread_id, payload_json, claimed_turn_id
              FROM queued_items
-             WHERE thread_id = ?
+             WHERE thread_id = ? AND claimed_turn_id IS NULL
              ORDER BY queue_order LIMIT ? OFFSET ?",
         )
         .bind(thread_id.to_string())
@@ -135,8 +138,8 @@ impl SqliteQueueStore {
         let row = sqlx::query(
             "UPDATE queued_items
              SET payload_json = ?, updated_at_ms = ?
-             WHERE thread_id = ? AND id = ?
-             RETURNING id, thread_id, payload_json",
+             WHERE thread_id = ? AND id = ? AND claimed_turn_id IS NULL
+             RETURNING id, thread_id, payload_json, claimed_turn_id",
         )
         .bind(payload_json)
         .bind(datetime_to_epoch_millis(Utc::now()))
@@ -150,22 +153,111 @@ impl SqliteQueueStore {
     }
 
     pub async fn delete(&self, thread_id: ThreadId, item_id: &str) -> anyhow::Result<bool> {
-        Ok(
-            sqlx::query("DELETE FROM queued_items WHERE thread_id = ? AND id = ?")
-                .bind(thread_id.to_string())
-                .bind(item_id)
-                .execute(self.pool.as_ref())
-                .await?
-                .rows_affected()
-                > 0,
+        Ok(sqlx::query(
+            "DELETE FROM queued_items
+                 WHERE thread_id = ? AND id = ? AND claimed_turn_id IS NULL",
         )
+        .bind(thread_id.to_string())
+        .bind(item_id)
+        .execute(self.pool.as_ref())
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn get(
+        &self,
+        thread_id: ThreadId,
+        item_id: &str,
+    ) -> anyhow::Result<Option<QueuedUserSubmissionRecord>> {
+        let row = sqlx::query(
+            "SELECT id, thread_id, payload_json, claimed_turn_id
+             FROM queued_items
+             WHERE thread_id = ? AND id = ?",
+        )
+        .bind(thread_id.to_string())
+        .bind(item_id)
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+        row.as_ref()
+            .map(QueuedUserSubmissionRecord::try_from_row)
+            .transpose()
+    }
+
+    pub async fn claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: &str,
+        turn_id: &str,
+    ) -> anyhow::Result<Option<QueuedUserSubmissionRecord>> {
+        let row = sqlx::query(
+            "UPDATE queued_items
+             SET claimed_turn_id = ?, updated_at_ms = ?
+             WHERE thread_id = ? AND id = ? AND claimed_turn_id IS NULL
+             RETURNING id, thread_id, payload_json, claimed_turn_id",
+        )
+        .bind(turn_id)
+        .bind(datetime_to_epoch_millis(Utc::now()))
+        .bind(thread_id.to_string())
+        .bind(item_id)
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+        row.as_ref()
+            .map(QueuedUserSubmissionRecord::try_from_row)
+            .transpose()
+    }
+
+    pub async fn release_claim(
+        &self,
+        thread_id: ThreadId,
+        item_id: &str,
+        turn_id: &str,
+    ) -> anyhow::Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE queued_items
+             SET claimed_turn_id = NULL, updated_at_ms = ?
+             WHERE thread_id = ? AND id = ? AND claimed_turn_id = ?",
+        )
+        .bind(datetime_to_epoch_millis(Utc::now()))
+        .bind(thread_id.to_string())
+        .bind(item_id)
+        .bind(turn_id)
+        .execute(self.pool.as_ref())
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn complete_claim(&self, thread_id: ThreadId, turn_id: &str) -> anyhow::Result<bool> {
+        Ok(sqlx::query(
+            "DELETE FROM queued_items
+             WHERE thread_id = ? AND claimed_turn_id = ?",
+        )
+        .bind(thread_id.to_string())
+        .bind(turn_id)
+        .execute(self.pool.as_ref())
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn complete_claims(&self, thread_id: ThreadId) -> anyhow::Result<bool> {
+        Ok(sqlx::query(
+            "DELETE FROM queued_items
+             WHERE thread_id = ? AND claimed_turn_id IS NOT NULL",
+        )
+        .bind(thread_id.to_string())
+        .execute(self.pool.as_ref())
+        .await?
+        .rows_affected()
+            > 0)
     }
 
     pub async fn reorder(&self, thread_id: ThreadId, ordered_ids: &[String]) -> anyhow::Result<()> {
         let mut transaction = self.pool.begin().await?;
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT id, queue_order FROM queued_items
-             WHERE thread_id = ? ORDER BY queue_order",
+             WHERE thread_id = ? AND claimed_turn_id IS NULL ORDER BY queue_order",
         )
         .bind(thread_id.to_string())
         .fetch_all(transaction.as_mut())
@@ -183,7 +275,12 @@ impl SqliteQueueStore {
             .into());
         }
         let now_ms = datetime_to_epoch_millis(Utc::now());
-        let max_queue_order = rows.last().map_or(-1, |(_, queue_order)| *queue_order);
+        let max_queue_order: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(queue_order), -1) FROM queued_items WHERE thread_id = ?",
+        )
+        .bind(thread_id.to_string())
+        .fetch_one(transaction.as_mut())
+        .await?;
         for (index, item_id) in ordered_ids.iter().enumerate() {
             sqlx::query(
                 "UPDATE queued_items SET queue_order = ?, updated_at_ms = ?

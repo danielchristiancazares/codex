@@ -34,7 +34,11 @@ use core_test_support::wait_for_mcp_server;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static OUTPUT_TOKENIZER: LazyLock<tiktoken_rs::CoreBPE> =
+    LazyLock::new(|| tiktoken_rs::o200k_base().expect("initialize output tokenizer"));
 
 fn assert_wall_time_header(output: &str) {
     let (wall_time, marker) = output
@@ -42,6 +46,18 @@ fn assert_wall_time_header(output: &str) {
         .expect("wall-time header should contain an Output marker");
     assert_regex_match(r"^Wall time: [0-9]+(?:\.[0-9]+)? seconds$", wall_time);
     assert_eq!(marker, "Output:");
+}
+
+fn assert_serialized_output_fits(output: &str, policy: TruncationPolicy) {
+    let serialized = serde_json::to_string(output).expect("serialize function output");
+    let (cost, limit) = match policy {
+        TruncationPolicy::Bytes(limit) => (serialized.len(), limit),
+        TruncationPolicy::Tokens(limit) => (OUTPUT_TOKENIZER.count_ordinary(&serialized), limit),
+    };
+    assert!(
+        cost <= limit,
+        "serialized output cost {cost} exceeds {limit}"
+    );
 }
 
 // Verifies that a standard tool call (exec_command) exceeding the model formatting
@@ -111,11 +127,8 @@ async fn tool_call_output_configured_limit_chars_type() -> Result<()> {
         "expected truncated shell output to be plain text"
     );
 
-    assert!(
-        (400_000..=401_000).contains(&output.len()),
-        "expected output near the configured 100k-token budget, got {} bytes",
-        output.len()
-    );
+    assert_serialized_output_fits(&output, TruncationPolicy::Bytes(400_000));
+    assert!(output.len() > 300_000, "unexpectedly small output");
 
     assert!(
         output.contains("chars truncated"),
@@ -193,11 +206,8 @@ async fn tool_call_output_exceeds_limit_truncated_chars_limit() -> Result<()> {
 
     assert_regex_match(truncated_pattern, &output);
 
-    let len = output.len();
-    assert!(
-        (9_900..=10_500).contains(&len),
-        "expected ~10k chars after truncation, got {len}"
-    );
+    assert_serialized_output_fits(&output, TruncationPolicy::Bytes(10_000));
+    assert!(output.len() > 8_000, "unexpectedly small output");
 
     Ok(())
 }
@@ -627,7 +637,7 @@ async fn token_policy_marker_reports_tokens() -> Result<()> {
 
     assert_regex_match(pattern, &output);
     assert_eq!(output.matches("tokens truncated").count(), 1);
-    assert!(output.len() <= (TruncationPolicy::Tokens(50) * 1.2).byte_budget());
+    assert_serialized_output_fits(&output, TruncationPolicy::Tokens(50));
 
     Ok(())
 }
@@ -680,7 +690,7 @@ async fn byte_policy_marker_reports_bytes() -> Result<()> {
 
     assert_regex_match(pattern, &output);
     assert_eq!(output.matches("chars truncated").count(), 1);
-    assert!(output.len() <= (TruncationPolicy::Bytes(200) * 1.2).byte_budget());
+    assert_serialized_output_fits(&output, TruncationPolicy::Bytes(200));
 
     Ok(())
 }

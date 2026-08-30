@@ -14,8 +14,14 @@ use crate::AttestationContext;
 use crate::AttestationProvider;
 use crate::GenerateAttestationFuture;
 use crate::responses_metadata::CodexResponsesMetadata;
+use crate::responses_metadata::CodexResponsesRequestKind;
+use crate::responses_metadata::CompactionTurnMetadata;
 use crate::test_support::TestCodexResponsesRequestKind;
 use crate::test_support::responses_metadata as test_responses_metadata;
+use codex_analytics::CompactionImplementation;
+use codex_analytics::CompactionPhase;
+use codex_analytics::CompactionReason;
+use codex_analytics::CompactionTrigger;
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
@@ -42,6 +48,7 @@ use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
@@ -54,6 +61,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadSource;
 use codex_rollout_trace::CompactionTraceContext;
 use codex_rollout_trace::ExecutionStatus;
 use codex_rollout_trace::InferenceTraceAttempt;
@@ -430,6 +438,172 @@ fn reasoning_effort_for_requests_maps_ultra_and_persistent() {
             ReasoningEffort::Max,
         )
     );
+}
+
+#[test]
+fn temporary_structured_requests_omit_reasoning_summaries() -> anyhow::Result<()> {
+    let client = test_model_client(SessionSource::Cli);
+
+    for (profile, model_slug, effort) in [
+        ("recap", "gpt-test", None),
+        ("fallback title", "gpt-test", None),
+        ("Luna title", "gpt-5.6-luna", Some(ReasoningEffort::Low)),
+    ] {
+        let mut model = test_model_info();
+        model.slug = model_slug.to_string();
+        model.supports_reasoning_summary_parameter = true;
+        let expected_effort = effort
+            .clone()
+            .or_else(|| model.default_reasoning_level.clone())
+            .map(super::reasoning_effort_for_request);
+        let mut responses_metadata = test_responses_metadata_for_client(
+            &client,
+            /*turn_id*/ None,
+            format!("{}:0", client.state.thread_id),
+            /*parent_thread_id*/ None,
+            TestCodexResponsesRequestKind::Turn,
+        );
+        responses_metadata.thread_source = Some(ThreadSource::Feature("system".to_string()));
+        let expected_client_metadata = responses_metadata.client_metadata();
+
+        let request = client.build_responses_request(
+            &Prompt::default(),
+            &model,
+            effort,
+            ReasoningSummary::Detailed,
+            ServiceTier::Default,
+            &responses_metadata,
+        )?;
+        let reasoning = request.reasoning.expect("reasoning request");
+
+        assert_eq!(reasoning.summary, None, "{profile}");
+        assert_eq!(reasoning.effort, expected_effort, "{profile}");
+        assert_eq!(
+            request.client_metadata,
+            Some(expected_client_metadata),
+            "{profile}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn reasoning_summary_policy_preserves_supported_consumers() -> anyhow::Result<()> {
+    let client = test_model_client(SessionSource::Cli);
+
+    for (profile, thread_source, supports_summary, requested, expected) in [
+        (
+            "temporary summary disabled",
+            ThreadSource::Feature("system".to_string()),
+            true,
+            ReasoningSummary::None,
+            None,
+        ),
+        (
+            "temporary unsupported model",
+            ThreadSource::Feature("system".to_string()),
+            false,
+            ReasoningSummary::Detailed,
+            None,
+        ),
+        (
+            "legacy title source",
+            ThreadSource::Feature("title".to_string()),
+            true,
+            ReasoningSummary::Detailed,
+            None,
+        ),
+        (
+            "guardian review",
+            ThreadSource::GuardianReview,
+            true,
+            ReasoningSummary::Detailed,
+            None,
+        ),
+        (
+            "ordinary user turn",
+            ThreadSource::User,
+            true,
+            ReasoningSummary::Detailed,
+            Some(ReasoningSummary::Detailed),
+        ),
+        (
+            "automation feature",
+            ThreadSource::Feature("automation".to_string()),
+            true,
+            ReasoningSummary::Detailed,
+            Some(ReasoningSummary::Detailed),
+        ),
+        (
+            "ordinary unsupported model",
+            ThreadSource::User,
+            false,
+            ReasoningSummary::Detailed,
+            None,
+        ),
+    ] {
+        let mut model = test_model_info();
+        model.supports_reasoning_summary_parameter = supports_summary;
+        let mut responses_metadata = test_responses_metadata_for_client(
+            &client,
+            /*turn_id*/ None,
+            format!("{}:0", client.state.thread_id),
+            /*parent_thread_id*/ None,
+            TestCodexResponsesRequestKind::Turn,
+        );
+        responses_metadata.thread_source = Some(thread_source);
+
+        let request = client.build_responses_request(
+            &Prompt::default(),
+            &model,
+            /*effort*/ None,
+            requested,
+            ServiceTier::Default,
+            &responses_metadata,
+        )?;
+
+        assert_eq!(
+            request.reasoning.and_then(|reasoning| reasoning.summary),
+            expected,
+            "{profile}"
+        );
+    }
+
+    let mut model = test_model_info();
+    model.supports_reasoning_summary_parameter = true;
+    let mut responses_metadata = test_responses_metadata_for_client(
+        &client,
+        /*turn_id*/ None,
+        format!("{}:0", client.state.thread_id),
+        /*parent_thread_id*/ None,
+        TestCodexResponsesRequestKind::Turn,
+    );
+    responses_metadata.request_kind = Some(CodexResponsesRequestKind::Compaction(
+        CompactionTurnMetadata::new(
+            CompactionTrigger::Manual,
+            CompactionReason::UserRequested,
+            CompactionImplementation::Responses,
+            CompactionPhase::StandaloneTurn,
+        ),
+    ));
+    let effort = ReasoningEffort::Medium;
+    let expected_effort = super::reasoning_effort_for_request(effort.clone());
+
+    let request = client.build_responses_request(
+        &Prompt::default(),
+        &model,
+        Some(effort),
+        ReasoningSummary::Detailed,
+        ServiceTier::Default,
+        &responses_metadata,
+    )?;
+    let reasoning = request.reasoning.expect("reasoning request");
+
+    assert_eq!(reasoning.summary, None);
+    assert_eq!(reasoning.effort, Some(expected_effort));
+
+    Ok(())
 }
 
 fn write_chatgpt_auth_json(codex_home: &std::path::Path) {
