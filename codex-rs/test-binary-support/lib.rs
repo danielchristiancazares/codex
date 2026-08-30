@@ -6,8 +6,8 @@ use codex_arg0::arg0_dispatch;
 use tempfile::TempDir;
 
 pub struct TestBinaryDispatchGuard {
-    _codex_home: TempDir,
     arg0: Arg0PathEntryGuard,
+    _codex_home: TempDir,
     _previous_codex_home: Option<std::ffi::OsString>,
 }
 
@@ -75,8 +75,8 @@ where
             }
 
             Some(TestBinaryDispatchGuard {
-                _codex_home: codex_home,
                 arg0,
+                _codex_home: codex_home,
                 _previous_codex_home: previous_codex_home,
             })
         }

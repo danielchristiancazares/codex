@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-apply-patch = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-install-context = { workspace = true }
@@ -23,7 +23,7 @@ codex-shell-escalation = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 dotenvy = { workspace = true }
-tempfile = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -31,4 +31,4 @@ codex-windows-sandbox = { workspace = true }
 pathdiff = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

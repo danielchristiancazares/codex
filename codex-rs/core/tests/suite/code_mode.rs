@@ -3333,7 +3333,7 @@ text("session b done");
 
 #[cfg_attr(windows, ignore = "no exec_command on Windows")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn code_mode_background_keeps_running_on_later_turn_without_wait() -> Result<()> {
+async fn code_mode_background_callbacks_do_not_route_through_a_later_turn() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -3344,14 +3344,18 @@ async fn code_mode_background_keeps_running_on_later_turn_without_wait() -> Resu
     let resumed_file = test.workspace_path("code-mode-yield-resumed.txt");
     let resumed_file_quoted = shlex::try_join([resumed_file.to_string_lossy().as_ref()])?;
     let write_file_command = format!("printf resumed > {resumed_file_quoted}");
-    let wait_for_file_command =
-        format!("while [ ! -f {resumed_file_quoted} ]; do sleep 0.01; done; printf ready");
     let code = format!(
         r#"
 text("before yield");
 yield_control();
-await tools.exec_command({{ cmd: {write_file_command:?} }});
-text("after yield");
+await new Promise(resolve => setTimeout(resolve, 500));
+try {{
+  await tools.exec_command({{ cmd: {write_file_command:?} }});
+  text("unexpected nested success");
+}} catch (_error) {{
+  text("owner dispatch rejected");
+}}
+notify("stale_code_mode_notify_marker");
 "#
     );
 
@@ -3386,6 +3390,7 @@ text("after yield");
         text_item(&first_items, /*index*/ 0),
     );
     assert_eq!(text_item(&first_items, /*index*/ 1), "before yield");
+    let cell_id = extract_running_cell_id(text_item(&first_items, /*index*/ 0));
 
     responses::mount_sse_once(
         &server,
@@ -3395,7 +3400,7 @@ text("after yield");
                 "call-2",
                 "exec_command",
                 &serde_json::to_string(&serde_json::json!({
-                    "cmd": wait_for_file_command,
+                    "cmd": "sleep 1",
                 }))?,
             ),
             ev_completed("resp-3"),
@@ -3417,9 +3422,52 @@ text("after yield");
     assert!(
         second_request
             .function_call_output_text("call-2")
-            .is_some_and(|output| output.ends_with("ready"))
+            .is_some_and(|output| output.contains("Process exited with code 0"))
     );
-    assert_eq!(fs::read_to_string(&resumed_file)?, "resumed");
+    assert!(!resumed_file.exists());
+    assert_eq!(
+        second_request
+            .body_json()
+            .to_string()
+            .matches("stale_code_mode_notify_marker")
+            .count(),
+        1,
+        "the marker should appear only in the original JavaScript source"
+    );
+
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-5"),
+            responses::ev_function_call(
+                "call-3",
+                "wait",
+                &serde_json::to_string(&serde_json::json!({
+                    "cell_id": cell_id,
+                    "yield_time_ms": 1_000,
+                }))?,
+            ),
+            ev_completed("resp-5"),
+        ]),
+    )
+    .await;
+    let third_completion = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-3", "cell ownership preserved"),
+            ev_completed("resp-6"),
+        ]),
+    )
+    .await;
+
+    test.submit_turn("inspect the original cell").await?;
+    let third_request = third_completion.single_request();
+    let third_items = function_tool_output_items(&third_request, "call-3");
+    assert!(
+        third_items
+            .iter()
+            .any(|item| item.to_string().contains("owner dispatch rejected"))
+    );
 
     Ok(())
 }
@@ -3578,7 +3626,7 @@ async fn code_mode_interrupt_terminates_active_cells_and_nested_tools() -> Resul
                     "wait",
                     &serde_json::to_string(&serde_json::json!({
                         "cell_id": background_cell_id,
-                        "yield_time_ms": 1,
+                        "terminate": true,
                     }))?,
                 ),
                 ev_completed("resp-wait-background"),
@@ -3618,7 +3666,15 @@ async fn code_mode_interrupt_terminates_active_cells_and_nested_tools() -> Resul
     );
     assert_eq!(metadata["tool_calls_complete"], Value::Bool(true));
     let background_output = function_tool_output_items(&requests[1], "call-wait-background");
-    assert!(text_item(&background_output, /*index*/ 1).contains("not found"));
+    assert!(
+        text_item(&background_output, /*index*/ 0).contains("Script terminated"),
+        "interrupting the later turn should leave the earlier cell available for explicit termination: {background_output:?}"
+    );
+    assert!(
+        !background_output
+            .iter()
+            .any(|item| item.to_string().contains("not found"))
+    );
     let active_output = function_tool_output_items(&requests[2], "call-wait-active");
     assert!(text_item(&active_output, /*index*/ 1).contains("not found"));
     let recovery_items = custom_tool_output_items(&requests[3], "call-recovery");

@@ -19,5 +19,5 @@ codex-file-system = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-toml = { workspace = true, features = ["preserve_order"] }
+toml = { workspace = true, features = ["parse", "preserve_order", "serde"] }
 tracing = { workspace = true }

@@ -8,12 +8,12 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-base64 = { workspace = true }
+base64 = { workspace = true, features = ["std"] }
 image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
 codex-utils-cache = { workspace = true }
 mime_guess = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "macros"] }
+thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 divan = { workspace = true }

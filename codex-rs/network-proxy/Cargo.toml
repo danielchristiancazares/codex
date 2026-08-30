@@ -13,45 +13,52 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-base64 = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-chrono = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
+clap = { workspace = true, features = ["derive", "std"] }
+chrono = { workspace = true, features = ["clock"] }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 codex-utils-rustls-provider = { workspace = true }
 globset = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 thiserror = { workspace = true }
-time = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+time = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
 tracing = { workspace = true }
 url = { workspace = true }
-rama-core = { version = "=0.3.0-alpha.4" }
-rama-http = { version = "=0.3.0-alpha.4" }
-rama-http-backend = { version = "=0.3.0-alpha.4", features = ["tls"] }
-rama-net = { version = "=0.3.0-alpha.4", features = ["http", "tls"] }
-rama-socks5 = { version = "=0.3.0-alpha.4" }
-rama-tcp = { version = "=0.3.0-alpha.4", features = ["http"] }
-rama-tls-rustls = { version = "=0.3.0-alpha.4", features = ["http"] }
+rama-core = { version = "=0.3.0-alpha.4", default-features = false }
+rama-http = { version = "=0.3.0-alpha.4", default-features = false }
+rama-http-backend = { version = "=0.3.0-alpha.4", default-features = false, features = ["tls"] }
+rama-net = { version = "=0.3.0-alpha.4", default-features = false, features = ["http", "tls"] }
+rama-socks5 = { version = "=0.3.0-alpha.4", default-features = false }
+rama-tcp = { version = "=0.3.0-alpha.4", default-features = false, features = ["http"] }
+rama-tls-rustls = { version = "=0.3.0-alpha.4", default-features = false, features = ["http"] }
 rustls-native-certs = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
-rama-unix = { version = "=0.3.0-alpha.4" }
+rama-unix = { version = "=0.3.0-alpha.4", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
+security-framework = { version = "3", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-schannel = "0.1"
-windows-sys = { version = "0.52", features = [
+schannel = { version = "0.1", default-features = false }
+windows-sys = { version = "0.52", default-features = false, features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
@@ -61,4 +68,4 @@ windows-sys = { version = "0.52", features = [
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
-codex-windows-sandbox = { path = "../windows-sandbox-rs" }
+codex-windows-sandbox = { path = "../windows-sandbox-rs", default-features = false }

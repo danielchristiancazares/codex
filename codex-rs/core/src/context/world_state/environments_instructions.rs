@@ -31,6 +31,10 @@ impl WorldStateSection for EnvironmentsInstructionsState {
         true
     }
 
+    fn retained_fragment_is_authoritative() -> bool {
+        true
+    }
+
     fn matches_retained_fragment(role: &str, text: &str) -> bool {
         Self::matches_legacy_fragment(role, text)
     }

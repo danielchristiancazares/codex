@@ -11,17 +11,17 @@ doctest = false
 
 
 [dependencies]
-codex-core = { path = "../core" }
+codex-core = { path = "../core", default-features = false }
 codex-http-client = { workspace = true }
-codex-model-provider-info = { path = "../model-provider-info" }
-serde_json = "1"
-tokio = { version = "1", features = ["rt"] }
-tracing = { version = "0.1.44", features = ["log"] }
-which = "8.0"
+codex-model-provider-info = { path = "../model-provider-info", default-features = false }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+tokio = { version = "1", default-features = false, features = ["rt"] }
+tracing = { version = "0.1.44", default-features = false, features = ["log", "std"] }
+which = { version = "8.0", default-features = false, features = ["real-sys"] }
 
 [dev-dependencies]
-wiremock = "0.6"
-tokio = { version = "1", features = ["full"] }
+wiremock = { version = "0.6", default-features = false }
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

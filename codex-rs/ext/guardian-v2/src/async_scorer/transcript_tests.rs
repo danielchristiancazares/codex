@@ -1067,3 +1067,56 @@ fn transcript_omits_encrypted_messages_arguments_and_tool_outputs() {
         ]
     );
 }
+
+#[test]
+fn reviewed_tool_call_is_excluded_from_transcript() {
+    let items = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "exec_command".to_string(),
+            namespace: None,
+            arguments: "{\"cmd\":\"earlier\"}".to_string(),
+            encrypted_function_args: None,
+            call_id: "call-earlier".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "exec_command".to_string(),
+            namespace: None,
+            arguments: "{\"cmd\":\"reviewed\"}".to_string(),
+            encrypted_function_args: None,
+            call_id: "call-reviewed".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        },
+    ];
+
+    let transcript = TranscriptConfig::default()
+        .build_excluding_call(&items, "call-reviewed")
+        .entries;
+
+    assert_eq!(
+        transcript,
+        vec!["[1] tool exec_command call: {\"cmd\":\"earlier\"}\n"]
+    );
+}
+
+#[test]
+fn transcript_images_deduplicate_history_and_repl_payloads() {
+    let image = ContentItem::InputImage {
+        image_url: "data:image/png;base64,same-image".to_string(),
+        detail: None,
+    };
+    let items = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![image.clone()],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    }];
+
+    let rendered = TranscriptConfig::default().images(&items, vec![image.clone()]);
+
+    assert_eq!(rendered.images, vec![image]);
+    assert_eq!(rendered.omitted_bytes, 0);
+}

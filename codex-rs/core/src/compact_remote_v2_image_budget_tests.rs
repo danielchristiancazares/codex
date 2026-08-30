@@ -47,14 +47,19 @@ fn image_only_boundary_is_atomic_and_does_not_backfill_older_messages() {
         message(vec![image()]),
         newest.clone(),
     ];
-    let image_tokens = images::content_item_token_count(&image());
+    let image_message = message(vec![image()]);
+    let newest_tokens = retained_item_token_count(&newest);
+    let image_tokens = retained_item_token_count(&image_message);
     for (max_tokens, expected) in [
         (
-            image_tokens + 1,
-            vec![message(vec![image()]), newest.clone()],
+            image_tokens.saturating_add(newest_tokens),
+            vec![image_message, newest.clone()],
         ),
-        (image_tokens, vec![newest.clone()]),
-        (1, vec![newest]),
+        (
+            image_tokens.saturating_add(newest_tokens).saturating_sub(1),
+            vec![newest.clone()],
+        ),
+        (newest_tokens, vec![newest]),
     ] {
         assert_eq!(trim(items.clone(), max_tokens), expected);
     }
@@ -91,11 +96,7 @@ fn later_image_parts_preserve_labels_audio_and_annotations() {
         content_item_kinds: Some(kinds.clone()),
         ..Default::default()
     });
-    let image_tokens = parts[1..4]
-        .iter()
-        .map(images::content_item_token_count)
-        .sum::<usize>();
-    for (max_tokens, start) in [(image_tokens, 4), (image_tokens + 1, 1)] {
+    for start in [4, 1] {
         let mut expected = source.clone();
         let ResponseItem::Message {
             content,
@@ -110,6 +111,7 @@ fn later_image_parts_preserve_labels_audio_and_annotations() {
             .as_mut()
             .unwrap()
             .content_item_kinds = Some(kinds[start..].to_vec());
+        let max_tokens = retained_item_token_count(&expected);
         assert_eq!(trim(vec![source.clone()], max_tokens), vec![expected]);
     }
 }

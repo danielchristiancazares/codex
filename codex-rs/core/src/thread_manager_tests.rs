@@ -2408,6 +2408,39 @@ fn interrupted_fork_snapshot_appends_interrupt_boundary() {
 }
 
 #[test]
+fn interrupted_fork_snapshot_reuses_live_interruption_marker() {
+    let marker = contextual_user_interrupted_marker();
+    let committed_history = InitialHistory::Forked(vec![
+        RolloutItem::ResponseItem(user_msg("hello").into()),
+        RolloutItem::ResponseItem(marker.clone().into()),
+    ]);
+
+    let history = append_interrupted_boundary(
+        committed_history,
+        Some("turn-1".to_string()),
+        /*started_at*/ None,
+        InterruptedTurnHistoryMarker::ContextualUser,
+    );
+
+    assert_eq!(
+        serde_json::to_value(history.get_rollout_items())
+            .expect("serialize interrupted fork history"),
+        serde_json::to_value(vec![
+            RolloutItem::ResponseItem(user_msg("hello").into()),
+            RolloutItem::ResponseItem(marker.into()),
+            RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
+                turn_id: Some("turn-1".to_string()),
+                started_at: None,
+                reason: TurnAbortReason::Interrupted,
+                completed_at: None,
+                duration_ms: None,
+            })),
+        ])
+        .expect("serialize expected interrupted fork history")
+    );
+}
+
+#[test]
 fn disabled_interrupted_fork_snapshot_appends_only_interrupt_event() {
     let committed_history =
         InitialHistory::Forked(vec![RolloutItem::ResponseItem(user_msg("hello").into())]);

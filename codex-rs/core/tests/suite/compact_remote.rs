@@ -371,6 +371,31 @@ async fn wait_for_turn_complete(codex: &codex_core::CodexThread) {
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_remote_v2_compaction_skips_pristine_history() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let compact_mock = mount_sse_once(
+        &server,
+        sse(vec![responses::ev_completed("unexpected-compact")]),
+    )
+    .await;
+    let test = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::RemoteCompactionV2);
+        })
+        .build(&server)
+        .await?;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_turn_complete(&test.codex).await;
+
+    assert!(compact_mock.requests().is_empty());
+    Ok(())
+}
+
 fn amazon_bedrock_test_codex() -> TestCodexBuilder {
     let auth = CodexAuth::BedrockApiKey(BedrockApiKeyAuth {
         api_key: "bedrock-test-api-key".to_string(),
@@ -1335,7 +1360,7 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
 }
 
 #[test_case(None; "default_trims_images")]
-#[test_case(Some(false); "disabled_preserves_images")]
+#[test_case(Some(false); "disabled_drops_oversized_image_boundary")]
 #[test_case(Some(true); "enabled_trims_images")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_compact_v2_charges_retained_images_to_token_budget(
@@ -1439,12 +1464,12 @@ async fn remote_compact_v2_charges_retained_images_to_token_budget(
             follow_up.inputs_of_type("compaction")[0]["encrypted_content"],
             "IMAGE_BUDGET_SUMMARY"
         );
-        let dropped = if image_budget_enabled.unwrap_or(true) {
-            cycle
+        let image_budget_enabled = image_budget_enabled.unwrap_or(true);
+        let mut expected_images = if image_budget_enabled {
+            prepared_images[cycle..].to_vec()
         } else {
-            0
+            Vec::new()
         };
-        let mut expected_images = prepared_images[dropped..].to_vec();
         if cycle == 2 {
             let UserInput::Image { image_url, .. } = &image_inputs[7] else {
                 unreachable!()
@@ -1452,11 +1477,12 @@ async fn remote_compact_v2_charges_retained_images_to_token_budget(
             expected_images.push(image_url.clone());
         }
         assert_eq!(follow_up.message_input_image_urls("user"), expected_images);
-        assert!(
+        assert_eq!(
             follow_up
                 .message_input_texts("user")
                 .iter()
-                .any(|text| text == "Compare these images")
+                .any(|text| text == "Compare these images"),
+            image_budget_enabled
         );
 
         if cycle == 1 {
@@ -2699,30 +2725,37 @@ async fn auto_remote_compact_trims_function_call_history_to_fit_context_window()
     Ok(())
 }
 
+#[test_case(false; "v1")]
+#[test_case(true; "v2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Result<()> {
+async fn remote_compact_omits_tool_search_schemas_below_context_limit(
+    remote_compaction_v2: bool,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
     let search_call_id = "tool-search-1";
-    let tool_name = "oversized_dynamic_tool";
-    let tool_description = format!(
-        "Oversized deferred tool for remote compaction. {}",
-        "x".repeat(20_000)
-    );
-    let _responses_mock = mount_sse_once(
+    let tool_name = "deferred_dynamic_tool";
+    let tool_description = "Deferred tool for remote compaction.";
+    let _responses_mock = responses::mount_sse_sequence(
         &server,
-        sse(vec![
-            responses::ev_response_created("resp-1"),
-            responses::ev_tool_search_call(
-                search_call_id,
-                &json!({
-                    "query": "oversized deferred tool",
-                    "limit": 8,
-                }),
-            ),
-            responses::ev_completed("resp-1"),
-        ]),
+        vec![
+            sse(vec![
+                responses::ev_response_created("resp-1"),
+                responses::ev_tool_search_call(
+                    search_call_id,
+                    &json!({
+                        "query": "deferred dynamic tool",
+                        "limit": 8,
+                    }),
+                ),
+                responses::ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                responses::ev_assistant_message("msg-1", "search complete"),
+                responses::ev_completed("resp-2"),
+            ]),
+        ],
     )
     .await;
 
@@ -2740,7 +2773,7 @@ async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Resul
         tools: vec![DynamicToolNamespaceTool::Function(
             DynamicToolFunctionSpec {
                 name: tool_name.to_string(),
-                description: tool_description,
+                description: tool_description.to_string(),
                 input_schema,
                 defer_loading: true,
             },
@@ -2749,9 +2782,15 @@ async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Resul
 
     let mut builder = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
-        .with_config(|config| {
+        .with_config(move |config| {
             configure_search_capable_model(config);
-            config.model_context_window = Some(2_000);
+            config.model_context_window = Some(100_000);
+            if remote_compaction_v2 {
+                config
+                    .features
+                    .enable(Feature::RemoteCompactionV2)
+                    .expect("remote compaction v2 should be configurable");
+            }
         });
     let mut test = builder.build(&server).await?;
     let new_thread = test
@@ -2767,15 +2806,31 @@ async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Resul
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "Find the oversized deferred tool".to_string(),
+            text: "Find the deferred dynamic tool".to_string(),
             text_elements: Vec::new(),
         }]))
         .await?;
     wait_for_turn_complete(&codex).await;
 
-    let compact_mock =
+    let compact_mock = if remote_compaction_v2 {
+        mount_sse_once(
+            &server,
+            sse(vec![
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "compaction",
+                        "encrypted_content": "REMOTE_COMPACT_SUMMARY",
+                    }
+                }),
+                responses::ev_completed("resp-compact"),
+            ]),
+        )
+        .await
+    } else {
         responses::mount_compact_user_history_with_summary_once(&server, "REMOTE_COMPACT_SUMMARY")
-            .await;
+            .await
+    };
 
     codex.submit(Op::Compact).await?;
     wait_for_turn_complete(&codex).await;
@@ -2787,16 +2842,20 @@ async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Resul
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    assert!(
-        compact_request
-            .inputs_of_type("tool_search_output")
-            .iter()
-            .any(|item| item.get("call_id").and_then(Value::as_str) == Some(search_call_id)),
-        "expected compact request to retain the tool_search_output item"
-    );
+    let retained_search_calls = compact_request
+        .inputs_of_type("tool_search_call")
+        .iter()
+        .filter(|item| item.get("call_id").and_then(Value::as_str) == Some(search_call_id))
+        .count();
+    let retained_search_outputs = compact_request
+        .inputs_of_type("tool_search_output")
+        .iter()
+        .filter(|item| item.get("call_id").and_then(Value::as_str) == Some(search_call_id))
+        .count();
+    assert_eq!((retained_search_calls, retained_search_outputs), (1, 1));
     assert!(
         compact_tools.is_empty(),
-        "expected compact request to rewrite trailing tool_search output to an empty tools array"
+        "expected compact request to omit tool-search schemas below the context limit"
     );
 
     Ok(())

@@ -38,6 +38,7 @@ use crate::exec_policy::ExecPolicyManager;
 use crate::exec_policy::default_policy_path;
 use crate::image_preparation::ImagePreparationMode;
 use crate::image_preparation::ImageResizeNoticeMode;
+use crate::image_preparation::ToolOutputRetention;
 use crate::image_preparation::prepare_response_items as prepare_image_response_items;
 use crate::image_preparation::unified_image_budget_enabled;
 use crate::parse_turn_item;
@@ -227,6 +228,7 @@ mod mcp_prewarm;
 mod mcp_refresh;
 mod mcp_runtime;
 pub(crate) mod multi_agents;
+mod reminder_reconstruction;
 mod review;
 mod rollout_budget;
 mod rollout_reconstruction;
@@ -863,10 +865,19 @@ impl SessionIo {
     /// session loop exits before replying, the caller gets `InternalAgentDied`.
     pub(crate) async fn submit_turn_input(
         &self,
-        mut request: TurnInputRequest,
+        request: TurnInputRequest,
         mode: TurnInputMode,
     ) -> CodexResult<TurnInputSubmission> {
-        let id = new_submission_id();
+        self.submit_turn_input_with_id(request, mode, new_submission_id())
+            .await
+    }
+
+    pub(crate) async fn submit_turn_input_with_id(
+        &self,
+        mut request: TurnInputRequest,
+        mode: TurnInputMode,
+        id: String,
+    ) -> CodexResult<TurnInputSubmission> {
         let (reply_tx, reply_rx) = oneshot::channel();
         let trace = request.trace.take();
         self.submit_with_id(Submission {
@@ -1237,6 +1248,27 @@ impl Session {
         state.get_total_token_usage(state.server_reasoning_included())
     }
 
+    /// Applies the current model's prompt normalization delta to authoritative server usage.
+    ///
+    /// Server usage remains the baseline so provider-counted instructions and tools are retained.
+    /// The local delta removes media and other history items that normalization will replace or
+    /// discard before the next request.
+    pub(crate) async fn get_model_visible_token_usage(&self, model_info: &ModelInfo) -> i64 {
+        let (active_context_tokens, history) = {
+            let state = self.state.lock().await;
+            (
+                state.get_total_token_usage(state.server_reasoning_included()),
+                state.history.clone(),
+            )
+        };
+        active_context_tokens
+            .saturating_add(history.model_visible_token_delta(
+                &model_info.input_modalities,
+                model_info.truncation_policy.into(),
+            ))
+            .max(0)
+    }
+
     pub(crate) async fn auto_compact_window_snapshot(&self) -> AutoCompactWindowSnapshot {
         let state = self.state.lock().await;
         state.auto_compact_window_snapshot()
@@ -1338,6 +1370,7 @@ impl Session {
             InitialHistory::Resumed(resumed_history) => {
                 let turn_context = self.new_default_turn().await;
                 let rollout_items = resumed_history.history;
+                self.restore_rollout_budget(&rollout_items);
                 if matches!(
                     rollout_items.iter().rev().find_map(|item| match item {
                         RolloutItem::EventMsg(event) => agent_status_from_event(event),
@@ -1387,6 +1420,7 @@ impl Session {
             }
             InitialHistory::Forked(mut rollout_items) => {
                 let turn_context = self.new_default_turn().await;
+                self.restore_rollout_budget(&rollout_items);
                 Self::assign_missing_rollout_response_item_ids(&mut rollout_items);
                 self.apply_rollout_reconstruction(&turn_context, &rollout_items)
                     .await;
@@ -1474,6 +1508,9 @@ impl Session {
         } = self
             .reconstruct_history_from_rollout(turn_context, rollout_items)
             .await;
+        let reminder_delivery =
+            reminder_reconstruction::ReminderDelivery::from_rollout(rollout_items);
+        let reminder_window_id = format!("{}:{window_number}", self.thread_id());
         // Keep the recorded rollout unchanged. Prepare its reconstructed history before
         // installing it, so legacy media is processed once for this resume or fork and
         // will be processed again if the rollout is reconstructed in a future session.
@@ -1483,12 +1520,13 @@ impl Session {
             .into_iter()
             .map(|envelope| (envelope.item, envelope.metadata))
             .unzip();
+        prepare_audio_response_items(&mut prepared_history);
         let _ = prepare_image_response_items(
             &mut prepared_history,
             ImagePreparationMode::DetailBased,
             ImageResizeNoticeMode::Disabled,
+            ToolOutputRetention::Preserve,
         );
-        prepare_audio_response_items(&mut prepared_history);
         assert_eq!(
             prepared_history.len(),
             metadata.len(),
@@ -1520,6 +1558,7 @@ impl Session {
                     window_id,
                 },
             );
+            reminder_delivery.restore(&mut state, &reminder_window_id);
             state.set_previous_turn_settings(previous_turn_settings.clone());
         }
         let prefix_tokens = if matches!(
@@ -3087,12 +3126,13 @@ impl Session {
         } else {
             ImageResizeNoticeMode::Disabled
         };
+        prepare_audio_response_items(&mut items);
         let image_preparations = prepare_image_response_items(
             &mut items,
             image_preparation_mode,
             image_resize_notice_mode,
+            ToolOutputRetention::Canonicalize(turn_context.model_info().truncation_policy.into()),
         );
-        prepare_audio_response_items(&mut items);
         // Most response items get their passthrough turn ID at the durable history boundary.
         for item in &mut items {
             Self::stamp_response_item_for_history(item, &turn_context.sub_id);
@@ -3118,7 +3158,7 @@ impl Session {
         items
     }
 
-    fn assign_missing_response_item_id(item: &mut ResponseItem) {
+    pub(crate) fn assign_missing_response_item_id(item: &mut ResponseItem) {
         if item.id().is_some_and(|id| !id.is_empty()) {
             return;
         }
@@ -3500,9 +3540,10 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
-        items = self
+        let (rehydrated_items, additional_context_baseline) = self
             .rehydrate_additional_context_for_compaction(items)
             .await;
+        items = rehydrated_items;
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }
@@ -3518,13 +3559,24 @@ impl Session {
                 .map(|id| id.to_string()),
             window_id: Some(metadata.window_ids.window_id.to_string()),
         };
-        // Compaction starts a new history window, so its WorldState baseline must be full.
+        // Compaction starts a new history window, so its WorldState baseline must be full. A
+        // pre-turn/manual replacement rehydrates only additional-context fragments; persist that
+        // one section as the honest partial baseline so every other initial-context section is
+        // still eligible for reinjection on the next turn.
+        let world_state_snapshot = match world_state_baseline {
+            Some(world_state) => Some(world_state.snapshot()),
+            None if additional_context_baseline != Default::default() => {
+                let mut world_state = WorldState::default();
+                world_state.add_section(AdditionalContextState::new(additional_context_baseline));
+                Some(world_state.snapshot())
+            }
+            None => None,
+        };
         let mut world_state_item = None;
         {
             let mut state = self.state.lock().await;
             state.replace_annotated_history(items, reference_context_item.clone());
-            if let Some(world_state) = world_state_baseline {
-                let snapshot = world_state.snapshot();
+            if let Some(snapshot) = world_state_snapshot {
                 world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
                 state.history.set_world_state_baseline(snapshot);
             }
@@ -4091,7 +4143,7 @@ impl Session {
                 }
                 state.token_info()
             };
-            let budget_result = self.record_rollout_budget_usage(token_usage);
+            let budget_result = self.record_rollout_budget_usage(token_usage).await;
             if let Some(token_info) = token_info.as_ref() {
                 for contributor in self.services.extensions.token_usage_contributors() {
                     contributor
@@ -4188,7 +4240,11 @@ impl Session {
             let state = self.state.lock().await;
             state.token_info_and_rate_limits()
         };
-        let event = EventMsg::TokenCount(TokenCountEvent { info, rate_limits });
+        let event = EventMsg::TokenCount(TokenCountEvent {
+            info,
+            rate_limits,
+            rollout_budget: self.services.agent_control.rollout_budget().checkpoint(),
+        });
         self.send_event(turn_context, event).await;
     }
 

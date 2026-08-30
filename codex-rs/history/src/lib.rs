@@ -272,21 +272,10 @@ impl InitialHistory {
                 resumed
                     .history
                     .iter()
-                    .filter_map(|item| match item {
-                        RolloutItem::EventMsg(event) => Some(event.clone()),
-                        _ => None,
-                    })
+                    .filter_map(replayable_event_msg)
                     .collect(),
             ),
-            Self::Forked(items) => Some(
-                items
-                    .iter()
-                    .filter_map(|item| match item {
-                        RolloutItem::EventMsg(event) => Some(event.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
+            Self::Forked(items) => Some(items.iter().filter_map(replayable_event_msg).collect()),
         }
     }
 
@@ -387,6 +376,20 @@ impl InitialHistory {
                 _ => None,
             }),
         }
+    }
+}
+
+fn replayable_event_msg(item: &RolloutItem) -> Option<EventMsg> {
+    match item {
+        RolloutItem::EventMsg(EventMsg::TokenCount(event))
+            if event.info.is_none()
+                && event.rate_limits.is_none()
+                && event.rollout_budget.is_some() =>
+        {
+            None
+        }
+        RolloutItem::EventMsg(event) => Some(event.clone()),
+        _ => None,
     }
 }
 

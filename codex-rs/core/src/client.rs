@@ -87,6 +87,7 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::service_tier::resolve_request_service_tier;
 use codex_rollout_trace::CompactionTraceContext;
@@ -125,6 +126,7 @@ use crate::context::ContextualUserFragment;
 use crate::cyber_access_program;
 use crate::feedback_tags;
 use crate::responses_metadata::CodexResponsesMetadata;
+use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_metadata::subagent_header_value;
 use crate::util::emit_feedback_auth_recovery_tags;
 use codex_feedback::FeedbackRequestTags;
@@ -882,6 +884,25 @@ impl ModelClient {
         }
     }
 
+    fn reasoning_summary_for_request(
+        requested_summary: ReasoningSummaryConfig,
+        responses_metadata: &CodexResponsesMetadata,
+    ) -> ReasoningSummaryConfig {
+        match (
+            responses_metadata.request_kind,
+            responses_metadata.thread_source.as_ref(),
+        ) {
+            (Some(CodexResponsesRequestKind::Compaction(_)), _)
+            | (_, Some(ThreadSource::GuardianReview)) => ReasoningSummaryConfig::None,
+            (_, Some(ThreadSource::Feature(feature)))
+                if matches!(feature.as_str(), "system" | "title") =>
+            {
+                ReasoningSummaryConfig::None
+            }
+            _ => requested_summary,
+        }
+    }
+
     fn build_responses_request(
         &self,
         prompt: &Prompt,
@@ -943,6 +964,7 @@ impl ModelClient {
                 }
             }
         }
+        let summary = Self::reasoning_summary_for_request(summary, responses_metadata);
         let reasoning = Self::build_reasoning(model_info, effort, summary);
         let stream_options = (self.state.concurrent_reasoning_summaries_enabled
             && is_openai
@@ -2187,7 +2209,8 @@ where
                 break;
             };
             match event {
-                Ok(ResponseEvent::OutputItemDone(item)) => {
+                Ok(ResponseEvent::OutputItemDone(mut item)) => {
+                    crate::session::session::Session::assign_missing_response_item_id(&mut item);
                     items_added.push(item.clone());
                     if tx_event
                         .send(Ok(ResponseEvent::OutputItemDone(item)))

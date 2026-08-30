@@ -175,6 +175,7 @@ pub(crate) async fn build_guardian_prompt_items_with_parent_turn(
             }
         }
     };
+    let include_root_context = matches!(prompt_shape, GuardianPromptShape::Full);
     let (transcript_entries, omission_note, headings) = match prompt_shape {
         GuardianPromptShape::Full => {
             let (transcript_entries, omission_note) =
@@ -226,7 +227,8 @@ pub(crate) async fn build_guardian_prompt_items_with_parent_turn(
     };
 
     push_text(headings.intro.to_string());
-    if let Some(root_authorization) = root_authorization
+    if include_root_context
+        && let Some(root_authorization) = root_authorization
         && !root_authorization.is_empty()
     {
         push_text(">>> ROOT CONVERSATION START\n".to_string());
@@ -239,7 +241,7 @@ pub(crate) async fn build_guardian_prompt_items_with_parent_turn(
         }
         push_text(">>> ROOT CONVERSATION END\n".to_string());
     }
-    if !trusted_user_inputs.is_empty() {
+    if include_root_context && !trusted_user_inputs.is_empty() {
         push_text(">>> TRUSTED USER ANSWERS START\n".to_string());
         for answer in trusted_user_inputs {
             push_text(answer);
@@ -259,7 +261,10 @@ pub(crate) async fn build_guardian_prompt_items_with_parent_turn(
     if let Some(note) = omission_note {
         push_text(format!("\n{note}\n"));
     }
-    if let Some(denied_reads_context) = parent_context.and_then(parent_turn_denied_reads_context) {
+    if include_root_context
+        && let Some(denied_reads_context) =
+            parent_context.and_then(parent_turn_denied_reads_context)
+    {
         push_text("\n>>> PARENT TURN PERMISSION CONTEXT START\n".to_string());
         push_text(denied_reads_context);
         push_text(">>> PARENT TURN PERMISSION CONTEXT END\n".to_string());
@@ -805,17 +810,9 @@ pub(crate) fn guardian_output_schema() -> Value {
 /// Prompt fragment that describes the exact JSON contract paired with
 /// `guardian_output_schema()`.
 fn guardian_output_contract_prompt() -> &'static str {
-    r#"You may use read-only tool checks to gather any additional context you need before deciding. When you are ready to answer, your final message must be strict JSON.
-
-For low-risk actions, give the final answer directly: {"outcome":"allow"}.
-
-For anything else, use this JSON schema:
-{
-  "risk_level": "low" | "medium" | "high" | "critical",
-  "user_authorization": "unknown" | "low" | "medium" | "high",
-  "outcome": "allow" | "deny",
-  "rationale": string
-}"#
+    "You may use read-only tool checks to gather any additional context you need before deciding. \
+When you are ready to answer, return strict JSON matching the supplied output schema. For \
+low-risk actions, return the smallest schema-valid allow decision."
 }
 
 pub(crate) const BUNDLED_GUARDIAN_POLICY: &str = include_str!("policy.md");

@@ -102,6 +102,24 @@ const REMOTE_V2_SUMMARY: &str = "global-instructions-remote-v2-summary";
 
 pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_local_compaction_skips_pristine_history() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let compact_mock = mount_sse_once(&server, sse(vec![ev_completed("unexpected-compact")])).await;
+    let test = test_codex().build(&server).await?;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    assert!(compact_mock.requests().is_empty());
+    Ok(())
+}
+
 fn ev_exec_command_call(call_id: &str, command: &str) -> serde_json::Value {
     ev_function_call(
         call_id,
@@ -3655,7 +3673,7 @@ async fn auto_compact_persists_rollout_entries() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manual_compact_retries_after_context_window_error() {
+async fn local_compaction_retries_once_with_bulk_reduction_after_context_window_error() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
@@ -3673,6 +3691,10 @@ async fn manual_compact_retries_after_context_window_error() {
         ev_assistant_message("m2", SUMMARY_TEXT),
         ev_completed("r2"),
     ]);
+    let follow_up = sse(vec![
+        ev_assistant_message("m3", "after compact"),
+        ev_completed("r3"),
+    ]);
 
     let request_log = mount_sse_sequence(
         &server,
@@ -3680,6 +3702,7 @@ async fn manual_compact_retries_after_context_window_error() {
             user_turn.clone(),
             compact_failed.clone(),
             compact_succeeds.clone(),
+            follow_up,
         ],
     )
     .await;
@@ -3710,11 +3733,20 @@ async fn manual_compact_retries_after_context_window_error() {
     assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "after compact".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        3,
-        "expected user turn and two compact attempts"
+        4,
+        "expected user turn, two compact attempts, and a follow-up"
     );
 
     let compact_attempt = requests[1].body_json();
@@ -3734,12 +3766,11 @@ async fn manual_compact_retries_after_context_window_error() {
         compact_contains_prompt, retry_contains_prompt,
         "compact attempts should consistently include or omit the summarization prompt"
     );
-    assert_eq!(
-        retry_input.len(),
-        compact_input.len().saturating_sub(1),
-        "retry should drop exactly one history item (before {} vs after {})",
+    assert!(
+        retry_input.len() <= compact_input.len().saturating_sub(2),
+        "one planned reduction should drop several old items (before {} vs after {})",
         compact_input.len(),
-        retry_input.len()
+        retry_input.len(),
     );
     if let (Some(first_before), Some(first_after)) = (compact_input.first(), retry_input.first()) {
         assert_ne!(
@@ -3749,6 +3780,10 @@ async fn manual_compact_retries_after_context_window_error() {
     } else {
         panic!("expected non-empty compact inputs");
     }
+    assert!(!retry_attempt.to_string().contains("first turn"));
+    let follow_up_request = requests[3].body_json().to_string();
+    assert!(!follow_up_request.contains("first turn"));
+    assert!(follow_up_request.contains("after compact"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

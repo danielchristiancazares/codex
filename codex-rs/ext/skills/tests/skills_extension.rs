@@ -555,6 +555,7 @@ async fn executor_orchestrator_and_host_share_catalog_world_state_flow() -> Test
     );
     assert!(metrics.samples().is_empty());
 
+    let mut rendered_bodies = Vec::new();
     for (section_id, expected_line) in [
         (
             "skills",
@@ -573,7 +574,15 @@ async fn executor_orchestrator_and_host_share_catalog_world_state_flow() -> Test
             .render_diff(PreviousWorldStateSection::Absent)
             .ok_or("skill catalog should render through world state")?;
         assert!(fragment.body().contains(expected_line));
+        rendered_bodies.push(fragment.body().to_string());
     }
+    assert_eq!(
+        rendered_bodies
+            .iter()
+            .filter(|body| body.contains("Trigger rules: If the user names a skill"))
+            .count(),
+        1
+    );
 
     let expected_metrics = [
         "executor_world_state",

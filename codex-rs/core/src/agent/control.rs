@@ -72,6 +72,7 @@ use self::residency::V2Residency;
 mod execution;
 mod legacy;
 mod residency;
+mod rollout_budget_checkpoint;
 mod spawn;
 mod user_authorization;
 
@@ -189,10 +190,12 @@ impl AgentControl {
     ) -> CodexResult<String> {
         let state = self.upgrade()?;
         let thread = state.get_thread(agent_id).await?;
-        let result = match thread
+        let was_final = is_final(&thread.agent_status().await);
+        let submission = thread
             .start_or_steer_turn(TurnInputRequest::user_input(input).on_start(start_options))
-            .await
-        {
+            .await;
+        let started_new_turn = matches!(submission, Ok(TurnInputSubmission::Started { .. }));
+        let result = match submission {
             Ok(TurnInputSubmission::Started { turn_id }) => Ok(turn_id),
             Ok(TurnInputSubmission::Steered { .. }) => {
                 // MAv1 exposes an opaque `submission_id` to the model. The legacy
@@ -206,6 +209,25 @@ impl AgentControl {
             )),
             Err(err) => Err(err),
         };
+        if was_final
+            && started_new_turn
+            && thread.multi_agent_version() != Some(MultiAgentVersion::V2)
+        {
+            let metadata = self.state.agent_metadata_for_thread(agent_id);
+            let child_agent_path = metadata
+                .as_ref()
+                .and_then(|metadata| metadata.agent_path.clone());
+            let child_reference = child_agent_path
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| agent_id.to_string());
+            self.maybe_start_completion_watcher(
+                agent_id,
+                Some(thread.session_source.clone()),
+                child_reference,
+                child_agent_path,
+            );
+        }
         self.handle_thread_request_result(agent_id, &state, result)
             .await
     }

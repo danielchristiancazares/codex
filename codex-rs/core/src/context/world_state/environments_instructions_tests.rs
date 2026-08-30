@@ -55,3 +55,18 @@ fn persisted_guidance_is_restored_only_when_missing_from_history() {
             .is_empty()
     );
 }
+
+#[test]
+fn cf_056_reenabled_guidance_is_not_repeated_while_retained_in_history() {
+    let mut disabled = super::super::WorldState::default();
+    disabled.add_section(EnvironmentsInstructionsState::new(/*enabled*/ false));
+    let mut reenabled = super::super::WorldState::default();
+    reenabled.add_section(EnvironmentsInstructionsState::new(/*enabled*/ true));
+    let retained: ResponseItem = ContextualUserFragment::into(EnvironmentsInstructions);
+
+    assert!(
+        reenabled
+            .render_history_diff(Some(&disabled.snapshot()), &[retained])
+            .is_empty()
+    );
+}

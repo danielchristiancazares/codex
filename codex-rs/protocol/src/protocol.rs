@@ -2257,10 +2257,21 @@ impl TokenUsageInfo {
     }
 }
 
+/// Model-invisible cumulative state for the shared session rollout budget.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, JsonSchema)]
+pub struct RolloutBudgetCheckpoint {
+    pub weighted_tokens_used: f64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TokenCountEvent {
     pub info: Option<TokenUsageInfo>,
     pub rate_limits: Option<RateLimitSnapshot>,
+    /// Persisted by the rollout envelope and excluded from every client protocol.
+    #[serde(skip)]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub rollout_budget: Option<RolloutBudgetCheckpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

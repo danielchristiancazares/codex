@@ -69,7 +69,10 @@ pub(super) async fn run_remote_compact_v2_attempt(
         .is_enabled()
         .then(|| history.raw_items().cloned().collect());
     let (mut input, prompt_input_metadata): (Vec<_>, Vec<_>) = history
-        .for_prompt_annotated(&turn_context.model_info().input_modalities)
+        .for_prompt_annotated_with_policy(
+            &turn_context.model_info().input_modalities,
+            turn_context.model_info().truncation_policy.into(),
+        )
         .into_iter()
         .map(|envelope| (envelope.item, envelope.metadata))
         .unzip();

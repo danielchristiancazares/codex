@@ -25,12 +25,11 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-base64 = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
 axum = { workspace = true, default-features = false, features = [
     "http1",
     "json",
-    "tokio",
     "ws",
 ] }
 codex-analytics = { workspace = true }
@@ -90,29 +89,38 @@ codex-tools = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }
 codex-utils-path-uri = { workspace = true }
-chrono = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+chrono = { workspace = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive", "std"] }
 futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
-tempfile = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 thiserror = { workspace = true }
-time = { workspace = true }
-toml = { workspace = true }
-toml_edit = { workspace = true }
+time = { workspace = true, features = ["std"] }
+toml = { workspace = true, features = ["display", "parse", "serde", "std"] }
+toml_edit = { workspace = true, features = ["display", "parse"] }
 tokio = { workspace = true, features = [
+    "fs",
     "io-std",
     "macros",
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
+    "time",
 ] }
-tokio-util = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true, features = ["attributes", "log"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "json",
+    "tracing-log",
+] }
 url = { workspace = true }
-uuid = { workspace = true, features = ["serde", "v7"] }
+uuid = { workspace = true, features = ["serde", "v4", "v7"] }
 
 [target.'cfg(windows)'.dependencies]
 codex-windows-sandbox = { workspace = true }
@@ -124,25 +132,26 @@ axum = { workspace = true, default-features = false, features = [
     "json",
     "tokio",
 ] }
-base64 = { workspace = true }
+base64 = { workspace = true, features = ["alloc"] }
 codex-model-provider-info = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
-flate2 = { workspace = true }
+flate2 = { workspace = true, features = ["rust_backend"] }
 hmac = { workspace = true }
 http = { workspace = true }
 opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-pretty_assertions = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+pretty_assertions = { workspace = true, features = ["std"] }
 rmcp = { workspace = true, default-features = false, features = [
     "elicitation",
     "server",
     "transport-streamable-http-server",
 ] }
-serial_test = { workspace = true }
-shlex = { workspace = true }
+serial_test = { workspace = true, features = ["async"] }
+shlex = { workspace = true, features = ["std"] }
 tar = { workspace = true }
-test-case = "3.3.1"
-tokio-tungstenite = { workspace = true }
+test-case = { version = "3.3.1", default-features = false }
+tokio = { workspace = true, features = ["io-util", "net", "test-util"] }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
 tracing-opentelemetry = { workspace = true }
 wiremock = { workspace = true }

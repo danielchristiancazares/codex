@@ -96,6 +96,82 @@ async fn get_account_rate_limits_requires_chatgpt_auth() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn get_account_rate_limits_returns_copilot_monthly_quota() -> Result<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/copilot_internal/user"))
+        .and(header("authorization", "Bearer test-copilot-api-token"))
+        .and(header("accept", "application/vnd.github+json"))
+        .and(header("user-agent", "GitHubCopilotCLI/1.0.80"))
+        .and(header("x-github-api-version", "2022-11-28"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "quota_reset_date_utc": "2026-09-01T00:00:00Z",
+            "quota_snapshots": {
+                "premium_interactions": {
+                    "entitlement": 1500,
+                    "percent_remaining": 67,
+                    "quota_remaining": 1005,
+                    "unlimited": false
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        "model_provider = \"copilot\"\n",
+    )?;
+    let copilot_api_url = server.uri();
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .with_env_overrides(&[
+            ("GITHUB_COPILOT_API_TOKEN", Some("test-copilot-api-token")),
+            ("COPILOT_API_URL", Some(copilot_api_url.as_str())),
+            ("COPILOT_GITHUB_TOKEN", None),
+            ("GH_TOKEN", None),
+            ("GITHUB_TOKEN", None),
+            ("OPENAI_API_KEY", None),
+        ])
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+
+    let request_id = mcp.send_get_account_rate_limits_request().await?;
+    let received: GetAccountRateLimitsResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
+    let snapshot = RateLimitSnapshot {
+        limit_id: Some("copilot".to_string()),
+        limit_name: Some("Copilot".to_string()),
+        primary: Some(RateLimitWindow {
+            used_percent: 33,
+            window_duration_mins: Some(43_200),
+            resets_at: Some(1_788_220_800),
+        }),
+        secondary: None,
+        credits: None,
+        individual_limit: None,
+        spend_control_reached: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+    };
+    assert_eq!(
+        received,
+        GetAccountRateLimitsResponse {
+            rate_limits: snapshot.clone(),
+            rate_limits_by_limit_id: Some(
+                [("copilot".to_string(), snapshot)].into_iter().collect()
+            ),
+            rate_limit_reset_credits: None,
+        }
+    );
+
+    Ok(())
+}
+
 #[test_case("enterprise_cbp_automation", AccountPlanType::EnterpriseCbpAutomation; "enterprise_automation")]
 #[test_case("edu_plus", AccountPlanType::EduPlus; "edu_plus")]
 #[test_case("edu_pro", AccountPlanType::EduPro; "edu_pro")]

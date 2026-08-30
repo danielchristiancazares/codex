@@ -223,6 +223,62 @@ async fn record_initial_history_restores_world_state_baseline() {
 }
 
 #[tokio::test]
+async fn record_initial_history_restores_context_baselines_without_user_boundary() {
+    let (session, turn_context) = make_session_and_context().await;
+    let turn_context = Arc::new(turn_context);
+    let turn_context_item = turn_context.to_turn_context_item();
+    let world_state = build_world_state_from_turn_context(&session, &turn_context).await;
+    let expected_history = world_state
+        .render_full()
+        .into_iter()
+        .map(ContextualUserFragment::into_boxed_response_item)
+        .collect::<Vec<_>>();
+    let rollout_items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: String::new(),
+            replacement_history: Some(
+                expected_history
+                    .iter()
+                    .cloned()
+                    .map(ResponseItemEnvelope::new)
+                    .collect(),
+            ),
+            mcp_resource_origins: None,
+            window_number: None,
+            first_window_id: None,
+            previous_window_id: None,
+            window_id: None,
+        }),
+        RolloutItem::TurnContext(turn_context_item.clone()),
+        RolloutItem::WorldState(WorldStateItem::full(world_state.snapshot().into_object())),
+    ];
+
+    session
+        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
+            conversation_id: ThreadId::default(),
+            history: Arc::new(rollout_items),
+            rollout_path: Some(PathBuf::from("/tmp/resume.jsonl")),
+        }))
+        .await;
+
+    assert_eq!(
+        session.reference_context_item().await,
+        Some(turn_context_item)
+    );
+
+    let step_context = StepContext::for_test(Arc::clone(&turn_context));
+    session
+        .record_context_updates_and_set_reference_context_item(&step_context)
+        .await
+        .expect("world state should build");
+
+    assert_eq!(
+        raw_history_items(&session.clone_history().await),
+        expected_history,
+    );
+}
+
+#[tokio::test]
 async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previous_turn_settings()
 {
     let (session, turn_context) = make_session_and_context().await;

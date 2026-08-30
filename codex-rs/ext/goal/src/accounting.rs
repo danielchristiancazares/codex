@@ -21,6 +21,7 @@ struct GoalAccountingInner {
     turns: HashMap<String, GoalTurnAccounting>,
     wall_clock: GoalWallClockAccounting,
     budget_limit_reported_goal_id: Option<String>,
+    continuation_failure: Option<String>,
 }
 
 #[derive(Debug)]
@@ -133,6 +134,7 @@ impl GoalAccountingState {
 
     pub(crate) fn mark_turn_goal_active(&self, turn_id: &str, goal_id: impl Into<String>) {
         let mut inner = self.inner();
+        inner.continuation_failure = None;
         let goal_id = goal_id.into();
         if inner.budget_limit_reported_goal_id.as_deref() != Some(goal_id.as_str()) {
             inner.budget_limit_reported_goal_id = None;
@@ -150,6 +152,7 @@ impl GoalAccountingState {
         goal_id: impl Into<String>,
     ) -> Option<String> {
         let mut inner = self.inner();
+        inner.continuation_failure = None;
         let turn_id = inner.current_turn_id.clone()?;
         let goal_id = goal_id.into();
         if inner.budget_limit_reported_goal_id.as_deref() != Some(goal_id.as_str()) {
@@ -164,6 +167,7 @@ impl GoalAccountingState {
 
     pub(crate) fn mark_idle_goal_active(&self, goal_id: impl Into<String>) {
         let mut inner = self.inner();
+        inner.continuation_failure = None;
         let goal_id = goal_id.into();
         if inner.budget_limit_reported_goal_id.as_deref() != Some(goal_id.as_str()) {
             inner.budget_limit_reported_goal_id = None;
@@ -263,6 +267,14 @@ impl GoalAccountingState {
         }
     }
 
+    pub(crate) fn mark_continuation_failure(&self, error: String) {
+        self.inner().continuation_failure = Some(error);
+    }
+
+    pub(crate) fn continuation_failure(&self) -> Option<String> {
+        self.inner().continuation_failure.clone()
+    }
+
     pub(crate) fn mark_idle_progress_accounted_for_status(
         &self,
         snapshot: &IdleGoalProgressSnapshot,
@@ -343,6 +355,7 @@ impl Default for GoalAccountingInner {
             turns: HashMap::new(),
             wall_clock: GoalWallClockAccounting::new(),
             budget_limit_reported_goal_id: None,
+            continuation_failure: None,
         }
     }
 }

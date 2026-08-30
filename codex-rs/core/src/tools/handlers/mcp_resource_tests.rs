@@ -1,4 +1,6 @@
 use super::*;
+use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
+use codex_protocol::models::FunctionCallOutputContentItem;
 use pretty_assertions::assert_eq;
 use rmcp::model::ResourceContents;
 use serde_json::json;
@@ -13,7 +15,8 @@ fn template(uri_template: &str, name: &str) -> ResourceTemplate {
 
 #[test]
 fn resource_with_server_serializes_server_field() {
-    let entry = ResourceWithServer::new("test".to_string(), resource("memo://id", "memo"));
+    let entry =
+        ResourceListingEntry::with_server("test".to_string(), resource("memo://id", "memo"));
     let value = serde_json::to_value(&entry).expect("serialize resource");
 
     assert_eq!(value["server"], json!("test"));
@@ -22,17 +25,28 @@ fn resource_with_server_serializes_server_field() {
 }
 
 #[test]
-fn list_resources_payload_from_single_server_copies_next_cursor() {
-    let mut result = ListResourcesResult::with_all_items(vec![resource("memo://id", "memo")]);
+fn list_resources_payload_from_single_server_emits_server_once_and_copies_cursor() {
+    let resources = (0..50)
+        .map(|index| resource(&format!("memo://{index}"), &format!("memo-{index}")))
+        .collect();
+    let mut result = ListResourcesResult::with_all_items(resources);
     result.next_cursor = Some("cursor-1".to_string());
     let payload = ListResourcesPayload::from_single_server("srv".to_string(), result);
     let value = serde_json::to_value(&payload).expect("serialize payload");
 
-    assert_eq!(value["server"], json!("srv"));
-    assert_eq!(value["nextCursor"], json!("cursor-1"));
-    let resources = value["resources"].as_array().expect("resources array");
-    assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0]["server"], json!("srv"));
+    assert_eq!(
+        value,
+        json!({
+            "server": "srv",
+            "resources": (0..50)
+                .map(|index| json!({
+                    "uri": format!("memo://{index}"),
+                    "name": format!("memo-{index}"),
+                }))
+                .collect::<Vec<_>>(),
+            "nextCursor": "cursor-1",
+        })
+    );
 }
 
 #[test]
@@ -46,20 +60,16 @@ fn list_resources_payload_from_all_servers_is_sorted() {
 
     let payload = ListResourcesPayload::from_all_servers(map);
     let value = serde_json::to_value(&payload).expect("serialize payload");
-    let uris: Vec<String> = value["resources"]
-        .as_array()
-        .expect("resources array")
-        .iter()
-        .map(|entry| entry["uri"].as_str().unwrap().to_string())
-        .collect();
 
     assert_eq!(
-        uris,
-        vec![
-            "memo://a-1".to_string(),
-            "memo://a-2".to_string(),
-            "memo://b-1".to_string()
-        ]
+        value,
+        json!({
+            "resources": [
+                {"server": "alpha", "uri": "memo://a-1", "name": "a-1"},
+                {"server": "alpha", "uri": "memo://a-2", "name": "a-2"},
+                {"server": "beta", "uri": "memo://b-1", "name": "b-1"},
+            ],
+        })
     );
 }
 
@@ -107,7 +117,8 @@ fn list_resource_args_normalizes_server_and_cursor() {
 
 #[test]
 fn template_with_server_serializes_server_field() {
-    let entry = ResourceWithServer::new("srv".to_string(), template("memo://{id}", "memo"));
+    let entry =
+        ResourceListingEntry::with_server("srv".to_string(), template("memo://{id}", "memo"));
     let value = serde_json::to_value(&entry).expect("serialize template");
 
     assert_eq!(
@@ -116,6 +127,22 @@ fn template_with_server_serializes_server_field() {
             "server": "srv",
             "uriTemplate": "memo://{id}",
             "name": "memo"
+        })
+    );
+}
+
+#[test]
+fn list_resource_templates_payload_from_single_server_omits_child_server() {
+    let payload = ListResourceTemplatesPayload::from_single_server(
+        "srv".to_string(),
+        ListResourceTemplatesResult::with_all_items(vec![template("memo://{id}", "memo")]),
+    );
+
+    assert_eq!(
+        serde_json::to_value(payload).expect("serialize resource templates"),
+        json!({
+            "server": "srv",
+            "resourceTemplates": [{"uriTemplate": "memo://{id}", "name": "memo"}],
         })
     );
 }
@@ -158,25 +185,90 @@ fn serialize_function_output_preserves_small_payload() {
 }
 
 #[test]
-fn serialize_function_output_caps_read_resource_payload() {
-    let truncation_policy = TruncationPolicy::Bytes(8_000);
+fn read_resource_projection_preserves_text_with_compact_identity_header() {
     let payload = ReadResourcePayload {
         server: "hosted".to_string(),
-        uri: "skill://large/SKILL.md".to_string(),
+        uri: "skill://example/SKILL.md".to_string(),
         result: ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
-            uri: "skill://large/SKILL.md".to_string(),
+            uri: "skill://example/SKILL.md".to_string(),
             mime_type: Some("text/markdown".to_string()),
-            text: "x".repeat(16_000),
+            text: "# Example".to_string(),
             meta: None,
         }]),
     };
-    let serialized = serde_json::to_string(&payload).expect("serialize payload");
-    let expected = truncate_text(&serialized, truncation_policy * 1.2);
 
-    let output = serialize_function_output(payload, truncation_policy)
-        .expect("serialize bounded function output")
-        .into_text();
+    let output =
+        read_mcp_resource::project_read_resource_output(payload, TruncationPolicy::Bytes(8_000))
+            .expect("project text resource");
 
-    assert_ne!(output, serialized);
-    assert_eq!(output, expected);
+    assert_eq!(
+        output.body,
+        vec![FunctionCallOutputContentItem::InputText {
+            text:
+                "MCP resource `skill://example/SKILL.md` from `hosted` (text/markdown)\n# Example"
+                    .to_string(),
+        }]
+    );
+}
+
+#[test]
+fn read_resource_projection_emits_image_as_typed_content() {
+    let payload = ReadResourcePayload {
+        server: "hosted".to_string(),
+        uri: "image://example".to_string(),
+        result: ReadResourceResult::new(vec![ResourceContents::BlobResourceContents {
+            uri: "image://example".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: "aW1hZ2UtYnl0ZXM=".to_string(),
+            meta: None,
+        }]),
+    };
+
+    let output =
+        read_mcp_resource::project_read_resource_output(payload, TruncationPolicy::Bytes(8_000))
+            .expect("project image resource");
+
+    assert_eq!(
+        output.body,
+        vec![
+            FunctionCallOutputContentItem::InputText {
+                text: "MCP resource `image://example` from `hosted` (image/png)".to_string(),
+            },
+            FunctionCallOutputContentItem::InputImage {
+                image_url: "data:image/png;base64,aW1hZ2UtYnl0ZXM=".to_string(),
+                detail: Some(DEFAULT_IMAGE_DETAIL),
+            },
+        ]
+    );
+}
+
+#[test]
+fn read_resource_projection_omits_raw_unhandled_binary_payload() {
+    let payload = ReadResourcePayload {
+        server: "hosted".to_string(),
+        uri: "file://example.pdf".to_string(),
+        result: ReadResourceResult::new(vec![ResourceContents::BlobResourceContents {
+            uri: "file://example.pdf".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            blob: "cGRmLWJ5dGVz".to_string(),
+            meta: None,
+        }]),
+    };
+
+    let output =
+        read_mcp_resource::project_read_resource_output(payload, TruncationPolicy::Bytes(8_000))
+            .expect("project binary resource");
+
+    assert_eq!(
+        output.body,
+        vec![
+            FunctionCallOutputContentItem::InputText {
+                text: "MCP resource `file://example.pdf` from `hosted` (application/pdf)"
+                    .to_string(),
+            },
+            FunctionCallOutputContentItem::InputText {
+                text: "[binary payload omitted: 12 base64 characters]".to_string(),
+            },
+        ]
+    );
 }

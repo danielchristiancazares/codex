@@ -17,6 +17,7 @@ mod types;
 
 pub use codex_state::MAX_QUEUE_ITEMS;
 pub use codex_state::QueuedUserSubmissionRecord;
+pub use codex_state::QueuedUserSubmissionState;
 pub use error::ThreadStoreError;
 pub use error::ThreadStoreResult;
 pub use in_memory::InMemoryThreadStore;

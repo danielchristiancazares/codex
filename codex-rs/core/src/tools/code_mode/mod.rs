@@ -143,13 +143,13 @@ impl CodeModeService {
         self.session().await?.terminate(cell_id).await
     }
 
-    pub(crate) async fn interrupt_active_cells(&self) {
+    pub(crate) async fn interrupt_active_cells(&self, turn_id: &str) {
         let Some(session) = self.session.get() else {
             return;
         };
         join_all(
             self.dispatch_broker
-                .active_cell_ids()
+                .active_cell_ids_for_turn(turn_id)
                 .into_iter()
                 .map(|cell_id| async move {
                     if let Err(error) = session.terminate(cell_id.clone()).await {
@@ -180,10 +180,16 @@ impl CodeModeService {
     pub(crate) fn mark_cell_ready_for_dispatch(
         &self,
         cell_id: &codex_code_mode::CellId,
+        session: &Arc<Session>,
+        turn_id: &str,
         originating_item_id: Option<codex_protocol::ResponseItemId>,
-    ) {
-        self.dispatch_broker
-            .mark_cell_ready_for_dispatch(cell_id, originating_item_id);
+    ) -> Result<(), String> {
+        self.dispatch_broker.mark_cell_ready_for_dispatch(
+            cell_id,
+            session,
+            turn_id,
+            originating_item_id,
+        )
     }
 
     pub(crate) fn cell_originating_item_id(

@@ -231,6 +231,7 @@ async fn streamable_http_404_session_expiry_recovers_and_retries_once() -> anyho
 
     let warmup = call_echo_tool(&client, "warmup").await?;
     assert_eq!(warmup, expected_echo_result("warmup"));
+    let tool_list_generation = client.tool_list_generation();
 
     arm_session_post_failure(
         &base_url,
@@ -242,6 +243,7 @@ async fn streamable_http_404_session_expiry_recovers_and_retries_once() -> anyho
 
     let recovered = call_echo_tool(&client, "recovered").await?;
     assert_eq!(recovered, expected_echo_result("recovered"));
+    assert_eq!(client.tool_list_generation(), tool_list_generation + 1);
 
     Ok(())
 }

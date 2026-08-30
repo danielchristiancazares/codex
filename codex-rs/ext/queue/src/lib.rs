@@ -16,6 +16,7 @@ where
     C: Send + Sync + 'static,
 {
     let watcher = Arc::downgrade(&service);
+    registry.turn_lifecycle_contributor(service.clone());
     registry.thread_lifecycle_contributor(service);
     tokio::spawn(QueuedItemService::watch_external_messages(watcher));
 }

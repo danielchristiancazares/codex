@@ -22,11 +22,12 @@ fn exec_command_tool_matches_expected_spec() {
 
     let description = if cfg!(windows) {
         format!(
-            "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.{}",
+            "Runs a command in a PTY, returning output or a session ID for ongoing interaction.{}",
             windows_shell_guidance_description()
         )
     } else {
-        "Runs a shell command or direct argv vector in a PTY, returning output or a session ID for ongoing interaction.".to_string()
+        "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
+            .to_string()
     };
     let yield_time_ms_description = if cfg!(windows) {
         "Maximum time to wait before returning a session ID for a still-running command. Commands that finish sooner return immediately. For ordinary commands, omit this parameter to use the 10000 ms default. Effective range on Windows is 10000-30000 ms."
@@ -37,18 +38,7 @@ fn exec_command_tool_matches_expected_spec() {
     let mut properties = BTreeMap::from([
         (
             "cmd".to_string(),
-            JsonSchema::string(Some(
-                "Shell command to execute. Provide exactly one of `cmd` or `argv`.".to_string(),
-            )),
-        ),
-        (
-            "argv".to_string(),
-            JsonSchema::array(
-                JsonSchema::string(/*description*/ None),
-                Some(
-                    "Direct program and argument vector. Provide exactly one of `cmd` or `argv`; `shell` and `login` apply only to `cmd`.".to_string(),
-                ),
-            ),
+            JsonSchema::string(Some("Shell command to execute.".to_string())),
         ),
         (
             "workdir".to_string(),
@@ -66,7 +56,7 @@ fn exec_command_tool_matches_expected_spec() {
         (
             "tty".to_string(),
             JsonSchema::boolean(Some(
-                    "True allocates a PTY for the command; false or omitted uses plain pipes."
+                    "True allocates a PTY and keeps interactive stdin available for later non-empty write_stdin calls; false or omitted uses plain pipes."
                         .to_string(),
                 )),
         ),
@@ -98,7 +88,11 @@ fn exec_command_tool_matches_expected_spec() {
             description,
             strict: false,
             defer_loading: None,
-            parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
+            parameters: JsonSchema::object(
+                properties,
+                Some(vec!["cmd".to_string()]),
+                Some(false.into()),
+            ),
             output_schema: Some(unified_exec_output_schema()),
         })
     );
@@ -154,9 +148,8 @@ fn write_stdin_tool_matches_expected_spec() {
         tool,
         ToolSpec::Function(ResponsesApiTool {
             name: "write_stdin".to_string(),
-            description:
-                "Writes characters to an existing unified exec session and returns recent output."
-                    .to_string(),
+            description: "Writes characters to an existing unified exec session and returns recent output. Non-empty writes require a session launched with tty=true; empty writes can poll any running session."
+                .to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(

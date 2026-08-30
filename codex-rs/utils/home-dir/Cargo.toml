@@ -12,8 +12,8 @@ codex-utils-absolute-path = { workspace = true }
 dirs = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lib]
 doctest = false

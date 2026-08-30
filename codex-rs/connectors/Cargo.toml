@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 arc-swap = { workspace = true }
 codex-config = { workspace = true }
 codex-login = { workspace = true }
@@ -17,15 +17,16 @@ codex-plugin = { workspace = true }
 codex-protocol = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha1 = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tracing = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["macros"] }
+tracing = { workspace = true, features = ["attributes"] }
 urlencoding = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 
 [lib]
 doctest = false

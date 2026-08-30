@@ -1645,12 +1645,28 @@ pub(crate) async fn handle_audio(
 }
 
 fn realtime_transcript_delta_from_handoff(handoff: &RealtimeHandoffRequested) -> Option<String> {
-    realtime_transcript_delta(&handoff.active_transcript)
+    let duplicated_input_index = (!handoff.input_transcript.is_empty())
+        .then(|| {
+            handoff
+                .active_transcript
+                .iter()
+                .rposition(|entry| entry.role == "user" && entry.text == handoff.input_transcript)
+        })
+        .flatten();
+    realtime_transcript_delta(
+        handoff
+            .active_transcript
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| (Some(index) != duplicated_input_index).then_some(entry)),
+    )
 }
 
-fn realtime_transcript_delta(active_transcript: &[RealtimeTranscriptEntry]) -> Option<String> {
+fn realtime_transcript_delta<'a>(
+    active_transcript: impl IntoIterator<Item = &'a RealtimeTranscriptEntry>,
+) -> Option<String> {
     let active_transcript = active_transcript
-        .iter()
+        .into_iter()
         .map(|entry| format!("{role}: {text}", role = entry.role, text = entry.text))
         .collect::<Vec<_>>()
         .join("\n");
@@ -1999,6 +2015,9 @@ async fn flush_realtime_transcript_tail(
     transcript_tail: &[RealtimeTranscriptEntry],
 ) {
     if transcript_tail_flush.enabled
+        && transcript_tail
+            .iter()
+            .any(|entry| entry.role == "user" && !entry.text.trim().is_empty())
         && let Some(transcript_delta) = realtime_transcript_delta(transcript_tail)
     {
         let _ = transcript_tail_flush

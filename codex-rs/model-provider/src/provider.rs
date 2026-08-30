@@ -9,6 +9,7 @@ use codex_api::Provider;
 use codex_api::SharedAuthProvider;
 use codex_api::TransportError;
 use codex_api::is_azure_responses_provider;
+use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::RESIDENCY_HEADER_NAME;
@@ -22,6 +23,7 @@ use codex_models_manager::manager::StaticModelsManager;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::CodexErr;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::protocol::RateLimitSnapshot;
 use http::HeaderValue;
 
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
@@ -205,6 +207,15 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
 
     /// Returns the current app-visible account state for this provider.
     fn account_state(&self) -> ProviderAccountResult;
+
+    /// Reads provider-owned account rate limits when the provider exposes them.
+    fn read_rate_limits(
+        &self,
+        _http_client_factory: HttpClientFactory,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<Option<Vec<RateLimitSnapshot>>>>
+    {
+        Box::pin(async { Ok(None) })
+    }
 
     /// Maps an API client error into the provider's user-facing error representation.
     fn map_api_error(&self, error: ApiError) -> CodexErr {

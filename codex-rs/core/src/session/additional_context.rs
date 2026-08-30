@@ -3,6 +3,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AdditionalContextKind;
 
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
+use crate::state::AdditionalContextSnapshot;
 
 use super::Session;
 
@@ -10,11 +11,12 @@ impl Session {
     pub(crate) async fn rehydrate_additional_context_for_compaction(
         &self,
         replacement: Vec<ResponseItemEnvelope>,
-    ) -> Vec<ResponseItemEnvelope> {
-        let (current, history) = {
+    ) -> (Vec<ResponseItemEnvelope>, AdditionalContextSnapshot) {
+        let (current, snapshot, history) = {
             let state = self.state.lock().await;
             (
                 state.additional_context.current_keys_and_kinds(),
+                state.additional_context.snapshot(),
                 state.history.annotated_items().to_vec(),
             )
         };
@@ -35,11 +37,12 @@ impl Session {
                     .cloned()
             })
             .collect::<Vec<_>>();
-        if retained.is_empty() {
+        let replacement = if retained.is_empty() {
             replacement
         } else {
             insert_initial_context_before_last_real_user_or_summary(replacement, retained)
-        }
+        };
+        (replacement, snapshot)
     }
 }
 

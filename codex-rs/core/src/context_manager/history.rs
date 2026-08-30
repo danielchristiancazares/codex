@@ -4,6 +4,8 @@ use crate::context::world_state::PersistentModeState;
 use crate::context::world_state::WorldState;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::normalize;
+use crate::context_manager::tool_discovery::ToolDiscoveryState;
+use crate::context_manager::truncate_function_output_payload;
 use crate::event_mapping::has_non_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_user_message_content;
@@ -21,7 +23,6 @@ use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
@@ -37,8 +38,6 @@ use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
-use codex_utils_output_truncation::truncate_function_output_items_with_policy;
-use codex_utils_output_truncation::truncate_text;
 use std::num::NonZeroUsize;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -66,6 +65,8 @@ pub(crate) struct ContextManager {
     reference_context_item: Option<TurnContextItem>,
     /// World state most recently appended to model-visible history.
     world_state_baseline: Option<WorldStateSnapshot>,
+    /// Deferred-tool definitions already retained in model-visible history.
+    tool_discovery: ToolDiscoveryState,
 }
 
 struct SharedConversationHistory {
@@ -104,6 +105,7 @@ impl ContextManager {
             ),
             reference_context_item: None,
             world_state_baseline: None,
+            tool_discovery: ToolDiscoveryState::default(),
         }
     }
 
@@ -196,8 +198,11 @@ impl ContextManager {
                 continue;
             }
 
+            let mut processed_item = Self::process_item(item, policy);
+            self.tool_discovery
+                .deduplicate_response_item(&mut processed_item);
             let processed = ResponseItemEnvelope {
-                item: Self::process_item(item, policy),
+                item: processed_item,
                 metadata: metadata.cloned(),
             };
             Arc::make_mut(&mut self.items).push(processed);
@@ -207,6 +212,7 @@ impl ContextManager {
     /// Returns the history prepared for sending to the model. This applies a proper
     /// normalization and drops un-suited items. Unsupported image and audio content
     /// is stripped from messages and tool outputs according to `input_modalities`.
+    #[cfg(test)]
     pub(crate) fn for_prompt(self, input_modalities: &[InputModality]) -> Vec<ResponseItem> {
         self.for_prompt_annotated(input_modalities)
             .into_iter()
@@ -214,12 +220,34 @@ impl ContextManager {
             .collect()
     }
 
+    pub(crate) fn for_prompt_with_policy(
+        self,
+        input_modalities: &[InputModality],
+        truncation_policy: TruncationPolicy,
+    ) -> Vec<ResponseItem> {
+        self.for_prompt_annotated_with_policy(input_modalities, truncation_policy)
+            .into_iter()
+            .map(ResponseItemEnvelope::into_item)
+            .collect()
+    }
+
     /// Returns normalized history envelopes for internal consumers that must retain metadata.
+    #[cfg(test)]
     pub(crate) fn for_prompt_annotated(
         mut self,
         input_modalities: &[InputModality],
     ) -> Vec<ResponseItemEnvelope> {
         self.normalize_history(input_modalities);
+        Arc::unwrap_or_clone(self.items)
+    }
+
+    pub(crate) fn for_prompt_annotated_with_policy(
+        mut self,
+        input_modalities: &[InputModality],
+        truncation_policy: TruncationPolicy,
+    ) -> Vec<ResponseItemEnvelope> {
+        self.normalize_history(input_modalities);
+        self.finalize_function_outputs(truncation_policy);
         Arc::unwrap_or_clone(self.items)
     }
 
@@ -266,6 +294,27 @@ impl ContextManager {
         self.estimate_token_count_with_base_instructions(&base_instructions)
     }
 
+    pub(crate) fn model_visible_token_delta(
+        &self,
+        input_modalities: &[InputModality],
+        truncation_policy: TruncationPolicy,
+    ) -> i64 {
+        let raw_estimate = self
+            .items
+            .iter()
+            .map(|envelope| estimate_item_token_count(&envelope.item))
+            .fold(0i64, i64::saturating_add);
+        let mut history = self.clone();
+        history.normalize_history(input_modalities);
+        history.finalize_function_outputs(truncation_policy);
+        let model_visible_estimate = history
+            .items
+            .iter()
+            .map(|envelope| estimate_item_token_count(&envelope.item))
+            .fold(0i64, i64::saturating_add);
+        model_visible_estimate.saturating_sub(raw_estimate)
+    }
+
     pub(crate) fn estimate_token_count_with_base_instructions(
         &self,
         base_instructions: &BaseInstructions,
@@ -282,29 +331,20 @@ impl ContextManager {
         Some(base_tokens.saturating_add(items_tokens))
     }
 
-    pub(crate) fn remove_first_item(&mut self) {
-        if !self.items.is_empty() {
-            // Remove the oldest item (front of the list). Items are ordered from
-            // oldest → newest, so index 0 is the first entry recorded.
-            let items = Arc::make_mut(&mut self.items);
-            let removed = items.remove(0);
-            // If the removed item participates in a call/output pair, also remove
-            // its corresponding counterpart to keep the invariants intact without
-            // running a full normalization pass.
-            normalize::remove_corresponding_for(items, &removed.item);
-            self.world_state_baseline = None;
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn replace(&mut self, items: Vec<ResponseItem>) {
         self.replace_annotated(items.into_iter().map(ResponseItemEnvelope::new).collect());
     }
 
-    pub(crate) fn replace_annotated(&mut self, items: Vec<ResponseItemEnvelope>) {
+    pub(crate) fn replace_annotated(&mut self, mut items: Vec<ResponseItemEnvelope>) {
+        let mut tool_discovery = ToolDiscoveryState::default();
+        for envelope in &mut items {
+            tool_discovery.deduplicate_response_item(&mut envelope.item);
+        }
         self.items = Arc::new(items);
         self.history_version = self.history_version.saturating_add(1);
         self.world_state_baseline = None;
+        self.tool_discovery = tool_discovery;
     }
 
     /// Drop the last `num_turns` instruction turns from this history.
@@ -469,6 +509,8 @@ impl ContextManager {
         // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);
 
+        super::citation_projection::strip_hidden_citations(items);
+
         // strip images when model does not support them
         normalize::strip_images_when_unsupported(input_modalities, items);
 
@@ -476,8 +518,19 @@ impl ContextManager {
         normalize::strip_audio_when_unsupported(input_modalities, items);
     }
 
+    fn finalize_function_outputs(&mut self, truncation_policy: TruncationPolicy) {
+        for envelope in Arc::make_mut(&mut self.items) {
+            match &mut envelope.item {
+                ResponseItem::FunctionCallOutput { output, .. }
+                | ResponseItem::CustomToolCallOutput { output, .. } => {
+                    *output = truncate_function_output_payload(output, truncation_policy);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn process_item(item: &ResponseItem, policy: TruncationPolicy) -> ResponseItem {
-        let policy_with_serialization_budget = policy * 1.2;
         match item {
             ResponseItem::FunctionCallOutput {
                 id,
@@ -491,7 +544,7 @@ impl ContextManager {
                 call_id: call_id.clone(),
                 name: name.clone(),
                 namespace: namespace.clone(),
-                output: truncate_function_output_payload(output, policy_with_serialization_budget),
+                output: truncate_function_output_payload(output, policy),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
             ResponseItem::CustomToolCallOutput {
@@ -504,7 +557,7 @@ impl ContextManager {
                 id: id.clone(),
                 call_id: call_id.clone(),
                 name: name.clone(),
-                output: truncate_function_output_payload(output, policy_with_serialization_budget),
+                output: truncate_function_output_payload(output, policy),
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
             ResponseItem::ToolSearchOutput {
@@ -608,29 +661,6 @@ fn is_additional_context_message(item: &ResponseItem) -> bool {
                 .iter()
                 .all(|kind| kind.0.starts_with("additional_content."))
     })
-}
-
-pub(crate) fn truncate_function_output_payload(
-    output: &FunctionCallOutputPayload,
-    policy: TruncationPolicy,
-) -> FunctionCallOutputPayload {
-    let body = match &output.body {
-        FunctionCallOutputBody::Text(content) => {
-            FunctionCallOutputBody::Text(truncate_text(content, policy))
-        }
-        FunctionCallOutputBody::ContentItems(items) => {
-            FunctionCallOutputBody::ContentItems(truncate_function_output_items_with_policy(
-                items,
-                policy,
-                estimate_function_output_content_item_tokens,
-            ))
-        }
-    };
-
-    FunctionCallOutputPayload {
-        body,
-        success: output.success,
-    }
 }
 
 /// API messages include every non-system item (user/assistant messages, reasoning,

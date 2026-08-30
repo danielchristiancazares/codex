@@ -170,6 +170,7 @@ pub(super) async fn spawn_review_thread(
         extension_data,
         turn_timing_state: Arc::new(TurnTimingState::default()),
         terminal_error: Arc::new(Mutex::new(None)),
+        pending_post_tool_contexts: Arc::new(Mutex::new(Vec::new())),
         server_model_warning_emitted: AtomicBool::new(false),
         model_verification_emitted: AtomicBool::new(false),
         cyber_access_program: None,

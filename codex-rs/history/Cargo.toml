@@ -14,10 +14,10 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+schemars = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["alloc"] }

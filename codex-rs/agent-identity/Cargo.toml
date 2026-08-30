@@ -13,19 +13,28 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-base64 = { workspace = true }
-chrono = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["clock"] }
 codex-http-client = { workspace = true }
 codex-protocol = { workspace = true }
-crypto_box = { workspace = true }
-ed25519-dalek = { workspace = true }
+crypto_box = { workspace = true, features = [
+    "rand_core",
+    "salsa20",
+    "seal",
+] }
+ed25519-dalek = { workspace = true, features = [
+    "fast",
+    "pkcs8",
+    "std",
+    "zeroize",
+] }
 http = { workspace = true }
-jsonwebtoken = { workspace = true }
-rand = { workspace = true }
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
+rand = { workspace = true, features = ["os_rng", "std"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

@@ -13,20 +13,20 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-base64 = { workspace = true }
-regex = { workspace = true }
+base64 = { workspace = true, features = ["alloc"] }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { version = "0.52", default-features = false, features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }

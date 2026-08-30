@@ -377,6 +377,37 @@ impl CodexThread {
         }
     }
 
+    /// Starts a regular turn under a caller-reserved identifier only when the thread is idle.
+    ///
+    /// The caller must durably reserve a unique identifier before this call. Core uses it for
+    /// every event and persisted record belonging to the accepted turn.
+    pub async fn start_turn_if_idle_with_id(
+        &self,
+        request: TurnInputRequest,
+        turn_id: String,
+    ) -> CodexResult<StartIfIdleSubmission> {
+        self.session
+            .services
+            .agent_control
+            .ensure_execution_capacity_for_turn_start(self)
+            .await?;
+        match self
+            .io
+            .submit_turn_input_with_id(request, TurnInputMode::StartIfIdle, turn_id)
+            .await?
+        {
+            TurnInputSubmission::Started { turn_id } => {
+                Ok(StartIfIdleSubmission::Started { turn_id })
+            }
+            TurnInputSubmission::NotSubmitted { reason } => {
+                Ok(StartIfIdleSubmission::NotSubmitted { reason })
+            }
+            TurnInputSubmission::Steered { .. } => {
+                unreachable!("start-if-idle submission cannot steer")
+            }
+        }
+    }
+
     /// Resumes an interrupted regular turn only when the thread is idle.
     ///
     /// Recovery starts no new user input and preserves the turn ID that was

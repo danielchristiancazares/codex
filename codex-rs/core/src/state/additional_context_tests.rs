@@ -55,13 +55,25 @@ fn explicit_clear_allows_the_same_value_to_be_published_again() {
 }
 
 #[test]
-fn raw_value_changes_remain_distinct_after_render_truncation() {
+fn render_equivalent_tail_changes_are_suppressed_after_truncation() {
     let mut store = AdditionalContextStore::default();
     let first = format!("head{}a{}tail", "x".repeat(20_000), "y".repeat(20_000));
     let second = format!("head{}b{}tail", "x".repeat(20_000), "y".repeat(20_000));
-    let (first_items, snapshot) = store.prepare(browser_context(&first));
+    let (_, snapshot) = store.prepare(browser_context(&first));
     store.commit(snapshot);
 
     let (items, _) = store.prepare(browser_context(&second));
-    assert_eq!(items, first_items);
+    assert_eq!(items, Vec::new());
+}
+
+#[test]
+fn changes_in_the_rendered_projection_are_published() {
+    let mut store = AdditionalContextStore::default();
+    let first = format!("first{}tail", "x".repeat(40_000));
+    let second = format!("second{}tail", "x".repeat(40_000));
+    let (_, snapshot) = store.prepare(browser_context(&first));
+    store.commit(snapshot);
+
+    let (items, _) = store.prepare(browser_context(&second));
+    assert_eq!(items.len(), 1);
 }

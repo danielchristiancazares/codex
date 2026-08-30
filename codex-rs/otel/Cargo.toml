@@ -13,7 +13,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-string = { workspace = true }
 codex-api = { workspace = true }
@@ -33,36 +33,38 @@ opentelemetry-otlp = { workspace = true, features = [
     "reqwest-rustls",
     "tls",
     "tls-roots",
-]}
+] }
 opentelemetry-semantic-conventions = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = [
     "experimental_trace_batch_span_processor_with_async_runtime",
     "experimental_metrics_custom_reader",
-    "logs",
-    "metrics",
-    "rt-tokio",
     "testing",
-    "trace",
 ] }
 http = { workspace = true }
 os_info = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
+reqwest = { workspace = true, features = [
+    "blocking",
+    "http2",
+    "rustls-tls",
+    "system-proxy",
+] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["registry"] }
 
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true, features = [
     "experimental_metrics_custom_reader",
     "testing",
 ] }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = { workspace = true }

@@ -8,6 +8,7 @@ use codex_protocol::models::is_image_close_tag_text;
 use codex_protocol::models::is_image_open_tag_text;
 use codex_protocol::models::is_local_image_open_tag_text;
 use codex_protocol::protocol::TruncationPolicy;
+use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
 use codex_utils_output_truncation::truncate_text;
@@ -21,13 +22,13 @@ pub(super) fn content_item_token_count(item: &ContentItem) -> usize {
             approx_tokens_from_byte_count_i64(estimate_image_bytes(image_url, *detail)),
         )
         .unwrap_or(usize::MAX),
-        ContentItem::InputAudio { .. } => 0,
+        ContentItem::InputAudio { audio_url } => estimate_audio_token_count(audio_url),
     }
 }
 
 /// Retain later parts of an image-containing boundary message, keeping each
 /// image and its adjacent harness labels atomic. Text keeps its existing middle
-/// truncation policy; audio remains uncharged and is preserved as before.
+/// truncation policy; audio uses the shared duration-based estimate.
 pub(super) fn truncate_message_to_token_budget(
     mut envelope: ResponseItemEnvelope,
     max_tokens: usize,

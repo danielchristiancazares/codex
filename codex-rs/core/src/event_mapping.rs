@@ -82,7 +82,7 @@ pub(crate) fn has_non_contextual_dev_message_content(message: &[ContentItem]) ->
         .any(|content_item| !is_contextual_dev_fragment(content_item))
 }
 
-fn is_contextual_dev_fragment(content_item: &ContentItem) -> bool {
+pub(crate) fn is_contextual_dev_fragment(content_item: &ContentItem) -> bool {
     let ContentItem::InputText { text } = content_item else {
         return false;
     };

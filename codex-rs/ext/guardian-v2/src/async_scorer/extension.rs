@@ -519,7 +519,7 @@ impl GuardianV2Extension {
                 guardian_evidence.user_input_fragments(conversation_history.as_ref());
             let transcript = guardian_config
                 .transcript
-                .build(conversation_history.items());
+                .build_excluding_call(conversation_history.items(), &call_id);
             truncations.extend(transcript.truncations);
             let rendered_images = guardian_config
                 .transcript

@@ -104,6 +104,20 @@ fn finalize_active_segment<'a>(
         return;
     }
 
+    // Items are collected newest-first. A full world-state snapshot before the
+    // first compaction in this order survives that compaction boundary and,
+    // together with a surviving TurnContext, proves that this prefix already
+    // established canonical initial context.
+    let has_surviving_context_baseline = matches!(
+        &active_segment.reference_context_item,
+        TurnReferenceContextItem::Latest(_)
+    ) && active_segment
+        .world_state_replay
+        .iter()
+        .copied()
+        .take_while(|item| !matches!(item, RolloutItem::Compacted(_)))
+        .any(|item| matches!(item, RolloutItem::WorldState(world_state) if world_state.full));
+
     world_state_replay.extend(active_segment.world_state_replay);
 
     // A surviving replacement-history checkpoint is a complete history base. Once we
@@ -127,6 +141,7 @@ fn finalize_active_segment<'a>(
     // from a surviving compaction that explicitly cleared that baseline.
     if matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
         && (active_segment.counts_as_user_turn
+            || has_surviving_context_baseline
             || matches!(
                 active_segment.reference_context_item,
                 TurnReferenceContextItem::Cleared
@@ -378,8 +393,12 @@ impl Session {
         for item in rollout_suffix {
             match item {
                 RolloutItem::ResponseItem(response_item) => {
+                    let mut response_item = response_item.clone();
+                    crate::context::TurnAborted::rewrite_response_item_for_resume(
+                        &mut response_item.item,
+                    );
                     history.record_annotated_items(
-                        std::slice::from_ref(response_item),
+                        std::slice::from_ref(&response_item),
                         turn_context.model_info().truncation_policy.into(),
                     );
                 }

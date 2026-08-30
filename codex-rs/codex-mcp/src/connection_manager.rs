@@ -175,8 +175,14 @@ struct McpServerView {
 impl McpServerView {
     async fn listed_tools(
         &self,
+        server_name: &str,
         tool_plugin_provenance: &ToolPluginProvenance,
+        tool_catalog_revision: &RwLock<u64>,
     ) -> Option<Vec<ToolInfo>> {
+        self.connection
+            .client
+            .refresh_tools_if_changed(server_name, self.catalog_item_limit, tool_catalog_revision)
+            .await;
         let tools = self.connection.client.listed_tools().await?;
         let tools = filter_tools(tools, &self.tool_filter);
         Some(if self.connection.client.is_codex_apps_mcp_server {

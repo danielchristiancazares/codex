@@ -18,7 +18,7 @@ use crate::analytics::GoalAnalytics;
 use crate::analytics::GoalEventAttribution;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
-use crate::steering::continuation_steering_item;
+use crate::steering::continuation_delta_steering_item;
 use crate::steering::objective_updated_steering_item;
 use crate::tool::protocol_goal_from_state;
 use tokio::sync::Semaphore;
@@ -361,6 +361,11 @@ impl GoalRuntimeHandle {
     }
 
     pub(crate) async fn continue_if_idle(&self) -> Result<(), String> {
+        if let Some(error) = self.inner.accounting_state.continuation_failure() {
+            return Err(format!(
+                "automatic goal continuation is stopped after accounting failed: {error}"
+            ));
+        }
         if !self.tools_visible() {
             self.inner.accounting_state.clear_active_goal();
             return Ok(());
@@ -404,7 +409,7 @@ impl GoalRuntimeHandle {
             self.inner.accounting_state.clear_active_goal();
             return Ok(());
         }
-        let item = continuation_steering_item(&protocol_goal_from_state(goal));
+        let item = continuation_delta_steering_item(&protocol_goal_from_state(goal));
 
         match thread
             .start_turn_if_idle(

@@ -6,6 +6,7 @@ use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::RolloutBudgetCheckpoint;
 use codex_protocol::user_input::UserInput;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
@@ -173,7 +174,65 @@ async fn invalid_provider_rollout_budget_units_fail_without_retry() -> Result<()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
+async fn cf_027_cold_resume_restores_consumed_rollout_budget() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut completed = ev_completed_with_tokens("before-resume", /*total_tokens*/ 1);
+    completed["response"]["usage"]["codex_rollout_budget_units"] = json!(80.0);
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![ev_response_created("before-resume"), completed]),
+            sse(vec![
+                ev_response_created("after-resume"),
+                ev_completed("after-resume"),
+            ]),
+        ],
+    )
+    .await;
+    let initial = test_codex()
+        .with_config(|config| {
+            config.rollout_budget = Some(rollout_budget());
+        })
+        .build(&server)
+        .await?;
+
+    initial.submit_turn("consume 80 percent").await?;
+    initial.codex.flush_rollout().await?;
+    let rollout_path = initial.codex.rollout_path().expect("rollout path");
+    let persisted = codex_rollout::RolloutRecorder::get_rollout_history(&rollout_path).await?;
+    assert_eq!(
+        persisted
+            .get_rollout_items()
+            .iter()
+            .filter_map(|item| match item {
+                codex_rollout::RolloutItem::EventMsg(EventMsg::TokenCount(event)) => {
+                    event.rollout_budget
+                }
+                _ => None,
+            })
+            .next_back(),
+        Some(RolloutBudgetCheckpoint {
+            weighted_tokens_used: 80.0,
+        })
+    );
+    let mut resume_builder = test_codex().with_config(|config| {
+        config.rollout_budget = Some(rollout_budget());
+    });
+    let resumed = resume_builder.restart(&server, &initial).await?;
+    resumed.submit_turn("report remaining budget").await?;
+
+    let requests = responses.requests();
+    assert_eq!(
+        rollout_budget_texts(&requests[1]).last(),
+        Some(&rollout_budget_message(/*remaining_tokens*/ 20))
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cf_027_subagent_usage_survives_root_cold_resume() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     const ROOT_PROMPT: &str = "spawn a budget worker";
@@ -211,18 +270,6 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
         ]),
     )
     .await;
-    mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| {
-            wire_request_contains(request, SPAWN_CALL_ID)
-                && !wire_request_contains(request, "\"type\":\"agent_message\"")
-        },
-        sse(vec![
-            ev_response_created("root-2"),
-            ev_completed_with_tokens("root-2", /*total_tokens*/ 10),
-        ]),
-    )
-    .await;
     let follow_up = mount_sse_once_match(
         &server,
         |request: &wiremock::Request| wire_request_contains(request, FOLLOW_UP_PROMPT),
@@ -253,7 +300,19 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
-    test.submit_turn(FOLLOW_UP_PROMPT).await?;
+    let mut resume_builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Collab)
+            .expect("test config should allow multi-agent tools");
+        config
+            .features
+            .enable(Feature::MultiAgentV2)
+            .expect("test config should allow multi-agent v2");
+        config.rollout_budget = Some(rollout_budget());
+    });
+    let resumed = resume_builder.restart(&server, &test).await?;
+    resumed.submit_turn(FOLLOW_UP_PROMPT).await?;
 
     let requests = follow_up
         .requests()
@@ -270,7 +329,7 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
     };
     assert_eq!(
         rollout_budget_texts(request).last(),
-        Some(&rollout_budget_message(/*remaining_tokens*/ 50))
+        Some(&rollout_budget_message(/*remaining_tokens*/ 60))
     );
 
     Ok(())

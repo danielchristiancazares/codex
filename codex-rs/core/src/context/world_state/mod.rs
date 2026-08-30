@@ -65,6 +65,8 @@ trait ErasedWorldStateSection: Send + Sync {
 
     fn has_retained_fragment_matcher(&self) -> bool;
 
+    fn retained_fragment_is_authoritative(&self) -> bool;
+
     fn matches_retained_fragment(&self, role: &str, text: &str) -> bool;
 
     fn render_diff(
@@ -106,6 +108,10 @@ impl<S: WorldStateSection> ErasedWorldStateSection for S {
 
     fn has_retained_fragment_matcher(&self) -> bool {
         S::has_retained_fragment_matcher()
+    }
+
+    fn retained_fragment_is_authoritative(&self) -> bool {
+        S::retained_fragment_is_authoritative()
     }
 
     fn matches_retained_fragment(&self, role: &str, text: &str) -> bool {
@@ -157,6 +163,10 @@ impl ErasedWorldStateSection for ExtensionWorldStateSection {
 
     fn has_retained_fragment_matcher(&self) -> bool {
         self.0.has_retained_fragment_matcher()
+    }
+
+    fn retained_fragment_is_authoritative(&self) -> bool {
+        false
     }
 
     fn matches_retained_fragment(&self, role: &str, text: &str) -> bool {
@@ -249,6 +259,14 @@ pub(crate) trait WorldStateSection: Send + Sync + 'static {
 
     /// Whether retained history must still contain this section's rendered fragment.
     fn has_retained_fragment_matcher() -> bool {
+        false
+    }
+
+    /// Whether a matching retained fragment fully satisfies the section's current state.
+    ///
+    /// Static guidance uses this across silent disable/re-enable transitions. Dynamic sections
+    /// should keep the default so their persisted snapshot can still drive content updates.
+    fn retained_fragment_is_authoritative() -> bool {
         false
     }
 
@@ -436,10 +454,13 @@ impl WorldState {
         items: impl IntoIterator<Item = &'a ResponseItem> + Clone,
     ) -> Vec<Box<dyn ContextualUserFragment>> {
         self.render_with(|id, section| {
+            let retained_fragment = section.has_retained_fragment_matcher()
+                && has_retained_fragment(items.clone(), section);
+            if retained_fragment && section.retained_fragment_is_authoritative() {
+                return PreviousSectionState::Unknown;
+            }
             if let Some(previous) = previous.and_then(|previous| previous.sections.get(id)) {
-                if section.has_retained_fragment_matcher()
-                    && !has_retained_fragment(items.clone(), section)
-                {
+                if section.has_retained_fragment_matcher() && !retained_fragment {
                     PreviousSectionState::Absent
                 } else {
                     PreviousSectionState::Known(previous)

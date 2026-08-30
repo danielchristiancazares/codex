@@ -132,6 +132,7 @@ async fn slash_rename_generates_editable_title_through_embedded_app_server()
         format!(
             "model = \"gpt-5.2\"\n\
              model_provider = \"{provider_id}\"\n\n\
+             model_reasoning_summary = \"detailed\"\n\n\
              [model_providers.{provider_id}]\n\
              name = \"Thread title test\"\n\
              base_url = \"{}/v1\"\n\
@@ -233,6 +234,7 @@ async fn slash_rename_generates_editable_title_through_embedded_app_server()
             .to_string()
             .contains("Fix the login timeout")
     );
+    assert_eq!(request.body_json()["reasoning"].get("summary"), None);
 
     app_server.shutdown().await?;
     Ok(())

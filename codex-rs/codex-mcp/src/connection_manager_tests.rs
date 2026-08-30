@@ -329,18 +329,33 @@ impl InProcessTransportFactory for RefreshTestTransportFactory {
 struct MutableToolsServer {
     tools: Arc<tokio::sync::RwLock<Vec<Tool>>>,
     block_tool_listing: Arc<AtomicBool>,
+    tool_list_changed: Option<Arc<Notify>>,
 }
 
 impl ServerHandler for MutableToolsServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
     }
 
     async fn list_tools(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        if let Some(tool_list_changed) = self.tool_list_changed.clone() {
+            let peer = context.peer.clone();
+            tokio::spawn(async move {
+                tool_list_changed.notified().await;
+                peer.notify_tool_list_changed()
+                    .await
+                    .expect("send tool-list-changed notification");
+            });
+        }
         if self.block_tool_listing.load(Ordering::Acquire) {
             std::future::pending::<()>().await;
         }
@@ -448,6 +463,125 @@ async fn legacy_tool_catalog_does_not_follow_pagination_cursor() -> anyhow::Resu
     Ok(())
 }
 
+#[tokio::test]
+async fn tool_list_changed_refreshes_the_model_visible_binding() -> anyhow::Result<()> {
+    let tools = Arc::new(tokio::sync::RwLock::new(vec![Tool::new(
+        "old_search",
+        "old search",
+        Arc::new(JsonObject::default()),
+    )]));
+    let tool_list_changed = Arc::new(Notify::new());
+    let client = Arc::new(
+        RmcpClient::new_in_process_client(Arc::new(MutableToolsTransportFactory {
+            server: MutableToolsServer {
+                tools: Arc::clone(&tools),
+                block_tool_listing: Arc::new(AtomicBool::new(false)),
+                tool_list_changed: Some(Arc::clone(&tool_list_changed)),
+            },
+        }))
+        .await?,
+    );
+    let initialize = client
+        .initialize(
+            InitializeRequestParams::new(
+                ClientCapabilities::default(),
+                Implementation::new("codex-test", "0.0.0-test"),
+            )
+            .with_protocol_version(ProtocolVersion::V_2025_06_18),
+            /*timeout*/ None,
+            Box::new(|_, _| {
+                async {
+                    Ok(ElicitationResponse {
+                        action: ElicitationAction::Decline,
+                        content: None,
+                        meta: None,
+                    })
+                }
+                .boxed()
+            }),
+        )
+        .await?;
+    let initial_tools = list_tools_for_client_uncached(
+        "docs",
+        /*is_codex_apps_mcp_server*/ false,
+        /*codex_apps_refresh_trigger*/ "test",
+        &client,
+        /*timeout*/ None,
+        crate::pagination::MAX_MCP_CATALOG_ITEMS,
+        initialize.instructions.as_deref(),
+    )
+    .await?;
+    let initial_generation = client.tool_list_generation();
+    let managed = ManagedClient {
+        client: Arc::clone(&client),
+        server_info: create_test_server_info("Mutable tools"),
+        tools: Arc::new(std::sync::Mutex::new(initial_tools)),
+        tool_list_generation: Arc::new(std::sync::atomic::AtomicU64::new(initial_generation)),
+        tool_list_refresh_gate: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+        tool_timeout: None,
+        server_instructions: initialize.instructions,
+        server_supports_sandbox_state_meta_capability: false,
+        codex_apps_tools_cache_context: None,
+    };
+    let managed = AsyncManagedClient {
+        client: futures::future::ready(Ok(managed)).boxed().shared(),
+        is_codex_apps_mcp_server: false,
+        cached_server_info: None,
+        codex_apps_tools_cache_context: None,
+        tool_catalog_cache_context: None,
+        startup_complete: Arc::new(AtomicBool::new(true)),
+        startup_reconnect: None,
+        cancel_token: CancellationToken::new(),
+    };
+    let approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+    let permission_profile = Constrained::allow_any(PermissionProfile::default());
+    let mut manager = McpConnectionSet::new_uninitialized(
+        &approval_policy,
+        &permission_profile,
+        /*prefix_mcp_tool_names*/ true,
+    );
+    manager.insert_test_client("docs", managed);
+    let manager = Arc::new(manager);
+
+    let initial_binding = capture_binding(&manager).await;
+    assert_eq!(
+        initial_binding
+            .tools()
+            .iter()
+            .map(|tool| tool.tool.name.as_ref())
+            .collect::<Vec<_>>(),
+        vec!["old_search"]
+    );
+    assert_eq!(manager.stable_catalog_revision().await, Some(0));
+
+    *tools.write().await = vec![Tool::new(
+        "new_search",
+        "new search",
+        Arc::new(JsonObject::default()),
+    )];
+    tool_list_changed.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while client.tool_list_generation() == initial_generation {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+
+    assert_eq!(manager.stable_catalog_revision().await, None);
+    let refreshed_binding = capture_binding(&manager).await;
+    assert_eq!(
+        refreshed_binding
+            .tools()
+            .iter()
+            .map(|tool| tool.tool.name.as_ref())
+            .collect::<Vec<_>>(),
+        vec!["new_search"]
+    );
+    assert_eq!(manager.stable_catalog_revision().await, Some(1));
+    client.shutdown().await;
+    Ok(())
+}
+
 async fn create_test_managed_client(tools: Vec<ToolInfo>) -> ManagedClient {
     ManagedClient {
         client: Arc::new(
@@ -456,7 +590,9 @@ async fn create_test_managed_client(tools: Vec<ToolInfo>) -> ManagedClient {
                 .expect("create in-process RMCP client"),
         ),
         server_info: create_test_server_info("Ready"),
-        tools,
+        tools: Arc::new(std::sync::Mutex::new(tools)),
+        tool_list_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        tool_list_refresh_gate: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
         tool_timeout: None,
         server_instructions: None,
         server_supports_sandbox_state_meta_capability: false,
@@ -589,6 +725,33 @@ async fn binding_tools_follow_deterministic_server_order() {
         .map(|tool| tool.server_name.as_str())
         .collect::<Vec<_>>();
     assert_eq!(listed_server_order, expected_server_order);
+}
+
+#[tokio::test]
+async fn hidden_tools_do_not_rename_colliding_visible_tools() {
+    let mut visible = create_test_tool("docs", "search.tool");
+    visible.callable_name = "search.tool".to_string();
+    let mut hidden = create_test_tool("docs", "search-tool");
+    hidden.callable_name = "search-tool".to_string();
+    let mut hidden_meta = rmcp::model::MetaObject::new();
+    hidden_meta.insert("ui".to_string(), serde_json::json!({"visibility": ["app"]}));
+    hidden.tool.meta = Some(hidden_meta);
+    let mut manager = McpConnectionSet::empty(/*prefix_mcp_tool_names*/ true);
+    manager.insert_test_client(
+        "docs",
+        create_ready_async_managed_client(vec![hidden, visible]).await,
+    );
+
+    let binding = capture_binding(&Arc::new(manager)).await;
+
+    assert_eq!(
+        binding
+            .tools()
+            .iter()
+            .map(|tool| tool.callable_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["search_tool"]
+    );
 }
 
 #[tokio::test]
@@ -787,11 +950,14 @@ async fn create_test_manager_with_ready_apps_client(
             Box::new(|_, _| async { Err(anyhow!("unexpected elicitation")) }.boxed()),
         )
         .await?;
+    let tool_list_generation = client.tool_list_generation();
 
     let managed_client = ManagedClient {
         client,
         server_info: create_test_server_info("Codex Apps"),
-        tools: vec![tool],
+        tools: Arc::new(std::sync::Mutex::new(vec![tool])),
+        tool_list_generation: Arc::new(std::sync::atomic::AtomicU64::new(tool_list_generation)),
+        tool_list_refresh_gate: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
         tool_timeout: Some(Duration::from_secs(5)),
         server_instructions: None,
         server_supports_sandbox_state_meta_capability: false,
@@ -3175,7 +3341,7 @@ async fn cancelling_startup_does_not_disable_a_ready_client() {
         .await
         .expect("startup cancellation should not disable a ready client");
     assert_eq!(
-        model_tool_names(&managed.tools),
+        model_tool_names(&managed.listed_tools()),
         HashSet::from([ToolName::namespaced("ready", "search")])
     );
 }
@@ -4506,6 +4672,7 @@ async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> a
             server: MutableToolsServer {
                 tools: Arc::clone(&tools),
                 block_tool_listing: Arc::clone(&block_tool_listing),
+                tool_list_changed: None,
             },
         }))
         .await?,
@@ -4540,10 +4707,13 @@ async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> a
         initialize.instructions.as_deref(),
     )
     .await?;
+    let tool_list_generation = client.tool_list_generation();
     let managed_client = ManagedClient {
         client,
         server_info: create_test_server_info("Mutable tools"),
-        tools: initial_tools,
+        tools: Arc::new(std::sync::Mutex::new(initial_tools)),
+        tool_list_generation: Arc::new(std::sync::atomic::AtomicU64::new(tool_list_generation)),
+        tool_list_refresh_gate: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
         tool_timeout: None,
         server_instructions: initialize.instructions,
         server_supports_sandbox_state_meta_capability: false,
@@ -5090,6 +5260,7 @@ async fn reconciliation_replaces_closed_connections() -> anyhow::Result<()> {
                     Arc::new(JsonObject::default()),
                 )])),
                 block_tool_listing: Arc::new(AtomicBool::new(false)),
+                tool_list_changed: None,
             },
             disconnect: disconnect.clone(),
         }))

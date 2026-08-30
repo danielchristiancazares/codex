@@ -1847,6 +1847,73 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn() -> Result<()>
 }
 
 #[tokio::test]
+async fn cf_052_rollback_aborts_and_discards_async_hook_context_from_removed_turn() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_assistant_message("msg-1", "turn to roll back completed"),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "turn after rollback completed"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_pre_build_hook(|home| {
+            write_async_user_prompt_submit_hook(home, /*gated*/ true)
+                .expect("write gated async user prompt submit hook");
+        })
+        .with_config(trust_discovered_hooks)
+        .build(&server)
+        .await?;
+
+    let rolled_back_prompt = "start a slow async hook, then roll this turn back";
+    test.submit_turn(rolled_back_prompt).await?;
+    let started_path = test
+        .codex_home_path()
+        .join("async_user_prompt_submit_started");
+    fs_wait::wait_for_path_exists(started_path, Duration::from_secs(5))
+        .await
+        .context("timed out waiting for the rolled-back async hook to start")?;
+
+    test.codex
+        .submit(Op::ThreadRollback { num_turns: 1 })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::ThreadRolledBack(_))
+    })
+    .await;
+    test.submit_turn("continue after rollback").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]
+            .input()
+            .iter()
+            .all(|item| !item.to_string().contains(rolled_back_prompt)),
+        "the follow-up request must not contain context from the rolled-back async hook"
+    );
+    assert!(
+        !test
+            .codex_home_path()
+            .join("async_user_prompt_submit_finished")
+            .exists(),
+        "rollback should abort the slow hook process before it publishes a result"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_start_hook_spills_large_additional_context() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

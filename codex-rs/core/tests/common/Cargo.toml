@@ -12,9 +12,9 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 assert_cmd = { workspace = true }
-base64 = { workspace = true }
+base64 = { workspace = true, features = ["alloc"] }
 codex-arg0 = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -31,25 +31,25 @@ codex-thread-store = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 codex-utils-path-uri = { workspace = true }
-ctor = { workspace = true }
+ctor = { workspace = true, features = ["proc_macro"] }
 futures = { workspace = true }
-notify = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-regex-lite = { workspace = true }
-serde_json = { workspace = true }
-similar = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["net", "test-util", "time"] }
-tokio-tungstenite = { workspace = true }
+notify = { workspace = true, features = ["macos_fsevent"] }
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry_sdk = { workspace = true, features = ["trace"] }
+regex-lite = { workspace = true, features = ["std", "string"] }
+serde_json = { workspace = true, features = ["alloc"] }
+similar = { workspace = true, features = ["text"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "test-util"] }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["registry"] }
 walkdir = { workspace = true }
 wiremock = { workspace = true }
-shlex = { workspace = true }
+shlex = { workspace = true, features = ["std"] }
 zstd = { workspace = true }
 
 [dev-dependencies]
 codex-http-client = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

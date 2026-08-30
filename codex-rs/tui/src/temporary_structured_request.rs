@@ -16,6 +16,8 @@ use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
 use codex_app_server_protocol::ThreadUnsubscribeResponse;
+use codex_app_server_protocol::TurnInterruptParams;
+use codex_app_server_protocol::TurnInterruptResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
@@ -28,7 +30,64 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use uuid::Uuid;
 
 const STRUCTURED_TURN_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 30);
+const STRUCTURED_CLEANUP_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
 const STRUCTURED_RESPONSE_MAX_BYTES: usize = 8 * 1024;
+
+struct TemporaryStructuredTurnRequest {
+    thread_id: String,
+    prompt: String,
+    output_schema: Value,
+    effort: Option<ReasoningEffort>,
+    notifications: UnboundedReceiver<ServerNotification>,
+}
+
+struct TemporaryStructuredTurnCleanup {
+    request_handle: AppServerRequestHandle,
+    thread_id: String,
+    turn_id: Option<String>,
+    armed: bool,
+}
+
+impl TemporaryStructuredTurnCleanup {
+    fn new(request_handle: AppServerRequestHandle, thread_id: String) -> Self {
+        Self {
+            request_handle,
+            thread_id,
+            turn_id: None,
+            armed: true,
+        }
+    }
+
+    async fn finish(&mut self, interrupt: bool) {
+        self.armed = false;
+        let task = tokio::spawn(cleanup_temporary_structured_turn(
+            self.request_handle.clone(),
+            self.thread_id.clone(),
+            self.turn_id.clone(),
+            interrupt,
+        ));
+        if let Err(error) = task.await {
+            tracing::debug!(%error, "temporary structured turn cleanup task failed");
+        }
+    }
+}
+
+impl Drop for TemporaryStructuredTurnCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(cleanup_temporary_structured_turn(
+            self.request_handle.clone(),
+            self.thread_id.clone(),
+            self.turn_id.clone(),
+            /*interrupt*/ true,
+        ));
+    }
+}
 
 /// Preserve the visible thread's provider, permissions, and external-tool isolation.
 pub(crate) struct TemporaryStructuredThreadOptions {
@@ -243,7 +302,7 @@ pub(crate) async fn unsubscribe_temporary_thread(
     thread_id: String,
 ) {
     match tokio::time::timeout(
-        STRUCTURED_TURN_TIMEOUT,
+        STRUCTURED_CLEANUP_TIMEOUT,
         request_handle.request_typed::<ThreadUnsubscribeResponse>(
             ClientRequest::ThreadUnsubscribe {
                 request_id: RequestId::String(format!(
@@ -266,16 +325,65 @@ pub(crate) async fn unsubscribe_temporary_thread(
     }
 }
 
-/// Run a bounded structured turn and make a bounded temporary-thread cleanup attempt.
-pub(crate) async fn run_temporary_structured_turn(
+async fn interrupt_temporary_structured_turn(
+    request_handle: &AppServerRequestHandle,
+    thread_id: String,
+    turn_id: String,
+) {
+    match tokio::time::timeout(
+        STRUCTURED_CLEANUP_TIMEOUT,
+        request_handle.request_typed::<TurnInterruptResponse>(ClientRequest::TurnInterrupt {
+            request_id: RequestId::String(format!(
+                "temporary-structured-interrupt-{}",
+                Uuid::new_v4()
+            )),
+            params: TurnInterruptParams { thread_id, turn_id },
+        }),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "failed to interrupt temporary structured turn");
+        }
+        Err(_) => {
+            tracing::debug!("temporary structured turn interrupt timed out");
+        }
+    }
+}
+
+async fn cleanup_temporary_structured_turn(
     request_handle: AppServerRequestHandle,
     thread_id: String,
-    prompt: String,
-    output_schema: Value,
-    effort: Option<ReasoningEffort>,
-    notifications: UnboundedReceiver<ServerNotification>,
+    turn_id: Option<String>,
+    interrupt: bool,
+) {
+    if interrupt {
+        interrupt_temporary_structured_turn(
+            &request_handle,
+            thread_id.clone(),
+            turn_id.unwrap_or_default(),
+        )
+        .await;
+    }
+    unsubscribe_temporary_thread(&request_handle, thread_id).await;
+}
+
+async fn run_temporary_structured_turn_with_timeout(
+    request_handle: AppServerRequestHandle,
+    request: TemporaryStructuredTurnRequest,
+    timeout: Duration,
 ) -> color_eyre::Result<String> {
-    let result = tokio::time::timeout(STRUCTURED_TURN_TIMEOUT, async {
+    let TemporaryStructuredTurnRequest {
+        thread_id,
+        prompt,
+        output_schema,
+        effort,
+        notifications,
+    } = request;
+    let mut cleanup =
+        TemporaryStructuredTurnCleanup::new(request_handle.clone(), thread_id.clone());
+    let result = tokio::time::timeout(timeout, async {
         let turn = start_structured_turn(
             &request_handle,
             thread_id.clone(),
@@ -285,14 +393,37 @@ pub(crate) async fn run_temporary_structured_turn(
         )
         .await?;
 
+        cleanup.turn_id = Some(turn.turn.id.clone());
         collect_structured_response(notifications, &turn.turn.id).await
     })
     .await
     .unwrap_or_else(|_| Err(eyre!("temporary structured turn timed out")));
 
-    unsubscribe_temporary_thread(&request_handle, thread_id).await;
-
+    cleanup.finish(result.is_err()).await;
     result
+}
+
+/// Run a bounded structured turn and make a bounded temporary-thread cleanup attempt.
+pub(crate) async fn run_temporary_structured_turn(
+    request_handle: AppServerRequestHandle,
+    thread_id: String,
+    prompt: String,
+    output_schema: Value,
+    effort: Option<ReasoningEffort>,
+    notifications: UnboundedReceiver<ServerNotification>,
+) -> color_eyre::Result<String> {
+    run_temporary_structured_turn_with_timeout(
+        request_handle,
+        TemporaryStructuredTurnRequest {
+            thread_id,
+            prompt,
+            output_schema,
+            effort,
+            notifications,
+        },
+        STRUCTURED_TURN_TIMEOUT,
+    )
+    .await
 }
 
 #[cfg(test)]

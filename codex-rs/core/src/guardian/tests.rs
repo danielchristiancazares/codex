@@ -744,6 +744,8 @@ async fn build_guardian_prompt_delta_mode_preserves_original_numbering() -> anyh
     assert!(text.contains(">>> TRANSCRIPT DELTA END\n"));
     assert!(text.contains("The Codex agent has requested the following next action:\n"));
     assert!(!text.contains("[1] user: Please check the repo visibility"));
+    assert!(!text.contains(">>> ROOT CONVERSATION START"));
+    assert!(!text.contains(">>> TRUSTED USER ANSWERS START"));
     assert_eq!(prompt.transcript_cursor.transcript_entry_count, 6);
 
     Ok(())
@@ -1773,6 +1775,17 @@ fn guardian_output_schema_requires_only_outcome_and_allows_optional_details() {
             "required": ["outcome"]
         })
     );
+}
+
+#[test]
+fn guardian_prompt_leaves_output_shape_to_structured_schema() {
+    let prompt = guardian_policy_prompt_with_config_and_template("", "{{ tenant_policy_config }}");
+
+    assert!(prompt.contains("read-only tool checks"));
+    assert!(prompt.contains("smallest schema-valid allow decision"));
+    for schema_field in ["risk_level", "user_authorization", "outcome", "rationale"] {
+        assert!(!prompt.contains(schema_field));
+    }
 }
 
 enum GuardianTestCatalog {

@@ -3,6 +3,7 @@ use codex_protocol::models::ContentItemKind;
 use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
 use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 
+use crate::catalog_prompt::SKILLS_COMMON_USAGE_INSTRUCTIONS;
 use crate::catalog_prompt::SkillPromptKind;
 use crate::catalog_prompt::render_available_skills_body;
 use crate::tools::SkillToolAuthority;
@@ -19,10 +20,13 @@ impl AvailableSkillsInstructions {
         prompt_kind: SkillPromptKind,
         skill_root_lines: Vec<String>,
         mut skill_lines: Vec<String>,
-        include_skills_usage_instructions: bool,
+        usage_instructions: SkillUsageInstructions,
     ) -> Self {
-        if include_skills_usage_instructions {
+        if usage_instructions != SkillUsageInstructions::Omitted {
             skill_lines.push("### How to use skills".to_string());
+            if usage_instructions == SkillUsageInstructions::CommonAndSourceSpecific {
+                skill_lines.push(SKILLS_COMMON_USAGE_INSTRUCTIONS.to_string());
+            }
             if let Some(instructions) = prompt_kind.alias_instructions() {
                 skill_lines.push(instructions.to_string());
             }
@@ -34,6 +38,13 @@ impl AvailableSkillsInstructions {
             skill_lines,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SkillUsageInstructions {
+    Omitted,
+    SourceSpecific,
+    CommonAndSourceSpecific,
 }
 
 impl ContextualUserFragment for AvailableSkillsInstructions {

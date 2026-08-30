@@ -72,29 +72,36 @@ impl ListMcpResourceTemplatesHandler {
             arguments: arguments.clone(),
         };
 
-        run_resource_operation(&session, turn.as_ref(), &call_id, invocation, async {
-            if let Some((server_name, params)) = args.target(turn.as_ref())? {
-                let result = mcp
-                    .list_resource_templates(&server_name, params)
-                    .await
-                    .map_err(|err| {
-                        FunctionCallError::RespondToModel(format!(
-                            "resources/templates/list failed: {err:#}"
-                        ))
-                    })?;
-                Ok(ListResourceTemplatesPayload::from_single_server(
-                    server_name,
-                    result,
-                ))
-            } else {
-                let templates = mcp
-                    .list_all_resource_templates(|server_name| {
-                        model_can_access_mcp_server(turn.as_ref(), server_name)
-                    })
-                    .await;
-                Ok(ListResourceTemplatesPayload::from_all_servers(templates))
-            }
-        })
+        run_resource_operation(
+            &session,
+            turn.as_ref(),
+            &call_id,
+            invocation,
+            async {
+                if let Some((server_name, params)) = args.target(turn.as_ref())? {
+                    let result = mcp
+                        .list_resource_templates(&server_name, params)
+                        .await
+                        .map_err(|err| {
+                            FunctionCallError::RespondToModel(format!(
+                                "resources/templates/list failed: {err:#}"
+                            ))
+                        })?;
+                    Ok(ListResourceTemplatesPayload::from_single_server(
+                        server_name,
+                        result,
+                    ))
+                } else {
+                    let templates = mcp
+                        .list_all_resource_templates(|server_name| {
+                            model_can_access_mcp_server(turn.as_ref(), server_name)
+                        })
+                        .await;
+                    Ok(ListResourceTemplatesPayload::from_all_servers(templates))
+                }
+            },
+            super::serialize_function_output,
+        )
         .await
     }
 }

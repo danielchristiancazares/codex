@@ -71,9 +71,15 @@ fn latest_token_usage_turn_id_from_rollout_items(
     rollout_items: &[RolloutItem],
     turns: &[Turn],
 ) -> Option<String> {
-    let token_count_index = rollout_items
-        .iter()
-        .rposition(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TokenCount(_))))?;
+    let token_count_index = rollout_items.iter().rposition(|item| {
+        matches!(
+            item,
+            RolloutItem::EventMsg(EventMsg::TokenCount(event))
+                if event.info.is_some()
+                    || event.rate_limits.is_some()
+                    || event.rollout_budget.is_none()
+        )
+    })?;
     let mut builder = ThreadHistoryBuilder::new();
     for item in &rollout_items[..token_count_index] {
         builder.handle_rollout_item(item);
@@ -114,6 +120,7 @@ mod tests {
     use super::*;
     use codex_app_server_protocol::build_turns_from_rollout_items;
     use codex_protocol::protocol::AgentMessageEvent;
+    use codex_protocol::protocol::RolloutBudgetCheckpoint;
     use codex_protocol::protocol::TokenCountEvent;
     use codex_protocol::protocol::UserMessageEvent;
     use pretty_assertions::assert_eq;
@@ -163,6 +170,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn replay_attribution_ignores_rollout_budget_only_checkpoint() {
+        let mut rollout_items = token_usage_history();
+        rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
+            TokenCountEvent {
+                info: None,
+                rate_limits: None,
+                rollout_budget: Some(RolloutBudgetCheckpoint {
+                    weighted_tokens_used: 80.0,
+                }),
+            },
+        )));
+        let turns = build_turns_from_rollout_items(&rollout_items);
+
+        assert_eq!(
+            latest_token_usage_turn_id_from_rollout_items(&rollout_items, turns.as_slice()),
+            Some(turns[0].id.clone())
+        );
+    }
+
     fn token_usage_history() -> Vec<RolloutItem> {
         vec![
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
@@ -182,6 +209,7 @@ mod tests {
             RolloutItem::EventMsg(EventMsg::TokenCount(TokenCountEvent {
                 info: None,
                 rate_limits: None,
+                rollout_budget: None,
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,

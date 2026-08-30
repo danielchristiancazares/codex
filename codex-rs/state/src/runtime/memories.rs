@@ -842,6 +842,34 @@ WHERE kind = ? AND job_key = ?
         Ok(Stage1JobClaimOutcome::SkippedRunning)
     }
 
+    /// Extends a running stage-1 lease only while `ownership_token` still owns the job.
+    pub async fn renew_stage1_job_lease(
+        &self,
+        thread_id: ThreadId,
+        ownership_token: &str,
+        lease_seconds: i64,
+    ) -> anyhow::Result<bool> {
+        let lease_until = Utc::now().timestamp().saturating_add(lease_seconds.max(0));
+        Ok(sqlx::query(
+            r#"
+UPDATE jobs
+SET lease_until = ?
+WHERE kind = ?
+  AND job_key = ?
+  AND status = 'running'
+  AND ownership_token = ?
+            "#,
+        )
+        .bind(lease_until)
+        .bind(JOB_KIND_MEMORY_STAGE1)
+        .bind(thread_id.to_string())
+        .bind(ownership_token)
+        .execute(self.pool.as_ref())
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
     /// Marks a claimed stage-1 job successful and upserts generated output.
     ///
     /// Transaction behavior:
@@ -1088,7 +1116,7 @@ WHERE kind = ? AND job_key = ?
 
         let existing_job = sqlx::query(
             r#"
-SELECT status, lease_until, retry_at, input_watermark, finished_at, last_error
+SELECT status, lease_until, retry_at, retry_remaining, input_watermark, finished_at, last_error
 FROM jobs
 WHERE kind = ? AND job_key = ?
             "#,
@@ -1145,9 +1173,10 @@ INSERT INTO jobs (
         let status: String = existing_job.try_get("status")?;
         let existing_lease_until: Option<i64> = existing_job.try_get("lease_until")?;
         let retry_at: Option<i64> = existing_job.try_get("retry_at")?;
+        let retry_remaining: i64 = existing_job.try_get("retry_remaining")?;
         let finished_at: Option<i64> = existing_job.try_get("finished_at")?;
         let last_error: Option<String> = existing_job.try_get("last_error")?;
-        if retry_at.is_some_and(|retry_at| retry_at > now) {
+        if retry_remaining <= 0 || retry_at.is_some_and(|retry_at| retry_at > now) {
             tx.commit().await?;
             return Ok(Phase2JobClaimOutcome::SkippedRetryUnavailable);
         }
@@ -1178,6 +1207,7 @@ SET
 WHERE kind = ? AND job_key = ?
   AND (status != 'running' OR lease_until IS NULL OR lease_until <= ?)
   AND (retry_at IS NULL OR retry_at <= ?)
+  AND retry_remaining > 0
   AND (last_error IS NOT NULL OR finished_at IS NULL OR finished_at <= ?)
             "#,
         )
@@ -1299,8 +1329,9 @@ WHERE thread_id = ? AND source_updated_at = ?
     ///
     /// Query behavior:
     /// - updates only the owned running singleton global row
-    /// - sets `status='error'`, clears lease
-    /// - writes failure reason and retry time
+    /// - sets `status='error'`, or terminal `failed` when this exhausts retries
+    /// - clears the lease and writes the failure reason
+    /// - schedules another retry only while retries remain
     /// - decrements `retry_remaining` without going below zero
     pub async fn mark_global_phase2_job_failed(
         &self,
@@ -1314,10 +1345,10 @@ WHERE thread_id = ? AND source_updated_at = ?
             r#"
 UPDATE jobs
 SET
-    status = 'error',
+    status = CASE WHEN retry_remaining <= 1 THEN 'failed' ELSE 'error' END,
     finished_at = ?,
     lease_until = NULL,
-    retry_at = ?,
+    retry_at = CASE WHEN retry_remaining <= 1 THEN NULL ELSE ? END,
     retry_remaining = max(retry_remaining - 1, 0),
     last_error = ?
 WHERE kind = ? AND job_key = ?
@@ -1355,10 +1386,10 @@ WHERE kind = ? AND job_key = ?
             r#"
 UPDATE jobs
 SET
-    status = 'error',
+    status = CASE WHEN retry_remaining <= 1 THEN 'failed' ELSE 'error' END,
     finished_at = ?,
     lease_until = NULL,
-    retry_at = ?,
+    retry_at = CASE WHEN retry_remaining <= 1 THEN NULL ELSE ? END,
     retry_remaining = max(retry_remaining - 1, 0),
     last_error = ?
 WHERE kind = ? AND job_key = ?
@@ -1493,13 +1524,17 @@ INSERT INTO jobs (
 ON CONFLICT(kind, job_key) DO UPDATE SET
     status = CASE
         WHEN jobs.status = 'running' THEN 'running'
+        WHEN jobs.retry_remaining <= 0 THEN 'failed'
         ELSE 'pending'
     END,
     retry_at = CASE
         WHEN jobs.status = 'running' THEN jobs.retry_at
         ELSE NULL
     END,
-    retry_remaining = max(jobs.retry_remaining, excluded.retry_remaining),
+    retry_remaining = CASE
+        WHEN jobs.retry_remaining <= 0 THEN 0
+        ELSE max(jobs.retry_remaining, excluded.retry_remaining)
+    END,
     input_watermark = CASE
         WHEN excluded.input_watermark > COALESCE(jobs.input_watermark, 0)
             THEN excluded.input_watermark
@@ -1829,7 +1864,10 @@ mod tests {
             )
             .await
             .expect("claim a");
-        assert!(matches!(claim_a, Stage1JobClaimOutcome::Claimed { .. }));
+        let token_a = match claim_a {
+            Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+            other => panic!("unexpected claim outcome: {other:?}"),
+        };
 
         let claim_b_fresh = runtime
             .try_claim_stage1_job(
@@ -1853,10 +1891,24 @@ mod tests {
             )
             .await
             .expect("claim b stale");
-        assert!(matches!(
-            claim_b_stale,
-            Stage1JobClaimOutcome::Claimed { .. }
-        ));
+        let token_b = match claim_b_stale {
+            Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+            other => panic!("unexpected reclaimed outcome: {other:?}"),
+        };
+        assert!(
+            !runtime
+                .memories()
+                .renew_stage1_job_lease(thread_id, &token_a, /*lease_seconds*/ 3600)
+                .await
+                .expect("reject stale owner renewal")
+        );
+        assert!(
+            runtime
+                .memories()
+                .renew_stage1_job_lease(thread_id, &token_b, /*lease_seconds*/ 3600)
+                .await
+                .expect("renew current owner")
+        );
 
         let _ = tokio::fs::remove_dir_all(codex_home).await;
     }
@@ -3144,7 +3196,7 @@ WHERE kind = ? AND job_key = ?
     }
 
     #[tokio::test]
-    async fn phase2_global_lock_can_be_claimed_after_retry_budget_is_exhausted() {
+    async fn cf_044_phase2_global_lock_stops_after_retry_budget_is_exhausted() {
         let codex_home = unique_temp_dir();
         let runtime = StateRuntime::init(
             crate::SqliteConfig::new_for_testing(codex_home.as_path().abs()),
@@ -3187,30 +3239,50 @@ WHERE kind = ? AND job_key = ?
             );
         }
 
-        let job_row =
-            sqlx::query("SELECT retry_remaining FROM jobs WHERE kind = ? AND job_key = ?")
-                .bind("memory_consolidate_global")
-                .bind("global")
-                .fetch_one(memory_pool(&runtime))
-                .await
-                .expect("load phase2 job row after retry exhaustion");
+        let job_row = sqlx::query(
+            "SELECT status, retry_at, retry_remaining FROM jobs WHERE kind = ? AND job_key = ?",
+        )
+        .bind("memory_consolidate_global")
+        .bind("global")
+        .fetch_one(memory_pool(&runtime))
+        .await
+        .expect("load phase2 job row after retry exhaustion");
         assert_eq!(
             job_row
                 .try_get::<i64, _>("retry_remaining")
                 .expect("retry_remaining"),
             0
         );
+        assert_eq!(
+            job_row.try_get::<String, _>("status").expect("status"),
+            "failed"
+        );
+        assert_eq!(
+            job_row
+                .try_get::<Option<i64>, _>("retry_at")
+                .expect("retry_at"),
+            None
+        );
 
         let claim_after_exhaustion = runtime
             .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3_600)
             .await
             .expect("claim phase2 after retry exhaustion");
-        assert!(
-            matches!(
-                claim_after_exhaustion,
-                Phase2JobClaimOutcome::Claimed { .. }
-            ),
-            "phase2 claim should only lock; workspace diffing decides whether there is work"
+        assert_eq!(
+            claim_after_exhaustion,
+            Phase2JobClaimOutcome::SkippedRetryUnavailable
+        );
+
+        runtime
+            .enqueue_global_consolidation(/*input_watermark*/ 101)
+            .await
+            .expect("enqueue after retry exhaustion");
+        assert_eq!(
+            runtime
+                .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3_600)
+                .await
+                .expect("claim after exhausted job receives new input"),
+            Phase2JobClaimOutcome::SkippedRetryUnavailable
         );
 
         let _ = tokio::fs::remove_dir_all(codex_home).await;

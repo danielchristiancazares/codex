@@ -47,11 +47,13 @@ use codex_protocol::models::MessagePhase;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemCompletedEvent;
+use codex_protocol::protocol::NonSteerableTurnKind;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -301,6 +303,26 @@ fn has_subagent_notification<'a>(
     })
 }
 
+fn subagent_notification_count<'a>(
+    history_items: impl IntoIterator<Item = &'a ResponseItem>,
+) -> usize {
+    history_items
+        .into_iter()
+        .filter(|item| {
+            let ResponseItem::Message { role, content, .. } = item else {
+                return false;
+            };
+            role == "user"
+                && content.iter().any(|content_item| match content_item {
+                    ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                        SubagentNotification::matches_text(text)
+                    }
+                    ContentItem::InputImage { .. } | ContentItem::InputAudio { .. } => false,
+                })
+        })
+        .count()
+}
+
 /// Returns true when any message item contains `needle` in a text span.
 fn history_contains_text<'a>(
     history_items: impl IntoIterator<Item = &'a ResponseItem>,
@@ -518,6 +540,19 @@ async fn on_event_updates_status_from_error() {
 
     let expected = AgentStatus::Errored("boom".to_string());
     assert_eq!(status, Some(expected));
+}
+
+#[tokio::test]
+async fn nonterminal_error_does_not_update_agent_status() {
+    let status = agent_status_from_event(&EventMsg::Error(ErrorEvent {
+        misalignment: None,
+        message: "turn already active".to_string(),
+        codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
+            turn_kind: NonSteerableTurnKind::Review,
+        }),
+    }));
+
+    assert_eq!(status, None);
 }
 
 #[tokio::test]
@@ -3068,6 +3103,80 @@ async fn spawn_child_completion_notifies_parent_history() {
         .expect("child shutdown should submit");
 
     assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
+}
+
+#[tokio::test]
+async fn reused_v1_child_rearms_completion_notification() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    let child_thread_id = harness
+        .spawn_anonymous_child(parent_thread_id, Default::default())
+        .await;
+    let child_thread = harness
+        .manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should exist");
+
+    child_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    let first_turn = child_thread.session.new_default_turn().await;
+    child_thread
+        .session
+        .send_event(
+            first_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: first_turn.sub_id.clone(),
+                started_at: None,
+                last_agent_message: Some("first result".to_string()),
+                error: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+    assert!(wait_for_subagent_notification(&parent_thread).await);
+
+    let second_turn_id = harness
+        .control
+        .send_input(
+            child_thread_id,
+            text_input("second task"),
+            TurnStartOptions::default(),
+        )
+        .await
+        .expect("reused child should accept a second task");
+    let second_turn = child_thread.session.new_default_turn().await;
+    child_thread
+        .session
+        .send_event(
+            second_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: second_turn_id,
+                started_at: None,
+                last_agent_message: Some("second result".to_string()),
+                error: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let history = parent_thread.session.clone_history().await;
+            if subagent_notification_count(history.raw_items()) == 2 {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("reused child should publish its second completion");
 }
 
 #[tokio::test]

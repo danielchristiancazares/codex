@@ -65,6 +65,7 @@ async fn migrating_existing_queue_backfills_thread_revisions() {
         id: Uuid::now_v7().to_string(),
         thread_id,
         payload: r#"{"existing":true}"#.to_string(),
+        state: crate::QueuedUserSubmissionState::Pending,
     };
     sqlx::query(
         "INSERT INTO queued_items
@@ -191,6 +192,98 @@ async fn fifo_dispatch_preserves_edits_reordering_and_pagination() {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn cf_025_claimed_items_are_hidden_until_released_or_completed() {
+    let (runtime, thread_id) = runtime_with_thread().await;
+    let queue = runtime.thread_queue();
+    let first = queue.enqueue(thread_id, r#"{"n":1}"#).await.unwrap();
+    let second = queue.enqueue(thread_id, r#"{"n":2}"#).await.unwrap();
+    let turn_id = "queued-turn";
+
+    let claimed = queue
+        .claim(thread_id, &first.id, turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        QueuedUserSubmissionRecord {
+            state: crate::QueuedUserSubmissionState::Claimed {
+                turn_id: turn_id.to_string(),
+            },
+            ..first.clone()
+        },
+        claimed
+    );
+    assert_eq!(
+        Some(claimed.clone()),
+        queue.get(thread_id, &first.id).await.unwrap()
+    );
+    assert_eq!(
+        vec![second.clone()],
+        queue
+            .list_page(thread_id, /*offset*/ 0, /*limit*/ 2)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        None,
+        queue
+            .update(thread_id, &first.id, r#"{"n":"edited"}"#)
+            .await
+            .unwrap()
+    );
+    assert!(!queue.delete(thread_id, &first.id).await.unwrap());
+    assert!(
+        !queue
+            .release_claim(thread_id, &first.id, "different-turn")
+            .await
+            .unwrap()
+    );
+
+    assert!(
+        queue
+            .release_claim(thread_id, &first.id, turn_id)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        vec![first.clone(), second],
+        queue
+            .list_page(thread_id, /*offset*/ 0, /*limit*/ 2)
+            .await
+            .unwrap()
+    );
+
+    queue.claim(thread_id, &first.id, turn_id).await.unwrap();
+    assert!(
+        !queue
+            .complete_claim(thread_id, "different-turn")
+            .await
+            .unwrap()
+    );
+    assert!(queue.complete_claim(thread_id, turn_id).await.unwrap());
+    assert_eq!(None, queue.get(thread_id, &first.id).await.unwrap());
+}
+
+#[tokio::test]
+async fn cf_025_startup_reconciliation_completes_only_claimed_items() {
+    let (runtime, thread_id) = runtime_with_thread().await;
+    let queue = runtime.thread_queue();
+    let claimed = queue.enqueue(thread_id, r#"{"n":1}"#).await.unwrap();
+    let pending = queue.enqueue(thread_id, r#"{"n":2}"#).await.unwrap();
+    queue
+        .claim(thread_id, &claimed.id, "queued-turn")
+        .await
+        .unwrap();
+
+    assert!(queue.complete_claims(thread_id).await.unwrap());
+    assert_eq!(None, queue.get(thread_id, &claimed.id).await.unwrap());
+    assert_eq!(
+        Some(pending.clone()),
+        queue.get(thread_id, &pending.id).await.unwrap()
     );
 }
 

@@ -11,17 +11,18 @@ workspace = true
 [dependencies]
 dirs = { workspace = true }
 dunce = { workspace = true }
-schemars = { workspace = true }
+schemars = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 ts-rs = { workspace = true, features = [
+    "serde-compat",
     "serde-json-impl",
     "no-serde-warnings",
 ] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lib]
 doctest = false

@@ -16,6 +16,7 @@ use crate::sandbox_tags::permission_profile_sandbox_tag;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -697,12 +698,20 @@ impl ToolRegistry {
             None
         };
         if let Some(outcome) = &post_tool_use_outcome {
-            record_additional_contexts(
-                &invocation.session,
-                &invocation.turn,
-                outcome.additional_contexts.clone(),
-            )
-            .await;
+            let additional_contexts = outcome.additional_contexts.clone();
+            if matches!(invocation.source, ToolCallSource::Direct) {
+                invocation
+                    .turn
+                    .defer_post_tool_contexts(additional_contexts)
+                    .await;
+            } else {
+                record_additional_contexts(
+                    &invocation.session,
+                    &invocation.turn,
+                    additional_contexts,
+                )
+                .await;
+            }
         }
 
         // A PostToolUse block rejects the result, not the already-completed tool execution.

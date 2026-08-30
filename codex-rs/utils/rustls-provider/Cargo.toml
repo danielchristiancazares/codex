@@ -8,7 +8,11 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-rustls = { workspace = true }
+rustls = { workspace = true, features = [
+    "prefer-post-quantum",
+    "std",
+    "tls12",
+] }
 
 [lib]
 test = false

@@ -51,6 +51,7 @@ use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::debug;
 use tracing::info;
@@ -318,6 +319,12 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
 
     let rollback_event = ThreadRolledBackEvent { num_turns };
     let rollback_msg = EventMsg::ThreadRolledBack(rollback_event.clone());
+    let turn_ids_before_rollback = sess
+        .clone_history()
+        .await
+        .raw_items()
+        .filter_map(|item| item.turn_id().map(str::to_owned))
+        .collect::<HashSet<_>>();
     let replay_items = stored_history
         .items
         .into_iter()
@@ -325,6 +332,25 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
         .collect::<Vec<_>>();
     sess.apply_rollout_reconstruction(turn_context.as_ref(), replay_items.as_slice())
         .await;
+    let retained_turn_ids = sess
+        .clone_history()
+        .await
+        .raw_items()
+        .filter_map(|item| item.turn_id().map(str::to_owned))
+        .collect::<HashSet<_>>();
+    let rolled_back_turn_ids = turn_ids_before_rollback
+        .difference(&retained_turn_ids)
+        .cloned()
+        .collect::<HashSet<_>>();
+    if !rolled_back_turn_ids.is_empty() {
+        sess.hooks().abort_turns(&rolled_back_turn_ids).await;
+        crate::hook_runtime::drain_async_hook_results_after_rollback(
+            sess,
+            &turn_context,
+            &rolled_back_turn_ids,
+        )
+        .await;
+    }
     if sess
         .services
         .thread_extension_data

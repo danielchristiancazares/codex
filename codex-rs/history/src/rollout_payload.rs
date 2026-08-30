@@ -13,6 +13,7 @@ use super::SecurityRiskScore;
 use super::SessionMetaLine;
 use super::TurnContextItem;
 use super::WorldStateItem;
+use codex_protocol::protocol::RolloutBudgetCheckpoint;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -49,6 +50,8 @@ pub(super) enum RolloutItemWire<'a> {
     },
     EventMsg {
         payload: Cow<'a, EventMsg>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rollout_budget: Option<RolloutBudgetCheckpoint>,
     },
     RealtimeItem {
         payload: Cow<'a, RealtimeItem>,
@@ -87,9 +90,16 @@ impl<'a> From<&'a RolloutItem> for RolloutItemWire<'a> {
             RolloutItem::SecurityRiskScore(payload) => Self::SecurityRiskScore {
                 payload: Cow::Borrowed(payload),
             },
-            RolloutItem::EventMsg(payload) => Self::EventMsg {
-                payload: Cow::Borrowed(payload),
-            },
+            RolloutItem::EventMsg(payload) => {
+                let rollout_budget = match payload {
+                    EventMsg::TokenCount(event) => event.rollout_budget,
+                    _ => None,
+                };
+                Self::EventMsg {
+                    payload: Cow::Borrowed(payload),
+                    rollout_budget,
+                }
+            }
             RolloutItem::RealtimeItem(payload) => Self::RealtimeItem {
                 payload: Cow::Borrowed(payload),
             },
@@ -121,7 +131,16 @@ impl From<RolloutItemWire<'_>> for RolloutItem {
             RolloutItemWire::SecurityRiskScore { payload } => {
                 Self::SecurityRiskScore(payload.into_owned())
             }
-            RolloutItemWire::EventMsg { payload } => Self::EventMsg(payload.into_owned()),
+            RolloutItemWire::EventMsg {
+                payload,
+                rollout_budget,
+            } => {
+                let mut payload = payload.into_owned();
+                if let EventMsg::TokenCount(event) = &mut payload {
+                    event.rollout_budget = rollout_budget;
+                }
+                Self::EventMsg(payload)
+            }
             RolloutItemWire::RealtimeItem { payload } => Self::RealtimeItem(payload.into_owned()),
         }
     }

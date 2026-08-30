@@ -1,6 +1,7 @@
 use codex_protocol::AgentPath;
 use codex_protocol::protocol::AgentStatus;
 use codex_utils_output_truncation::TruncationPolicy;
+use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
 
 use crate::context::ContextualUserFragment;
@@ -31,6 +32,33 @@ pub(crate) fn bounded_completion_status(status: &AgentStatus) -> AgentStatus {
     }
 }
 
+pub(crate) fn bounded_completion_fragment(
+    body: String,
+    start_marker: &str,
+    end_marker: &str,
+) -> String {
+    let rendered = format!("{start_marker}{body}{end_marker}");
+    if approx_token_count(&rendered) <= COMPLETION_MESSAGE_MAX_TOKENS {
+        return rendered;
+    }
+
+    let marker_tokens = approx_token_count(&format!("{start_marker}{end_marker}"));
+    let mut body_budget = COMPLETION_MESSAGE_MAX_TOKENS.saturating_sub(marker_tokens);
+    loop {
+        let body = truncate_text(&body, TruncationPolicy::Tokens(body_budget));
+        let rendered = format!("{start_marker}{body}{end_marker}");
+        let rendered_tokens = approx_token_count(&rendered);
+        if rendered_tokens <= COMPLETION_MESSAGE_MAX_TOKENS || body_budget == 0 {
+            return rendered;
+        }
+        body_budget = body_budget.saturating_sub(
+            rendered_tokens
+                .saturating_sub(COMPLETION_MESSAGE_MAX_TOKENS)
+                .max(1),
+        );
+    }
+}
+
 // Helpers for model-visible session state markers that are stored in user-role
 // messages but are not user intent.
 
@@ -51,7 +79,8 @@ pub(crate) fn format_inter_agent_completion_message(
         AgentStatus::NotFound => "Agent was not found.".to_string(),
         AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::Interrupted => return None,
     };
-    Some(InterAgentCompletionMessage::new(task_name, sender, payload).render())
+    let message = InterAgentCompletionMessage::new(task_name, sender, payload);
+    Some(bounded_completion_fragment(message.body(), "", ""))
 }
 
 #[cfg(test)]

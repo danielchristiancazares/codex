@@ -4,6 +4,8 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
+const DURATIONLESS_WEBM_BASE64: &str = "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwH/////////EU2bdKtNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHLTbuMU6uEElTDZ1OsggE97AEAAAAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmpSrXsYMPQkBNgIxMYXZmNjMuMS4xMDFXQYxMYXZmNjMuMS4xMDEWVK5r7a4BAAAAAAAAZNeBAXPFiAqAsOJtwel3nIEAIrWcg3VuZIiBAIaGQV9PUFVTVqqDYy6gVruEBMS0AIOBAiPjg4QBMS0A4ZGfgQG1iEDncAAAAAAAYmSBEGOik09wdXNIZWFkAQE4AYC7AAAAAAASVMNn13Nzn2PAgGfImUWjh0VOQ09ERVJEh4xMYXZmNjMuMS4xMDFzc7JjwItjxYgKgLDibcHpd2fIoUWjh0VOQ09ERVJEh5RMYXZjNjMuMS4xMDEgbGlib3B1cx9DtnXy54EAo4eBAACA+P/+o4eBABWA+P/+o4eBACmA+P/+o4eBAD2A+P/+o4eBAFGA+P/+o4eBAGWA+P/+o4eBAHmA+P/+o4eBAI2A+P/+o4eBAKGA+P/+o4eBALWA+P/+oJOhh4EAyQD4//6bgQd1ooQAzf5g";
+
 fn pcm_wav_payload(sample_count: u32, prefix_chunk_bytes: usize) -> String {
     let padding = sample_count % 2;
     let prefix_padding = prefix_chunk_bytes % 2;
@@ -59,6 +61,19 @@ fn estimates_large_pcm_wav_without_hashing_or_full_decode() {
     let audio_url = format!("data:audio/wav;base64,{payload}");
 
     assert_eq!(estimate_audio_token_count(&audio_url), 6_554);
+}
+
+#[test]
+fn estimates_durationless_live_webm_from_bounded_packet_timing() {
+    let audio_url = format!("data:audio/webm;base64,{DURATIONLESS_WEBM_BASE64}");
+    let (_, payload) = parse_base64_audio_data_url(&audio_url).expect("valid WebM data URL");
+    let duration = audio_duration_seconds("audio/webm", payload)
+        .expect("durationless finite WebM should use packet timing");
+    let estimate = estimate_audio_token_count(&audio_url);
+
+    assert!((0.15..=0.30).contains(&duration));
+    assert_eq!(estimate, audio_tokens_for_duration(duration));
+    assert!(estimate.saturating_mul(10) < approx_token_count(&audio_url));
 }
 
 #[test]

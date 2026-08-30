@@ -44,6 +44,11 @@ pub(crate) struct CurrentTimeReminderState {
 }
 
 impl CurrentTimeReminderState {
+    pub(super) fn restore_delivery(&mut self, window_id: &str, delivery_time: DateTime<Utc>) {
+        self.last_delivery_time = Some(delivery_time);
+        self.last_window_id = Some(window_id.to_string());
+    }
+
     pub(super) fn note_recorded_items(&mut self, items: &[ResponseItem]) {
         if items.iter().any(|item| {
             is_user_turn_boundary(item)

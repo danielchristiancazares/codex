@@ -9,14 +9,11 @@ use codex_config::types::MemoriesConfig;
 use codex_core::Prompt;
 use codex_core::RolloutRecorder;
 use codex_core::config::Config;
-use codex_protocol::error::CodexErr;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TokenUsage;
 use codex_rollout::INTERACTIVE_SESSION_SOURCES;
-use codex_rollout::RolloutItem;
-use codex_rollout::should_persist_response_item_for_memories;
 use codex_secrets::redact_secrets;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -27,7 +24,7 @@ use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
 
-struct JobResult {
+pub(crate) struct JobResult {
     outcome: JobOutcome,
     token_usage: Option<TokenUsage>,
 }
@@ -221,7 +218,7 @@ async fn run_jobs(
         .await
 }
 
-mod job {
+pub(crate) mod job {
     use super::*;
 
     pub(crate) async fn run(
@@ -231,9 +228,21 @@ mod job {
         stage_one_context: &StageOneRequestContext,
     ) -> JobResult {
         let claimed_thread = claim.thread;
-        let (stage_one_output, token_usage) = match sample(
+        if let Err(reason) = renew_lease(context, claimed_thread.id, &claim.ownership_token).await {
+            warn!(
+                "skipping phase-1 sampling for thread {}: {reason}",
+                claimed_thread.id
+            );
+            return JobResult {
+                outcome: JobOutcome::Failed,
+                token_usage: None,
+            };
+        }
+        let (stage_one_output, token_usage) = match sample_with_heartbeat(
             context,
             config,
+            claimed_thread.id,
+            &claim.ownership_token,
             &claimed_thread.rollout_path,
             &claimed_thread.cwd,
             stage_one_context,
@@ -279,16 +288,75 @@ mod job {
         }
     }
 
+    async fn sample_with_heartbeat(
+        context: &MemoryStartupContext,
+        config: &Config,
+        thread_id: codex_protocol::ThreadId,
+        ownership_token: &str,
+        rollout_path: &Path,
+        rollout_cwd: &Path,
+        stage_one_context: &StageOneRequestContext,
+    ) -> anyhow::Result<(StageOneOutput, Option<TokenUsage>)> {
+        let sample = sample(
+            context,
+            config,
+            thread_id,
+            ownership_token,
+            rollout_path,
+            rollout_cwd,
+            stage_one_context,
+        );
+        tokio::pin!(sample);
+        let heartbeat_seconds =
+            u64::try_from((crate::stage_one::JOB_LEASE_SECONDS / 3).max(1)).unwrap_or(1);
+        let mut heartbeat =
+            tokio::time::interval(std::time::Duration::from_secs(heartbeat_seconds));
+        heartbeat.tick().await;
+        loop {
+            tokio::select! {
+                result = &mut sample => return result,
+                _ = heartbeat.tick() => {
+                    renew_lease(context, thread_id, ownership_token).await?;
+                }
+            }
+        }
+    }
+
+    async fn renew_lease(
+        context: &MemoryStartupContext,
+        thread_id: codex_protocol::ThreadId,
+        ownership_token: &str,
+    ) -> anyhow::Result<()> {
+        let state_db = context
+            .state_db()
+            .ok_or_else(|| anyhow::anyhow!("state db unavailable while renewing phase-1 lease"))?;
+        if !state_db
+            .memories()
+            .renew_stage1_job_lease(
+                thread_id,
+                ownership_token,
+                crate::stage_one::JOB_LEASE_SECONDS,
+            )
+            .await?
+        {
+            anyhow::bail!("phase-1 job ownership was lost before sampling");
+        }
+        Ok(())
+    }
+
     /// Extract the rollout and perform the actual sampling.
     async fn sample(
         context: &MemoryStartupContext,
         config: &Config,
+        thread_id: codex_protocol::ThreadId,
+        ownership_token: &str,
         rollout_path: &Path,
         rollout_cwd: &Path,
         stage_one_context: &StageOneRequestContext,
     ) -> anyhow::Result<(StageOneOutput, Option<TokenUsage>)> {
         let (rollout_items, _, _) = RolloutRecorder::load_rollout_items(rollout_path).await?;
-        let rollout_contents = serialize_filtered_rollout_response_items(&rollout_items)?;
+        let rollout_contents =
+            crate::phase1_projection::serialize_filtered_rollout_response_items(&rollout_items)?;
 
         let mut prompt = Prompt::default();
         prompt.input = vec![ResponseItem::Message {
@@ -311,6 +379,8 @@ mod job {
         };
         prompt.output_schema = Some(output_schema());
         prompt.output_schema_strict = true;
+
+        renew_lease(context, thread_id, ownership_token).await?;
 
         let (result, token_usage) = context
             .stream_stage_one_prompt(config, &prompt, stage_one_context)
@@ -401,92 +471,6 @@ mod job {
         }
     }
 
-    /// Serializes filtered stage-1 memory items for prompt inclusion.
-    pub(super) fn serialize_filtered_rollout_response_items(
-        items: &[RolloutItem],
-    ) -> codex_protocol::error::Result<String> {
-        let filtered = items
-            .iter()
-            .filter_map(|item| match item {
-                RolloutItem::ResponseItem(item) => sanitize_response_item_for_memories(&item.item),
-                RolloutItem::InterAgentCommunication(communication) => {
-                    Some(communication.to_model_input_item())
-                }
-                RolloutItem::SessionMeta(_)
-                | RolloutItem::InterAgentCommunicationMetadata { .. }
-                | RolloutItem::Compacted(_)
-                | RolloutItem::TurnContext(_)
-                | RolloutItem::RealtimeItem(_)
-                | RolloutItem::WorldState(_)
-                | RolloutItem::SecurityRiskScore(_)
-                | RolloutItem::EventMsg(_) => None,
-            })
-            .collect::<Vec<_>>();
-        let serialized = serde_json::to_string(&filtered).map_err(|err| {
-            CodexErr::InvalidRequest(format!("failed to serialize rollout memory: {err}"))
-        })?;
-        Ok(redact_secrets(serialized))
-    }
-
-    fn sanitize_response_item_for_memories(item: &ResponseItem) -> Option<ResponseItem> {
-        let ResponseItem::Message {
-            id,
-            role,
-            content,
-            phase,
-            internal_chat_message_metadata_passthrough: metadata,
-        } = item
-        else {
-            return should_persist_response_item_for_memories(item).then(|| item.clone());
-        };
-
-        if role == "developer" {
-            return None;
-        }
-
-        if role != "user" {
-            return Some(item.clone());
-        }
-
-        let content = content
-            .iter()
-            .filter(|content_item| !is_memory_excluded_contextual_user_fragment(content_item))
-            .cloned()
-            .collect::<Vec<_>>();
-        if content.is_empty() {
-            return None;
-        }
-
-        Some(ResponseItem::Message {
-            id: id.clone(),
-            role: role.clone(),
-            content,
-            phase: phase.clone(),
-            internal_chat_message_metadata_passthrough: metadata.clone(),
-        })
-    }
-
-    fn is_memory_excluded_contextual_user_fragment(content_item: &ContentItem) -> bool {
-        let ContentItem::InputText { text } = content_item else {
-            return false;
-        };
-
-        matches_marked_fragment(text, "# AGENTS.md instructions", "</INSTRUCTIONS>")
-            || matches_marked_fragment(text, "<skill>", "</skill>")
-    }
-
-    fn matches_marked_fragment(text: &str, start_marker: &str, end_marker: &str) -> bool {
-        let trimmed = text.trim_start();
-        let starts_with_marker = trimmed
-            .get(..start_marker.len())
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(start_marker));
-        let trimmed = trimmed.trim_end();
-        let ends_with_marker = trimmed
-            .get(trimmed.len().saturating_sub(end_marker.len())..)
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(end_marker));
-        starts_with_marker && ends_with_marker
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -518,9 +502,11 @@ mod job {
 
             for (text, expected) in cases {
                 assert_eq!(
-                    is_memory_excluded_contextual_user_fragment(&ContentItem::InputText {
-                        text: text.to_string(),
-                    }),
+                    crate::phase1_projection::is_memory_excluded_contextual_user_fragment(
+                        &ContentItem::InputText {
+                            text: text.to_string(),
+                        },
+                    ),
                     expected,
                     "{text}",
                 );
@@ -672,9 +658,15 @@ fn emit_metrics(context: &StageOneRequestContext, counts: &Stats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_models_manager::model_info::model_info_from_slug;
     use codex_protocol::AgentPath;
+    use codex_protocol::models::FunctionCallOutputBody;
+    use codex_protocol::models::FunctionCallOutputContentItem;
+    use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::protocol::InterAgentCommunication;
     use codex_protocol::security_risk::SecurityRiskScore;
+    use codex_rollout::CompactedItem;
+    use codex_rollout::RolloutItem;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 
@@ -723,7 +715,7 @@ mod tests {
             internal_chat_message_metadata_passthrough: None,
         };
 
-        let serialized = job::serialize_filtered_rollout_response_items(&[
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
             RolloutItem::ResponseItem(mixed_contextual_message.into()),
             RolloutItem::ResponseItem(skill_message.into()),
             RolloutItem::SecurityRiskScore(SecurityRiskScore {
@@ -757,8 +749,8 @@ mod tests {
 
     #[test]
     fn serializes_memory_rollout_redacts_secrets_before_prompt_upload() {
-        let serialized =
-            job::serialize_filtered_rollout_response_items(&[RolloutItem::ResponseItem(
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
+            RolloutItem::ResponseItem(
                 ResponseItem::FunctionCallOutput {
                     id: None,
                     call_id: Some("call_123".to_string()),
@@ -773,11 +765,311 @@ mod tests {
                     internal_chat_message_metadata_passthrough: None,
                 }
                 .into(),
-            )])
-            .expect("serialize");
+            ),
+        ])
+        .expect("serialize");
 
         assert!(!serialized.contains("sk-abcdefghijklmnopqrstuvwxyz123456"));
         assert!(serialized.contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn stage_one_input_sanitizes_citations_and_media_without_losing_call_relationships() {
+        const RAW_USER_IMAGE: &str = "RAW_USER_IMAGE_BASE64";
+        const RAW_USER_AUDIO: &str = "RAW_USER_AUDIO_BASE64";
+        const RAW_TOOL_IMAGE: &str = "RAW_TOOL_IMAGE_BASE64";
+        const RAW_TOOL_AUDIO: &str = "RAW_TOOL_AUDIO_BASE64";
+        const RAW_CUSTOM_AUDIO: &str = "RAW_CUSTOM_AUDIO_BASE64";
+        const RAW_COMPACTED_MEDIA: &str = "RAW_COMPACTED_MEDIA_BASE64";
+
+        let assistant_message = ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "Useful before <oai-mem-citation><memory_citation>raw-current</memory_citation></oai-mem-citation> useful after <memory_citation>raw-legacy</memory_citation>."
+                    .to_string(),
+            }],
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let user_message = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![
+                ContentItem::InputText {
+                    text: "user context".to_string(),
+                },
+                ContentItem::InputImage {
+                    image_url: RAW_USER_IMAGE.to_string(),
+                    detail: None,
+                },
+                ContentItem::InputAudio {
+                    audio_url: format!("data:audio/wav;base64,{RAW_USER_AUDIO}"),
+                },
+            ],
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let function_call = ResponseItem::FunctionCall {
+            id: None,
+            name: "inspect_media".to_string(),
+            namespace: None,
+            arguments: r#"{"path":"artifact.bin"}"#.to_string(),
+            encrypted_function_args: None,
+            call_id: "call-media".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let function_output = ResponseItem::FunctionCallOutput {
+            id: None,
+            call_id: Some("call-media".to_string()),
+            name: Some("inspect_media".to_string()),
+            namespace: None,
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::ContentItems(vec![
+                    FunctionCallOutputContentItem::InputText {
+                        text: "tool context".to_string(),
+                    },
+                    FunctionCallOutputContentItem::InputImage {
+                        image_url: format!("data:image/png;base64,{RAW_TOOL_IMAGE}"),
+                        detail: None,
+                    },
+                    FunctionCallOutputContentItem::InputAudio {
+                        audio_url: format!("data:audio/mpeg;base64,{RAW_TOOL_AUDIO}"),
+                    },
+                ]),
+                success: Some(true),
+            },
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let custom_call = ResponseItem::CustomToolCall {
+            id: None,
+            status: Some("completed".to_string()),
+            call_id: "call-custom".to_string(),
+            name: "custom_media".to_string(),
+            namespace: None,
+            input: "inspect".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let custom_output_text = json!({
+            "type": "audio",
+            "mimeType": "audio/wav",
+            "data": RAW_CUSTOM_AUDIO,
+            "note": "keep this text",
+        })
+        .to_string();
+        let expected_custom_output_text = json!({
+            "type": "audio",
+            "mimeType": "audio/wav",
+            "data": "[Audio: audio/wav]",
+            "note": "keep this text",
+        })
+        .to_string();
+        let custom_output = ResponseItem::CustomToolCallOutput {
+            id: None,
+            call_id: "call-custom".to_string(),
+            name: Some("custom_media".to_string()),
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(custom_output_text),
+                success: Some(true),
+            },
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let compacted = RolloutItem::Compacted(CompactedItem {
+            message: format!("data:image/png;base64,{RAW_COMPACTED_MEDIA}"),
+            replacement_history: Some(vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputImage {
+                        image_url: RAW_COMPACTED_MEDIA.to_string(),
+                        detail: None,
+                    }],
+                    phase: None,
+                    internal_chat_message_metadata_passthrough: None,
+                }
+                .into(),
+            ]),
+            mcp_resource_origins: None,
+            window_number: None,
+            first_window_id: None,
+            previous_window_id: None,
+            window_id: None,
+        });
+
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
+            compacted,
+            RolloutItem::ResponseItem(assistant_message.into()),
+            RolloutItem::ResponseItem(user_message.into()),
+            RolloutItem::ResponseItem(function_call.clone().into()),
+            RolloutItem::ResponseItem(function_output.into()),
+            RolloutItem::ResponseItem(custom_call.clone().into()),
+            RolloutItem::ResponseItem(custom_output.into()),
+        ])
+        .expect("serialize");
+        let parsed: Vec<ResponseItem> = serde_json::from_str(&serialized).expect("parse");
+
+        assert_eq!(
+            parsed,
+            vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "[Image]".to_string(),
+                    }],
+                    phase: None,
+                    internal_chat_message_metadata_passthrough: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "Useful before  useful after .".to_string(),
+                    }],
+                    phase: None,
+                    internal_chat_message_metadata_passthrough: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![
+                        ContentItem::InputText {
+                            text: "user context".to_string(),
+                        },
+                        ContentItem::InputText {
+                            text: "[Image]".to_string(),
+                        },
+                        ContentItem::InputText {
+                            text: "[Audio: audio/wav]".to_string(),
+                        },
+                    ],
+                    phase: None,
+                    internal_chat_message_metadata_passthrough: None,
+                },
+                function_call,
+                ResponseItem::FunctionCallOutput {
+                    id: None,
+                    call_id: Some("call-media".to_string()),
+                    name: Some("inspect_media".to_string()),
+                    namespace: None,
+                    output: FunctionCallOutputPayload {
+                        body: FunctionCallOutputBody::ContentItems(vec![
+                            FunctionCallOutputContentItem::InputText {
+                                text: "tool context".to_string(),
+                            },
+                            FunctionCallOutputContentItem::InputText {
+                                text: "[Image: image/png]".to_string(),
+                            },
+                            FunctionCallOutputContentItem::InputText {
+                                text: "[Audio: audio/mpeg]".to_string(),
+                            },
+                        ]),
+                        success: None,
+                    },
+                    internal_chat_message_metadata_passthrough: None,
+                },
+                custom_call,
+                ResponseItem::CustomToolCallOutput {
+                    id: None,
+                    call_id: "call-custom".to_string(),
+                    name: Some("custom_media".to_string()),
+                    output: FunctionCallOutputPayload {
+                        body: FunctionCallOutputBody::Text(expected_custom_output_text),
+                        success: None,
+                    },
+                    internal_chat_message_metadata_passthrough: None,
+                },
+            ]
+        );
+
+        let model_info = model_info_from_slug("gpt-5.3-codex");
+        let outbound = build_stage_one_input_message(
+            &model_info,
+            Path::new("/tmp/rollout.jsonl"),
+            Path::new("/tmp"),
+            &serialized,
+        )
+        .expect("build stage one input");
+        for forbidden in [
+            "<oai-mem-citation>",
+            "<memory_citation>",
+            "data:image/",
+            "data:audio/",
+            RAW_USER_IMAGE,
+            RAW_USER_AUDIO,
+            RAW_TOOL_IMAGE,
+            RAW_TOOL_AUDIO,
+            RAW_CUSTOM_AUDIO,
+            RAW_COMPACTED_MEDIA,
+        ] {
+            assert!(!outbound.contains(forbidden), "{forbidden}");
+        }
+        for retained in [
+            "Useful before",
+            "useful after",
+            "user context",
+            "tool context",
+            "keep this text",
+            "call-media",
+            "call-custom",
+            "[Image: image/png]",
+            "[Audio: audio/wav]",
+        ] {
+            assert!(outbound.contains(retained), "{retained}");
+        }
+    }
+
+    #[test]
+    fn cf_045_phase_one_projection_uses_latest_compaction_checkpoint() {
+        let surviving_call = ResponseItem::FunctionCall {
+            id: None,
+            name: "surviving_tool".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            encrypted_function_args: None,
+            call_id: "surviving-call".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let surviving_output = ResponseItem::FunctionCallOutput {
+            id: None,
+            call_id: Some("surviving-call".to_string()),
+            name: Some("surviving_tool".to_string()),
+            namespace: None,
+            output: FunctionCallOutputPayload::from_text("surviving evidence".to_string()),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
+            RolloutItem::ResponseItem(
+                ResponseItem::ToolSearchOutput {
+                    id: None,
+                    call_id: Some("retired-search".to_string()),
+                    status: "completed".to_string(),
+                    execution: "server".to_string(),
+                    tools: vec![json!({
+                        "name": "RETIRED_SCHEMA",
+                        "description": "schema removed by compaction",
+                    })],
+                    internal_chat_message_metadata_passthrough: None,
+                }
+                .into(),
+            ),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(vec![surviving_call.clone().into()]),
+                mcp_resource_origins: None,
+                window_number: Some(1),
+                first_window_id: None,
+                previous_window_id: None,
+                window_id: None,
+            }),
+            RolloutItem::ResponseItem(surviving_output.clone().into()),
+        ])
+        .expect("serialize checkpointed phase-one input");
+        let parsed: Vec<ResponseItem> = serde_json::from_str(&serialized).expect("parse");
+
+        assert_eq!(parsed, vec![surviving_call, surviving_output]);
+        assert!(!serialized.contains("RETIRED_SCHEMA"));
+        assert!(!serialized.contains("retired-search"));
     }
 
     #[test]
@@ -801,7 +1093,7 @@ mod tests {
             encrypted.to_model_input_item(),
         ];
 
-        let serialized = job::serialize_filtered_rollout_response_items(&[
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
             RolloutItem::InterAgentCommunication(plaintext),
             RolloutItem::InterAgentCommunication(encrypted),
         ])
@@ -822,7 +1114,7 @@ mod tests {
         );
         let response_item = communication.to_model_input_item();
 
-        let serialized = job::serialize_filtered_rollout_response_items(&[
+        let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
             RolloutItem::InterAgentCommunicationMetadata { trigger_turn: true },
             RolloutItem::ResponseItem(response_item.clone().into()),
         ])

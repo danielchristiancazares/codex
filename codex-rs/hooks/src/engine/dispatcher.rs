@@ -168,18 +168,30 @@ pub(crate) async fn execute_handlers_with_metadata<T: 'static>(
             let input_json = input_json.clone();
             let cwd = cwd.to_path_buf();
             let metadata = metadata.cloned();
-            engine.command_runtime.schedule_async_task(async move {
-                let result =
-                    execute_handler(&task_engine, &handler, &input_json, &cwd, metadata.as_ref())
-                        .await;
-                if let Some(error) = result.error {
-                    tracing::warn!(
-                        source_path = %handler.source_path,
-                        %error,
-                        "executor-scoped hook failed"
-                    );
-                }
-            });
+            let task_turn_id = if scope_for_event(handler.event_name) == HookScope::Turn {
+                turn_id.clone()
+            } else {
+                None
+            };
+            engine
+                .command_runtime
+                .schedule_async_task(task_turn_id.as_deref(), async move {
+                    let result = execute_handler(
+                        &task_engine,
+                        &handler,
+                        &input_json,
+                        &cwd,
+                        metadata.as_ref(),
+                    )
+                    .await;
+                    if let Some(error) = result.error {
+                        tracing::warn!(
+                            source_path = %handler.source_path,
+                            %error,
+                            "executor-scoped hook failed"
+                        );
+                    }
+                });
         }
     }
 

@@ -11,6 +11,7 @@ use codex_protocol::openai_models::ModelInfo;
 use crate::HostSkillsSnapshot;
 use crate::SkillsExtensionConfig;
 use crate::catalog::SkillCatalog;
+use crate::fragments::SkillUsageInstructions;
 use crate::provider::SkillListQuery;
 use crate::provider::attribute_executor_plugins;
 use crate::render::AvailableSkillsRender;
@@ -27,6 +28,7 @@ use crate::state::HostSkillsCatalogInWorldState;
 use crate::state::HostSkillsStepState;
 use crate::state::SkillsSessionState;
 use crate::state::SkillsThreadState;
+use crate::world_state::CatalogLines;
 use crate::world_state::CatalogRenderCallback;
 use crate::world_state::executor_skills_world_state_section;
 use crate::world_state::host_skills_world_state_section;
@@ -82,6 +84,7 @@ pub(crate) struct RenderedCatalogContribution {
     kind: CatalogKind,
     pub(crate) status: CatalogStatus,
     rendered: Option<AvailableSkillsRender>,
+    include_common_usage: bool,
 }
 
 pub(crate) struct CatalogContext<'a> {
@@ -263,6 +266,18 @@ impl<'a> CatalogContext<'a> {
         } else {
             RenderedSkillCatalogs::default()
         };
+        let common_usage_kind = self
+            .include_usage
+            .then(|| {
+                [
+                    (CatalogKind::Executor, rendered.executor.as_ref()),
+                    (CatalogKind::Orchestrator, rendered.orchestrator.as_ref()),
+                    (CatalogKind::Host, rendered.host.as_ref()),
+                ]
+                .into_iter()
+                .find_map(|(kind, rendered)| rendered.map(|_| kind))
+            })
+            .flatten();
 
         [
             (CatalogKind::Executor, catalogs.executor, rendered.executor),
@@ -277,6 +292,7 @@ impl<'a> CatalogContext<'a> {
             kind,
             status: catalog.status,
             rendered,
+            include_common_usage: common_usage_kind == Some(kind),
         })
     }
 
@@ -288,13 +304,28 @@ impl<'a> CatalogContext<'a> {
             kind,
             status,
             rendered,
+            include_common_usage,
         } = catalog;
         let report = rendered
             .as_ref()
             .map(|rendered| rendered.report.clone())
             .unwrap_or_default();
+        let lines = rendered
+            .as_ref()
+            .map(|rendered| CatalogLines {
+                roots: rendered.skill_root_lines.clone(),
+                skills: rendered.skill_lines.clone(),
+            })
+            .unwrap_or_default();
         let body = rendered
-            .and_then(|rendered| rendered.into_fragment(self.include_usage))
+            .and_then(|rendered| {
+                let usage_instructions = match (self.include_usage, include_common_usage) {
+                    (false, _) => SkillUsageInstructions::Omitted,
+                    (true, false) => SkillUsageInstructions::SourceSpecific,
+                    (true, true) => SkillUsageInstructions::CommonAndSourceSpecific,
+                };
+                rendered.into_fragment_with_usage(usage_instructions)
+            })
             .map(|fragment| fragment.body());
         let include_instructions = self.config.include_instructions;
         let metrics = self.input.extension_metrics.clone();
@@ -319,17 +350,24 @@ impl<'a> CatalogContext<'a> {
 
         match kind {
             CatalogKind::Executor => {
-                executor_skills_world_state_section(body, include_instructions, on_render)
+                executor_skills_world_state_section(body, lines, include_instructions, on_render)
             }
             CatalogKind::Orchestrator => orchestrator_skills_world_state_section(
                 body,
+                lines,
                 include_instructions,
                 status == CatalogStatus::Enabled,
                 on_render,
             ),
             CatalogKind::Host => {
                 self.input.turn_store.insert(HostSkillsCatalogInWorldState);
-                host_skills_world_state_section(body, include_instructions, &report, on_render)
+                host_skills_world_state_section(
+                    body,
+                    lines,
+                    include_instructions,
+                    &report,
+                    on_render,
+                )
             }
         }
     }

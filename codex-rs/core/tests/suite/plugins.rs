@@ -324,7 +324,7 @@ async fn mount_plugin_tool_search_turn(server: &MockServer) -> ResponseMock {
     .await
 }
 
-fn assert_plugin_provenance(tool: &serde_json::Value) {
+fn assert_app_plugin_provenance(tool: &serde_json::Value) {
     let description = tool
         .get("description")
         .and_then(serde_json::Value::as_str)
@@ -333,6 +333,25 @@ fn assert_plugin_provenance(tool: &serde_json::Value) {
         description.contains("This tool is part of plugin `sample`."),
         "expected plugin provenance in tool description: {description:?}"
     );
+}
+
+fn assert_regular_mcp_plugin_provenance(body: &serde_json::Value, tool: &serde_json::Value) {
+    let namespace = body["tools"]
+        .as_array()
+        .expect("tool search output tools")
+        .iter()
+        .find(|candidate| {
+            candidate["type"] == "namespace" && candidate["name"] == SAMPLE_PLUGIN_MCP_NAMESPACE
+        })
+        .expect("plugin MCP namespace");
+    let namespace_description = namespace["description"]
+        .as_str()
+        .expect("plugin MCP namespace description");
+    assert!(namespace_description.contains("This tool is part of plugin `sample`."));
+    let tool_description = tool["description"]
+        .as_str()
+        .expect("plugin MCP tool description");
+    assert!(!tool_description.contains("This tool is part of plugin"));
 }
 
 fn searched_plugin_tools(
@@ -1150,7 +1169,7 @@ async fn explicit_plugin_mentions_use_apps_for_chatgpt_dual_surface_plugins(
         "plugin app tool search should match app enablement"
     );
     if let Some(calendar_tool) = calendar_tool {
-        assert_plugin_provenance(&calendar_tool);
+        assert_app_plugin_provenance(&calendar_tool);
     }
     assert!(
         echo_tool.is_none(),
@@ -1216,7 +1235,10 @@ async fn explicit_plugin_mentions_keep_non_conflicting_mcp_for_chatgpt_auth() ->
         "plugin app tool should be searchable"
     );
     let echo_tool = echo_tool.expect("plugin MCP tool should remain searchable");
-    assert_plugin_provenance(&echo_tool);
+    assert_regular_mcp_plugin_provenance(
+        &requests[1].tool_search_output(PLUGIN_MCP_SEARCH_CALL_ID),
+        &echo_tool,
+    );
 
     Ok(())
 }
@@ -1452,7 +1474,10 @@ async fn explicitly_requested_mcp_waits_for_startup(request: ExplicitMcpRequest)
         "plugin app tool should be hidden for API-key auth"
     );
     let echo_tool = echo_tool.expect("plugin MCP tool should be searchable");
-    assert_plugin_provenance(&echo_tool);
+    assert_regular_mcp_plugin_provenance(
+        &requests[1].tool_search_output(PLUGIN_MCP_SEARCH_CALL_ID),
+        &echo_tool,
+    );
 
     Ok(())
 }

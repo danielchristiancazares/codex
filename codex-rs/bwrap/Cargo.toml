@@ -15,5 +15,5 @@ workspace = true
 libc = { workspace = true }
 
 [build-dependencies]
-cc = "1"
-pkg-config = "0.3"
+cc = { version = "1", default-features = false }
+pkg-config = { version = "0.3", default-features = false }

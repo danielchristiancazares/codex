@@ -8,11 +8,12 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
 codex-agent-identity = { workspace = true }
-codex-http-client = { workspace = true }
 codex-config = { workspace = true }
+codex-http-client = { workspace = true }
 codex-keyring-store = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-otel = { workspace = true }
@@ -23,37 +24,39 @@ codex-utils-home-dir = { workspace = true }
 codex-utils-template = { workspace = true }
 codex-workload-identity = { workspace = true }
 http = { workspace = true }
-once_cell = { workspace = true }
+once_cell = { workspace = true, features = ["std"] }
 os_info = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tiny_http = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
+    "io-util",
     "macros",
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
     "time",
 ] }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
 url = { workspace = true }
 urlencoding = { workspace = true }
 webbrowser = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
 core_test_support = { workspace = true }
-jsonwebtoken = { workspace = true }
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
 keyring = { workspace = true }
-pretty_assertions = { workspace = true }
-regex-lite = { workspace = true }
-serial_test = { workspace = true }
-tempfile = { workspace = true }
-tracing-subscriber = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+regex-lite = { workspace = true, features = ["std", "string"] }
+serial_test = { workspace = true, features = ["async"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 wiremock = { workspace = true }
 
 [lib]

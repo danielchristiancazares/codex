@@ -180,11 +180,7 @@ fn changing_primary_environment_updates_model_context_and_persisted_state() -> R
 
     assert_eq!(
         rendered,
-        format!(
-            "<environment_context>\n  <environments>\n    <environment id=\"local\" primary=\"false\">\n      <cwd>{}</cwd>\n      <shell>bash</shell>\n    </environment>\n    <environment id=\"remote\" primary=\"true\">\n      <cwd>{}</cwd>\n      <shell>zsh</shell>\n    </environment>\n  </environments>\n</environment_context>",
-            PathUri::parse("file:///local")?.inferred_native_path_string(),
-            PathUri::parse("file:///remote")?.inferred_native_path_string(),
-        )
+        "<environment_context>\n  <environments>\n    <environment id=\"local\" primary=\"false\">\n    </environment>\n    <environment id=\"remote\" primary=\"true\">\n    </environment>\n  </environments>\n</environment_context>"
     );
 
     let mut previous_world_state = super::super::WorldState::default();
@@ -206,6 +202,44 @@ fn changing_primary_environment_updates_model_context_and_persisted_state() -> R
         }))
     );
 
+    Ok(())
+}
+
+#[test]
+fn cf_054_changing_only_cwd_renders_only_the_cwd_field() -> Result<()> {
+    let before = EnvironmentsState {
+        environments: [(
+            LOCAL_ENVIRONMENT_ID.to_string(),
+            available("file:///repo/old", "bash")?,
+        )]
+        .into_iter()
+        .collect(),
+        current_date: Some("2026-08-30".to_string()),
+        timezone: Some("America/Los_Angeles".to_string()),
+        ..Default::default()
+    };
+    let after = EnvironmentsState {
+        environments: [(
+            LOCAL_ENVIRONMENT_ID.to_string(),
+            available("file:///repo/new", "bash")?,
+        )]
+        .into_iter()
+        .collect(),
+        current_date: before.current_date.clone(),
+        timezone: before.timezone.clone(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        after
+            .render_diff(PreviousSectionState::Known(&before.snapshot()))
+            .expect("cwd change should render")
+            .render(),
+        format!(
+            "<environment_context>\n  <cwd>{}</cwd>\n</environment_context>",
+            PathUri::parse("file:///repo/new")?.inferred_native_path_string(),
+        )
+    );
     Ok(())
 }
 

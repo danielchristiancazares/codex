@@ -104,7 +104,13 @@ impl CodeModeExecuteHandler {
         exec.session
             .services
             .code_mode_service
-            .mark_cell_ready_for_dispatch(&cell_id, originating_item_id);
+            .mark_cell_ready_for_dispatch(
+                &cell_id,
+                &exec.session,
+                exec.turn.sub_id.as_str(),
+                originating_item_id,
+            )
+            .map_err(FunctionCallError::RespondToModel)?;
         let response = started_cell
             .initial_response()
             .await

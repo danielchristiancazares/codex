@@ -16,11 +16,11 @@ workspace = true
 codex-config = { workspace = true }
 memchr = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["fs", "io-util", "rt"] }
 tracing = { workspace = true, features = ["log"] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

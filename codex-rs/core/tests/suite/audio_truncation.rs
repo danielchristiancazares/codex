@@ -25,7 +25,7 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 
 const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
-const OMITTED_AUDIO_MARKER: &str = "[omitted 1 audio items ...]";
+const OMITTED_AUDIO_MARKER: &str = "[omitted 1 audio items to fit output budget]";
 
 fn pcm_wav_data_url(sample_count: u32) -> String {
     let padding = sample_count % 2;

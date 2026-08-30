@@ -45,3 +45,28 @@ fn v1_subagent_notification_bounds_successful_completion() {
     assert!(approx_token_count(&message) < COMPLETION_MESSAGE_MAX_TOKENS);
     assert!(message.contains("tokens truncated"));
 }
+
+#[test]
+fn escaped_completion_payloads_and_long_paths_stay_within_cap() {
+    let payloads = ["\"".repeat(8_000), "\n".repeat(8_000), "\0".repeat(8_000)];
+    let long_component = "worker".repeat(500);
+    let sender =
+        AgentPath::try_from(format!("/root/{long_component}")).expect("valid long agent path");
+
+    for payload in payloads {
+        let v2 = format_inter_agent_completion_message(
+            AgentPath::root(),
+            sender.clone(),
+            &AgentStatus::Completed(Some(payload.clone())),
+        )
+        .expect("completed status should render");
+        let v1 =
+            SubagentNotification::new(sender.to_string(), AgentStatus::Completed(Some(payload)))
+                .render();
+
+        assert!(approx_token_count(&v2) <= COMPLETION_MESSAGE_MAX_TOKENS);
+        assert!(approx_token_count(&v1) <= COMPLETION_MESSAGE_MAX_TOKENS);
+        assert!(v1.starts_with("<subagent_notification>"));
+        assert!(v1.ends_with("</subagent_notification>"));
+    }
+}

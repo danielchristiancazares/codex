@@ -657,32 +657,7 @@ impl LunaSampler {
                         if delta.len() > MAX_OUTPUT_BYTES {
                             return Err(LunaSamplerError::OutputTooLarge);
                         }
-                        // The first output token is the complete classification.
-                        // Later output cannot revise that decision; drain it only
-                        // to preserve connection reuse and token accounting.
                         scored.store(true, Ordering::Relaxed);
-                        let mut remaining_events = stream.rx_event;
-                        let metrics = self.config.metrics.clone();
-                        tokio::spawn(async move {
-                            while let Some(event) = tokio::select! {
-                                biased;
-                                _ = &mut superseded => None,
-                                event = remaining_events.recv() => event,
-                            } {
-                                match event {
-                                    Ok(ResponseEvent::Completed { token_usage, .. }) => {
-                                        record_token_usage(
-                                            metrics.as_deref(),
-                                            token_usage.as_ref(),
-                                        );
-                                        lease.reuse();
-                                        break;
-                                    }
-                                    Err(_) => break,
-                                    _ => {}
-                                }
-                            }
-                        });
                         return Ok(delta);
                     }
                     ResponseEvent::OutputItemDone(ResponseItem::Message {
