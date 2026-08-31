@@ -14,12 +14,12 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
+anyhow = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
 codex-api = { workspace = true }
 codex-backend-client = { workspace = true }
 codex-git-utils = { workspace = true }
 codex-http-client = { workspace = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = { workspace = true }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["alloc"] }
 thiserror = { workspace = true }

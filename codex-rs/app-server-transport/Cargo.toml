@@ -13,15 +13,14 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 axum = { workspace = true, default-features = false, features = [
     "http1",
     "json",
-    "tokio",
     "ws",
 ] }
-base64 = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+base64 = { workspace = true, features = ["alloc"] }
+clap = { workspace = true, features = ["derive", "std"] }
 codex-api = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-core = { workspace = true }
@@ -38,27 +37,36 @@ hmac = { workspace = true }
 httpdate = { workspace = true }
 jsonwebtoken = { workspace = true }
 owo-colors = { workspace = true, features = ["supports-colors"] }
-rand = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
-time = { workspace = true }
+time = { workspace = true, features = ["parsing", "std"] }
 tokio = { workspace = true, features = [
+    "fs",
     "io-std",
+    "io-util",
     "macros",
+    "net",
     "process",
     "rt-multi-thread",
+    "sync",
+    "time",
 ] }
-tokio-tungstenite = { workspace = true }
-tokio-util = { workspace = true }
+tokio-tungstenite = { workspace = true, features = [
+    "connect",
+    "proxy",
+    "rustls-tls-native-roots",
+] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true, features = ["log"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v7"] }
 
 [dev-dependencies]
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 codex-config = { workspace = true }
 codex-protocol = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["test-util"] }

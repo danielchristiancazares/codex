@@ -23,9 +23,9 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
+anyhow = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive", "env", "std"] }
 clap_complete = { workspace = true }
 codex-app-server = { workspace = true }
 codex-app-server-daemon = { workspace = true }
@@ -34,7 +34,7 @@ codex-arg0 = { workspace = true }
 codex-api = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-cloud-config = { workspace = true }
-codex-cloud-tasks = { path = "../cloud-tasks" }
+codex-cloud-tasks = { path = "../cloud-tasks", default-features = false }
 codex-utils-cli = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -71,41 +71,48 @@ codex-thread-store = { workspace = true }
 codex-tui = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path = { workspace = true }
-crossterm = { workspace = true }
+crossterm = { workspace = true, features = ["windows"] }
 http = { workspace = true }
 libc = { workspace = true }
 os_info = { workspace = true }
 owo-colors = { workspace = true }
-regex-lite = { workspace = true }
+regex-lite = { workspace = true, features = ["std", "string"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 supports-color = { workspace = true }
 sys-locale = { workspace = true }
-tempfile = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = [
+    "fs",
     "io-std",
+    "io-util",
     "macros",
     "net",
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
     "time",
 ] }
-toml = { workspace = true }
+toml = { workspace = true, features = ["parse", "serde", "std"] }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "tracing-log"] }
 unicode-segmentation = { workspace = true }
 url = { workspace = true }
-which = { workspace = true }
+which = { workspace = true, features = ["real-sys"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-codex_windows_sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs" }
-windows-sys = { version = "0.52", features = [
+codex_windows_sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }
+windows-sys = { default-features = false, version = "0.52", features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_Storage_FileSystem",
     "Win32_Storage_Packaging_Appx",
     "Win32_System_Console",
+    "Win32_System_IO",
     "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
 ] }
 
 [dev-dependencies]
@@ -115,10 +122,10 @@ assert_matches = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 futures = { workspace = true }
 insta = { workspace = true }
-predicates = { workspace = true }
-pretty_assertions = { workspace = true }
-sqlx = { workspace = true }
-tokio-tungstenite = { workspace = true }
+predicates = { workspace = true, features = ["regex"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite-bundled"] }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 wiremock = { workspace = true }
 zstd = { workspace = true }
 

@@ -53,6 +53,7 @@ extern "C" fn cleanup_codex_aliases_temp_dir() {
 #[cfg(not(target_os = "windows"))]
 mod abort_tasks;
 mod additional_context;
+mod additional_context_compaction;
 mod agent_execution;
 mod agent_websocket;
 mod agents_md;

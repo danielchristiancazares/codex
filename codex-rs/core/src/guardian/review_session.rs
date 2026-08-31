@@ -87,6 +87,7 @@ use super::prompt::GuardianPromptMode;
 use super::prompt::GuardianTranscriptCursor;
 use super::prompt::build_guardian_prompt_items_with_parent_turn;
 use super::prompt::guardian_policy_prompt_with_config_and_template;
+use super::prompt::parse_guardian_assessment;
 use super::review::guardian_review_session_config;
 
 const GUARDIAN_INTERRUPT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -158,6 +159,14 @@ struct PendingNodeReplEvidenceAdmission {
 
 fn had_prior_review_context(prompt_mode: &GuardianPromptMode) -> bool {
     matches!(prompt_mode, GuardianPromptMode::Delta { .. })
+}
+
+fn completed_assessment_is_valid(outcome: &GuardianReviewSessionOutcome) -> bool {
+    matches!(
+        outcome,
+        GuardianReviewSessionOutcome::Completed(Ok(Some(message)))
+            if parse_guardian_assessment(Some(message)).is_ok()
+    )
 }
 
 fn token_usage_delta(start: &TokenUsage, end: &TokenUsage) -> TokenUsage {
@@ -642,7 +651,7 @@ impl GuardianReviewSessionManager {
             deadline,
         ))
         .await;
-        if keep_review_session && matches!(outcome, GuardianReviewSessionOutcome::Completed(_)) {
+        if keep_review_session && completed_assessment_is_valid(&outcome) {
             trunk.refresh_last_committed_fork_snapshot().await;
         }
         drop(trunk_guard);
@@ -1235,7 +1244,7 @@ async fn run_review_on_session(
         &mut analytics_result,
     )
     .await;
-    if matches!(outcome.0, GuardianReviewSessionOutcome::Completed(_)) {
+    if completed_assessment_is_valid(&outcome.0) {
         if outcome.2
             && let Some(total_token_usage) = review_session.session.total_token_usage().await
         {
@@ -2150,6 +2159,18 @@ mod tests {
                 transcript_entry_count: 42,
             }
         }));
+    }
+
+    #[test]
+    fn completed_guardian_assessment_is_committable_only_after_valid_parse() {
+        let valid = GuardianReviewSessionOutcome::Completed(Ok(Some(
+            r#"{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"authorized"}"#
+                .to_string(),
+        )));
+        let invalid = GuardianReviewSessionOutcome::Completed(Ok(Some("{".to_string())));
+
+        assert!(completed_assessment_is_valid(&valid));
+        assert!(!completed_assessment_is_valid(&invalid));
     }
 
     #[test]

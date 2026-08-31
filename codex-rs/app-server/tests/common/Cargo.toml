@@ -12,9 +12,9 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-base64 = { workspace = true }
-chrono = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["clock"] }
 codex-app-server-protocol = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -25,8 +25,8 @@ codex-models-manager = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = [
     "io-util",
     "io-std",
@@ -34,16 +34,14 @@ tokio = { workspace = true, features = [
     "net",
     "process",
     "rt-multi-thread",
-    "sync",
     "test-util",
-    "time",
 ] }
 tokio-util = { workspace = true }
 url = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 wiremock = { workspace = true }
-core_test_support = { path = "../../../core/tests/common" }
-shlex = { workspace = true }
+core_test_support = { path = "../../../core/tests/common", default-features = false }
+shlex = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

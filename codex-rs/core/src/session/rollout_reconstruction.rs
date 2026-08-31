@@ -393,8 +393,12 @@ impl Session {
         for item in rollout_suffix {
             match item {
                 RolloutItem::ResponseItem(response_item) => {
+                    let mut response_item = response_item.clone();
+                    crate::context::TurnAborted::rewrite_response_item_for_resume(
+                        &mut response_item.item,
+                    );
                     history.record_annotated_items(
-                        std::slice::from_ref(response_item),
+                        std::slice::from_ref(&response_item),
                         turn_context.model_info().truncation_policy.into(),
                     );
                 }

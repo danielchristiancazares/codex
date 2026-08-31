@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-experimental-api-macros = { workspace = true }
 codex-app-server-protocol-noop-macros = { workspace = true }
 codex-extension-items = { workspace = true }
@@ -26,8 +26,8 @@ codex-utils-absolute-path = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 codex-utils-redacted-string = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-serde_with = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+serde_with = { workspace = true, features = ["alloc", "macros"] }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = [
@@ -41,16 +41,15 @@ uuid = { workspace = true, features = ["serde", "v7"] }
 zstd = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-utils-cargo-bin = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
 rmcp = { workspace = true, default-features = false, features = [
     "base64",
     "macros",
-    "schemars",
     "server",
 ] }
-schemars = { workspace = true }
-similar = { workspace = true }
-tempfile = { workspace = true }
-ts-rs = { workspace = true }
+schemars = { workspace = true, features = ["derive"] }
+similar = { workspace = true, features = ["text"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+ts-rs = { workspace = true, features = ["serde-compat"] }

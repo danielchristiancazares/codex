@@ -8,6 +8,9 @@ use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 
+#[path = "../src/test_backend.rs"]
+mod test_backend;
+
 mod custom_terminal {
     #![allow(dead_code, unused_imports)]
 

@@ -1647,9 +1647,10 @@ pub(crate) async fn handle_audio(
 fn realtime_transcript_delta_from_handoff(handoff: &RealtimeHandoffRequested) -> Option<String> {
     let duplicated_input_index = (!handoff.input_transcript.is_empty())
         .then(|| {
-            handoff.active_transcript.iter().rposition(|entry| {
-                entry.role == "user" && entry.text == handoff.input_transcript
-            })
+            handoff
+                .active_transcript
+                .iter()
+                .rposition(|entry| entry.role == "user" && entry.text == handoff.input_transcript)
         })
         .flatten();
     realtime_transcript_delta(

@@ -1131,38 +1131,69 @@ impl AccountRequestProcessor {
     async fn get_account_rate_limits_response(
         &self,
     ) -> Result<GetAccountRateLimitsResponse, JSONRPCErrorError> {
-        let Some(auth) = self.auth_manager.auth().await else {
-            return Err(invalid_request(
-                "codex account authentication required to read rate limits",
-            ));
+        let config = self.load_latest_config().await;
+        let http_client_factory = config.http_client_factory();
+        let provider =
+            create_model_provider(config.model_provider, Some(Arc::clone(&self.auth_manager)));
+        let is_copilot = provider.info().is_copilot();
+        let (rate_limits, rate_limit_reset_credits) = if is_copilot {
+            let rate_limits = provider
+                .read_rate_limits(http_client_factory)
+                .await
+                .map_err(|err| {
+                    internal_error(format!("failed to fetch GitHub Copilot rate limits: {err}"))
+                })?
+                .ok_or_else(|| {
+                    internal_error("GitHub Copilot provider did not expose account rate limits")
+                })?;
+            (rate_limits, None)
+        } else {
+            let Some(auth) = self.auth_manager.auth().await else {
+                return Err(invalid_request(
+                    "codex account authentication required to read rate limits",
+                ));
+            };
+
+            if !auth.uses_codex_backend() {
+                return Err(invalid_request(
+                    "chatgpt authentication required to read rate limits",
+                ));
+            }
+
+            let client = BackendClient::from_auth(
+                self.config.chatgpt_base_url.clone(),
+                &auth,
+                self.config.http_client_factory(),
+            );
+            let (response, detailed_rate_limit_reset_credits) = tokio::join!(
+                client.get_rate_limits_with_reset_credits(),
+                Self::detailed_rate_limit_reset_credits(&client),
+            );
+            let response = response.map_err(|err| {
+                internal_error(format!("failed to fetch codex rate limits: {err}"))
+            })?;
+            let rate_limit_reset_credits = detailed_rate_limit_reset_credits.or_else(|| {
+                response
+                    .rate_limit_reset_credits
+                    .map(|summary| RateLimitResetCreditsSummary {
+                        available_count: summary.available_count,
+                        credits: None,
+                    })
+            });
+            (response.rate_limits, rate_limit_reset_credits)
         };
-
-        if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to read rate limits",
-            ));
+        if rate_limits.is_empty() {
+            let provider_name = if is_copilot {
+                "GitHub Copilot"
+            } else {
+                "codex"
+            };
+            return Err(internal_error(format!(
+                "failed to fetch {provider_name} rate limits: no snapshots returned"
+            )));
         }
 
-        let client = BackendClient::from_auth(
-            self.config.chatgpt_base_url.clone(),
-            &auth,
-            self.config.http_client_factory(),
-        );
-
-        let (response, detailed_rate_limit_reset_credits) = tokio::join!(
-            client.get_rate_limits_with_reset_credits(),
-            Self::detailed_rate_limit_reset_credits(&client),
-        );
-        let response = response
-            .map_err(|err| internal_error(format!("failed to fetch codex rate limits: {err}")))?;
-        if response.rate_limits.is_empty() {
-            return Err(internal_error(
-                "failed to fetch codex rate limits: no snapshots returned",
-            ));
-        }
-
-        let rate_limits_by_limit_id: HashMap<_, _> = response
-            .rate_limits
+        let rate_limits_by_limit_id: HashMap<_, _> = rate_limits
             .iter()
             .cloned()
             .map(|snapshot| {
@@ -1173,21 +1204,11 @@ impl AccountRequestProcessor {
                 (limit_id, snapshot)
             })
             .collect();
-        let rate_limits = response
-            .rate_limits
+        let rate_limits = rate_limits
             .iter()
             .find(|snapshot| snapshot.limit_id.as_deref() == Some("codex"))
             .cloned()
-            .unwrap_or_else(|| response.rate_limits[0].clone());
-
-        let rate_limit_reset_credits = detailed_rate_limit_reset_credits.or_else(|| {
-            response
-                .rate_limit_reset_credits
-                .map(|summary| RateLimitResetCreditsSummary {
-                    available_count: summary.available_count,
-                    credits: None,
-                })
-        });
+            .unwrap_or_else(|| rate_limits[0].clone());
 
         Ok(GetAccountRateLimitsResponse {
             rate_limits: rate_limits.into(),

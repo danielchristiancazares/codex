@@ -9,13 +9,21 @@ bytes = { workspace = true }
 codex-utils-rustls-provider = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
-native-tls = "0.2"
-reqwest = { workspace = true, features = ["json", "rustls-tls-native-roots", "stream"] }
-rustls = { workspace = true }
+native-tls = { version = "0.2", default-features = false }
+reqwest = { workspace = true, features = [
+    "cookies",
+    "http2",
+    "json",
+    "native-tls",
+    "rustls-tls-native-roots",
+    "stream",
+    "system-proxy",
+] }
+rustls = { workspace = true, features = ["std", "tls12"] }
 rustls-native-certs = { workspace = true }
 rustls-pki-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
@@ -26,7 +34,7 @@ zstd = { workspace = true }
 system-configuration = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { default-features = false, version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Networking_WinHttp",
 ] }
@@ -36,10 +44,10 @@ workspace = true
 
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }
-pretty_assertions = { workspace = true }
-rcgen = { workspace = true }
-tempfile = { workspace = true }
-tracing-subscriber = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+rcgen = { workspace = true, features = ["aws_lc_rs", "pem"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [lib]
 doctest = false

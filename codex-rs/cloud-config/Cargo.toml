@@ -8,8 +8,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
+base64 = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
 codex-backend-client = { workspace = true }
 codex-config = { workspace = true }
 codex-http-client = { workspace = true }
@@ -17,9 +17,9 @@ codex-core = { workspace = true }
 codex-login = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
-hmac = "0.12.1"
+hmac = { version = "0.12.1", default-features = false }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "rt", "sync", "time"] }
@@ -27,9 +27,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 codex-agent-identity = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["macros", "test-util"] }
 
 [lib]
 doctest = false

@@ -979,6 +979,49 @@ async fn response_stream_records_last_model_feedback_ids() {
     );
 }
 
+#[tokio::test]
+async fn response_stream_assigns_one_id_to_provider_idless_output() {
+    let item = ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: "idless output".to_string(),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let api_stream = futures::stream::iter([
+        Ok(ResponseEvent::OutputItemDone(item)),
+        Ok(ResponseEvent::Completed {
+            response_id: "resp-idless".to_string(),
+            token_usage: None,
+            usage_metadata: None,
+            end_turn: Some(true),
+        }),
+    ]);
+    let (mut stream, last_response) = super::map_response_events(
+        /*upstream_request_id*/ None,
+        api_stream,
+        test_session_telemetry(),
+        InferenceTraceAttempt::disabled(),
+        test_model_provider(),
+    );
+
+    let streamed_item = loop {
+        match stream.next().await {
+            Some(Ok(ResponseEvent::OutputItemDone(item))) => break item,
+            Some(Ok(_)) => {}
+            Some(Err(err)) => panic!("mapped stream failed: {err}"),
+            None => panic!("mapped stream ended before output"),
+        }
+    };
+    while stream.next().await.is_some() {}
+    let last_response = last_response.await.expect("last response");
+
+    assert!(streamed_item.id().is_some());
+    assert_eq!(last_response.items_added, vec![streamed_item]);
+}
+
 #[derive(Debug)]
 struct TestRecoveryProvider {
     inner: SharedModelProvider,

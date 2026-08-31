@@ -8,9 +8,9 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["alloc"] }
 # Keep this sample limited to a single Codex workspace dependency.
 # Add new Codex surface area to `codex-core-api` instead of depending on
 # additional `codex-*` crates here.

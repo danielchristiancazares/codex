@@ -9,24 +9,25 @@ readme = "README.md"
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["clock"] }
 codex-file-system = { workspace = true }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 codex-utils-pty = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
-gix = { workspace = true }
-once_cell = { workspace = true }
-regex = "1"
-schemars = { workspace = true }
+gix = { workspace = true, features = ["sha1"] }
+once_cell = { workspace = true, features = ["std"] }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
+schemars = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
-similar = { workspace = true }
-tempfile = { workspace = true }
+similar = { workspace = true, features = ["text"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "process", "rt", "time"] }
 ts-rs = { workspace = true, features = [
+    "serde-compat",
     "uuid-impl",
     "serde-json-impl",
     "no-serde-warnings",
@@ -34,7 +35,8 @@ ts-rs = { workspace = true, features = [
 walkdir = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync"] }
 
 [lib]
 doctest = false

@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-chrono = { workspace = true, features = ["serde"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
 codex-app-server-protocol = { workspace = true }
 codex-extension-items = { workspace = true }
 codex-git-utils = { workspace = true }
@@ -27,17 +27,17 @@ codex-utils-path = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 futures = { workspace = true }
 pulldown-cmark = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sqlx = { workspace = true }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true, features = ["alloc"] }
+sqlx = { workspace = true, features = ["derive", "runtime-tokio", "sqlite-bundled"] }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync", "time"] }
+tracing = { workspace = true, features = ["attributes"] }
 zstd = { workspace = true }
 
 [dev-dependencies]
 codex-utils-absolute-path = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }

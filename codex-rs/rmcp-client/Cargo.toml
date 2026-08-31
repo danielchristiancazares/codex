@@ -8,13 +8,13 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", default-features = false, features = ["std"] }
 axum = { workspace = true, default-features = false, features = [
     "http1",
     "json",
     "tokio",
 ] }
-base64 = { workspace = true }
+base64 = { workspace = true, features = ["alloc"] }
 codex-api = { workspace = true }
 codex-config = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -27,50 +27,49 @@ codex-utils-path-uri = { workspace = true }
 codex-utils-pty = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 bytes = { workspace = true }
-futures = { workspace = true, default-features = false, features = ["std"] }
+futures = { workspace = true, default-features = false, features = ["async-await"] }
 http = { workspace = true }
 keyring = { workspace = true, features = ["crypto-rust"] }
 memchr = { workspace = true }
-oauth2 = "5"
+oauth2 = { version = "5", default-features = false }
 rmcp = { workspace = true, default-features = false, features = [
     "auth",
-    "base64",
     "client",
     "macros",
-    "schemars",
     "server",
-    "transport-async-rw",
     "transport-child-process",
     "transport-streamable-http-client",
     "transport-streamable-http-server",
 ] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
-sse-stream = "0.2.5"
+sse-stream = { version = "0.2.5", default-features = false }
 thiserror = { workspace = true }
 tiny_http = { workspace = true }
 tokio = { workspace = true, features = [
     "io-util",
     "macros",
+    "net",
     "process",
     "rt-multi-thread",
     "sync",
     "io-std",
     "time",
 ] }
-tracing = { workspace = true, features = ["log"] }
+tracing = { workspace = true, features = ["attributes", "log"] }
 url = { workspace = true }
 urlencoding = { workspace = true }
 webbrowser = { workspace = true }
-which = { workspace = true }
+which = { workspace = true, features = ["real-sys"] }
 
 [dev-dependencies]
 codex-http-client = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
 serial_test = { workspace = true }
-tempfile = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["test-util"] }
 wiremock = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -84,7 +83,7 @@ keyring = { workspace = true, features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { workspace = true, features = ["windows-native"] }
-windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.52", default-features = false, features = ["Win32_Storage_FileSystem"] }
 
 [target.'cfg(any(target_os = "freebsd", target_os = "openbsd"))'.dependencies]
 keyring = { workspace = true, features = ["sync-secret-service"] }

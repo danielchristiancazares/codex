@@ -7,17 +7,21 @@ license.workspace = true
 [dependencies]
 codex-http-client = { workspace = true }
 futures = { workspace = true }
-rustls = { workspace = true }
+rustls = { workspace = true, features = ["std", "tls12"] }
 tokio = { workspace = true, features = ["net", "rt", "time"] }
 tokio-rustls = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = [
+    "connect",
+    "proxy",
+    "rustls-tls-native-roots",
+] }
 url = { workspace = true }
 
 [dev-dependencies]
 codex-utils-rustls-provider = { workspace = true }
-pretty_assertions = { workspace = true }
-rcgen = { workspace = true }
-tokio = { workspace = true, features = ["macros", "test-util"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+rcgen = { workspace = true, features = ["aws_lc_rs"] }
+tokio = { workspace = true, features = ["io-util", "macros", "test-util"] }
 
 [lints]
 workspace = true

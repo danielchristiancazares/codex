@@ -21,7 +21,7 @@ codex-model-provider-info = { workspace = true }
 futures = { workspace = true }
 memchr = { workspace = true }
 semver = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = [
     "io-std",
     "macros",
@@ -34,4 +34,4 @@ wiremock = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

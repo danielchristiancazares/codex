@@ -2401,7 +2401,7 @@ fn record_items_omits_audio_that_exceeds_the_output_budget() {
             output: FunctionCallOutputPayload {
                 body: FunctionCallOutputBody::ContentItems(vec![
                     FunctionCallOutputContentItem::InputText {
-                        text: "[omitted 1 audio items ...]".to_string(),
+                        text: "[omitted 1 audio items to fit output budget]".to_string(),
                     },
                 ]),
                 success: Some(true),

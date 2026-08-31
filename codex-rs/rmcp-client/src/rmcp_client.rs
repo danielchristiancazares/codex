@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
 use std::sync::PoisonError;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -378,12 +379,21 @@ pub struct RmcpClient {
     initialize_context: Mutex<Option<InitializeContext>>,
     session_recovery_lock: Semaphore,
     elicitation_pause_state: ElicitationPauseState,
+    tool_list_generation: Arc<AtomicU64>,
 }
 
 impl RmcpClient {
     /// Returns the protocol compatibility policy captured when this client was created.
     pub fn protocol_mode(&self) -> McpProtocolMode {
         self.protocol_mode
+    }
+
+    /// Returns the tool-catalog generation observed by this transport.
+    ///
+    /// The generation advances after a successful handshake or session recovery and whenever the
+    /// server emits `notifications/tools/list_changed`.
+    pub fn tool_list_generation(&self) -> u64 {
+        self.tool_list_generation.load(Ordering::Acquire)
     }
 
     pub async fn new_in_process_client(
@@ -404,6 +414,7 @@ impl RmcpClient {
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            tool_list_generation: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -477,6 +488,7 @@ impl RmcpClient {
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            tool_list_generation: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -576,6 +588,7 @@ impl RmcpClient {
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            tool_list_generation: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -592,6 +605,7 @@ impl RmcpClient {
             params.clone(),
             send_elicitation,
             self.elicitation_pause_state.clone(),
+            Arc::clone(&self.tool_list_generation),
         );
         let pending_transport = {
             let mut guard = self.state.lock().await;
@@ -637,6 +651,8 @@ impl RmcpClient {
                 oauth: oauth_persistor.clone(),
             };
         }
+        self.tool_list_generation
+            .fetch_add(/*val*/ 1, Ordering::AcqRel);
 
         if let Some(runtime) = oauth_persistor
             && let Err(error) = runtime.persist_if_needed().await
@@ -1480,6 +1496,8 @@ impl RmcpClient {
                 oauth: oauth_persistor.clone(),
             };
         }
+        self.tool_list_generation
+            .fetch_add(/*val*/ 1, Ordering::AcqRel);
 
         if let Some(runtime) = oauth_persistor
             && let Err(error) = runtime.persist_if_needed().await

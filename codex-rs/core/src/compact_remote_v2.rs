@@ -881,10 +881,8 @@ mod tests {
             internal_chat_message_metadata_passthrough: None,
         };
 
-        let (history, _) = build_without_metadata(
-            vec![prior_summary, user.clone()],
-            output.clone(),
-        );
+        let (history, _) =
+            build_without_metadata(vec![prior_summary, user.clone()], output.clone());
 
         assert_eq!(raw(history), vec![user, output]);
     }

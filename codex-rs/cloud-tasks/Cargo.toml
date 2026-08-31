@@ -13,33 +13,38 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-clap = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+clap = { workspace = true, features = ["derive", "std"] }
 codex-http-client = { workspace = true }
 codex-cloud-tasks-client = { workspace = true }
 # TODO: codex-cloud-tasks-mock-client should be in dev-dependencies.
 codex-cloud-tasks-mock-client = { workspace = true }
 codex-core = { workspace = true }
 codex-git-utils = { workspace = true }
-codex-login = { path = "../login" }
+codex-login = { path = "../login", default-features = false }
 codex-model-provider = { workspace = true }
 codex-tui = { workspace = true }
 codex-utils-cli = { workspace = true }
-crossterm = { workspace = true, features = ["event-stream"] }
+crossterm = { workspace = true, features = ["event-stream", "windows"] }
 http = { workspace = true }
 owo-colors = { workspace = true, features = ["supports-colors"] }
-ratatui = { workspace = true }
+ratatui = { workspace = true, features = ["crossterm"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 supports-color = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-stream = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "tracing-log",
+] }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

@@ -14,17 +14,17 @@ workspace = true
 
 [dependencies]
 codex-protocol = { workspace = true }
-prost = "0.14.3"
+prost = { version = "0.14.3", default-features = false, features = ["derive", "std"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["io-util", "sync"] }
 tokio-util = { workspace = true, features = ["rt"] }
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["channel", "codegen"] }
 tonic-prost = { workspace = true }
 
 [build-dependencies]
 glob = { workspace = true }
-protoc-bin-vendored = "3.2.0"
+protoc-bin-vendored = { version = "3.2.0", default-features = false }
 tonic-prost-build = { version = "=0.14.3", default-features = false, features = ["transport"] }
 
 # Cargo-shear cannot inspect the prost and tonic-prost references in generated gRPC bindings.
@@ -32,5 +32,5 @@ tonic-prost-build = { version = "=0.14.3", default-features = false, features = 
 ignored = ["prost", "tonic-prost"]
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

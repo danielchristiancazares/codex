@@ -17,6 +17,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
@@ -112,7 +113,9 @@ const UNTRUSTED_CONNECTOR_META_KEYS: &[&str] = &[
 pub(crate) struct ManagedClient {
     pub(crate) client: Arc<RmcpClient>,
     pub(crate) server_info: McpServerInfo,
-    pub(crate) tools: Vec<ToolInfo>,
+    pub(crate) tools: Arc<StdMutex<Vec<ToolInfo>>>,
+    pub(crate) tool_list_generation: Arc<AtomicU64>,
+    pub(crate) tool_list_refresh_gate: Arc<tokio::sync::Semaphore>,
     pub(crate) tool_timeout: Option<Duration>,
     pub(crate) server_instructions: Option<String>,
     pub(crate) server_supports_sandbox_state_meta_capability: bool,
@@ -120,6 +123,17 @@ pub(crate) struct ManagedClient {
 }
 
 impl ManagedClient {
+    pub(crate) fn tool_list_is_current(&self) -> bool {
+        self.client.tool_list_generation() == self.tool_list_generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn connection_tools(&self) -> Vec<ToolInfo> {
+        self.tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     pub(crate) fn listed_tools(&self) -> Vec<ToolInfo> {
         let total_start = Instant::now();
         if let Some(tools) = self
@@ -143,7 +157,7 @@ impl ManagedClient {
             );
         }
 
-        self.tools.clone()
+        self.connection_tools()
     }
 }
 
@@ -501,6 +515,66 @@ impl AsyncManagedClient {
         self.client.clone().await
     }
 
+    pub(crate) async fn refresh_tools_if_changed(
+        &self,
+        server_name: &str,
+        catalog_item_limit: usize,
+        tool_catalog_revision: &tokio::sync::RwLock<u64>,
+    ) -> bool {
+        let Some(client) = self.ready_client() else {
+            return false;
+        };
+        if client.tool_list_is_current() {
+            return false;
+        }
+
+        let Ok(_refresh_permit) = client.tool_list_refresh_gate.acquire().await else {
+            return false;
+        };
+        let generation = client.client.tool_list_generation();
+        if client.tool_list_is_current() {
+            return false;
+        }
+        let timeout = client.tool_timeout.or(Some(DEFAULT_STARTUP_TIMEOUT));
+        let tools = match list_tools_for_client_uncached(
+            server_name,
+            self.is_codex_apps_mcp_server,
+            "list_changed",
+            &client.client,
+            timeout,
+            catalog_item_limit,
+            client.server_instructions.as_deref(),
+        )
+        .await
+        {
+            Ok(tools) => tools,
+            Err(error) => {
+                warn!(server_name, %error, "failed to refresh changed MCP tool list");
+                return false;
+            }
+        };
+
+        if let Some(cache_context) = self.codex_apps_tools_cache_context.as_ref() {
+            cache_context.publish_if_newest_accepted(
+                cache_context.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
+                &client.server_info,
+                tools.clone(),
+            );
+        }
+        if let Some(cache_context) = self.tool_catalog_cache_context.as_ref() {
+            cache_context.publish_if_newest(cache_context.begin_fetch(), &tools);
+        }
+        *client
+            .tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = tools;
+        *tool_catalog_revision.write().await += 1;
+        client
+            .tool_list_generation
+            .store(generation, Ordering::Release);
+        true
+    }
+
     /// Returns the current ready client, including its tool catalog and metadata,
     /// without waiting for startup or initiating a reconnection.
     pub(crate) fn ready_client(&self) -> Option<ManagedClient> {
@@ -688,13 +762,12 @@ pub(crate) fn prepare_codex_apps_tools_for_model(
 }
 
 /// Stores plugin names on the tool and appends a model-visible plugin membership note.
-fn add_plugin_provenance_to_tool(tool: &mut ToolInfo, plugin_names: &[String]) {
-    tool.plugin_display_names = plugin_names.to_vec();
+fn plugin_provenance_note(plugin_names: &[String]) -> Option<String> {
     if plugin_names.is_empty() {
-        return;
+        return None;
     }
 
-    let plugin_source_note = if plugin_names.len() == 1 {
+    Some(if plugin_names.len() == 1 {
         format!("This tool is part of plugin `{}`.", plugin_names[0])
     } else {
         format!(
@@ -705,21 +778,29 @@ fn add_plugin_provenance_to_tool(tool: &mut ToolInfo, plugin_names: &[String]) {
                 .collect::<Vec<_>>()
                 .join(", ")
         )
-    };
-    let description = tool
-        .tool
-        .description
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("");
-    let annotated_description = if description.is_empty() {
+    })
+}
+
+fn append_provenance_note(description: Option<&str>, plugin_source_note: String) -> String {
+    let description = description.map(str::trim).unwrap_or("");
+    if description.is_empty() {
         plugin_source_note
     } else if matches!(description.chars().last(), Some('.' | '!' | '?')) {
         format!("{description} {plugin_source_note}")
     } else {
         format!("{description}. {plugin_source_note}")
+    }
+}
+
+fn add_plugin_provenance_to_tool(tool: &mut ToolInfo, plugin_names: &[String]) {
+    tool.plugin_display_names = plugin_names.to_vec();
+    let Some(plugin_source_note) = plugin_provenance_note(plugin_names) else {
+        return;
     };
-    tool.tool.description = Some(Cow::Owned(annotated_description));
+    tool.tool.description = Some(Cow::Owned(append_provenance_note(
+        tool.tool.description.as_deref(),
+        plugin_source_note,
+    )));
 }
 
 /// Adds server-scoped plugin names to regular MCP tools without changing their input schemas.
@@ -730,7 +811,13 @@ pub(crate) fn prepare_regular_mcp_tools_for_model(
     for tool in &mut tools {
         let plugin_names = tool_plugin_provenance
             .plugin_display_names_for_mcp_server_name(tool.server_name.as_str());
-        add_plugin_provenance_to_tool(tool, plugin_names);
+        tool.plugin_display_names = plugin_names.to_vec();
+        if let Some(plugin_source_note) = plugin_provenance_note(plugin_names) {
+            tool.namespace_description = Some(append_provenance_note(
+                tool.namespace_description.as_deref(),
+                plugin_source_note,
+            ));
+        }
     }
     tools
 }
@@ -923,6 +1010,7 @@ async fn start_server_task(
     let fetch_ticket = codex_apps_tools_cache_context
         .as_ref()
         .map(|cache_context| cache_context.begin_fetch(ConnectorRuntimeFetchSource::Startup));
+    let tool_list_generation = client.tool_list_generation();
     let client_tools = list_tools_for_client_uncached(
         &server_name,
         is_codex_apps_mcp_server,
@@ -962,7 +1050,9 @@ async fn start_server_task(
     let managed = ManagedClient {
         client: Arc::clone(&client),
         server_info,
-        tools: client_tools,
+        tools: Arc::new(StdMutex::new(client_tools)),
+        tool_list_generation: Arc::new(AtomicU64::new(tool_list_generation)),
+        tool_list_refresh_gate: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
         tool_timeout: None,
         server_instructions: initialize_result.instructions,
         server_supports_sandbox_state_meta_capability,

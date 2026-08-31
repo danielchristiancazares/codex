@@ -12,13 +12,13 @@ path = "src/bin/main_execve_wrapper.rs"
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "std"] }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 socket2 = { workspace = true, features = ["all"] }
 tokio = { workspace = true, features = [
     "io-std",
@@ -27,15 +27,16 @@ tokio = { workspace = true, features = [
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
     "time",
 ] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "tracing-log"] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lib]
 doctest = false

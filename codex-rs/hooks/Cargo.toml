@@ -13,9 +13,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 async-channel = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
 codex-config = { workspace = true }
 codex-plugin = { workspace = true }
 codex-protocol = { workspace = true }
@@ -23,17 +23,17 @@ codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
-regex = { workspace = true }
-schemars = { workspace = true }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
+schemars = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
-tracing = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time"] }
+tracing = { workspace = true, features = ["attributes"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [target.'cfg(any(unix, windows))'.dependencies]

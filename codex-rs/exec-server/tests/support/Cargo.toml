@@ -13,12 +13,12 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-exec-server = { workspace = true }
 codex-http-client = { workspace = true }
 futures = { workspace = true }
-prost = "0.14.3"
-serde_json = { workspace = true }
+prost = { version = "0.14.3", default-features = false, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["macros", "net", "time"] }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 wiremock = { workspace = true }

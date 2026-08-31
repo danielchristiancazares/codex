@@ -13,12 +13,12 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+anyhow = { version = "1", default-features = false, features = ["std"] }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 http = { workspace = true }
 url = { workspace = true }
-codex-backend-openapi-models = { path = "../codex-backend-openapi-models" }
+codex-backend-openapi-models = { path = "../codex-backend-openapi-models", default-features = false }
 codex-api = { workspace = true }
 codex-http-client = { workspace = true }
 codex-login = { workspace = true }
@@ -26,6 +26,6 @@ codex-model-provider = { workspace = true }
 codex-protocol = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1"
+pretty_assertions = { version = "1", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wiremock = { workspace = true }

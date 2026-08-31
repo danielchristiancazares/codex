@@ -5,6 +5,7 @@ mod identity;
 mod models_endpoint;
 mod models_manager;
 mod payload;
+mod quota;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use codex_api::Provider;
 use codex_api::SharedAuthProvider;
 use codex_api::TransportError;
+use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
@@ -19,6 +21,7 @@ use codex_models_manager::cache::ModelsCache;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::SessionSource;
 
 use self::auth_provider::CopilotAuthProvider;
@@ -26,6 +29,7 @@ use self::endpoint::CopilotEndpointManager;
 use self::endpoint::shared_endpoint_manager;
 use self::models_endpoint::CopilotModelsEndpoint;
 use self::models_manager::CopilotModelsManager;
+use self::quota::CopilotQuotaEndpoint;
 use crate::ProviderAuthScope;
 use crate::ProviderRequestContext;
 use crate::ResolvedProviderAuth;
@@ -138,6 +142,19 @@ impl ModelProvider for CopilotModelProvider {
         Ok(ProviderAccountState {
             account: None,
             requires_openai_auth: false,
+        })
+    }
+
+    fn read_rate_limits(
+        &self,
+        http_client_factory: HttpClientFactory,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<Option<Vec<RateLimitSnapshot>>>>
+    {
+        Box::pin(async move {
+            CopilotQuotaEndpoint::new(Arc::clone(&self.endpoint_manager))
+                .read_rate_limits(http_client_factory)
+                .await
+                .map(Some)
         })
     }
 

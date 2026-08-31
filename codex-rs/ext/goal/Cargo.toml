@@ -24,14 +24,14 @@ codex-state = { workspace = true }
 codex-tools = { workspace = true }
 codex-utils-template = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["clock"] }
 codex-utils-absolute-path = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

@@ -744,6 +744,8 @@ async fn build_guardian_prompt_delta_mode_preserves_original_numbering() -> anyh
     assert!(text.contains(">>> TRANSCRIPT DELTA END\n"));
     assert!(text.contains("The Codex agent has requested the following next action:\n"));
     assert!(!text.contains("[1] user: Please check the repo visibility"));
+    assert!(!text.contains(">>> ROOT CONVERSATION START"));
+    assert!(!text.contains(">>> TRUSTED USER ANSWERS START"));
     assert_eq!(prompt.transcript_cursor.transcript_entry_count, 6);
 
     Ok(())
@@ -1781,12 +1783,7 @@ fn guardian_prompt_leaves_output_shape_to_structured_schema() {
 
     assert!(prompt.contains("read-only tool checks"));
     assert!(prompt.contains("smallest schema-valid allow decision"));
-    for schema_field in [
-        "risk_level",
-        "user_authorization",
-        "outcome",
-        "rationale",
-    ] {
+    for schema_field in ["risk_level", "user_authorization", "outcome", "rationale"] {
         assert!(!prompt.contains(schema_field));
     }
 }

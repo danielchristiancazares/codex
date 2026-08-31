@@ -13,9 +13,9 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 arc-swap = { workspace = true }
-async-channel = { workspace = true }
+async-channel = { workspace = true, features = ["std"] }
 codex-async-utils = { workspace = true }
 codex-api = { workspace = true }
 codex-config = { workspace = true }
@@ -29,23 +29,30 @@ codex-protocol = { workspace = true }
 codex-rmcp-client = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 codex-utils-plugins = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["async-await"] }
 lru = { workspace = true }
-regex-lite = { workspace = true }
-rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
+regex-lite = { workspace = true, features = ["std", "string"] }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "server"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha1 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
 tokio-util = { workspace = true, features = ["rt"] }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
 url = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 codex-exec-server-test-support = { workspace = true }
 codex-plugin = { workspace = true }
-pretty_assertions = { workspace = true }
-rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "server"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["test-util"] }

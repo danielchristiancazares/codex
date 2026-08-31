@@ -3158,7 +3158,7 @@ impl Session {
         items
     }
 
-    fn assign_missing_response_item_id(item: &mut ResponseItem) {
+    pub(crate) fn assign_missing_response_item_id(item: &mut ResponseItem) {
         if item.id().is_some_and(|id| !id.is_empty()) {
             return;
         }
@@ -3540,9 +3540,10 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
-        items = self
+        let (rehydrated_items, additional_context_baseline) = self
             .rehydrate_additional_context_for_compaction(items)
             .await;
+        items = rehydrated_items;
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }
@@ -3558,13 +3559,24 @@ impl Session {
                 .map(|id| id.to_string()),
             window_id: Some(metadata.window_ids.window_id.to_string()),
         };
-        // Compaction starts a new history window, so its WorldState baseline must be full.
+        // Compaction starts a new history window, so its WorldState baseline must be full. A
+        // pre-turn/manual replacement rehydrates only additional-context fragments; persist that
+        // one section as the honest partial baseline so every other initial-context section is
+        // still eligible for reinjection on the next turn.
+        let world_state_snapshot = match world_state_baseline {
+            Some(world_state) => Some(world_state.snapshot()),
+            None if additional_context_baseline != Default::default() => {
+                let mut world_state = WorldState::default();
+                world_state.add_section(AdditionalContextState::new(additional_context_baseline));
+                Some(world_state.snapshot())
+            }
+            None => None,
+        };
         let mut world_state_item = None;
         {
             let mut state = self.state.lock().await;
             state.replace_annotated_history(items, reference_context_item.clone());
-            if let Some(world_state) = world_state_baseline {
-                let snapshot = world_state.snapshot();
+            if let Some(snapshot) = world_state_snapshot {
                 world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
                 state.history.set_world_state_baseline(snapshot);
             }

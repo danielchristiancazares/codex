@@ -68,7 +68,7 @@ impl McpConnectionSet {
             {
                 return None;
             }
-            let Some(client) = view.connection.client.ready_transport() else {
+            let Some(client) = view.connection.client.ready_client() else {
                 if !view.connection.client.is_codex_apps_mcp_server
                     && self.required_servers.binary_search(server_name).is_err()
                     && matches!(view.connection.client.client.peek(), Some(Err(_)))
@@ -77,7 +77,7 @@ impl McpConnectionSet {
                 }
                 return None;
             };
-            if client.is_closed().await {
+            if client.client.is_closed().await || !client.tool_list_is_current() {
                 return None;
             }
         }
@@ -112,7 +112,14 @@ impl McpConnectionSet {
                             &self.tool_plugin_provenance,
                         ))
                     }
-                    None => view.listed_tools(&self.tool_plugin_provenance).await,
+                    None => {
+                        view.listed_tools(
+                            server_name,
+                            &self.tool_plugin_provenance,
+                            &self.tool_catalog_revision,
+                        )
+                        .await
+                    }
                 }
             }
             .instrument(trace_span!(
@@ -164,17 +171,12 @@ impl McpConnectionSet {
         tools
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "catalog capture must remain serialized with catalog replacement"
-    )]
     pub(crate) async fn capture_binding_with_metadata(
         self: &Arc<Self>,
         config: Arc<crate::McpConfig>,
         plugins_available: bool,
         required_servers: &[String],
     ) -> McpBinding {
-        let revision = self.tool_catalog_revision.read().await;
         let mut listed_tools = Vec::new();
         let mut clients = std::collections::HashMap::new();
         join_all(self.servers.iter().map(|(server_name, view)| async move {
@@ -233,7 +235,13 @@ impl McpConnectionSet {
                 if !view.connection.client.has_cached_tools() {
                     return None;
                 }
-                let server_tools = view.listed_tools(&self.tool_plugin_provenance).await?;
+                let server_tools = view
+                    .listed_tools(
+                        server_name,
+                        &self.tool_plugin_provenance,
+                        &self.tool_catalog_revision,
+                    )
+                    .await?;
                 let server_tools = server_tools
                     .into_iter()
                     .map(|mut tool| {
@@ -256,7 +264,20 @@ impl McpConnectionSet {
             } else {
                 None
             };
-            let server_tools = catalog_override.unwrap_or_else(|| client.tools.clone());
+            if view
+                .connection
+                .client
+                .refresh_tools_if_changed(
+                    server_name,
+                    view.catalog_item_limit,
+                    &self.tool_catalog_revision,
+                )
+                .await
+            {
+                drop(client);
+                client = view.connection.client().await.ok()?;
+            }
+            let server_tools = catalog_override.unwrap_or_else(|| client.connection_tools());
             let server_tools = filter_tools(server_tools, &view.tool_filter);
             let server_tools = if server_name == CODEX_APPS_MCP_SERVER_NAME {
                 prepare_codex_apps_tools_for_model(server_tools, &self.tool_plugin_provenance)
@@ -280,11 +301,16 @@ impl McpConnectionSet {
             listed_tools.extend(server_tools);
         }
         let clients = Arc::new(McpBindingClients::new(clients));
-        let listed_tools = normalize_tools_for_model_with_prefix(
-            listed_tools,
+        let (model_visible_tools, hidden_tools): (Vec<_>, Vec<_>) = listed_tools
+            .into_iter()
+            .partition(crate::tool_is_model_visible);
+        let mut listed_tools = normalize_tools_for_model_with_prefix(
+            model_visible_tools,
             self.prefix_mcp_tool_names,
             &self.non_prefixed_mcp_tool_servers,
         );
+        listed_tools.extend(hidden_tools);
+        let revision = self.tool_catalog_revision.read().await;
         let mut tools = Vec::with_capacity(listed_tools.len());
         let mut calls = std::collections::HashMap::with_capacity(listed_tools.len());
         for tool_info in listed_tools {

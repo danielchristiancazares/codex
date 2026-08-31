@@ -2209,7 +2209,8 @@ where
                 break;
             };
             match event {
-                Ok(ResponseEvent::OutputItemDone(item)) => {
+                Ok(ResponseEvent::OutputItemDone(mut item)) => {
+                    crate::session::session::Session::assign_missing_response_item_id(&mut item);
                     items_added.push(item.clone());
                     if tx_event
                         .send(Ok(ResponseEvent::OutputItemDone(item)))

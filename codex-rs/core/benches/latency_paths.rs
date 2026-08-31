@@ -6,9 +6,9 @@ use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_audio::prepare_response_items;
 use divan::Bencher;
 
-#[path = "../src/util.rs"]
+#[path = "../src/utils/json.rs"]
 #[allow(dead_code, unused_imports)]
-mod util;
+mod json;
 
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
 
@@ -48,7 +48,7 @@ fn pcm_wav_estimate(bencher: Bencher, sample_count: usize) {
 #[divan::bench]
 fn one_mebibyte_json_counted_len(bencher: Bencher) {
     let value = one_mebibyte_json_value();
-    bencher.bench_local(move || util::serialized_json_bytes(&value));
+    bencher.bench_local(move || json::serialized_json_bytes(&value));
 }
 
 fn pcm_wav_data_url(sample_count: usize) -> String {

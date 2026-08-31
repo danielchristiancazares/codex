@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-app-server-protocol = { workspace = true }
 codex-app-server-transport = { workspace = true }
 codex-http-client = { workspace = true }
@@ -22,7 +22,7 @@ codex-uds = { workspace = true }
 futures = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = [
     "fs",
@@ -33,8 +33,8 @@ tokio = { workspace = true, features = [
     "signal",
     "time",
 ] }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }

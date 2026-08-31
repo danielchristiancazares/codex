@@ -15,15 +15,18 @@ evidence are in [TOKEN_AUDIT_EVIDENCE.md](TOKEN_AUDIT_EVIDENCE.md).
 
 ## Active token-burning bug facets
 
-**Summary:** 67 demonstrated bug facets. Facet labels are authoritative where the same
-common-fix ID also appears in one of the other active documents.
+**Summary:** 61 active demonstrated bug facets. Facet labels are authoritative where the same
+common-fix ID also appears in one of the other active documents. Completed findings retained in
+the detailed record for traceability are excluded from this count.
 
 **Review reconciliation:** Source review moved CF-119 to the provider-contract backlog
 and promoted the directly demonstrated facets CF-019, CF-038, CF-045, CF-049, CF-077,
 CF-086, CF-089, CF-093, CF-096, CF-100, CF-105, and CF-120. CF-075 remains a design
 decision because eliminating its established second request changes the intentional
-user-versus-agent input ordering contract. The resulting active total is
-`56 - 1 + 12 = 67`.
+user-versus-agent input ordering contract. That review produced
+`56 - 1 + 12 = 67` active facets. CF-092 has since been resolved by invalidating the
+frozen MCP binding on tool-list notifications and session recovery. CF-001, CF-002, CF-003,
+CF-005, and CF-006 have also been confirmed fixed, leaving 61 active.
 
 **Evidence convention:** “Generated,” “resent,” or “extra request” describes client-observed model work. Provider billing is claimed only where usage or a provider contract establishes it; otherwise the record explicitly marks billing as unknown or conditional.
 
@@ -31,11 +34,6 @@ user-versus-agent input ordering contract. The resulting active total is
 
 | Canonical ID | Title & Summary | Reachability / Trigger | Expected Token Impact | Primary Fix Seam |
 | --- | --- | --- | --- | --- |
-| CF-001 (discarded-reasoning) | Enabled reasoning summaries on recap and non-bounded title paths are discarded | Recap/non-bounded title + summary-enabled model | Medium | `codex-rs/core/src/client.rs::ModelClient::build_responses_request` |
-| CF-002 | Goal continuations persist duplicate static policy and objective | Active goal continuation | High | `codex-rs/ext/goal/src/steering.rs::continuation_prompt` |
-| CF-003 | Memory Phase 1 serializes citation markup and media as text | Memories + eligible rollout with citations/media | High | `codex-rs/memories/write/src/phase1.rs::sanitize_response_item_for_memories` |
-| CF-005 | Additional context fingerprints unrendered raw values | Additional-context raw tail changes past render cap | Medium | `codex-rs/core/src/state/additional_context.rs::AdditionalContextStore::prepare` |
-| CF-006 | Compaction rehydration omits deduplication baselines | Compaction then resume/fork with active additional context | Medium | `codex-rs/core/src/session/additional_context.rs::Session::rehydrate_additional_context_for_compaction` |
 | CF-007 | Code Mode callbacks route to stale active turns | Delayed Code Mode callback overlaps a later turn | Medium | `codex-rs/core/src/tools/code_mode/delegate.rs::CodeModeDispatchBroker` |
 | CF-008 | Summary-capable compaction and sync Guardian requests ask for unused reasoning | Compaction/sync Guardian + enabled supported summaries | Medium | `codex-rs/core/src/client.rs::ModelClient::build_responses_request` |
 | CF-009 | Filtered forks inherit stale parent token usage and compact prematurely | Filtered legacy fork near compaction threshold | High | `codex-rs/core/src/agent/control/spawn.rs::keep_forked_rollout_item` |
@@ -79,7 +77,6 @@ user-versus-agent input ordering contract. The resulting active total is
 | CF-088 | Guardian V2 classifier prompt duplicates current tool action in transcript | Guardian V2 reviews current tool action | Medium | `codex-rs/ext/guardian-v2/src/async_scorer/transcript.rs` |
 | CF-089 (discarded-post-classification-output) | Guardian V2 Drains Generated Output After the Classification Is Known | Guardian V2 emits text after first verdict delta | Low | Set a provider output cap where supported or cancel the stream immediately after the first complete classification, while recording any usage already reported |
 | CF-090 | Guardian duplicates a screenshot present in both history and retained REPL evidence | Same screenshot in history and REPL evidence | Medium | `codex-rs/ext/guardian-v2/src/async_scorer/transcript.rs` |
-| CF-092 | MCP stale definitions persist; selected stale tools force corrective turns | MCP catalog change/recovery + stale tool selected | Medium | `codex-rs/codex-mcp/src/rmcp_client.rs` & `rmcp-client` |
 | CF-093 (regular-server common-provenance) | Regular MCP Plugin Provenance Repeats on Every Child Tool | Regular plugin-backed MCP server with many tools | Medium | For regular MCP servers whose tools share server-scoped membership, render provenance once in the namespace/server description and keep connector-specific Codex Apps attribution per tool |
 | CF-094 | Hidden/visible sanitized-name collision churn renames visible MCP tools | Hidden/visible sanitized collision + hidden churn | High | `codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs` |
 | CF-096 (false-empty-recovery) | Interrupted Deferred Search Reconstructs as Successful Empty Output | Crash after client search call before output | Medium | Reconstruct an orphaned client search as interrupted/failed (or resume it), not as a successful empty result, and preserve that status consistently in prompt history |
@@ -103,45 +100,107 @@ user-versus-agent input ordering contract. The resulting active total is
 
 ## Detailed Bug Findings
 
-### CF-001: Temporary Title and Recap Workers Request Discarded Reasoning Output
+### CF-001: Temporary Title and Recap Workers Request Discarded Reasoning Output (Complete)
 
-- **Sources & Facet:** #5 (worker-profile/input-bootstrap facet), H057 (discarded-reasoning facet)
-- **Trigger, Mechanism & Root Cause:** This path is active for recap workers and for title-generation paths that do not already force the bounded Luna profile, when the selected model supports reasoning summaries and the effective summary setting requests one. `start_temporary_thread` / `start_structured_turn` (`codex-rs/tui/src/temporary_structured_request.rs:46-232`) pass ordinary reasoning settings into `ModelClient::build_responses_request` (`codex-rs/core/src/client.rs:866-876`), while the metadata consumer keeps only final assistant text or structured JSON and discards reasoning items.
-- **Demonstrated Token Impact:** The client requests output that has no consumer. Actual emitted and billed summary tokens depend on model/provider support and the configured summary mode; there is no summary-token burn when the effective setting is `none` or the model cannot emit summaries.
-- **Remediation Seam:** In `codex-rs/core/src/client.rs::ModelClient::build_responses_request`, check the request kind/source (e.g. `ThreadSource::Feature` or metadata profile) and force `reasoning.summary = none` while preserving the configured model and permissions.
-- **Required Verification:** Cover recap, fallback/non-Luna title, and Luna title paths across supported/unsupported summary models and `none`/enabled settings; assert unused summaries are never requested and metadata output remains unchanged.
+- **Status:** **Complete** — current `HEAD` no longer requests discarded reasoning summaries for temporary
+  structured recap/title requests.
+- **Current implementation:** Temporary structured recap/title threads are launched with
+  `ThreadSource::Feature("system")` and flow through
+  `codex-rs/tui/src/temporary_structured_request.rs:202` plus
+  `codex-rs/tui/src/app/recap.rs:260-272` and
+  `codex-rs/tui/src/app/thread_title.rs:43-70`.
+- **Current fix seam:** `reasoning_summary_for_request` in `codex-rs/core/src/client.rs` suppresses summaries
+  for `ThreadSource::Feature("system")` and `ThreadSource::Feature("title")`.
+- **Regression evidence:** `codex-rs/core/src/client_tests.rs` asserts `temporary_structured_requests_omit_reasoning_summaries`
+  and verifies recap/title paths keep `reasoning.summary = None`.
 
-### CF-002: Goal Continuations Persist Duplicate Static Policy and Materialized Objective
+### CF-002: Goal Continuations Persist Duplicate Static Policy and Materialized Objective (Complete)
 
-- **Sources & Facet:** H051, H110 (continuation reference facet)
-- **Trigger, Mechanism & Root Cause:** `codex-rs/ext/goal/src/steering.rs::continuation_prompt` renders a 6.3K-character static policy rubric (`templates/goals/continuation.md:1-66`), full objective text, and an imperative to read materialized file attachments into every continuation item (`codex-rs/ext/goal/src/runtime.rs:363-417`). On every turn when the goal remains active, this entire static prompt is appended as a fresh user message to model history, duplicating bytes already present in previous turns.
-- **Demonstrated Token Impact:** ~1,500 redundant tokens per continuation turn. In a multi-step goal run of 20 turns, this accumulates to over 30K redundant prompt tokens.
-- **Remediation Seam:** Split `continuation_prompt` into a versioned `GoalContextRevision` injected once per goal revision or context window, and a lightweight `GoalContinuationDelta` containing only turn-specific status and step progress.
-- **Required Verification:** Run a multi-step goal execution across 10 turns; verify that the full static rubric appears exactly once and subsequent continuation items contain only the bounded delta.
+- **Status:** **Complete** — current `HEAD` retains the static goal policy and objective once per
+  goal revision while automatic continuation injects only bounded turn-specific accounting state.
+- **Current implementation:** `goal_context_world_state_section` in
+  `codex-rs/ext/goal/src/steering.rs` publishes the static rubric and objective as a World State
+  section keyed by goal ID and objective. An unchanged snapshot emits no new fragment; a missing
+  retained revision is rehydrated after compaction, and an objective update creates a new revision.
+- **Current continuation seam:** `GoalRuntimeHandle::continue_if_idle` injects
+  `continuation_delta_steering_item`, whose `continuation_delta.md` payload contains the current
+  token usage, budget, remaining tokens, and a short continuation instruction.
+- **Preserved behavior:** XML escaping, goal clearing, objective revision, and pause/resume retain
+  their established semantics while the static policy remains available in every context window.
+- **Regression evidence:**
+  `goal_context_revision_is_stable_and_rehydrates_after_compaction` in
+  `codex-rs/ext/goal/tests/goal_extension_backend.rs` verifies one static revision across ten
+  continuations, compaction rehydration, objective replacement, XML escaping, goal clearing, and
+  pause/resume stability.
 
-### CF-003: Memory Phase 1 Serializes Citation Markup and Raw Media Payloads as Text
+### CF-003: Memory Phase 1 Serializes Citation Markup and Raw Media Payloads as Text (Complete)
 
-- **Sources & Facet:** H103 (Phase 1 extraction facet), H105
-- **Trigger, Mechanism & Root Cause:** `codex-rs/memories/write/src/phase1.rs::serialize_filtered_rollout_response_items` (`404-466`) serializes filtered rollout `ResponseItem` objects as JSON into a single outer user message. Citation tags (`<memory_citation>`) emitted by the assistant and base64-encoded image/audio payloads in tool/user responses are embedded verbatim into the text string, forcing the Phase 1 extraction model to read raw base64 and citation boilerplate.
-- **Demonstrated Token Impact:** Up to 1 MiB of raw base64 strings and thousands of citation markup tokens are passed into extraction prompts, displacing useful conversational context.
-- **Remediation Seam:** In `sanitize_response_item_for_memories`, strip `<memory_citation>` XML tags and replace image/audio base64 payloads with compact modality placeholders (e.g. `[Image: 1024x768 PNG]`) before building `build_stage_one_input_message`.
-- **Required Verification:** Feed assistant messages with citations and tool results with image/audio into Phase 1 extraction; assert outbound extraction input contains no `<memory_citation>` tags or raw base64 strings.
+- **Status:** **Complete** — current `HEAD` sends Memory Phase 1 a sanitized, text-oriented rollout
+  projection with citation syntax removed and retained image/audio payloads replaced by compact
+  modality placeholders.
+- **Current implementation:**
+  `codex-rs/memories/write/src/phase1_projection.rs::serialize_filtered_rollout_response_items`
+  projects eligible rollout items before `phase1.rs` builds the Stage 1 prompt. The projection
+  sanitizes messages, agent messages, function outputs, custom-tool outputs, and compaction
+  replacement history, then applies secret redaction to the serialized result.
+- **Current sanitization seam:** Structured citations and legacy `<memory_citation>` blocks are
+  stripped from text. Typed content items, inline image/audio data URLs, and media fields nested in
+  JSON output become bounded placeholders such as `[Image: image/png]` and `[Audio: audio/wav]`.
+- **Preserved behavior:** Surrounding conversational text, media type hints, and function/custom
+  call relationships remain available to the extraction model.
+- **Regression evidence:**
+  `stage_one_input_sanitizes_citations_and_media_without_losing_call_relationships` in
+  `codex-rs/memories/write/src/phase1.rs` covers assistant citations, user image/audio, function
+  output media, custom JSON media, and compacted replacement history. It asserts that citation
+  markers, data-URL prefixes, and every raw payload are absent from the outbound Stage 1 input
+  while useful text, call IDs, and modality placeholders remain.
 
-### CF-005: Additional Context Fingerprinting Uses Unrendered Raw Values
+### CF-005: Additional Context Fingerprinting Uses Unrendered Raw Values (Complete)
 
-- **Sources & Facet:** #28 (additional-context facet), H083
-- **Trigger, Mechanism & Root Cause:** `codex-rs/core/src/state/additional_context.rs::AdditionalContextStore::set` fingerprints raw payload values before the 1,000-token rendering truncation applied in `codex-rs/context-fragments/src/additional_context.rs:94-101`. If an external caller updates a value where only bytes beyond the 1K truncation limit change, the store treats it as a new distinct fragment and appends a duplicate model-visible item whose rendered text is byte-identical to the previous turn.
-- **Demonstrated Token Impact:** Injects duplicate 1,000-token context items on every turn when unrendered tail bytes change, multiplying context consumption.
-- **Remediation Seam:** In `AdditionalContextStore::prepare`, render and truncate the fragment first, then compute the content fingerprint and dedup hash on the exact model-visible projection.
-- **Required Verification:** Update an additional context entry with changes only past the 1,000-token cutoff; assert no new fragment is appended to model context on the subsequent turn.
+- **Status:** **Complete** — current `HEAD` deduplicates additional context from the exact rendered,
+  token-truncated text that becomes model input.
+- **Current implementation:** `AdditionalContextStore::prepare` in
+  `codex-rs/core/src/state/additional_context.rs` first renders each untrusted or application
+  fragment through `AdditionalContextUserFragment` or `AdditionalContextDeveloperFragment`. It
+  fingerprints the rendered `InputText`, compares the treatment and fingerprint with the committed
+  snapshot, and publishes the same rendered fragment when that model-visible state changes.
+- **Current rendering seam:** `codex-rs/context-fragments/src/additional_context.rs` applies
+  `truncate_middle_with_token_budget` with the 1,000-token value budget before the v2 fingerprint is
+  calculated. Raw tail changes outside that projection therefore retain the same snapshot identity.
+- **Preserved behavior:** Changes to rendered bytes or trust treatment still publish, committed and
+  restored snapshots suppress unchanged values, and an explicit clear permits the same value to be
+  published again.
+- **Regression evidence:** `render_equivalent_tail_changes_are_suppressed_after_truncation` and
+  `changes_in_the_rendered_projection_are_published` in
+  `codex-rs/core/src/state/additional_context_tests.rs` cover the cutoff invariant in both
+  directions. The same test module also covers commit, restore, and explicit-clear lifecycle
+  behavior.
 
-### CF-006: Compaction Rehydration Omits Deduplication Baselines for Additional Context
+### CF-006: Compaction Rehydration Omits Deduplication Baselines for Additional Context (Complete)
 
-- **Sources & Facet:** H082, H084
-- **Trigger, Mechanism & Root Cause:** When local or remote compaction replaces history (`codex-rs/core/src/session/mod.rs:3496-3542`), `rehydrate_additional_context_for_compaction` (`codex-rs/core/src/session/additional_context.rs:9-40`) inserts retained context items into the compacted message list, but fails to persist or restore the baseline fingerprint in `AdditionalContextStore`. On resume or fork, the store starts empty and immediately re-emits the active context, creating duplicate entries.
-- **Demonstrated Token Impact:** Causes duplicate additional-context items to appear immediately after compaction or resume, wasting context on every subsequent turn.
-- **Remediation Seam:** In `Session::replace_compacted_history` and `apply_rollout_reconstruction`, make compaction replacement authoritative for all active additional context keys, persisting the exact baseline fingerprint in the rollout record.
-- **Required Verification:** Perform compaction with active additional context, resume the session, and perform a turn; verify that existing additional context is not re-injected as a duplicate fragment.
+- **Status:** **Complete** — the current worktree carries the rendered additional-context
+  fingerprint through compaction checkpoints and restores it during cold resume or fork.
+- **Current implementation:**
+  `Session::rehydrate_additional_context_for_compaction` in
+  `codex-rs/core/src/session/additional_context.rs` returns the retained model-visible fragments
+  together with the exact committed `AdditionalContextSnapshot`. When pre-turn or manual
+  compaction uses `InitialContextInjection::DoNotInject`, `Session::replace_compacted_history` in
+  `codex-rs/core/src/session/mod.rs` persists a full `WorldStateItem` whose sole section is
+  `additional_context` and installs the same snapshot as the live history baseline.
+- **Boundary behavior:** Mid-turn `InitialContextInjection::BeforeLastUserMessage` continues to
+  persist its complete world-state baseline. Rollout reconstruction reads the
+  `AdditionalContextState` section from either checkpoint shape and restores
+  `AdditionalContextStore` before the next `PublishSnapshot` action.
+- **Preserved behavior:** Other initial-context sections stay absent from a `DoNotInject`
+  checkpoint and remain eligible for normal reinjection on the next turn. An empty
+  additional-context snapshot emits no partial checkpoint.
+- **Regression evidence:**
+  `manual_compaction_preserves_additional_context_projection` in
+  `codex-rs/core/tests/suite/additional_context_compaction.rs` covers Local, Remote V1, and Remote
+  V2 compaction, each followed by cold resume and fork. All six cases assert that the persisted
+  full checkpoint contains exactly `additional_context` and that the reconstructed turn contains
+  exactly one application fragment and one untrusted fragment after the same snapshot is
+  published again.
 
 ### CF-007: Code Mode Callbacks Route to Stale Active Turns via Shared Broker
 
@@ -487,13 +546,21 @@ user-versus-agent input ordering contract. The resulting active total is
 - **Remediation Seam:** Deduplicate image payloads by content hash in `TranscriptConfig::images` before constructing the classifier prompt.
 - **Required Verification:** Submit a turn containing both a history image and a REPL screenshot with identical bytes; assert only one image is included in the classifier request.
 
-### CF-092: MCP Stale Tool Definitions Persist Across Catalog Changes and Recovery
+### CF-092: MCP Stale Tool Definitions Persist Across Catalog Changes and Recovery (Complete)
 
-- **Sources & Facet:** H032
-- **Trigger, Mechanism & Root Cause:** When an MCP server emits `tools/list_changed` or recovers from session expiry, `rmcp-client` logs the event but does not update `ManagedClient`'s cached tool declarations (`codex-rs/rmcp-client/src/rmcp_client.rs:112-124`). Stale or removed schemas remain in model context, causing failed calls.
-- **Demonstrated Token Impact:** Stale or removed schemas remain model-visible on the affected catalog-change/recovery path. An additional failed call and corrective model continuation occurs only if the model subsequently selects a stale tool.
-- **Remediation Seam:** Subscribe to `tools/list_changed` in `ConnectionManager` and republish updated tool definitions to the session tool registry.
-- **Required Verification:** Trigger `tools/list_changed` on an MCP server; verify that the tool registry updates immediately and removed tools are no longer model-visible.
+- **Status:** **Complete** — the current worktree refreshes the frozen model-visible MCP binding
+  after `notifications/tools/list_changed` and after session-expiry recovery.
+- **Current implementation:** `codex-rs/rmcp-client` advances a shared tool-list generation after
+  initialization, recovery, and list-change notifications. `codex-rs/codex-mcp` compares that
+  generation at the stable binding-cache boundary, relists through a single-flight semaphore, and
+  advances the catalog revision before publishing the replacement binding.
+- **Preserved behavior:** Pending startup catalogs remain nonblocking, while ready Codex Apps
+  bindings continue to use the exact connection-local tool list rather than a shared startup cache.
+- **Regression evidence:**
+  `connection_manager::tests::tool_list_changed_refreshes_the_model_visible_binding` verifies that
+  the old tool disappears from the rebuilt binding, and
+  `streamable_http_404_session_expiry_recovers_and_retries_once` verifies that recovery advances
+  the transport generation.
 
 ### CF-093: Regular MCP Plugin Provenance Repeats on Every Child Tool
 

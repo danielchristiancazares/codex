@@ -230,6 +230,7 @@ pub struct TurnContext {
     pub(crate) extension_data: Arc<codex_extension_api::ExtensionData>,
     pub(crate) turn_timing_state: Arc<TurnTimingState>,
     pub(crate) terminal_error: Arc<Mutex<Option<ErrorEvent>>>,
+    pub(crate) pending_post_tool_contexts: Arc<Mutex<Vec<String>>>,
     pub(crate) server_model_warning_emitted: AtomicBool,
     pub(crate) model_verification_emitted: AtomicBool,
     /// Effective cyber treatment for this turn, including any child-agent inheritance.
@@ -242,6 +243,17 @@ enum TurnMultiAgentRuntime {
 }
 
 impl TurnContext {
+    pub(crate) async fn defer_post_tool_contexts(&self, contexts: Vec<String>) {
+        self.pending_post_tool_contexts
+            .lock()
+            .await
+            .extend(contexts);
+    }
+
+    pub(crate) async fn take_post_tool_contexts(&self) -> Vec<String> {
+        std::mem::take(&mut *self.pending_post_tool_contexts.lock().await)
+    }
+
     /// Legacy: returns the frozen initial-turn model metadata.
     /// Step-scoped consumers should use their captured `StepContext::settings`.
     pub(crate) fn model_info(&self) -> &Arc<ModelInfo> {
@@ -534,6 +546,7 @@ impl TurnContext {
             extension_data: Arc::clone(&self.extension_data),
             turn_timing_state: Arc::clone(&self.turn_timing_state),
             terminal_error: Arc::clone(&self.terminal_error),
+            pending_post_tool_contexts: Arc::clone(&self.pending_post_tool_contexts),
             server_model_warning_emitted: AtomicBool::new(
                 self.server_model_warning_emitted.load(Ordering::Relaxed),
             ),
@@ -805,6 +818,7 @@ impl Session {
             extension_data,
             turn_timing_state: Arc::new(TurnTimingState::default()),
             terminal_error: Arc::new(Mutex::new(None)),
+            pending_post_tool_contexts: Arc::new(Mutex::new(Vec::new())),
             server_model_warning_emitted: AtomicBool::new(false),
             model_verification_emitted: AtomicBool::new(false),
             cyber_access_program: None,

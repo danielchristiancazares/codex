@@ -53,9 +53,7 @@ fn shared_trimmer_reaches_outputs_behind_newer_message_groups() {
         name: None,
         namespace: None,
         output: FunctionCallOutputPayload {
-            body: FunctionCallOutputBody::Text(
-                CONTEXT_WINDOW_TRUNCATED_OUTPUT_MESSAGE.to_string(),
-            ),
+            body: FunctionCallOutputBody::Text(CONTEXT_WINDOW_TRUNCATED_OUTPUT_MESSAGE.to_string()),
             success: Some(true),
         },
         internal_chat_message_metadata_passthrough: None,

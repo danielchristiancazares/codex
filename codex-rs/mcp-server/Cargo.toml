@@ -17,7 +17,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 codex-arg0 = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -34,20 +34,26 @@ codex-skills-extension = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }
 rmcp = { workspace = true }
-schemars = { workspace = true }
+schemars = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-shlex = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+shlex = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = [
     "io-std",
+    "io-util",
     "macros",
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
 ] }
 tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "tracing-log",
+] }
 [dev-dependencies]
 app_test_support = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -55,6 +61,7 @@ codex-shell-command = { workspace = true }
 core_test_support = { workspace = true }
 mcp_test_support = { workspace = true }
 os_info = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
+tokio = { workspace = true, features = ["time"] }
 wiremock = { workspace = true }

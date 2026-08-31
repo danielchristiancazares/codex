@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-schemars = { workspace = true }
+schemars = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 
 [lib]

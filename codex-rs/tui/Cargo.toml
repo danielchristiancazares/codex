@@ -26,11 +26,11 @@ harness = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-clap = { workspace = true, features = ["derive"] }
+base64 = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+clap = { workspace = true, features = ["derive", "std"] }
 codex-ansi-escape = { workspace = true }
 codex-app-server-client = { workspace = true }
 codex-app-server-protocol = { workspace = true }
@@ -73,8 +73,12 @@ codex-utils-plugins = { workspace = true }
 codex-utils-sandbox-summary = { workspace = true }
 codex-utils-sleep-inhibitor = { workspace = true }
 codex-utils-string = { workspace = true }
-color-eyre = { workspace = true }
-crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
+color-eyre = { workspace = true, features = ["capture-spantrace", "track-caller"] }
+crossterm = { workspace = true, features = [
+    "bracketed-paste",
+    "event-stream",
+    "windows",
+] }
 derive_more = { workspace = true, features = ["is_variant"] }
 diffy = { workspace = true }
 dirs = { workspace = true }
@@ -84,48 +88,57 @@ itertools = { workspace = true }
 lazy_static = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 ratatui = { workspace = true, features = [
+    "crossterm",
+    "layout-cache",
     "scrolling-regions",
+    "underline-color",
     "unstable-backend-writer",
     "unstable-rendered-line-info",
     "unstable-widget-ref",
 ] }
 ratatui-macros = { workspace = true }
-regex-lite = { workspace = true }
+regex-lite = { workspace = true, features = ["std", "string"] }
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = { workspace = true }
-shlex = { workspace = true }
+shlex = { workspace = true, features = ["std"] }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 supports-color = { workspace = true }
-tempfile = { workspace = true }
-textwrap = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
+textwrap = { workspace = true, features = [
+    "smawk",
+    "unicode-linebreak",
+    "unicode-width",
+] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
+    "fs",
     "io-std",
     "macros",
+    "net",
     "process",
     "rt-multi-thread",
     "signal",
-    "test-util",
+    "sync",
     "time",
 ] }
 tokio-stream = { workspace = true, features = ["sync"] }
-toml = { workspace = true }
+toml = { workspace = true, features = ["parse", "serde", "std"] }
 tracing = { workspace = true, features = ["log"] }
 tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
-syntect = "5"
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "tracing-log"] }
+syntect = { version = "5", default-features = false }
 two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
 webbrowser = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4", "v7"] }
 
 codex-windows-sandbox = { workspace = true }
 tokio-util = { workspace = true, features = ["time"] }
@@ -134,8 +147,8 @@ tokio-util = { workspace = true, features = ["time"] }
 libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-which = { workspace = true }
-windows-sys = { version = "0.52", features = [
+which = { workspace = true, features = ["real-sys"] }
+windows-sys = { default-features = false, version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
@@ -144,12 +157,15 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
-winsplit = "0.1"
+winsplit = { version = "0.1", default-features = false }
 
 # Clipboard support via `arboard` is not available on Android/Termux.
 # Only include it for non-Android targets so the crate builds on Android.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { workspace = true }
+arboard = { workspace = true, features = [
+    "image-data",
+    "wayland-data-control",
+] }
 
 
 [dev-dependencies]
@@ -163,10 +179,11 @@ divan = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 insta = { workspace = true }
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
 rand = { workspace = true }
-serial_test = { workspace = true }
-tokio-tungstenite = { workspace = true }
+serial_test = { workspace = true, features = ["async"] }
+tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 vt100 = { workspace = true }
 uuid = { workspace = true }
 wiremock = { workspace = true }

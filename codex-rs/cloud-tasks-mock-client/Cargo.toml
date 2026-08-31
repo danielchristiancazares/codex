@@ -15,6 +15,6 @@ doctest = false
 workspace = true
 
 [dependencies]
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 codex-cloud-tasks-client = { workspace = true }
 diffy = { workspace = true }

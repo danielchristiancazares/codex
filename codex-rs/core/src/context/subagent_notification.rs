@@ -44,4 +44,9 @@ impl ContextualUserFragment for SubagentNotification {
             })
         )
     }
+
+    fn render(&self) -> String {
+        let (start_marker, end_marker) = self.markers();
+        crate::session_prefix::bounded_completion_fragment(self.body(), start_marker, end_marker)
+    }
 }

@@ -2398,7 +2398,7 @@ Codex supports these authentication modes. The current mode is surfaced in `acco
 - `account/login/cancel` — cancel a pending managed ChatGPT login by `loginId`.
 - `account/logout` — sign out; triggers `account/updated` on success.
 - `account/updated` (notify) — emitted whenever auth mode changes (`authMode`: `apikey`, `bedrockApiKey`, `bedrockAccessKeys`, `chatgpt`, `personalAccessToken`, or `null`) and includes the current ChatGPT `planType` when available.
-- `account/rateLimits/read` — fetch ChatGPT rate limits, an optional effective monthly credit limit, whether spend control has been reached, and the earned rate-limit resets currently available, including expiry details when provided by the backend. Rate-limit updates arrive via `account/rateLimits/updated` (notify); reset-credit data is snapshot-only.
+- `account/rateLimits/read` — fetch rate limits for the active ChatGPT or GitHub Copilot provider. ChatGPT responses can include an effective monthly credit limit, spend-control state, and earned rate-limit resets. GitHub Copilot responses expose the monthly Copilot quota when the account reports a finite premium-interaction or chat allowance. ChatGPT rate-limit updates arrive via `account/rateLimits/updated` (notify); reset-credit data is snapshot-only.
 - `account/rateLimitResetCredit/consume` — consume one earned reset using a caller-provided idempotency key, optionally selecting a reset-credit ID returned by `account/rateLimits/read`.
 - `account/usage/read` — fetch ChatGPT account token-activity summary and daily buckets, or pass a valid thread UUID as `threadId` to read estimated credits, optional cost, and usage breakdowns for one thread using the app-server's active account. The optional `threadUsage` response field is absent on older servers and `null` when the billing route is unavailable.
 - `account/workspaceMessages/read` — fetch active workspace messages, including workspace notification headlines when available.
@@ -2602,7 +2602,7 @@ also clears `model`; `model_reasoning_effort` and other generic settings are pre
 Codex-managed credentials are removed; AWS profiles, environment credentials, and
 `$CODEX_HOME/.env` are left untouched.
 
-### 7) Rate limits (ChatGPT)
+### 7) Rate limits (ChatGPT and GitHub Copilot)
 
 ```json
 { "method": "account/rateLimits/read", "id": 7 }
@@ -2635,11 +2635,12 @@ Codex-managed credentials are removed; AWS profiles, environment credentials, an
 
 Field notes:
 
-- `usedPercent` is current usage within the OpenAI quota window.
+- `usedPercent` is current usage within the provider quota window.
 - `windowDurationMins` is the quota window length.
 - `resetsAt` is a Unix timestamp (seconds) for the next reset.
 - `rateLimitReachedType` identifies the backend-classified limit state when one has been reached.
 - `individualLimit` describes the effective monthly credit limit when available. In an `account/rateLimits/read` response, `null` means no monthly limit is available. In a sparse `account/rateLimits/updated` notification, nullable account metadata may be unavailable and does not clear a previously observed value.
+- With the GitHub Copilot provider active, `rateLimits.limitId` is `copilot` and the primary window represents the finite monthly `premium_interactions` allowance, falling back to the monthly `chat` allowance when premium interactions are absent. Unlimited allowances have no finite primary window. `rateLimitResetCredits` is `null`.
 - `rateLimitResetCredits` contains the available earned-reset count when the backend provides it; otherwise it is `null`.
 - `rateLimitResetCredits.credits` is `null` when only the count is available. An empty array means details were fetched and no available credits were returned.
 - The backend may cap `rateLimitResetCredits.credits`, so `availableCount` is the authoritative total and can be greater than the number of detail rows.

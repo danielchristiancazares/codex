@@ -843,6 +843,66 @@ async fn status_snapshot_shows_copilot_without_runtime_url_or_chatgpt_account() 
 }
 
 #[tokio::test]
+async fn status_snapshot_shows_copilot_monthly_limit() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model_provider_id = COPILOT_PROVIDER_ID.to_string();
+    config.model_provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove(COPILOT_PROVIDER_ID)
+        .expect("built-in Copilot provider");
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+    let usage = TokenUsage::default();
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2026, 8, 31, 12, 0, 0)
+        .single()
+        .expect("timestamp");
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+    let snapshot = RateLimitSnapshot {
+        limit_id: Some("copilot".to_string()),
+        limit_name: Some("Copilot".to_string()),
+        primary: Some(RateLimitWindow {
+            used_percent: 33,
+            window_duration_mins: Some(30 * 24 * 60),
+            resets_at: None,
+        }),
+        secondary: None,
+        credits: None,
+        individual_limit: None,
+        spend_control_reached: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+    };
+    let rate_limits = [super::rate_limit_snapshot_display_for_limit(
+        &snapshot,
+        "Copilot".to_string(),
+        captured_at,
+    )];
+    let (composite, _handle) = new_status_output_with_rate_limits_handle(
+        &config,
+        Some("https://api.githubcopilot.com"),
+        /*remote_connection*/ None,
+        /*account*/ None,
+        /*token_info*/ None,
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        &rate_limits,
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+        "<none>".to_string(),
+        /*refreshing_rate_limits*/ false,
+    );
+    let sanitized =
+        sanitize_directory(render_lines(&composite.display_lines(/*width*/ 80))).join("\n");
+
+    assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
 async fn status_snapshot_shows_auto_review_permissions() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;

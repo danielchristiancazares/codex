@@ -21,4 +21,4 @@ codex-utils-plugins = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }

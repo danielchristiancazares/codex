@@ -8,8 +8,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "std"] }
 codex-connectors = { workspace = true }
 codex-core = { workspace = true }
 codex-git-utils = { workspace = true }
@@ -19,13 +19,13 @@ codex-model-provider = { workspace = true }
 codex-plugin = { workspace = true }
 codex-utils-cli = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["fs", "macros", "process", "rt"] }
 
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }
-pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lib]
 doctest = false

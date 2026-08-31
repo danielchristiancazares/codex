@@ -152,361 +152,321 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Internal
-app_test_support = { path = "app-server/tests/common" }
-codex-analytics = { path = "analytics" }
-codex-agent-graph-store = { path = "agent-graph-store" }
-codex-agent-identity = { path = "agent-identity" }
-codex-agent-roles = { path = "agent-roles" }
-codex-ansi-escape = { path = "ansi-escape" }
-codex-api = { path = "codex-api" }
-codex-aws-auth = { path = "aws-auth" }
-codex-app-server = { path = "app-server" }
-codex-app-server-transport = { path = "app-server-transport" }
-codex-app-server-daemon = { path = "app-server-daemon" }
-codex-app-server-client = { path = "app-server-client" }
-codex-app-server-protocol = { path = "app-server-protocol" }
-codex-app-server-protocol-noop-macros = { path = "app-server-protocol-noop-macros" }
-codex-app-server-test-client = { path = "app-server-test-client" }
-codex-apply-patch = { path = "apply-patch" }
-codex-arg0 = { path = "arg0" }
-codex-async-utils = { path = "async-utils" }
-codex-backend-client = { path = "backend-client" }
-codex-chatgpt = { path = "chatgpt" }
-codex-client = { path = "codex-client" }
-codex-collaboration-mode-templates = { path = "collaboration-mode-templates" }
-codex-cloud-config = { path = "cloud-config" }
-codex-cloud-tasks-client = { path = "cloud-tasks-client" }
-codex-cloud-tasks-mock-client = { path = "cloud-tasks-mock-client" }
-codex-code-mode = { path = "code-mode" }
-codex-code-mode-protocol = { path = "code-mode-protocol" }
-codex-code-mode-runtime = { path = "code-mode-runtime" }
-codex-home = { path = "codex-home" }
-codex-http-client = { path = "http-client" }
-codex-websocket-client = { path = "websocket-client" }
-codex-config = { path = "config" }
-codex-connectors = { path = "connectors" }
-codex-agent-extension = { path = "ext/agent" }
-codex-connectors-extension = { path = "ext/connectors" }
-codex-context-fragments = { path = "context-fragments" }
-codex-core = { path = "core" }
-codex-core-api = { path = "core-api" }
-codex-core-plugins = { path = "core-plugins" }
-codex-diagnostics = { path = "diagnostics" }
-codex-exec = { path = "exec" }
-codex-exec-output-artifacts = { path = "exec-output-artifacts" }
-codex-file-system = { path = "file-system" }
-codex-exec-server-protocol = { path = "exec-server-protocol" }
-codex-exec-server = { path = "exec-server" }
-codex-exec-server-test-support = { path = "exec-server/tests/support" }
-codex-execpolicy = { path = "execpolicy" }
-codex-extension-api = { path = "ext/extension-api" }
-codex-extension-items = { path = "ext/items" }
-codex-goal-extension = { path = "ext/goal" }
-codex-git-attribution = { path = "ext/git-attribution" }
-codex-guardian-v2 = { path = "ext/guardian-v2" }
-codex-history-notes-extension = { path = "ext/history-notes" }
-codex-image-generation-extension = { path = "ext/image-generation" }
-codex-external-agent-migration = { path = "external-agent-migration" }
-codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
-codex-features = { path = "features" }
-codex-feedback = { path = "feedback" }
-codex-install-context = { path = "install-context" }
-codex-file-search = { path = "file-search" }
-codex-file-watcher = { path = "file-watcher" }
-codex-git-utils = { path = "git-utils" }
-codex-hooks = { path = "hooks" }
-codex-history = { path = "history" }
-codex-keyring-store = { path = "keyring-store" }
-codex-linux-sandbox = { path = "linux-sandbox" }
-codex-lmstudio = { path = "lmstudio" }
-codex-login = { path = "login" }
-codex-message-history = { path = "message-history" }
-codex-memories-extension = { path = "ext/memories" }
-codex-web-search-extension = { path = "ext/web-search" }
-codex-memories-read = { path = "memories/read" }
-codex-memories-write = { path = "memories/write" }
-codex-mcp = { path = "codex-mcp" }
-codex-mcp-extension = { path = "ext/mcp" }
-codex-mcp-server = { path = "mcp-server" }
-codex-model-provider-info = { path = "model-provider-info" }
-codex-models-manager = { path = "models-manager" }
-codex-network-proxy = { path = "network-proxy" }
-codex-ollama = { path = "ollama" }
-codex-otel = { path = "otel" }
-codex-plugin = { path = "plugin" }
-codex-model-provider = { path = "model-provider" }
-codex-process-hardening = { path = "process-hardening" }
-codex-protocol = { path = "protocol" }
-codex-prompts = { path = "prompts" }
-codex-queue-extension = { path = "ext/queue" }
-codex-responses-api-proxy = { path = "responses-api-proxy" }
-codex-response-debug-context = { path = "response-debug-context" }
-codex-rmcp-client = { path = "rmcp-client" }
-codex-rollout = { path = "rollout" }
-codex-rollout-trace = { path = "rollout-trace" }
-codex-sandboxing = { path = "sandboxing" }
-codex-secrets = { path = "secrets" }
-codex-shell-command = { path = "shell-command" }
-codex-shell-escalation = { path = "shell-escalation" }
-codex-skills-extension = { path = "ext/skills" }
-codex-skills = { path = "skills" }
-codex-state = { path = "state" }
-codex-stdio-to-uds = { path = "stdio-to-uds" }
-codex-terminal-detection = { path = "terminal-detection" }
-codex-test-binary-support = { path = "test-binary-support" }
-codex-thread-store = { path = "thread-store" }
-codex-tools = { path = "tools" }
-codex-tui = { path = "tui" }
-codex-uds = { path = "uds" }
-codex-utils-absolute-path = { path = "utils/absolute-path" }
-codex-utils-approval-presets = { path = "utils/approval-presets" }
-codex-utils-audio = { path = "utils/audio" }
-codex-utils-cache = { path = "utils/cache" }
-codex-utils-cargo-bin = { path = "utils/cargo-bin" }
-codex-utils-cli = { path = "utils/cli" }
-codex-utils-elapsed = { path = "utils/elapsed" }
-codex-utils-fuzzy-match = { path = "utils/fuzzy-match" }
-codex-utils-home-dir = { path = "utils/home-dir" }
-codex-utils-image = { path = "utils/image" }
-codex-utils-json-to-toml = { path = "utils/json-to-toml" }
-codex-utils-oss = { path = "utils/oss" }
-codex-utils-output-truncation = { path = "utils/output-truncation" }
-codex-utils-path = { path = "utils/path-utils" }
-codex-utils-path-uri = { path = "utils/path-uri" }
-codex-utils-plugins = { path = "utils/plugins" }
-codex-utils-pty = { path = "utils/pty" }
-codex-utils-redacted-string = { path = "utils/redacted-string" }
-codex-utils-rustls-provider = { path = "utils/rustls-provider" }
-codex-utils-sandbox-summary = { path = "utils/sandbox-summary" }
-codex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor" }
-codex-utils-stream-parser = { path = "utils/stream-parser" }
-codex-utils-string = { path = "utils/string" }
-codex-utils-template = { path = "utils/template" }
-codex-v8-poc = { path = "v8-poc" }
-codex-workload-identity = { path = "workload-identity" }
-codex-windows-sandbox = { path = "windows-sandbox-rs" }
-core_test_support = { path = "core/tests/common" }
-mcp_test_support = { path = "mcp-server/tests/common" }
+app_test_support = { path = "app-server/tests/common", default-features = false }
+codex-analytics = { path = "analytics", default-features = false }
+codex-agent-graph-store = { path = "agent-graph-store", default-features = false }
+codex-agent-identity = { path = "agent-identity", default-features = false }
+codex-agent-roles = { path = "agent-roles", default-features = false }
+codex-ansi-escape = { path = "ansi-escape", default-features = false }
+codex-api = { path = "codex-api", default-features = false }
+codex-aws-auth = { path = "aws-auth", default-features = false }
+codex-app-server = { path = "app-server", default-features = false }
+codex-app-server-transport = { path = "app-server-transport", default-features = false }
+codex-app-server-daemon = { path = "app-server-daemon", default-features = false }
+codex-app-server-client = { path = "app-server-client", default-features = false }
+codex-app-server-protocol = { path = "app-server-protocol", default-features = false }
+codex-app-server-protocol-noop-macros = { path = "app-server-protocol-noop-macros", default-features = false }
+codex-apply-patch = { path = "apply-patch", default-features = false }
+codex-arg0 = { path = "arg0", default-features = false }
+codex-async-utils = { path = "async-utils", default-features = false }
+codex-backend-client = { path = "backend-client", default-features = false }
+codex-chatgpt = { path = "chatgpt", default-features = false }
+codex-client = { path = "codex-client", default-features = false }
+codex-collaboration-mode-templates = { path = "collaboration-mode-templates", default-features = false }
+codex-cloud-config = { path = "cloud-config", default-features = false }
+codex-cloud-tasks-client = { path = "cloud-tasks-client", default-features = false }
+codex-cloud-tasks-mock-client = { path = "cloud-tasks-mock-client", default-features = false }
+codex-code-mode = { path = "code-mode", default-features = false }
+codex-code-mode-protocol = { path = "code-mode-protocol", default-features = false }
+codex-code-mode-runtime = { path = "code-mode-runtime", default-features = false }
+codex-home = { path = "codex-home", default-features = false }
+codex-http-client = { path = "http-client", default-features = false }
+codex-websocket-client = { path = "websocket-client", default-features = false }
+codex-config = { path = "config", default-features = false }
+codex-connectors = { path = "connectors", default-features = false }
+codex-agent-extension = { path = "ext/agent", default-features = false }
+codex-connectors-extension = { path = "ext/connectors", default-features = false }
+codex-context-fragments = { path = "context-fragments", default-features = false }
+codex-core = { path = "core", default-features = false }
+codex-core-api = { path = "core-api", default-features = false }
+codex-core-plugins = { path = "core-plugins", default-features = false }
+codex-diagnostics = { path = "diagnostics", default-features = false }
+codex-exec = { path = "exec", default-features = false }
+codex-exec-output-artifacts = { path = "exec-output-artifacts", default-features = false }
+codex-file-system = { path = "file-system", default-features = false }
+codex-exec-server-protocol = { path = "exec-server-protocol", default-features = false }
+codex-exec-server = { path = "exec-server", default-features = false }
+codex-exec-server-test-support = { path = "exec-server/tests/support", default-features = false }
+codex-execpolicy = { path = "execpolicy", default-features = false }
+codex-extension-api = { path = "ext/extension-api", default-features = false }
+codex-extension-items = { path = "ext/items", default-features = false }
+codex-goal-extension = { path = "ext/goal", default-features = false }
+codex-git-attribution = { path = "ext/git-attribution", default-features = false }
+codex-guardian-v2 = { path = "ext/guardian-v2", default-features = false }
+codex-history-notes-extension = { path = "ext/history-notes", default-features = false }
+codex-image-generation-extension = { path = "ext/image-generation", default-features = false }
+codex-external-agent-migration = { path = "external-agent-migration", default-features = false }
+codex-experimental-api-macros = { path = "codex-experimental-api-macros", default-features = false }
+codex-features = { path = "features", default-features = false }
+codex-feedback = { path = "feedback", default-features = false }
+codex-install-context = { path = "install-context", default-features = false }
+codex-file-search = { path = "file-search", default-features = false }
+codex-file-watcher = { path = "file-watcher", default-features = false }
+codex-git-utils = { path = "git-utils", default-features = false }
+codex-hooks = { path = "hooks", default-features = false }
+codex-history = { path = "history", default-features = false }
+codex-keyring-store = { path = "keyring-store", default-features = false }
+codex-linux-sandbox = { path = "linux-sandbox", default-features = false }
+codex-login = { path = "login", default-features = false }
+codex-message-history = { path = "message-history", default-features = false }
+codex-memories-extension = { path = "ext/memories", default-features = false }
+codex-web-search-extension = { path = "ext/web-search", default-features = false }
+codex-memories-read = { path = "memories/read", default-features = false }
+codex-memories-write = { path = "memories/write", default-features = false }
+codex-mcp = { path = "codex-mcp", default-features = false }
+codex-mcp-extension = { path = "ext/mcp", default-features = false }
+codex-mcp-server = { path = "mcp-server", default-features = false }
+codex-model-provider-info = { path = "model-provider-info", default-features = false }
+codex-models-manager = { path = "models-manager", default-features = false }
+codex-network-proxy = { path = "network-proxy", default-features = false }
+codex-otel = { path = "otel", default-features = false }
+codex-plugin = { path = "plugin", default-features = false }
+codex-model-provider = { path = "model-provider", default-features = false }
+codex-process-hardening = { path = "process-hardening", default-features = false }
+codex-protocol = { path = "protocol", default-features = false }
+codex-prompts = { path = "prompts", default-features = false }
+codex-queue-extension = { path = "ext/queue", default-features = false }
+codex-responses-api-proxy = { path = "responses-api-proxy", default-features = false }
+codex-response-debug-context = { path = "response-debug-context", default-features = false }
+codex-rmcp-client = { path = "rmcp-client", default-features = false }
+codex-rollout = { path = "rollout", default-features = false }
+codex-rollout-trace = { path = "rollout-trace", default-features = false }
+codex-sandboxing = { path = "sandboxing", default-features = false }
+codex-secrets = { path = "secrets", default-features = false }
+codex-shell-command = { path = "shell-command", default-features = false }
+codex-shell-escalation = { path = "shell-escalation", default-features = false }
+codex-skills-extension = { path = "ext/skills", default-features = false }
+codex-skills = { path = "skills", default-features = false }
+codex-state = { path = "state", default-features = false }
+codex-stdio-to-uds = { path = "stdio-to-uds", default-features = false }
+codex-terminal-detection = { path = "terminal-detection", default-features = false }
+codex-test-binary-support = { path = "test-binary-support", default-features = false }
+codex-thread-store = { path = "thread-store", default-features = false }
+codex-tools = { path = "tools", default-features = false }
+codex-tui = { path = "tui", default-features = false }
+codex-uds = { path = "uds", default-features = false }
+codex-utils-absolute-path = { path = "utils/absolute-path", default-features = false }
+codex-utils-approval-presets = { path = "utils/approval-presets", default-features = false }
+codex-utils-audio = { path = "utils/audio", default-features = false }
+codex-utils-cache = { path = "utils/cache", default-features = false }
+codex-utils-cargo-bin = { path = "utils/cargo-bin", default-features = false }
+codex-utils-cli = { path = "utils/cli", default-features = false }
+codex-utils-elapsed = { path = "utils/elapsed", default-features = false }
+codex-utils-fuzzy-match = { path = "utils/fuzzy-match", default-features = false }
+codex-utils-home-dir = { path = "utils/home-dir", default-features = false }
+codex-utils-image = { path = "utils/image", default-features = false }
+codex-utils-json-to-toml = { path = "utils/json-to-toml", default-features = false }
+codex-utils-oss = { path = "utils/oss", default-features = false }
+codex-utils-output-truncation = { path = "utils/output-truncation", default-features = false }
+codex-utils-path = { path = "utils/path-utils", default-features = false }
+codex-utils-path-uri = { path = "utils/path-uri", default-features = false }
+codex-utils-plugins = { path = "utils/plugins", default-features = false }
+codex-utils-pty = { path = "utils/pty", default-features = false }
+codex-utils-redacted-string = { path = "utils/redacted-string", default-features = false }
+codex-utils-rustls-provider = { path = "utils/rustls-provider", default-features = false }
+codex-utils-sandbox-summary = { path = "utils/sandbox-summary", default-features = false }
+codex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor", default-features = false }
+codex-utils-stream-parser = { path = "utils/stream-parser", default-features = false }
+codex-utils-string = { path = "utils/string", default-features = false }
+codex-utils-template = { path = "utils/template", default-features = false }
+codex-workload-identity = { path = "workload-identity", default-features = false }
+codex-windows-sandbox = { path = "windows-sandbox-rs", default-features = false }
+core_test_support = { path = "core/tests/common", default-features = false }
+mcp_test_support = { path = "mcp-server/tests/common", default-features = false }
 
 # External
-age = "0.11.1"
-ansi-to-tui = "8.0.1"
-anyhow = "1"
-arboard = { version = "3", features = ["wayland-data-control"] }
-arc-swap = "1.9.0"
-assert_cmd = "2"
-assert_matches = "1.5.0"
-async-channel = "2.3.1"
-async-io = "2.6.0"
-async-stream = "0.3.6"
-aws-config = "1"
-aws-credential-types = "1"
-aws-sigv4 = "1"
-aws-types = "1"
+age = { version = "0.11.1", default-features = false }
+ansi-to-tui = { version = "8.0.1", default-features = false }
+anyhow = { version = "1", default-features = false }
+arboard = { version = "3", default-features = false }
+arc-swap = { version = "1.9.0", default-features = false }
+assert_cmd = { version = "2", default-features = false }
+assert_matches = { version = "1.5.0", default-features = false }
+async-channel = { version = "2.3.1", default-features = false }
+async-io = { version = "2.6.0", default-features = false }
+async-stream = { version = "0.3.6", default-features = false }
+aws-config = { version = "1", default-features = false }
+aws-credential-types = { version = "1", default-features = false }
+aws-sigv4 = { version = "1", default-features = false }
+aws-types = { version = "1", default-features = false }
 axum = { version = "0.8", default-features = false }
-base64 = "0.22.1"
-bitflags = "2.13.1"
-blake3 = { version = "1.8.2", features = ["rayon"] }
-bm25 = "2.3.2"
-bytes = "1.10.1"
-chardetng = "0.1.17"
-chrono = "0.4.43"
-clap = "4"
-clap_complete = "4"
-clatter = { version = "2.2.0", default-features = false, features = [
-    "alloc",
-    "getrandom",
-    "use-25519",
-    "use-aes-gcm",
-    "use-rust-crypto-ml-kem",
-    "use-sha",
-] }
-color-eyre = "0.6.3"
-constant_time_eq = "0.3.1"
-crossbeam-channel = "0.5.15"
-crypto_box = { version = "0.9.1", features = ["seal"] }
-crossterm = "0.29.0"
-ctor = "0.6.3"
-deno_core_icudata = "0.77.0"
-derive_more = "2"
-diffy = "0.4.2"
-dirs = "6"
-divan = "0.1.21"
-dns-lookup = "3.0.1"
-dotenvy = "0.15.7"
-dunce = "1.0.4"
-ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
-encoding_rs = "0.8.35"
-eventsource-stream = "0.2.3"
-flate2 = "1.1.8"
+base64 = { version = "0.22.1", default-features = false }
+bitflags = { version = "2.13.1", default-features = false }
+blake3 = { version = "1.8.2", default-features = false }
+bm25 = { version = "2.3.2", default-features = false }
+bytes = { version = "1.10.1", default-features = false }
+chardetng = { version = "0.1.17", default-features = false }
+chrono = { version = "0.4.43", default-features = false }
+clap = { version = "4", default-features = false }
+clap_complete = { version = "4", default-features = false }
+clatter = { version = "2.2.0", default-features = false }
+color-eyre = { version = "0.6.3", default-features = false }
+constant_time_eq = { version = "0.3.1", default-features = false }
+crossbeam-channel = { version = "0.5.15", default-features = false }
+crypto_box = { version = "0.9.1", default-features = false }
+crossterm = { version = "0.29.0", default-features = false }
+ctor = { version = "0.6.3", default-features = false }
+deno_core_icudata = { version = "0.77.0", default-features = false }
+derive_more = { version = "2", default-features = false }
+diffy = { version = "0.4.2", default-features = false }
+dirs = { version = "6", default-features = false }
+divan = { version = "0.1.21", default-features = false }
+dns-lookup = { version = "3.0.1", default-features = false }
+dotenvy = { version = "0.15.7", default-features = false }
+dunce = { version = "1.0.4", default-features = false }
+ed25519-dalek = { version = "2.2.0", default-features = false }
+encoding_rs = { version = "0.8.35", default-features = false }
+eventsource-stream = { version = "0.2.3", default-features = false }
+flate2 = { version = "1.1.8", default-features = false }
 futures = { version = "0.3", default-features = false }
-gethostname = "1.1.0"
-gix = { version = "0.81.0", default-features = false, features = ["sha1"] }
-gix-url = "0.35.2"
-glob = "0.3"
-globset = "0.4"
-hmac = "0.12.1"
-http = "1.3.1"
-httpdate = "1.0.3"
-iana-time-zone = "0.1.64"
-icu_decimal = "2.1"
-icu_locale_core = "2.1"
-icu_provider = { version = "2.1", features = ["sync"] }
-ignore = "0.4.23"
+gethostname = { version = "1.1.0", default-features = false }
+gix = { version = "0.81.0", default-features = false }
+gix-url = { version = "0.35.2", default-features = false }
+glob = { version = "0.3", default-features = false }
+globset = { version = "0.4", default-features = false }
+hmac = { version = "0.12.1", default-features = false }
+http = { version = "1.3.1", default-features = false }
+httpdate = { version = "1.0.3", default-features = false }
+iana-time-zone = { version = "0.1.64", default-features = false }
+icu_decimal = { version = "2.1", default-features = false }
+icu_locale_core = { version = "2.1", default-features = false }
+icu_provider = { version = "2.1", default-features = false }
+ignore = { version = "0.4.23", default-features = false }
 image = { version = "^0.25.9", default-features = false }
-include_dir = "0.7.4"
-indexmap = "2.12.0"
-insta = "1.46.3"
-inventory = "0.3.19"
-itertools = "0.14.0"
+include_dir = { version = "0.7.4", default-features = false }
+indexmap = { version = "2.12.0", default-features = false }
+insta = { version = "1.46.3", default-features = false }
+inventory = { version = "0.3.19", default-features = false }
+itertools = { version = "0.14.0", default-features = false }
 jsonptr = { version = "0.7.1", default-features = false }
-jsonwebtoken = "9.3.1"
+jsonwebtoken = { version = "9.3.1", default-features = false }
 keyring = { version = "3.6", default-features = false }
-landlock = "0.4.4"
-lazy_static = "1"
-libc = "0.2.182"
+landlock = { version = "0.4.4", default-features = false }
+lazy_static = { version = "1", default-features = false }
+libc = { version = "0.2.182", default-features = false }
 # Keep SQLx's bundled SQLite on a version containing the WAL-reset corruption fix:
 # https://www.sqlite.org/wal.html#the_wal_reset_bug
 libsqlite3-sys = { version = "0.37", default-features = false }
-log = "0.4"
-lru = "0.18.2"
-maplit = "1.0.2"
-memchr = "2.7.6"
-mime_guess = "2.0.5"
-multimap = "0.10.0"
-notify = "8.2.0"
-nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
-once_cell = "1.20.2"
-openssl-sys = "*"
-opentelemetry = "0.31.0"
-opentelemetry-appender-tracing = "0.31.0"
-opentelemetry-otlp = "0.31.0"
-opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
-os_info = "3.12.0"
-owo-colors = "4.3.0"
-pathdiff = "0.2"
-portable-pty = "0.9.0"
-predicates = "3"
-pretty_assertions = "1.4.1"
+log = { version = "0.4", default-features = false }
+lru = { version = "0.18.2", default-features = false }
+maplit = { version = "1.0.2", default-features = false }
+memchr = { version = "2.7.6", default-features = false }
+mime_guess = { version = "2.0.5", default-features = false }
+multimap = { version = "0.10.0", default-features = false }
+notify = { version = "8.2.0", default-features = false }
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee", default-features = false }
+once_cell = { version = "1.20.2", default-features = false }
+openssl-sys = { version = "*", default-features = false }
+opentelemetry = { version = "0.31.0", default-features = false }
+opentelemetry-appender-tracing = { version = "0.31.0", default-features = false }
+opentelemetry-otlp = { version = "0.31.0", default-features = false }
+opentelemetry-semantic-conventions = { version = "0.31.0", default-features = false }
+opentelemetry_sdk = { version = "0.31.0", default-features = false }
+os_info = { version = "3.12.0", default-features = false }
+owo-colors = { version = "4.3.0", default-features = false }
+pathdiff = { version = "0.2", default-features = false }
+portable-pty = { version = "0.9.0", default-features = false }
+predicates = { version = "3", default-features = false }
+pretty_assertions = { version = "1.4.1", default-features = false }
 pulldown-cmark = { version = "0.10", default-features = false }
-quick-xml = "0.41.0"
-rand = "0.9"
-ratatui = { version = "0.30.2", default-features = false, features = [
-    "crossterm",
-    "layout-cache",
-    "underline-color",
-] }
-ratatui-macros = "0.7.2"
-rcgen = { version = "0.14.7", default-features = false, features = [
-    "aws_lc_rs",
-    "pem",
-] }
-regex = "1.12.3"
-regex-lite = "0.1.8"
-reqwest = { version = "0.12", features = ["cookies"] }
+quick-xml = { version = "0.41.0", default-features = false }
+rand = { version = "0.9", default-features = false }
+ratatui = { version = "0.30.2", default-features = false }
+ratatui-macros = { version = "0.7.2", default-features = false }
+rcgen = { version = "0.14.7", default-features = false }
+regex = { version = "1.12.3", default-features = false }
+regex-lite = { version = "0.1.8", default-features = false }
+reqwest = { default-features = false, version = "0.12" }
 rmcp = { version = "=3.1.3", default-features = false }
-runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
-rustix = { version = "1.1.4", features = ["net"] }
-rustls = { version = "0.23", default-features = false, features = [
-    "aws_lc_rs",
-    "std",
-] }
-rustls-native-certs = "0.8.3"
-rustls-pki-types = "1.14.0"
-schemars = "0.8.22"
-seccompiler = "0.5.0"
-semver = "1.0"
-sentry = "0.46.0"
-serde = { version = "1", features = ["rc"] }
-serde_ignored = "0.1.14"
-serde_json = "1"
-serde_path_to_error = "0.1.20"
-serde_with = "3.17"
-serde_yaml = "0.9"
-serial_test = "3.2.0"
-sha1 = "0.10.6"
-scopeguard = "1.2.0"
-sha2 = "0.10"
-shlex = "1.3.0"
-similar = "2.7.0"
-symphonia = { version = "0.6.0", default-features = false, features = [
-    "isomp4",
-    "mkv",
-    "mp3",
-    "ogg",
-    "wav",
-] }
-socket2 = "0.6.1"
+runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81", default-features = false }
+rustix = { version = "1.1.4", default-features = false }
+rustls = { version = "0.23", default-features = false }
+rustls-native-certs = { version = "0.8.3", default-features = false }
+rustls-pki-types = { version = "1.14.0", default-features = false }
+schemars = { version = "0.8.22", default-features = false }
+seccompiler = { version = "0.5.0", default-features = false }
+semver = { version = "1.0", default-features = false }
+sentry = { version = "0.46.0", default-features = false }
+serde = { default-features = false, version = "1" }
+serde_ignored = { version = "0.1.14", default-features = false }
+serde_json = { version = "1", default-features = false }
+serde_path_to_error = { version = "0.1.20", default-features = false }
+serde_with = { version = "3.17", default-features = false }
+serde_yaml = { version = "0.9", default-features = false }
+serial_test = { version = "3.2.0", default-features = false }
+sha1 = { version = "0.10.6", default-features = false }
+scopeguard = { version = "1.2.0", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+shlex = { version = "1.3.0", default-features = false }
+similar = { version = "2.7.0", default-features = false }
+socket2 = { version = "0.6.1", default-features = false }
 # When bumping sqlx, audit the SQLite constructor deny list in clippy.toml.
-sqlx = { version = "0.9.0", default-features = false, features = [
-    "chrono",
-    "json",
-    "macros",
-    "migrate",
-    "runtime-tokio",
-    "tls-rustls",
-    "sqlite-bundled",
-    "time",
-    "uuid",
-] }
+sqlx = { version = "0.9.0", default-features = false }
 starlark = { version = "0.14.2", default-features = false }
-strum = "0.27.2"
-strum_macros = "0.28.0"
-supports-color = "3.0.2"
-syntect = "5"
-sys-locale = "0.3.2"
-system-configuration = "0.7"
+strum = { version = "0.27.2", default-features = false }
+strum_macros = { version = "0.28.0", default-features = false }
+supports-color = { version = "3.0.2", default-features = false }
+symphonia = { version = "0.6.0", default-features = false }
+syntect = { version = "5", default-features = false }
+sys-locale = { version = "0.3.2", default-features = false }
+system-configuration = { version = "0.7", default-features = false }
 tar = { version = "=0.4.45", default-features = false }
-tempfile = "3.23.0"
-test-log = "0.2.19"
-textwrap = "0.16.2"
-thiserror = "2.0.17"
+tempfile = { version = "3.23.0", default-features = false }
+test-log = { version = "0.2.19", default-features = false }
+textwrap = { version = "0.16.2", default-features = false }
+thiserror = { version = "2.0.17", default-features = false }
 tiktoken-rs = { version = "0.12.0", default-features = false }
-time = "0.3.47"
-tiny_http = "0.12"
-tokio = "1"
-tokio-rustls = "0.26.4"
-tokio-stream = "0.1.18"
-tokio-test = "0.4"
-tokio-tungstenite = { version = "0.28.0", features = [
-    "proxy",
-    "rustls-tls-native-roots",
-] }
-tokio-util = "0.7.18"
-toml = "0.9.5"
-toml_edit = "0.24.0"
-tracing = "0.1.44"
-tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.32.0"
-tracing-subscriber = "0.3.22"
-tracing-test = "0.2.5"
-tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
-tonic-prost = "0.14.3"
-tree-sitter = "0.25.10"
-tree-sitter-bash = "0.25"
-tree-sitter-powershell = "=0.26.4"
-ts-rs = "11"
-tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
-uds_windows = "1.1.0"
-unicode-segmentation = "1.12.0"
-unicode-width = "0.2"
-url = "2"
-urlencoding = "2.1"
-uuid = "1"
-v8 = "=150.4.0"
-vt100 = "0.16.2"
-walkdir = "2.5.0"
-webbrowser = "1.2.2"
-which = "8"
-whoami = "1.6.1"
-wildmatch = "2.6.1"
-winapi-util = "0.1.11"
-zip = "2.4.2"
-zstd = "0.13"
+time = { version = "0.3.47", default-features = false }
+tiny_http = { version = "0.12", default-features = false }
+tokio = { version = "1", default-features = false }
+tokio-rustls = { version = "0.26.4", default-features = false }
+tokio-stream = { version = "0.1.18", default-features = false }
+tokio-test = { version = "0.4", default-features = false }
+tokio-tungstenite = { default-features = false, version = "0.28.0" }
+tokio-util = { version = "0.7.18", default-features = false }
+toml = { version = "0.9.5", default-features = false }
+toml_edit = { version = "0.24.0", default-features = false }
+tracing = { version = "0.1.44", default-features = false }
+tracing-appender = { version = "0.2.3", default-features = false }
+tracing-opentelemetry = { version = "0.32.0", default-features = false }
+tracing-subscriber = { version = "0.3.22", default-features = false }
+tracing-test = { version = "0.2.5", default-features = false }
+tonic = { version = "0.14.3", default-features = false }
+tonic-prost = { version = "0.14.3", default-features = false }
+tree-sitter = { version = "0.25.10", default-features = false }
+tree-sitter-bash = { version = "0.25", default-features = false }
+tree-sitter-powershell = { version = "=0.26.4", default-features = false }
+ts-rs = { version = "11", default-features = false }
+tungstenite = { version = "0.27.0", default-features = false }
+uds_windows = { version = "1.1.0", default-features = false }
+unicode-segmentation = { version = "1.12.0", default-features = false }
+unicode-width = { version = "0.2", default-features = false }
+url = { version = "2", default-features = false }
+urlencoding = { version = "2.1", default-features = false }
+uuid = { version = "1", default-features = false }
+v8 = { version = "=150.4.0", default-features = false }
+vt100 = { version = "0.16.2", default-features = false }
+walkdir = { version = "2.5.0", default-features = false }
+webbrowser = { version = "1.2.2", default-features = false }
+which = { version = "8", default-features = false }
+whoami = { version = "1.6.1", default-features = false }
+wildmatch = { version = "2.6.1", default-features = false }
+winapi-util = { version = "0.1.11", default-features = false }
+zip = { version = "2.4.2", default-features = false }
+zstd = { version = "0.13", default-features = false }
 
-wiremock = "0.6"
-zeroize = "1.8.2"
+wiremock = { version = "0.6", default-features = false }
+zeroize = { version = "1.8.2", default-features = false }
 
 [workspace.lints]
 rust = {}
@@ -555,21 +515,22 @@ unwrap_used = "deny"
 ignored = [
     "icu_provider",
     "openssl-sys",
-    "codex-v8-poc",
 ]
 
 [profile.dev]
-# Keep line tables/backtraces while avoiding expensive full variable debug info
-# across local dev builds.
-debug = "limited"
-
-[profile.dev-small]
-inherits = "dev"
 opt-level = 0
 debug = "none"
 strip = "symbols"
 
+[profile.dev-small]
+inherits = "dev"
+# Keep line tables/backtraces while avoiding expensive full variable debug info.
+debug = "limited"
+strip = "none"
+
 [profile.release]
+# Keep release optimization while favoring build throughput. Whole-program
+# ThinLTO made the final CDX binary unit dominate release builds.
 lto = false
 debug = "line-tables-only"
 split-debuginfo = "off"
@@ -577,8 +538,10 @@ split-debuginfo = "off"
 # sidecar symbols and stripped the binaries.
 strip = false
 
-# Balance parallel release code generation against binary size.
-codegen-units = 4
+# Use Cargo's standard release parallelism and retain work between local
+# release builds.
+codegen-units = 16
+incremental = true
 
 [profile.profiling]
 inherits = "release"
@@ -595,7 +558,7 @@ opt-level = 0
 [patch.crates-io]
 # Uncomment to debug local changes.
 # ratatui = { path = "../../ratatui" }
-crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "45fecb9508105988f42fe6ff0441783ed3717f92" }
+crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "f69a4a0499f2fdc7d5d222df32373ffffe9ba3f5" }
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
 

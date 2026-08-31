@@ -931,8 +931,7 @@ impl AgentControl {
                         "system" | "assistant" => true,
                         _ => true,
                     });
-                    if content.is_empty()
-                        || set_annotated_content(response_item, content).is_none()
+                    if content.is_empty() || set_annotated_content(response_item, content).is_none()
                     {
                         return false;
                     }

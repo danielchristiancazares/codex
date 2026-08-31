@@ -8,25 +8,25 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-base64 = { workspace = true }
+base64 = { workspace = true, features = ["alloc"] }
 codex-protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 libc = { workspace = true }
-once_cell = { workspace = true }
-regex = { workspace = true }
+once_cell = { workspace = true, features = ["std"] }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-shlex = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+shlex = { workspace = true, features = ["std"] }
 tree-sitter = { workspace = true }
 tree-sitter-bash = { workspace = true }
 tree-sitter-powershell = { workspace = true }
 url = { workspace = true }
-which = { workspace = true }
+which = { workspace = true, features = ["real-sys"] }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+pretty_assertions = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lib]
 doctest = false

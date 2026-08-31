@@ -2184,6 +2184,12 @@ async fn drain_in_flight(
             }
         }
     }
+    record_additional_contexts(
+        &sess,
+        &turn_context,
+        turn_context.take_post_tool_contexts().await,
+    )
+    .await;
     Ok(())
 }
 
