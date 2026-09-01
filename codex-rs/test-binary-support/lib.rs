@@ -48,9 +48,23 @@ where
                 Ok(current_dir) => current_dir,
                 Err(error) => panic!("failed to resolve test working directory: {error}"),
             };
+            // Cargo places integration-test binaries in target/<profile>/deps. Keep each
+            // test CODEX_HOME in the adjacent profile directory so nextest's per-test
+            // homes stay within Cargo's disposable output tree. Other runners retain
+            // the current working directory as their parent.
+            let temp_parent = std::env::current_exe()
+                .ok()
+                .and_then(|current_exe| {
+                    let deps_dir = current_exe.parent()?;
+                    if !deps_dir.ends_with("deps") {
+                        return None;
+                    }
+                    deps_dir.parent().map(Path::to_path_buf)
+                })
+                .unwrap_or(current_dir);
             let codex_home = match tempfile::Builder::new()
                 .prefix(codex_home_prefix)
-                .tempdir_in(current_dir)
+                .tempdir_in(temp_parent)
             {
                 Ok(codex_home) => codex_home,
                 Err(error) => panic!("failed to create test CODEX_HOME: {error}"),
