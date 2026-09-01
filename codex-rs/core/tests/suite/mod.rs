@@ -187,6 +187,7 @@ mod tool_harness;
 mod tool_lifecycle;
 mod tool_output_retention;
 mod tool_parallelism;
+mod tool_search_compaction;
 mod tools;
 mod truncation;
 mod turn_input_submission;

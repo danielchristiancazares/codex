@@ -9,6 +9,7 @@ use crate::client_common::ResponseEvent;
 use crate::context_manager::ContextManager;
 use crate::context_manager::estimate_item_token_count;
 use crate::context_manager::is_user_turn_boundary;
+use crate::context_manager::strip_tool_search_schemas;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -74,9 +75,12 @@ impl LocalCompactionPlan {
         input_modalities: &[InputModality],
         truncation_policy: TruncationPolicy,
     ) -> Vec<ResponseItem> {
-        self.history
+        let mut input = self
+            .history
             .clone()
-            .for_prompt_with_policy(input_modalities, truncation_policy)
+            .for_prompt_with_policy(input_modalities, truncation_policy);
+        strip_tool_search_schemas(&mut input);
+        input
     }
 
     pub(super) fn reduce_after_context_error(

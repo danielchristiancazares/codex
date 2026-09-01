@@ -333,16 +333,6 @@ async fn run_remote_compact_task_inner_impl(
             Some(compaction_turn_context.to_turn_context_item())
         }
     };
-    if let Some(trace_input_history) = trace_input_history.as_deref() {
-        let replacement_history = new_history
-            .iter()
-            .map(|envelope| envelope.item.clone())
-            .collect::<Vec<_>>();
-        compaction_trace.record_installed(&CompactionCheckpointTracePayload {
-            input_history: trace_input_history,
-            replacement_history: &replacement_history,
-        });
-    }
     sess.replace_compacted_history(
         new_history,
         reference_context_item,
@@ -354,6 +344,13 @@ async fn run_remote_compact_task_inner_impl(
         },
     )
     .await;
+    if let Some(trace_input_history) = trace_input_history.as_deref() {
+        let replacement_history = sess.clone_history().await.into_raw_items();
+        compaction_trace.record_installed(&CompactionCheckpointTracePayload {
+            input_history: trace_input_history,
+            replacement_history: &replacement_history,
+        });
+    }
     sess.recompute_token_usage(compaction_turn_context).await;
 
     sess.emit_turn_item_completed(compaction_turn_context, compaction_item)

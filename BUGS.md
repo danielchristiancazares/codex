@@ -15,7 +15,7 @@ evidence are in [TOKEN_AUDIT_EVIDENCE.md](TOKEN_AUDIT_EVIDENCE.md).
 
 ## Active token-burning bug facets
 
-**Summary:** 61 active demonstrated bug facets. Facet labels are authoritative where the same
+**Summary:** 60 active demonstrated bug facets. Facet labels are authoritative where the same
 common-fix ID also appears in one of the other active documents. Completed findings retained in
 the detailed record for traceability are excluded from this count.
 
@@ -26,7 +26,7 @@ decision because eliminating its established second request changes the intentio
 user-versus-agent input ordering contract. That review produced
 `56 - 1 + 12 = 67` active facets. CF-092 has since been resolved by invalidating the
 frozen MCP binding on tool-list notifications and session recovery. CF-001, CF-002, CF-003,
-CF-005, and CF-006 have also been confirmed fixed, leaving 61 active.
+CF-005, CF-006, and CF-012 have also been confirmed fixed, leaving 60 active.
 
 **Evidence convention:** “Generated,” “resent,” or “extra request” describes client-observed model work. Provider billing is claimed only where usage or a provider contract establishes it; otherwise the record explicitly marks billing as unknown or conditional.
 
@@ -38,7 +38,6 @@ CF-005, and CF-006 have also been confirmed fixed, leaving 61 active.
 | CF-008 | Summary-capable compaction and sync Guardian requests ask for unused reasoning | Compaction/sync Guardian + enabled supported summaries | Medium | `codex-rs/core/src/client.rs::ModelClient::build_responses_request` |
 | CF-009 | Filtered forks inherit stale parent token usage and compact prematurely | Filtered legacy fork near compaction threshold | High | `codex-rs/core/src/agent/control/spawn.rs::keep_forked_rollout_item` |
 | CF-010 | Rollout reconstruction re-injects initial context baseline | Reconstruction from full context without user boundary | High | `codex-rs/core/src/session/rollout_reconstruction.rs::finalize_active_segment` |
-| CF-012 | Deferred tool search retains duplicate schema batches | Repeated deferred search or compaction of its history | High | `codex-rs/core/src/context_manager/history.rs::ContextManager` |
 | CF-014 (single-server repeated identity) | Explicit single-server MCP listings repeat server identity per descriptor | Explicit single-server MCP list | Low | `codex-rs/core/src/tools/handlers/mcp_resource.rs` |
 | CF-015 (projection) | Generic MCP resource reads flatten binary content into JSON/base64 text | Generic MCP binary/media resource read | High | `codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs` |
 | CF-016 (typed-resource) | Normal MCP results JSON-stringify embedded resources and media | MCP result embeds resource/media | High | `codex-rs/protocol/src/models.rs::convert_mcp_content_to_items` |
@@ -234,13 +233,36 @@ CF-005, and CF-006 have also been confirmed fixed, leaving 61 active.
 - **Remediation Seam:** Update `finalize_active_segment` so that surviving full `WorldState` and `TurnContext` snapshots establish the baseline even in the absence of an explicit user boundary.
 - **Required Verification:** Reconstruct a session from a compacted context prefix without a user message; verify that turn 1 does not re-emit system and environment fragments.
 
-### CF-012: Deferred Tool Search Retains Duplicate Schema Batches in History
+### CF-012: Deferred Tool Search Retains Duplicate Schema Batches in History (Complete)
 
-- **Sources & Facet:** #7, H039
-- **Trigger, Mechanism & Root Cause:** When tool search is performed, each `ToolSearchOutput` (up to 32 KiB of JSON schemas) is recorded as ordinary history in `ContextManager` (`codex-rs/core/src/context_manager/history.rs:510-523`). Repeated searches for the same tool or multiple searches in a turn retain duplicate full schema definitions. Furthermore, remote compaction includes all historical `ToolSearchOutput` batches in its compaction prompt, uploading tens of kilobytes of schemas only to discard them.
-- **Demonstrated Token Impact:** Repeated 32 KiB schema batches accumulate in context (up to 100K+ tokens over multiple searches), and compaction requests are bloated with discarded tool definitions.
-- **Remediation Seam:** Maintain a deduplicated active discovery store in `ContextManager`. Replace duplicate search results with the latest revision, and omit consumed discovery schemas from compaction inputs.
-- **Required Verification:** Execute identical tool searches across consecutive turns; verify that history retains only one instance of the schema batch and compaction inputs omit consumed discovery schemas.
+- **Status:** **Complete** — the current worktree deduplicates deferred-tool definitions in ordinary
+  model history and removes schema bodies from every local, remote-v1, and remote-v2 compaction
+  request while preserving the latest result that the coding model still needs to consume.
+- **Current implementation:** `ToolDiscoveryState` in
+  `codex-rs/core/src/context_manager/tool_discovery.rs` fingerprints individual definitions,
+  preserves every call/output envelope, and retains changed schema revisions. Its rolling
+  1,024-entry fingerprint window stays bounded while continuing to deduplicate recent definitions.
+- **Lifecycle boundary:** One bounded client `ToolSearchOutput` is cached as pending until the next
+  model-generated continuation. History rebuilds restore its full body only when the rebuilt
+  history independently identifies the same call as its latest unconsumed result.
+- **Compaction projection:** Local compaction and the shared remote-v1/v2 output-rewrite path clear
+  every `tools` array before inference. `Session::replace_compacted_history` reinstalls the pending
+  call/output pair immediately before the terminal compaction summary, persists that same
+  replacement, and leaves installed-history traces aligned with the live context.
+- **P0 model-visible size review:** The reinstated output can approach the existing 32 KiB search
+  ceiling and therefore exceed 1,000 tokens. Exactly one such result is retained; the tools body
+  is 8,192 tokens at the repository's byte-based estimator, its fixed envelope keeps the item
+  below the 10K-token ceiling, and the first coding-model continuation clears it.
+- **Preserved behavior:** Distinct definitions and revisions survive; duplicate result envelopes,
+  canonical IDs, statuses, execution modes, and harness metadata remain intact. Projection is
+  idempotent, so retries and model fallback do not multiply schema content.
+- **Regression evidence:**
+  `mid_turn_compaction_omits_search_schemas_and_restores_the_live_result` in
+  `codex-rs/core/tests/suite/tool_search_compaction.rs` covers Local, Remote V1, and Remote V2 and
+  proves each compaction request sees an empty schema body while the immediate coding-model
+  continuation sees exactly one full matching call/output pair. Discovery-state tests cover
+  consumption and rebuild behavior; the existing repeated-search and remote-compaction tests
+  continue to prove one retained schema and schema-free compaction projections.
 
 ### CF-014: MCP Resource Listings Repeat Server Identity per Descriptor
 

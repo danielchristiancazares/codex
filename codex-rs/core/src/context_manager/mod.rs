@@ -12,3 +12,4 @@ pub(crate) use history::estimate_function_output_content_item_tokens;
 pub(crate) use history::estimate_image_bytes;
 pub(crate) use history::estimate_item_token_count;
 pub(crate) use history::is_user_turn_boundary;
+pub(crate) use tool_discovery::strip_tool_search_schemas;

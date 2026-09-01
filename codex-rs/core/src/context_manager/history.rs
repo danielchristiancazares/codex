@@ -198,6 +198,9 @@ impl ContextManager {
                 continue;
             }
 
+            if is_model_continuation_item(item) {
+                self.tool_discovery.note_model_generated_item();
+            }
             let mut processed_item = Self::process_item(item, policy);
             self.tool_discovery
                 .deduplicate_response_item(&mut processed_item);
@@ -261,6 +264,10 @@ impl ContextManager {
     /// Returns annotated history items without cloning their response payloads.
     pub(crate) fn annotated_items(&self) -> &[ResponseItemEnvelope] {
         &self.items
+    }
+
+    pub(crate) fn pending_tool_search_exchange(&self) -> Vec<ResponseItemEnvelope> {
+        self.tool_discovery.pending_exchange(&self.items)
     }
 
     /// Returns raw items in the history and consumes the snapshot.
@@ -339,8 +346,12 @@ impl ContextManager {
     pub(crate) fn replace_annotated(&mut self, mut items: Vec<ResponseItemEnvelope>) {
         let mut tool_discovery = ToolDiscoveryState::default();
         for envelope in &mut items {
+            if is_model_continuation_item(&envelope.item) {
+                tool_discovery.note_model_generated_item();
+            }
             tool_discovery.deduplicate_response_item(&mut envelope.item);
         }
+        tool_discovery.restore_pending_output_from(&self.tool_discovery);
         self.items = Arc::new(items);
         self.history_version = self.history_version.saturating_add(1);
         self.world_state_baseline = None;
@@ -1039,6 +1050,14 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::AgentMessage { .. }
         | ResponseItem::Other => false,
     }
+}
+
+fn is_model_continuation_item(item: &ResponseItem) -> bool {
+    is_model_generated_item(item)
+        && !matches!(
+            item,
+            ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+        )
 }
 
 pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {

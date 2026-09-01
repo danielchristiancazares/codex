@@ -20,6 +20,7 @@ use crate::compact;
 use crate::compact::CompactedHistoryMetadata;
 use crate::config::ManagedFeatures;
 use crate::config::resolve_tool_suggest_config_from_layer_stack;
+use crate::context::CompactionSummary;
 use crate::context::ContextualUserFragment;
 use crate::context::DeveloperInstructions;
 use crate::context::GuardianPolicy;
@@ -3540,10 +3541,34 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
+        let pending_tool_search_exchange = {
+            let state = self.state.lock().await;
+            state.history.pending_tool_search_exchange()
+        };
         let (rehydrated_items, additional_context_baseline) = self
             .rehydrate_additional_context_for_compaction(items)
             .await;
         items = rehydrated_items;
+        if !pending_tool_search_exchange.is_empty() {
+            // Keep the provider/local compaction summary terminal while restoring the latest
+            // search result that the coding model has not consumed yet.
+            let insertion_index = items
+                .last()
+                .is_some_and(|envelope| {
+                    CompactionSummary::is_summary_item(&envelope.item)
+                        || matches!(
+                            &envelope.item,
+                            ResponseItem::Compaction { .. }
+                                | ResponseItem::ContextCompaction { .. }
+                        )
+                })
+                .then(|| items.len().saturating_sub(1))
+                .unwrap_or(items.len());
+            items.splice(
+                insertion_index..insertion_index,
+                pending_tool_search_exchange,
+            );
+        }
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }

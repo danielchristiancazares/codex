@@ -15,6 +15,7 @@ use crate::compact_remote_history::history_item_groups;
 use crate::context::world_state::WorldState;
 use crate::context_manager::ContextManager;
 use crate::context_manager::estimate_item_token_count;
+use crate::context_manager::strip_tool_search_schemas;
 use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
@@ -275,15 +276,6 @@ async fn run_remote_compact_task_inner_impl(
             Some(compaction_turn_context.to_turn_context_item())
         }
     };
-    // Install is the semantic boundary where the compact endpoint's output becomes live
-    // thread history. Keep it distinct from the later inference request so the reducer can
-    // still represent repeated developer/context prefix items exactly as the model saw them.
-    if let Some(trace_input_history) = trace_input_history.as_deref() {
-        compaction_trace.record_installed(&CompactionCheckpointTracePayload {
-            input_history: trace_input_history,
-            replacement_history: &new_history,
-        });
-    }
     // Legacy `/responses/compact` returns provider-normalized items without a stable link to their
     // original envelopes, so it does not preserve harness metadata. Compaction-trigger/v2 does.
     let new_history = new_history
@@ -301,6 +293,16 @@ async fn run_remote_compact_task_inner_impl(
         },
     )
     .await;
+    // Install is the semantic boundary where the compact endpoint's output becomes live
+    // thread history. Read it back after replacement so tracing includes rehydrated context and
+    // any pending deferred-tool result restored for the coding-model continuation.
+    if let Some(trace_input_history) = trace_input_history.as_deref() {
+        let replacement_history = sess.clone_history().await.into_raw_items();
+        compaction_trace.record_installed(&CompactionCheckpointTracePayload {
+            input_history: trace_input_history,
+            replacement_history: &replacement_history,
+        });
+    }
     sess.recompute_token_usage(compaction_turn_context).await;
 
     sess.emit_turn_item_completed(compaction_turn_context, compaction_item)
@@ -424,15 +426,16 @@ fn trim_function_call_history_for_context_window(
             .fold(base_tokens, i128::saturating_add);
     let initial_estimated_tokens = i64::try_from(initial_estimated_tokens).unwrap_or(i64::MAX);
     let mut projected_items = original_items.to_vec();
-    let mut rewritten = vec![false; projected_items.len()];
-    for (index, envelope) in projected_items.iter_mut().enumerate() {
-        if let ResponseItem::ToolSearchOutput { tools, .. } = &mut envelope.item
-            && !tools.is_empty()
-        {
-            tools.clear();
-            rewritten[index] = true;
-        }
-    }
+    strip_tool_search_schemas(
+        projected_items
+            .iter_mut()
+            .map(|envelope| &mut envelope.item),
+    );
+    let mut rewritten = projected_items
+        .iter()
+        .zip(original_items)
+        .map(|(projected, original)| projected.item != original.item)
+        .collect::<Vec<_>>();
     let mut estimated_tokens = history_item_groups(projected_items.iter().map(|item| &item.item))
         .map(|group| group.estimated_token_count())
         .fold(base_tokens, i128::saturating_add);
