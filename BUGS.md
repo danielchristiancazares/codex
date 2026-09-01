@@ -15,7 +15,7 @@ evidence are in [TOKEN_AUDIT_EVIDENCE.md](TOKEN_AUDIT_EVIDENCE.md).
 
 ## Active token-burning bug facets
 
-**Summary:** 58 active demonstrated bug facets. Facet labels are authoritative where the same
+**Summary:** 57 active demonstrated bug facets. Facet labels are authoritative where the same
 common-fix ID also appears in one of the other active documents. Completed findings retained in
 the detailed record for traceability are excluded from this count.
 
@@ -29,6 +29,8 @@ frozen MCP binding on tool-list notifications and session recovery. CF-001, CF-0
 CF-005, CF-006, and CF-012 have also been confirmed fixed, leaving 60 active.
 CF-007 and CF-008 have since been confirmed fixed by the per-turn Code Mode dispatch ownership
 and centralized request-level reasoning-summary policy, leaving 58 active.
+CF-009 has since been confirmed fixed by filtering inherited token-count events and recomputing
+fork usage from the retained child history, leaving 57 active.
 
 **Evidence convention:** “Generated,” “resent,” or “extra request” describes client-observed model work. Provider billing is claimed only where usage or a provider contract establishes it; otherwise the record explicitly marks billing as unknown or conditional.
 
@@ -36,7 +38,6 @@ and centralized request-level reasoning-summary policy, leaving 58 active.
 
 | Canonical ID | Title & Summary | Reachability / Trigger | Expected Token Impact | Primary Fix Seam |
 | --- | --- | --- | --- | --- |
-| CF-009 | Filtered forks inherit stale parent token usage and compact prematurely | Filtered legacy fork near compaction threshold | High | `codex-rs/core/src/agent/control/spawn.rs::keep_forked_rollout_item` |
 | CF-010 | Rollout reconstruction re-injects initial context baseline | Reconstruction from full context without user boundary | High | `codex-rs/core/src/session/rollout_reconstruction.rs::finalize_active_segment` |
 | CF-014 (single-server repeated identity) | Explicit single-server MCP listings repeat server identity per descriptor | Explicit single-server MCP list | Low | `codex-rs/core/src/tools/handlers/mcp_resource.rs` |
 | CF-015 (projection) | Generic MCP resource reads flatten binary content into JSON/base64 text | Generic MCP binary/media resource read | High | `codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs` |
@@ -234,13 +235,20 @@ and centralized request-level reasoning-summary policy, leaving 58 active.
   exercises the compaction request, and `guardian_denial_rejects_tool_call_with_rationale`
   exercises a summary-capable synchronous Guardian request with an explicit reasoning effort.
 
-### CF-009: Filtered Legacy Forks Inherit Stale Parent Token Usage and Compact Prematurely
+### CF-009: Filtered Legacy Forks Inherit Stale Parent Token Usage and Compact Prematurely (Complete)
 
-- **Sources & Facet:** H048, H073
-- **Trigger, Mechanism & Root Cause:** When spawning a legacy subagent fork (`codex-rs/core/src/agent/control/spawn.rs:63-100, 877-980`), `keep_forked_rollout_item` filters model-visible history items, but retains the parent's `TokenCount` event. The child session adopts this inflated parent token count upon initialization (`codex-rs/core/src/session/mod.rs:1388-1398`), causing the admission logic (`turn.rs:155-176`) to trigger an immediate, unnecessary compaction before the child's first turn.
-- **Demonstrated Token Impact:** Triggers an avoidable full compaction request (10K+ tokens) on subagent startup even when child history easily fits within the context window.
-- **Remediation Seam:** Strip inherited `TokenCount` events when filtering rollout items for a fork, and recalculate initial token usage directly from the retained child items.
-- **Required Verification:** Create a subagent fork from a large parent session where history is filtered down to a small prompt; verify the child does not trigger compaction on turn 1.
+- **Status:** **Complete** — filtered forks initialize admission accounting from their retained
+  child prompt instead of the parent's last provider-reported usage.
+- **Current implementation:** `keep_forked_rollout_item` drops inherited `TokenCount` events.
+  `Session::record_initial_history` recomputes fork usage from the reconstructed history and the
+  child's effective base instructions, while resumed sessions continue restoring recorded usage.
+- **Preserved behavior:** Forked model history, reference-context reuse, rollout-budget ownership,
+  and rate-limit reporting remain unchanged. Explicit post-compaction token recomputation still
+  publishes its normal `TokenCount` event.
+- **Regression evidence:** `filtered_legacy_fork_recomputes_usage_before_its_first_turn` gives the
+  parent and child different compaction limits, seeds the parent above the child's limit, and
+  verifies the child records a smaller local estimate and reaches ordinary inference on turn 1
+  without a compaction request.
 
 ### CF-010: Rollout Reconstruction Re-Injects Initial Context Baseline
 

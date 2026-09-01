@@ -98,6 +98,9 @@ fn keep_forked_rollout_item(item: &RolloutItem, preserve_reference_context_item:
         // from the parent's durable baseline. Truncated forks drop part of that prompt,
         // so they must rebuild context on their first child turn.
         RolloutItem::TurnContext(_) | RolloutItem::WorldState(_) => preserve_reference_context_item,
+        // A filtered child prefix has a different active token count. The child
+        // recomputes that count from its reconstructed history during initialization.
+        RolloutItem::EventMsg(EventMsg::TokenCount(_)) => false,
         RolloutItem::Compacted(_) | RolloutItem::EventMsg(_) | RolloutItem::SessionMeta(_) => true,
     }
 }
@@ -997,7 +1000,6 @@ impl AgentControl {
                         &*item,
                         RolloutItem::EventMsg(
                             EventMsg::ItemCompleted(_)
-                                | EventMsg::TokenCount(_)
                                 | EventMsg::ThreadGoalUpdated(_)
                                 | EventMsg::ThreadSettingsApplied(_),
                         )

@@ -1427,11 +1427,13 @@ impl Session {
                 self.apply_rollout_reconstruction(&turn_context, &rollout_items)
                     .await;
 
-                // Seed usage info from the recorded rollout so UIs can show token counts
-                // immediately on resume/fork.
+                // Filtered forks omit parent usage because their retained prompt differs.
+                // Other forks can continue using an authoritative recorded count.
                 if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                } else {
+                    self.set_recomputed_token_usage(&turn_context).await;
                 }
 
                 let thread_settings_applied =
@@ -4187,13 +4189,13 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
+    async fn set_recomputed_token_usage(&self, turn_context: &TurnContext) -> bool {
         let history = self.clone_history().await;
         let base_instructions = self.get_base_instructions().await;
         let Some(estimated_total_tokens) =
             history.estimate_token_count_with_base_instructions(&base_instructions)
         else {
-            return;
+            return false;
         };
         {
             let mut state = self.state.lock().await;
@@ -4224,7 +4226,13 @@ impl Session {
             estimated_total_tokens,
         )
         .await;
-        self.send_token_count_event(turn_context).await;
+        true
+    }
+
+    pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
+        if self.set_recomputed_token_usage(turn_context).await {
+            self.send_token_count_event(turn_context).await;
+        }
     }
 
     pub(crate) async fn update_rate_limits(
