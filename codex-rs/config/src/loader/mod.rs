@@ -541,7 +541,17 @@ async fn load_user_config_layer(
         ));
     }
 
-    load_config_toml_for_required_layer(fs, user_file, strict_config, |config_toml| {
+    load_config_toml_for_required_layer(fs, user_file, strict_config, |mut config_toml| {
+        // A selected profile is a complete reasoning-mode boundary, so omission
+        // resets any inherited mode to Standard.
+        if profile.is_some()
+            && let Some(profile_config) = config_toml.as_table_mut()
+        {
+            profile_config
+                .entry("model_reasoning_mode".to_string())
+                .or_insert_with(|| TomlValue::String("standard".to_string()));
+        }
+
         ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: user_file.clone(),

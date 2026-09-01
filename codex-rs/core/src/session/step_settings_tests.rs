@@ -301,6 +301,7 @@ fn configured_settings() -> StepSettings {
             },
         },
         reasoning_summary: Some(ReasoningSummary::Concise),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         service_tier: ServiceTier::Default,
         personality: Some(Personality::Friendly),
         approval_policy: Constrained::allow_any(AskForApproval::OnRequest),

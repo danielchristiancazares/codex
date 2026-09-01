@@ -187,6 +187,7 @@ pub(crate) fn thread_settings_from_config_snapshot(
         model_provider: config_snapshot.model_provider_id.clone(),
         service_tier: config_snapshot.service_tier,
         effort: config_snapshot.reasoning_effort.clone(),
+        reasoning_mode: config_snapshot.reasoning_mode,
         summary: config_snapshot.reasoning_summary,
         collaboration_mode: config_snapshot.collaboration_mode.clone(),
         multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,

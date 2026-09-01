@@ -3,6 +3,7 @@ use crate::ServerNotification;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::config_types::MultiAgentMode;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
@@ -250,6 +251,7 @@ fn thread_turns_list_params_accepts_items_view() {
 fn thread_resume_params_accept_turns_page_bootstrap() {
     let params = serde_json::from_value::<ThreadResumeParams>(json!({
         "threadId": "thr_123",
+        "serviceTier": "default",
         "initialTurnsPage": {
             "limit": 25,
             "sortDirection": "asc",
@@ -316,6 +318,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
         sandbox: SandboxPolicy::DangerFullAccess,
         active_permission_profile: None,
         reasoning_effort: None,
+        reasoning_mode: ReasoningMode::Standard,
         multi_agent_mode: Default::default(),
         initial_turns_page: Some(TurnsPage {
             data: Vec::new(),
@@ -1081,6 +1084,7 @@ fn permissions_request_approval_response_accepts_strict_auto_review() {
 fn permission_profile_selection_uses_id_string() {
     let start: ThreadStartParams = serde_json::from_value(json!({
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+        "serviceTier": "default",
     }))
     .expect("thread/start params deserialize");
     assert_eq!(
@@ -1106,6 +1110,7 @@ fn permission_profile_selection_uses_id_string() {
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+        "serviceTier": "default",
     }))
     .expect("thread/resume params deserialize");
     assert_eq!(
@@ -1116,6 +1121,7 @@ fn permission_profile_selection_uses_id_string() {
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "permissions": BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+        "serviceTier": "default",
     }))
     .expect("thread/fork params deserialize");
     assert_eq!(
@@ -1129,6 +1135,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
     let resume: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "path": "",
+        "serviceTier": "default",
     }))
     .expect("thread/resume params deserialize");
     assert_eq!(resume.path, None);
@@ -1136,6 +1143,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
     let fork: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "path": "",
+        "serviceTier": "default",
     }))
     .expect("thread/fork params deserialize");
     assert_eq!(fork.path, None);
@@ -1143,6 +1151,7 @@ fn thread_path_params_deserialize_empty_path_as_none() {
     let resume_with_path: ThreadResumeParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "path": "/tmp/resume-thread.jsonl",
+        "serviceTier": "default",
     }))
     .expect("thread/resume params deserialize");
     assert_eq!(
@@ -1156,6 +1165,7 @@ fn thread_fork_last_turn_id_round_trips() {
     let params: ThreadForkParams = serde_json::from_value(json!({
         "threadId": "thread-1",
         "lastTurnId": "turn-2",
+        "serviceTier": "default",
     }))
     .expect("thread/fork params deserialize");
 
@@ -4638,6 +4648,18 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
     assert_eq!(fork.active_permission_profile, None);
     assert_eq!(
         (
+            start.reasoning_mode,
+            resume.reasoning_mode,
+            fork.reasoning_mode,
+        ),
+        (
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+        )
+    );
+    assert_eq!(
+        (
             start.multi_agent_mode,
             resume.multi_agent_mode,
             fork.multi_agent_mode,
@@ -4676,6 +4698,112 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
         fork.instruction_source_path_uris(),
         vec![foreign_source_uri]
     );
+}
+
+#[test]
+fn reasoning_mode_defaults_to_standard_in_request_params() {
+    let thread_start: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "default"
+    }))
+    .expect("thread/start params");
+    let thread_update: ThreadSettingsUpdateParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "serviceTier": "default"
+    }))
+    .expect("thread/settings/update params");
+    let turn_start: TurnStartParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "input": []
+    }))
+    .expect("turn/start params");
+    let turn_update: TurnSettingsUpdateParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "turnId": "turn-1"
+    }))
+    .expect("turn/settings/update params");
+
+    assert_eq!(
+        (
+            thread_start.reasoning_mode,
+            thread_update.reasoning_mode,
+            turn_start.reasoning_mode,
+            turn_update.reasoning_mode,
+        ),
+        (
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+        )
+    );
+}
+
+#[test]
+fn reasoning_mode_parses_explicit_pro_in_request_params() {
+    let thread_start: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "default",
+        "reasoningMode": "pro"
+    }))
+    .expect("thread/start params");
+    let thread_update: ThreadSettingsUpdateParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "serviceTier": "default",
+        "reasoningMode": "pro"
+    }))
+    .expect("thread/settings/update params");
+    let turn_start: TurnStartParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "input": [],
+        "reasoningMode": "pro"
+    }))
+    .expect("turn/start params");
+    let turn_update: TurnSettingsUpdateParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "turnId": "turn-1",
+        "reasoningMode": "pro"
+    }))
+    .expect("turn/settings/update params");
+
+    assert_eq!(
+        (
+            thread_start.reasoning_mode,
+            thread_update.reasoning_mode,
+            turn_start.reasoning_mode,
+            turn_update.reasoning_mode,
+        ),
+        (
+            ReasoningMode::Pro,
+            ReasoningMode::Pro,
+            ReasoningMode::Pro,
+            ReasoningMode::Pro,
+        )
+    );
+}
+
+#[test]
+fn thread_settings_defaults_missing_reasoning_mode_to_standard() {
+    let parsed: ThreadSettings = serde_json::from_value(json!({
+        "cwd": absolute_path_string("tmp"),
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "user",
+        "sandboxPolicy": { "type": "dangerFullAccess" },
+        "activePermissionProfile": null,
+        "model": "gpt-5",
+        "modelProvider": "openai",
+        "effort": null,
+        "summary": null,
+        "collaborationMode": {
+            "mode": "default",
+            "settings": {
+                "model": "gpt-5",
+                "reasoning_effort": null,
+                "developer_instructions": null
+            }
+        },
+        "personality": null
+    }))
+    .expect("thread settings should deserialize");
+    assert_eq!(parsed.reasoning_mode, ReasoningMode::Standard);
 }
 
 #[test]
@@ -4721,6 +4849,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
         service_tier: None,
         service_tier_for_turn: None,
         effort: None,
+        reasoning_mode: ReasoningMode::Standard,
         summary: None,
         output_schema: None,
         collaboration_mode: None,
@@ -4788,6 +4917,7 @@ fn turn_start_params_round_trip_multi_agent_mode() {
 #[test]
 fn thread_start_params_round_trip_multi_agent_mode() {
     let params: ThreadStartParams = serde_json::from_value(json!({
+        "serviceTier": "default",
         "multiAgentMode": "proactive"
     }))
     .expect("params should deserialize");

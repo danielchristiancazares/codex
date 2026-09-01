@@ -31,6 +31,7 @@ use codex_model_provider::ProviderAuthScope;
 use codex_model_provider::ProviderRequestContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ContentItem;
@@ -517,6 +518,7 @@ impl LunaSampler {
             tool_choice: "none".to_owned(),
             parallel_tool_calls: false,
             reasoning: Some(Reasoning {
+                mode: ReasoningMode::Standard,
                 effort: Some(request.reasoning_effort),
                 summary: None,
                 context: Some(ReasoningContext::AllTurns),

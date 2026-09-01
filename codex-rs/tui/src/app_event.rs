@@ -61,6 +61,7 @@ use codex_features::Feature;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 
@@ -1012,6 +1013,11 @@ pub(crate) enum AppEvent {
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
         service_tier: ServiceTier,
+    },
+
+    /// Persist the selected Responses API reasoning mode.
+    PersistReasoningModeSelection {
+        reasoning_mode: ReasoningMode,
     },
 
     /// Open the reasoning selection popup after picking a model.

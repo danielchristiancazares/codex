@@ -2738,6 +2738,14 @@
         }
       ]
     },
+    "ReasoningMode": {
+      "description": "Selects the OpenAI Responses API reasoning execution mode.",
+      "enum": [
+        "standard",
+        "pro"
+      ],
+      "type": "string"
+    },
     "ReasoningSummary": {
       "description": "A summary of the reasoning performed by the model. This can be useful for debugging and understanding the model's reasoning process. See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries",
       "oneOf": [
@@ -5113,6 +5121,15 @@
             }
           ]
         },
+        "reasoningMode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningMode"
+            }
+          ],
+          "default": "standard",
+          "description": "Reasoning execution mode. Omission selects `standard`."
+        },
         "sandbox": {
           "anyOf": [
             {
@@ -5382,6 +5399,15 @@
           ],
           "description": "Override the personality for this turn and subsequent turns."
         },
+        "reasoningMode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningMode"
+            }
+          ],
+          "default": "standard",
+          "description": "Reasoning mode for this turn and subsequent turns. Omission selects standard."
+        },
         "sandboxPolicy": {
           "anyOf": [
             {
@@ -5394,19 +5420,33 @@
           "description": "Override the sandbox policy for this turn and subsequent turns."
         },
         "serviceTier": {
-          "allOf": [
+          "anyOf": [
             {
-              "$ref": "#/definitions/ServiceTier"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ServiceTier"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            {
+              "type": "null"
             }
           ],
-          "description": "Complete current routing selection for this turn and subsequent turns."
+          "description": "Override the service tier for this turn and subsequent turns."
         },
         "serviceTierForTurn": {
-          "description": "Override the service tier only when this request starts a new turn. Use \"default\" for standard speed. Omitted or null inherits the thread's tier. Does not change the thread's tier or a turn being steered.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Override the service tier only when this request starts a new turn. Use \"default\" for standard speed. Omitted or null inherits the thread's tier. Does not change the thread's tier or a turn being steered."
         },
         "summary": {
           "anyOf": [
@@ -5442,7 +5482,6 @@
       },
       "required": [
         "input",
-        "serviceTier",
         "threadId"
       ],
       "type": "object"

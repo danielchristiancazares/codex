@@ -4,6 +4,7 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { LegacyAppPathString } from "../LegacyAppPathString";
 import type { ReasoningEffort } from "../ReasoningEffort";
+import type { ReasoningMode } from "../ReasoningMode";
 import type { ServiceTier } from "../ServiceTier";
 import type { ApprovalsReviewer } from "./ApprovalsReviewer";
 import type { AskForApproval } from "./AskForApproval";
@@ -20,7 +21,7 @@ approvalsReviewer: ApprovalsReviewer, /**
  * Legacy sandbox policy retained for compatibility. Experimental clients
  * should prefer `activePermissionProfile` for profile provenance.
  */
-sandbox: SandboxPolicy, reasoningEffort: ReasoningEffort | null, /**
+sandbox: SandboxPolicy, reasoningEffort: ReasoningEffort | null, reasoningMode: ReasoningMode, /**
  * Opaque cursor for hydrating paginated turns backwards.
  *
  * Pass this as `cursor` to `thread/turns/list` with

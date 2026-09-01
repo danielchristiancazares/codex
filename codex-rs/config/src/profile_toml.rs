@@ -37,7 +37,8 @@ pub struct ConfigProfile {
     pub sandbox_mode: Option<SandboxMode>,
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
-    pub model_reasoning_mode: Option<ReasoningMode>,
+    #[serde(default, skip_serializing_if = "ReasoningMode::is_standard")]
+    pub model_reasoning_mode: ReasoningMode,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
     /// Optional path to a JSON model catalog (applied on startup only).

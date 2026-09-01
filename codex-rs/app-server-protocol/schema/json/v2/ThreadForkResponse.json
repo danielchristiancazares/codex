@@ -998,6 +998,14 @@
       "minLength": 1,
       "type": "string"
     },
+    "ReasoningMode": {
+      "description": "Selects the OpenAI Responses API reasoning execution mode.",
+      "enum": [
+        "standard",
+        "pro"
+      ],
+      "type": "string"
+    },
     "SandboxPolicy": {
       "oneOf": [
         {
@@ -2894,6 +2902,14 @@
           "type": "null"
         }
       ]
+    },
+    "reasoningMode": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningMode"
+        }
+      ],
+      "default": "standard"
     },
     "sandbox": {
       "allOf": [

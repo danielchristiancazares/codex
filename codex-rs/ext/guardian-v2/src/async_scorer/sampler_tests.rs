@@ -40,7 +40,6 @@ use super::LunaSampler;
 use super::LunaSamplerConfig;
 use super::LunaSamplingRequest;
 use super::MAX_SAMPLING_RETRIES;
-use super::MAX_WEBSOCKET_CONNECTIONS;
 
 fn assert_connection_metadata(server: &responses::WebSocketTestServer) -> Result<String> {
     let handshake = server.single_handshake();

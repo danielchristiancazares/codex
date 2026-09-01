@@ -1,5 +1,6 @@
 use super::*;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_utils_absolute_path::test_support::PathBufExt;
@@ -678,6 +679,25 @@ async fn session_configured_from_thread_response_preserves_parent_thread_id() {
     assert_eq!(event.forked_from_id, Some(forked_from_id));
 }
 
+#[tokio::test]
+async fn session_configured_from_thread_response_preserves_reasoning_mode() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build config");
+    let mut response = sample_thread_start_response();
+    response.reasoning_mode = ReasoningMode::Pro;
+
+    let event = session_configured_from_thread_start_response(&response, &config)
+        .expect("build bootstrap session configured event");
+
+    assert_eq!(event.reasoning_mode, ReasoningMode::Pro);
+}
+
 fn sample_thread_start_response() -> ThreadStartResponse {
     ThreadStartResponse {
         thread: codex_app_server_protocol::Thread {
@@ -725,6 +745,7 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         },
         active_permission_profile: None,
         reasoning_effort: None,
+        reasoning_mode: ReasoningMode::Standard,
         multi_agent_mode: Default::default(),
     }
 }

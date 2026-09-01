@@ -83,6 +83,7 @@ impl ChatWidget {
         self.status_line_project_root_name_cache = None;
         let forked_from_id = session.forked_from_id;
         let default_model = session.model.clone();
+        self.set_reasoning_mode(session.reasoning_mode);
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(default_model.clone()),
             Some(session.reasoning_effort.clone()),

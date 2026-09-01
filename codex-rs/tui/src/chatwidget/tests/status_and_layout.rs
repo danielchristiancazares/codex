@@ -4640,6 +4640,7 @@ async fn session_configured_clears_goal_status_footer() {
         runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         collaboration_mode: None,
         personality: None,
         message_history: None,

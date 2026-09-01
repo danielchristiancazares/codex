@@ -20,6 +20,7 @@ use codex_app_server_protocol::SkillsConfigWriteResponse;
 use codex_config::loader::project_trust_key;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_features::FEATURES;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -100,6 +101,15 @@ pub(crate) fn service_tier_selection_edit(service_tier: ServiceTier) -> ConfigEd
         ServiceTier::Default => clear_config_value("service_tier"),
         ServiceTier::Fast | ServiceTier::Flex => {
             replace_config_value("service_tier", serde_json::json!(service_tier))
+        }
+    }
+}
+
+pub(crate) fn reasoning_mode_selection_edit(reasoning_mode: ReasoningMode) -> ConfigEdit {
+    match reasoning_mode {
+        ReasoningMode::Standard => clear_config_value("model_reasoning_mode"),
+        ReasoningMode::Pro => {
+            replace_config_value("model_reasoning_mode", serde_json::json!(reasoning_mode))
         }
     }
 }

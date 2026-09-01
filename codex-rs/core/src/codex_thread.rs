@@ -20,6 +20,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -92,6 +93,7 @@ pub struct ThreadConfigSnapshot {
     pub profile_workspace_roots: Vec<AbsolutePathBuf>,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
+    pub reasoning_mode: ReasoningMode,
     pub reasoning_summary: Option<ReasoningSummary>,
     pub personality: Option<Personality>,
     pub collaboration_mode: CollaborationMode,
@@ -145,6 +147,7 @@ pub struct CodexThreadSettingsOverrides {
     pub windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub model: Option<String>,
     pub effort: Option<Option<ReasoningEffort>>,
+    pub reasoning_mode: codex_protocol::protocol::ReasoningModeUpdate,
     pub summary: Option<ReasoningSummary>,
     pub service_tier: Option<Option<ServiceTier>>,
     pub collaboration_mode: Option<CollaborationMode>,
@@ -589,6 +592,7 @@ impl CodexThread {
             windows_sandbox_level,
             model,
             effort,
+            reasoning_mode,
             summary,
             service_tier,
             collaboration_mode,
@@ -598,6 +602,7 @@ impl CodexThread {
             step_settings: StepSettingsUpdate {
                 model,
                 effort,
+                reasoning_mode,
                 collaboration_mode,
                 reasoning_summary: summary,
                 service_tier,

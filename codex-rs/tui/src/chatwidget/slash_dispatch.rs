@@ -297,6 +297,7 @@ impl ChatWidget {
                 self.open_model_popup();
                 self.defer_input_until_settings_applied();
             }
+            SlashCommand::Pro => self.toggle_reasoning_mode(),
             SlashCommand::Provider => {
                 self.open_provider_popup();
                 self.defer_input_until_settings_applied();
@@ -1171,6 +1172,7 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
+            | SlashCommand::Pro
             | SlashCommand::Provider
             | SlashCommand::Personality
             | SlashCommand::Plan

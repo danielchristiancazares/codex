@@ -79,6 +79,7 @@ use codex_protocol::ResponseItemId;
 use codex_protocol::auth::AuthMode;
 
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
@@ -190,6 +191,7 @@ pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
 
 pub(crate) struct CompactConversationRequestSettings {
     pub(crate) effort: Option<ReasoningEffortConfig>,
+    pub(crate) mode: ReasoningMode,
     pub(crate) summary: ReasoningSummaryConfig,
     pub(crate) service_tier: ServiceTier,
 }
@@ -601,6 +603,7 @@ impl ModelClient {
             prompt,
             model_info,
             settings.effort,
+            settings.mode,
             settings.summary,
             settings.service_tier,
             responses_metadata,
@@ -769,6 +772,7 @@ impl ModelClient {
             reasoning: effort
                 .map(reasoning_effort_for_request)
                 .map(|effort| Reasoning {
+                    mode: ReasoningMode::Standard,
                     effort: Some(effort),
                     summary: None,
                     context: None,
@@ -867,9 +871,11 @@ impl ModelClient {
     fn build_reasoning(
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
     ) -> Reasoning {
         Reasoning {
+            mode,
             effort: effort
                 .or_else(|| model_info.default_reasoning_level.clone())
                 .map(reasoning_effort_for_request),
@@ -903,11 +909,13 @@ impl ModelClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_responses_request(
         &self,
         prompt: &Prompt,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
         service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
@@ -965,7 +973,7 @@ impl ModelClient {
             }
         }
         let summary = Self::reasoning_summary_for_request(summary, responses_metadata);
-        let reasoning = Self::build_reasoning(model_info, effort, summary);
+        let reasoning = Self::build_reasoning(model_info, effort, mode, summary);
         let stream_options = (self.state.concurrent_reasoning_summaries_enabled
             && is_openai
             && reasoning.summary.is_some())
@@ -1579,6 +1587,7 @@ impl ModelClientSession {
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
         service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
@@ -1627,6 +1636,7 @@ impl ModelClientSession {
                 prompt,
                 model_info,
                 effort.clone(),
+                mode,
                 summary,
                 service_tier,
                 responses_metadata,
@@ -1737,6 +1747,7 @@ impl ModelClientSession {
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
         service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
@@ -1771,6 +1782,7 @@ impl ModelClientSession {
                 prompt,
                 model_info,
                 effort.clone(),
+                mode,
                 summary,
                 service_tier,
                 responses_metadata,
@@ -1969,6 +1981,7 @@ impl ModelClientSession {
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
         service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
@@ -1987,6 +2000,7 @@ impl ModelClientSession {
                 model_info,
                 session_telemetry,
                 effort,
+                mode,
                 summary,
                 service_tier,
                 responses_metadata,
@@ -2038,6 +2052,7 @@ impl ModelClientSession {
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
         effort: Option<ReasoningEffortConfig>,
+        mode: ReasoningMode,
         summary: ReasoningSummaryConfig,
         service_tier: ServiceTier,
         responses_metadata: &CodexResponsesMetadata,
@@ -2054,6 +2069,7 @@ impl ModelClientSession {
                             model_info,
                             session_telemetry,
                             effort.clone(),
+                            mode,
                             summary,
                             service_tier,
                             responses_metadata,
@@ -2071,6 +2087,7 @@ impl ModelClientSession {
                             model_info,
                             session_telemetry,
                             effort,
+                            mode,
                             summary,
                             service_tier,
                             responses_metadata,

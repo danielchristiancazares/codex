@@ -38,6 +38,7 @@ impl App {
                 permissions: Some(selection.profile_id),
                 approval_policy: selection.approval_policy,
                 approvals_reviewer: selection.approvals_reviewer.map(Into::into),
+                reasoning_mode: self.chat_widget.current_reasoning_mode(),
                 ..Default::default()
             }).await? {
                 color_eyre::eyre::bail!("this app server does not support confirmed permission changes; use /permissions");

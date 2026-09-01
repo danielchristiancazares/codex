@@ -9,6 +9,7 @@ use codex_app_server_protocol::AskForApproval;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
@@ -51,6 +52,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) runtime_workspace_roots: Vec<AbsolutePathBuf>,
     pub(crate) instruction_source_paths: Vec<PathUri>,
     pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    pub(crate) reasoning_mode: ReasoningMode,
     pub(crate) collaboration_mode: Option<Box<CollaborationMode>>,
     pub(crate) personality: Option<Personality>,
     pub(crate) message_history: Option<MessageHistoryMetadata>,

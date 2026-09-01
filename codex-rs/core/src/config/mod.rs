@@ -937,9 +937,9 @@ pub struct Config {
     /// Responses API.
     pub model_reasoning_effort: Option<ReasoningEffort>,
 
-    /// Optional value to use for `reasoning.mode` when making a request using
-    /// the Responses API. When unset, the API default is used.
-    pub model_reasoning_mode: Option<ReasoningMode>,
+    /// Value to use for `reasoning.mode` when making a request using the
+    /// Responses API. Omission selects [`ReasoningMode::Standard`].
+    pub model_reasoning_mode: ReasoningMode,
 
     /// Optional Plan-mode-specific reasoning effort override used by the TUI.
     ///

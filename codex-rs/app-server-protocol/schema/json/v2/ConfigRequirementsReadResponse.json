@@ -1009,14 +1009,6 @@
       ],
       "type": "string"
     },
-    "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex",
-        "default"
-      ],
-      "type": "string"
-    },
     "WebSearchMode": {
       "enum": [
         "disabled",

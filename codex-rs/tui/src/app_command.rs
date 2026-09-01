@@ -12,6 +12,7 @@ use codex_config::types::ApprovalsReviewer;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -38,6 +39,7 @@ pub(crate) enum AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         model: String,
         effort: Option<ReasoningEffortConfig>,
+        reasoning_mode: ReasoningMode,
         summary: Option<ReasoningSummaryConfig>,
         service_tier: ServiceTier,
         final_output_json_schema: Option<Value>,
@@ -120,6 +122,7 @@ impl AppCommand {
         active_permission_profile: Option<ActivePermissionProfile>,
         model: String,
         effort: Option<ReasoningEffortConfig>,
+        reasoning_mode: ReasoningMode,
         summary: Option<ReasoningSummaryConfig>,
         service_tier: ServiceTier,
         final_output_json_schema: Option<Value>,
@@ -134,6 +137,7 @@ impl AppCommand {
             active_permission_profile,
             model,
             effort,
+            reasoning_mode,
             summary,
             service_tier,
             final_output_json_schema,

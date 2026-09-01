@@ -26,6 +26,7 @@ use crate::config_types::CollaborationMode;
 use crate::config_types::ModeKind;
 use crate::config_types::MultiAgentMode;
 use crate::config_types::Personality;
+use crate::config_types::ReasoningMode;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::config_types::ServiceTier;
 use crate::config_types::WindowsSandboxLevel;
@@ -479,9 +480,17 @@ pub struct TurnSettingsUpdate {
     pub model: Option<String>,
     /// `None` preserves the selection; `Some(None)` clears it.
     pub effort: Option<Option<ReasoningEffortConfig>>,
+    pub reasoning_mode: ReasoningModeUpdate,
     pub summary: Option<ReasoningSummaryConfig>,
     /// `None` preserves the requested tier; `Some(None)` clears it.
     pub service_tier: Option<Option<ServiceTier>>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReasoningModeUpdate {
+    #[default]
+    Preserve,
+    Set(ReasoningMode),
 }
 
 /// The result of processing a turn-settings update, not merely queueing it.
@@ -535,6 +544,9 @@ pub struct ThreadSettingsOverrides {
     /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear the
     /// effort, or `None` to leave the existing value unchanged.
     pub effort: Option<Option<ReasoningEffortConfig>>,
+
+    /// Updated reasoning mode for future turns.
+    pub reasoning_mode: ReasoningModeUpdate,
 
     /// Updated reasoning summary preference (honored only for reasoning-capable models).
     pub summary: Option<ReasoningSummaryConfig>,
@@ -2161,6 +2173,9 @@ pub struct ThreadSettingsSnapshot {
     pub cwd: AbsolutePathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffortConfig>,
+    #[serde(default, skip_serializing_if = "ReasoningMode::is_standard")]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<ReasoningSummaryConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3190,6 +3205,9 @@ pub struct TurnContextItem {
     pub cyber_access_program: Option<CyberAccessProgram>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<ReasoningEffortConfig>,
+    #[serde(default, skip_serializing_if = "ReasoningMode::is_standard")]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     // Compatibility-only field written with a default value so older Codex
     // versions can deserialize turn-context rollout items. It is no longer
     // read by context reconstruction and should be removed in a future schema
@@ -3848,6 +3866,11 @@ pub struct SessionConfiguredEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffortConfig>,
 
+    /// The Responses API reasoning execution mode.
+    #[serde(default, skip_serializing_if = "ReasoningMode::is_standard")]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
+
     /// Optional initial messages (as events) for resumed sessions.
     /// When present, UIs can use these to seed the history.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3895,6 +3918,8 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             active_permission_profile: Option<ActivePermissionProfile>,
             cwd: AbsolutePathBuf,
             reasoning_effort: Option<ReasoningEffortConfig>,
+            #[serde(default)]
+            reasoning_mode: ReasoningMode,
             initial_messages: Option<Vec<EventMsg>>,
             network_proxy: Option<SessionNetworkProxyRuntime>,
             rollout_path: Option<PathBuf>,
@@ -3928,6 +3953,7 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             active_permission_profile: wire.active_permission_profile,
             cwd: wire.cwd,
             reasoning_effort: wire.reasoning_effort,
+            reasoning_mode: wire.reasoning_mode,
             initial_messages: wire.initial_messages,
             network_proxy: wire.network_proxy,
             rollout_path: wire.rollout_path,
@@ -5983,6 +6009,7 @@ mod tests {
             realtime_active: None,
             cyber_access_program: None,
             effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             summary: ReasoningSummaryConfig::Auto,
         };
 
@@ -6037,6 +6064,7 @@ mod tests {
                 active_permission_profile: None,
                 cwd: test_path_buf("/home/user/project").abs(),
                 reasoning_effort: Some(ReasoningEffortConfig::default()),
+                reasoning_mode: ReasoningMode::Standard,
                 initial_messages: None,
                 network_proxy: None,
                 rollout_path: Some(rollout_file.path().to_path_buf()),

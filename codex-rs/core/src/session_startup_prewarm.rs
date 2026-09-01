@@ -324,6 +324,7 @@ async fn schedule_startup_prewarm_inner(
             &step_context.settings.model_info,
             &step_context.session_telemetry,
             step_context.settings.reasoning_effort().cloned(),
+            step_context.settings.reasoning_mode(),
             step_context.settings.reasoning_summary,
             step_context.settings.service_tier,
             &responses_metadata,

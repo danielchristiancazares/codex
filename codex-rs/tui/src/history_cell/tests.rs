@@ -623,6 +623,7 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: None,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         collaboration_mode: None,
         personality: None,
         message_history: None,

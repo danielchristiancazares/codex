@@ -690,6 +690,7 @@ mod thread_processor_behavior_tests {
             profile_workspace_roots: Vec::new(),
             ephemeral: false,
             reasoning_effort: None,
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             reasoning_summary: None,
             personality: None,
             collaboration_mode: CollaborationMode {

@@ -31,6 +31,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ModelProviderAuthInfo;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
@@ -1596,6 +1597,7 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
             &model_info,
             &session_telemetry,
             effort,
+            codex_protocol::config_types::ReasoningMode::Standard,
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ ServiceTier::Default,
             &responses_metadata,
@@ -2251,6 +2253,42 @@ async fn includes_configured_max_effort_in_request() -> anyhow::Result<()> {
             .and_then(|v| v.as_str()),
         Some("max")
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn includes_configured_reasoning_mode_in_request() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+
+    let resp_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let TestCodex { codex, .. } = test_codex()
+        .with_model("gpt-5.4")
+        .with_config(|config| {
+            config.model_reasoning_effort = Some(ReasoningEffort::High);
+            config.model_reasoning_mode = ReasoningMode::Pro;
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "hello".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = resp_mock.single_request();
+    let reasoning = &request.body_json()["reasoning"];
+    assert_eq!(reasoning["mode"], "pro");
+    assert_eq!(reasoning["effort"], "high");
 
     Ok(())
 }
@@ -3164,6 +3202,7 @@ async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids(
             &model_info,
             &session_telemetry,
             effort,
+            codex_protocol::config_types::ReasoningMode::Standard,
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ ServiceTier::Default,
             &responses_metadata,

@@ -3,6 +3,7 @@ use super::*;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
 use codex_agent_extension::AgentRunner;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::ContentItem;
@@ -11,6 +12,7 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind as CoreAdditionalContextKind;
+use codex_protocol::protocol::ReasoningModeUpdate;
 use codex_protocol::protocol::TurnSettingsUpdate;
 use codex_protocol::protocol::TurnSettingsUpdateOutcome;
 use codex_protocol::turn_input::AdditionalContextAction;
@@ -137,6 +139,7 @@ struct ThreadSettingsBuildParams {
     model: Option<String>,
     service_tier: Option<Option<ServiceTier>>,
     effort: Option<ReasoningEffort>,
+    reasoning_mode: ReasoningMode,
     summary: Option<ReasoningSummary>,
     collaboration_mode: Option<CollaborationMode>,
     personality: Option<Personality>,
@@ -234,6 +237,7 @@ impl TurnRequestProcessor {
                     model: params.model,
                     // Match thread/settings/update: public null does not clear effort.
                     effort: params.effort.map(Some),
+                    reasoning_mode: ReasoningModeUpdate::Set(params.reasoning_mode),
                     summary: params.summary,
                     service_tier: params.service_tier,
                 },
@@ -628,6 +632,7 @@ impl TurnRequestProcessor {
                     model: params.model,
                     service_tier: params.service_tier,
                     effort: params.effort,
+                    reasoning_mode: params.reasoning_mode,
                     summary: params.summary,
                     collaboration_mode: params.collaboration_mode,
                     personality: params.personality,
@@ -780,6 +785,7 @@ impl TurnRequestProcessor {
             model,
             service_tier,
             effort,
+            reasoning_mode,
             summary,
             collaboration_mode,
             personality,
@@ -793,7 +799,6 @@ impl TurnRequestProcessor {
 
         let collaboration_mode =
             collaboration_mode.map(|mode| self.normalize_collaboration_mode(mode));
-        let has_environment_override = environments.is_some();
         // `thread/settings/update` only acknowledges that the update was queued.
         // Clients that send dependent partial updates should wait for
         // `thread/settings/updated` or combine the fields in one request.
@@ -802,18 +807,6 @@ impl TurnRequestProcessor {
         } else {
             None
         };
-
-        let has_any_overrides = has_environment_override
-            || approval_policy.is_some()
-            || approvals_reviewer.is_some()
-            || sandbox_policy.is_some()
-            || permissions.is_some()
-            || model.is_some()
-            || service_tier.is_some()
-            || effort.is_some()
-            || summary.is_some()
-            || collaboration_mode.is_some()
-            || personality.is_some();
 
         let approval_policy =
             approval_policy.map(codex_app_server_protocol::AskForApproval::to_core);
@@ -865,29 +858,26 @@ impl TurnRequestProcessor {
             };
         let effort = effort.map(Some);
 
-        if has_any_overrides {
-            thread
-                .preview_thread_settings_overrides(CodexThreadSettingsOverrides {
-                    environments: environments.clone(),
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy: sandbox_policy.clone(),
-                    permission_profile: permission_profile.clone(),
-                    active_permission_profile: active_permission_profile.clone(),
-                    profile_workspace_roots: profile_workspace_roots.clone(),
-                    windows_sandbox_level: None,
-                    model: model.clone(),
-                    effort: effort.clone(),
-                    summary,
-                    service_tier,
-                    collaboration_mode: collaboration_mode.clone(),
-                    personality,
-                })
-                .await
-                .map_err(|err| {
-                    invalid_request(format!("invalid thread settings override: {err}"))
-                })?;
-        }
+        thread
+            .preview_thread_settings_overrides(CodexThreadSettingsOverrides {
+                environments: environments.clone(),
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy: sandbox_policy.clone(),
+                permission_profile: permission_profile.clone(),
+                active_permission_profile: active_permission_profile.clone(),
+                profile_workspace_roots: profile_workspace_roots.clone(),
+                windows_sandbox_level: None,
+                model: model.clone(),
+                effort: effort.clone(),
+                reasoning_mode: ReasoningModeUpdate::Set(reasoning_mode),
+                summary,
+                service_tier,
+                collaboration_mode: collaboration_mode.clone(),
+                personality,
+            })
+            .await
+            .map_err(|err| invalid_request(format!("invalid thread settings override: {err}")))?;
 
         Ok(codex_protocol::protocol::ThreadSettingsOverrides {
             environments,
@@ -900,6 +890,7 @@ impl TurnRequestProcessor {
             windows_sandbox_level: None,
             model,
             effort,
+            reasoning_mode: ReasoningModeUpdate::Set(reasoning_mode),
             summary,
             service_tier,
             collaboration_mode,
@@ -937,6 +928,7 @@ impl TurnRequestProcessor {
                     model: params.model,
                     service_tier: Some(Some(params.service_tier)),
                     effort: params.effort,
+                    reasoning_mode: params.reasoning_mode,
                     summary: params.summary,
                     collaboration_mode: params.collaboration_mode,
                     personality: params.personality,

@@ -3690,6 +3690,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         realtime_active: Some(turn_context.realtime_active),
         cyber_access_program: None,
         effort: turn_context.reasoning_effort().cloned(),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     };
     let turn_id = previous_context_item
@@ -4450,6 +4451,7 @@ async fn set_rate_limits_retains_previous_credits() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -4566,6 +4568,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -5163,6 +5166,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -6072,6 +6076,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -6225,6 +6230,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -6524,6 +6530,7 @@ async fn make_session_with_config_and_rx(
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -6650,6 +6657,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),
@@ -8505,6 +8513,7 @@ where
         step_settings: Arc::new(StepSettings {
             collaboration_mode,
             reasoning_summary: config.model_reasoning_summary,
+            reasoning_mode: config.model_reasoning_mode,
             service_tier: ServiceTier::Default,
             personality: config.personality,
             approval_policy: config.permissions.approval_policy.clone(),

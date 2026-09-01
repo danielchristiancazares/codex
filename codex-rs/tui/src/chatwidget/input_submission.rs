@@ -360,6 +360,7 @@ impl ChatWidget {
             active_permission_profile,
             effective_mode.model().to_string(),
             effective_mode.reasoning_effort(),
+            self.config.model_reasoning_mode,
             /*summary*/ None,
             service_tier,
             /*final_output_json_schema*/ None,

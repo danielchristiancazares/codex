@@ -91,6 +91,7 @@ use codex_otel::traceparent_context_from_env;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
@@ -706,6 +707,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let default_cwd = config.cwd.to_path_buf();
     let default_approval_policy = config.permissions.approval_policy.value();
     let default_effort = config.model_reasoning_effort.clone();
+    let default_reasoning_mode = config.model_reasoning_mode;
 
     let (initial_operation, prompt_summary) = match (command.as_ref(), prompt, images) {
         (Some(ExecCommand::Review(review_cli)), _, _) => {
@@ -912,6 +914,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             response.active_permission_profile.map(Into::into),
             response.cwd,
             response.reasoning_effort,
+            response.reasoning_mode,
         )
         .map_err(anyhow::Error::msg)?;
         (session_configured.thread_id, session_configured)
@@ -991,6 +994,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         service_tier: None,
                         service_tier_for_turn: None,
                         effort: default_effort,
+                        reasoning_mode: default_reasoning_mode,
                         summary: None,
                         personality: None,
                         output_schema,
@@ -1313,6 +1317,7 @@ fn session_configured_from_thread_start_response(
         response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort.clone(),
+        response.reasoning_mode,
     )
 }
 
@@ -1337,6 +1342,7 @@ fn session_configured_from_thread_resume_response(
         response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort.clone(),
+        response.reasoning_mode,
     )
 }
 
@@ -1370,6 +1376,7 @@ fn session_configured_from_thread_response(
     active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
     cwd: AbsolutePathBuf,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_mode: ReasoningMode,
 ) -> Result<SessionConfiguredEvent, String> {
     let session_id = SessionId::from_string(session_id)
         .map_err(|err| format!("session id `{session_id}` is invalid: {err}"))?;
@@ -1400,6 +1407,7 @@ fn session_configured_from_thread_response(
         active_permission_profile,
         cwd,
         reasoning_effort,
+        reasoning_mode,
         initial_messages: None,
         network_proxy: None,
         rollout_path,

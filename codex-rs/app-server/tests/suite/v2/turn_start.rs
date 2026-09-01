@@ -74,6 +74,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
@@ -797,6 +798,79 @@ async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn turn_start_omitted_reasoning_mode_selects_standard() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let websocket_server = responses::start_websocket_server(vec![vec![
+        vec![
+            responses::ev_response_created("warm-1"),
+            responses::ev_completed("warm-1"),
+        ],
+        vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_assistant_message("msg-1", "Done"),
+            responses::ev_completed("resp-1"),
+        ],
+    ]])
+    .await;
+
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&websocket_server.uri().replacen("ws://", "http://", 1))
+        .with_provider_config("supports_websockets = true")
+        .write(codex_home.path())?;
+    write_models_cache(codex_home.path())?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+    let ThreadStartResponse { thread, .. } = mcp
+        .start_thread(ThreadStartParams {
+            reasoning_mode: ReasoningMode::Pro,
+            ..Default::default()
+        })
+        .await?;
+
+    let request_id = mcp
+        .send_raw_request(
+            "turn/start",
+            Some(json!({
+                "threadId": thread.id,
+                "input": [{
+                    "type": "text",
+                    "text": "Hello",
+                    "text_elements": [],
+                }],
+            })),
+        )
+        .await?;
+    let _: TurnStartResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(request_id)).await??;
+    let settings_updated: ThreadSettingsUpdatedNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_notification("thread/settings/updated"),
+    )
+    .await??;
+    assert_eq!(
+        settings_updated.thread_settings.reasoning_mode,
+        ReasoningMode::Standard
+    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let request = websocket_server
+        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 1)
+        .await
+        .body_json();
+    assert_eq!(request["reasoning"]["mode"], json!("standard"));
+
+    websocket_server.shutdown().await;
     Ok(())
 }
 
@@ -2779,6 +2853,7 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
                 sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
                 model: Some("mock-model".to_string()),
                 effort: Some(ReasoningEffort::Medium),
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 summary: Some(ReasoningSummary::Auto),
                 ..Default::default()
             },
@@ -3069,6 +3144,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 permissions: None,
                 model: Some("mock-model".to_string()),
                 effort: Some(ReasoningEffort::Medium),
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 summary: Some(ReasoningSummary::Auto),
                 service_tier: None,
                 service_tier_for_turn: None,
@@ -3116,6 +3192,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 permissions: None,
                 model: Some("mock-model".to_string()),
                 effort: Some(ReasoningEffort::Medium),
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 summary: Some(ReasoningSummary::Auto),
                 service_tier: None,
                 service_tier_for_turn: None,

@@ -1209,6 +1209,7 @@ impl AppServerSession {
         workspace_roots: &[AbsolutePathBuf],
         model: String,
         effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode,
         summary: Option<codex_protocol::config_types::ReasoningSummary>,
         service_tier: ServiceTier,
         collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
@@ -1237,6 +1238,7 @@ impl AppServerSession {
                     sandbox_policy,
                     permissions,
                     model: Some(model),
+                    reasoning_mode,
                     service_tier: Some(Some(service_tier)),
                     service_tier_for_turn: None,
                     effort,
@@ -1894,6 +1896,7 @@ pub(crate) fn thread_start_params_from_config(
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(config),
         service_tier: config.service_tier,
+        reasoning_mode: config.model_reasoning_mode,
         cwd: thread_cwd_from_config(config, thread_params_mode, remote_cwd_override),
         runtime_workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
@@ -2111,6 +2114,7 @@ async fn thread_session_state_from_thread_start_response(
         response.runtime_workspace_roots.clone(),
         response.instruction_source_path_uris(),
         response.reasoning_effort.clone(),
+        response.reasoning_mode,
         config,
     )
     .await
@@ -2152,6 +2156,7 @@ async fn thread_session_state_from_thread_resume_response(
         response.runtime_workspace_roots.clone(),
         response.instruction_source_path_uris(),
         response.reasoning_effort.clone(),
+        response.reasoning_mode,
         config,
     )
     .await
@@ -2184,6 +2189,7 @@ async fn thread_session_state_from_thread_fork_response(
         response.runtime_workspace_roots.clone(),
         response.instruction_source_path_uris(),
         response.reasoning_effort.clone(),
+        response.reasoning_mode,
         config,
     )
     .await
@@ -2234,6 +2240,7 @@ async fn thread_session_state_from_thread_response(
     runtime_workspace_roots: Vec<AbsolutePathBuf>,
     instruction_source_paths: Vec<PathUri>,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_mode: codex_protocol::config_types::ReasoningMode,
     config: &Config,
 ) -> Result<ThreadSessionState, String> {
     let thread_id = ThreadId::from_string(thread_id)
@@ -2262,6 +2269,7 @@ async fn thread_session_state_from_thread_response(
         runtime_workspace_roots,
         instruction_source_paths,
         reasoning_effort,
+        reasoning_mode,
         collaboration_mode: None,
         personality: config.personality,
         message_history: Some(MessageHistoryMetadata {
@@ -3706,6 +3714,7 @@ mod tests {
                 .into(),
             active_permission_profile: None,
             reasoning_effort: None,
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             multi_agent_mode: Default::default(),
             initial_turns_page: None,
             turns_backwards_cursor: None,
@@ -3841,6 +3850,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             /*reasoning_effort*/ None,
+            codex_protocol::config_types::ReasoningMode::Standard,
             &config,
         )
         .await
@@ -3876,6 +3886,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             /*reasoning_effort*/ None,
+            codex_protocol::config_types::ReasoningMode::Standard,
             &config,
         )
         .await

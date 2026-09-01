@@ -32,6 +32,27 @@ impl App {
         }
     }
 
+    pub(super) async fn sync_active_thread_reasoning_mode_to_cached_session(&mut self) {
+        let Some(active_thread_id) = self.active_thread_id else {
+            return;
+        };
+        let reasoning_mode = self.chat_widget.current_reasoning_mode();
+        let update_session = |session: &mut ThreadSessionState| {
+            session.reasoning_mode = reasoning_mode;
+        };
+        if self.primary_thread_id == Some(active_thread_id)
+            && let Some(session) = self.primary_session_configured.as_mut()
+        {
+            update_session(session);
+        }
+        if let Some(channel) = self.thread_event_channels.get(&active_thread_id) {
+            let mut store = channel.store.lock().await;
+            if let Some(session) = store.session.as_mut() {
+                update_session(session);
+            }
+        }
+    }
+
     pub(super) async fn sync_active_thread_permission_settings_to_cached_session(&mut self) {
         let Some(active_thread_id) = self.active_thread_id else {
             return;
@@ -105,6 +126,7 @@ impl App {
                 runtime_workspace_roots: self.config.workspace_roots.clone(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: self.chat_widget.current_reasoning_effort(),
+                reasoning_mode: self.config.model_reasoning_mode,
                 collaboration_mode: None,
                 personality: None,
                 message_history: None,
@@ -187,6 +209,7 @@ mod tests {
             runtime_workspace_roots: vec![cwd.abs()],
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             collaboration_mode: None,
             personality: None,
             message_history: None,

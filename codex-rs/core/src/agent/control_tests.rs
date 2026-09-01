@@ -1244,6 +1244,7 @@ async fn spawn_agent_fork_from_paginated_parent_uses_model_context_prefix() {
                         active_permission_profile: None,
                         cwd: harness.config.cwd.clone(),
                         reasoning_effort: None,
+                        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                         reasoning_summary: None,
                         personality: None,
                         collaboration_mode: CollaborationMode {

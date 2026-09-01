@@ -79,14 +79,6 @@
       ],
       "type": "string"
     },
-    "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex",
-        "default"
-      ],
-      "type": "string"
-    },
     "ThreadSource": {
       "type": "string"
     }

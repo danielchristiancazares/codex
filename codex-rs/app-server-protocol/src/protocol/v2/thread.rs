@@ -25,6 +25,7 @@ pub use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 pub use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
@@ -72,6 +73,10 @@ pub struct ThreadStartParams {
     pub allow_provider_model_fallback: bool,
     /// Complete routing selection for the new thread.
     pub service_tier: ServiceTier,
+    /// Reasoning execution mode. Omission selects `standard`.
+    #[serde(default)]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
@@ -202,6 +207,8 @@ pub struct ThreadStartResponse {
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
     /// @deprecated Always `explicitRequestOnly`. Use `reasoningEffort` for Ultra behavior.
     #[experimental("thread/start.multiAgentMode")]
     #[serde(default)]
@@ -245,6 +252,10 @@ pub struct ThreadSettingsUpdateParams {
     pub model: Option<String>,
     /// Complete current routing selection for subsequent turns.
     pub service_tier: ServiceTier,
+    /// Complete reasoning-mode selection for subsequent turns.
+    #[serde(default)]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     /// Override the reasoning effort for subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,
@@ -287,6 +298,8 @@ pub struct ThreadSettings {
     #[ts(optional, as = "Option<ServiceTier>")]
     pub service_tier: ServiceTier,
     pub effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
     pub summary: Option<ReasoningSummary>,
     pub collaboration_mode: CollaborationMode,
     /// @deprecated Always `explicitRequestOnly`. Use `effort` for Ultra behavior.
@@ -426,6 +439,8 @@ pub struct ThreadResumeResponse {
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
     /// @deprecated Always `explicitRequestOnly`. Use `reasoningEffort` for Ultra behavior.
     #[experimental("thread/resume.multiAgentMode")]
     #[serde(default)]
@@ -613,6 +628,8 @@ pub struct ThreadForkResponse {
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
     /// @deprecated Always `explicitRequestOnly`. Use `reasoningEffort` for Ultra behavior.
     #[experimental("thread/fork.multiAgentMode")]
     #[serde(default)]

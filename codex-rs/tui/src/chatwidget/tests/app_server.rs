@@ -26,6 +26,7 @@ fn thread_settings_for_test(
             model_provider: "openai".to_string(),
             service_tier: ServiceTier::Fast,
             effort: Some(ReasoningEffortConfig::High),
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             summary: None,
             collaboration_mode: CollaborationMode {
                 mode: ModeKind::Plan,
@@ -58,6 +59,7 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
         runtime_workspace_roots: vec![test_path_buf("/tmp/thread-settings").abs()],
         instruction_source_paths: Vec::new(),
         reasoning_effort: None,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         collaboration_mode: None,
         personality: None,
         message_history: None,

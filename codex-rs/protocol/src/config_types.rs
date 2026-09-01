@@ -73,13 +73,21 @@ pub enum ReasoningSummary {
 
 /// Selects the OpenAI Responses API reasoning execution mode.
 #[derive(
-    Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Display, JsonSchema, TS,
+    Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Display, JsonSchema, TS,
 )]
 #[serde(rename_all = "lowercase")]
+#[ts(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum ReasoningMode {
+    #[default]
     Standard,
     Pro,
+}
+
+impl ReasoningMode {
+    pub const fn is_standard(&self) -> bool {
+        matches!(self, Self::Standard)
+    }
 }
 
 /// Controls output length/detail on GPT-5 models via the Responses API.

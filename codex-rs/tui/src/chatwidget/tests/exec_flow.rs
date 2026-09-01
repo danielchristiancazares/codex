@@ -1608,6 +1608,7 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
         runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         collaboration_mode: None,
         personality: None,
         message_history: None,

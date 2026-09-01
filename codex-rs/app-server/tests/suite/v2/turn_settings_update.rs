@@ -131,6 +131,7 @@ async fn settings_updates_report_results_and_preserve_the_target_on_saved_thread
         turn_id: turn_id.clone(),
         model: Some(MODEL_B.to_string()),
         effort: Some(ReasoningEffort::High),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: Some(ReasoningSummary::Detailed),
         service_tier: Some(Some(ServiceTier::Fast)),
     };

@@ -1329,14 +1329,6 @@
       ],
       "type": "string"
     },
-    "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex",
-        "default"
-      ],
-      "type": "string"
-    },
     "SortDirection": {
       "enum": [
         "asc",

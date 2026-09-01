@@ -717,6 +717,7 @@ impl Session {
             ),
             step_settings: Arc::new(StepSettings {
                 collaboration_mode,
+                reasoning_mode: config.model_reasoning_mode,
                 reasoning_summary: config.model_reasoning_summary,
                 service_tier,
                 personality: config.personality,

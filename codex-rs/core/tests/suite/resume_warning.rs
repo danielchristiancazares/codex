@@ -50,6 +50,7 @@ fn resume_history(
         realtime_active: None,
         cyber_access_program: None,
         effort: config.model_reasoning_effort.clone(),
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: config
             .model_reasoning_summary
             .unwrap_or(ReasoningSummary::Auto),

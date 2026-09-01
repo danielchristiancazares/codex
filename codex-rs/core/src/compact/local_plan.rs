@@ -279,6 +279,7 @@ pub(super) async fn drain_to_completed(
             turn_context.model_info(),
             &turn_context.session_telemetry,
             turn_context.reasoning_effort().cloned(),
+            turn_context.reasoning_mode(),
             turn_context.reasoning_summary(),
             turn_context.config.service_tier,
             responses_metadata,

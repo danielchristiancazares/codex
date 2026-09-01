@@ -243,6 +243,7 @@ async fn settings_updates_preserve_turn_identity_and_target(target: SettingsTarg
             let update = TurnSettingsUpdate {
                 model: Some(MODEL_B.to_string()),
                 effort: Some(Some(ReasoningEffort::High)),
+                reasoning_mode: Default::default(),
                 summary: Some(ReasoningSummary::Detailed),
                 service_tier: Some(Some(ServiceTier::Fast)),
             };

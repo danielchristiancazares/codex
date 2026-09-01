@@ -19,6 +19,7 @@ use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ThreadIdleCause;
 use codex_protocol::SanitizedGitUrl;
 use codex_protocol::config_types::MultiAgentMode;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::mcp::ClientMcpExtensions;
@@ -1117,6 +1118,7 @@ impl ThreadRequestProcessor {
             model_provider,
             allow_provider_model_fallback,
             service_tier,
+            reasoning_mode,
             cwd,
             runtime_workspace_roots,
             approval_policy,
@@ -1219,6 +1221,7 @@ impl ThreadRequestProcessor {
                 config,
                 typesafe_overrides,
                 service_tier,
+                reasoning_mode,
                 dynamic_tools,
                 selected_capability_roots.unwrap_or_default(),
                 history_mode.map(Into::into),
@@ -1299,6 +1302,7 @@ impl ThreadRequestProcessor {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
         service_tier: ServiceTier,
+        reasoning_mode: ReasoningMode,
         dynamic_tools: Option<Vec<DynamicToolSpec>>,
         selected_capability_roots: Vec<SelectedCapabilityRoot>,
         history_mode: Option<ThreadHistoryMode>,
@@ -1319,6 +1323,7 @@ impl ThreadRequestProcessor {
             .await
             .map_err(|err| config_load_error(&err))?;
         config.service_tier = service_tier;
+        config.model_reasoning_mode = reasoning_mode;
         // Project-local config can launch host processes, so only the effective
         // permissions after managed constraints can imply project trust.
         let effective_permission_profile = config.permissions.effective_permission_profile();
@@ -1573,6 +1578,7 @@ impl ThreadRequestProcessor {
             sandbox,
             active_permission_profile,
             reasoning_effort: config_snapshot.reasoning_effort,
+            reasoning_mode: config_snapshot.reasoning_mode,
             multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         };
         let notif = thread_started_notification(thread);
@@ -3982,6 +3988,7 @@ impl ThreadRequestProcessor {
                     sandbox,
                     active_permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
+                    reasoning_mode: session_configured.reasoning_mode,
                     multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
                     initial_turns_page,
                     turns_backwards_cursor,
@@ -5140,6 +5147,7 @@ impl ThreadRequestProcessor {
             sandbox,
             active_permission_profile,
             reasoning_effort: session_configured.reasoning_effort,
+            reasoning_mode: session_configured.reasoning_mode,
             multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         };
 

@@ -8,6 +8,7 @@ use codex_experimental_api_macros::ExperimentalApi;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -54,6 +55,10 @@ pub struct TurnSettingsUpdateParams {
     /// Omission or `null` leaves the effort unchanged.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,
+    /// Omission selects standard reasoning mode.
+    #[serde(default)]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     /// Omission or `null` leaves the summary preference unchanged.
     #[ts(optional = nullable)]
     pub summary: Option<ReasoningSummary>,
@@ -227,6 +232,10 @@ pub struct TurnStartParams {
     /// Override the reasoning effort for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,
+    /// Reasoning mode for this turn and subsequent turns. Omission selects standard.
+    #[serde(default)]
+    #[ts(optional, as = "Option<ReasoningMode>")]
+    pub reasoning_mode: ReasoningMode,
     /// Override the reasoning summary for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub summary: Option<ReasoningSummary>,

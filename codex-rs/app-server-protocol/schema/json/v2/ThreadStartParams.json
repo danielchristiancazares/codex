@@ -227,6 +227,14 @@
       ],
       "type": "string"
     },
+    "ReasoningMode": {
+      "description": "Selects the OpenAI Responses API reasoning execution mode.",
+      "enum": [
+        "standard",
+        "pro"
+      ],
+      "type": "string"
+    },
     "SandboxMode": {
       "enum": [
         "read-only",
@@ -382,6 +390,15 @@
           "type": "null"
         }
       ]
+    },
+    "reasoningMode": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningMode"
+        }
+      ],
+      "default": "standard",
+      "description": "Reasoning execution mode. Omission selects `standard`."
     },
     "sandbox": {
       "anyOf": [

@@ -255,12 +255,14 @@ impl Session {
         let TurnSettingsUpdate {
             model,
             effort,
+            reasoning_mode,
             summary,
             service_tier,
         } = update;
         let update = StepSettingsUpdate {
             model,
             effort,
+            reasoning_mode,
             reasoning_summary: summary,
             service_tier,
             ..Default::default()

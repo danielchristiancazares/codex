@@ -39,6 +39,7 @@ fn settings_item(
                 active_permission_profile,
                 cwd: cwd(),
                 reasoning_effort: None,
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 reasoning_summary: None,
                 personality: None,
                 collaboration_mode: CollaborationMode {
@@ -82,6 +83,7 @@ fn turn_context_item(
         realtime_active: None,
         cyber_access_program: None,
         effort: None,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     })
 }

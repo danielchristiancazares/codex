@@ -10,11 +10,13 @@ use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::ReasoningModeUpdate;
 use std::sync::Arc;
 
 /// Model and execution settings selected for an individual model step within
@@ -22,6 +24,7 @@ use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StepSettings {
     pub(crate) collaboration_mode: CollaborationMode,
+    pub(crate) reasoning_mode: ReasoningMode,
     /// `None` follows the pinned model's default.
     pub(crate) reasoning_summary: Option<ReasoningSummary>,
     /// Normalized requested tier. Startup retains initial-model filtering;
@@ -74,6 +77,10 @@ impl ResolvedStepSettings {
             .settings
             .reasoning_effort
             .as_ref()
+    }
+
+    pub(crate) fn reasoning_mode(&self) -> ReasoningMode {
+        self.selected.reasoning_mode
     }
 
     pub(crate) fn effective_reasoning_effort(&self) -> Option<ReasoningEffort> {
@@ -213,6 +220,7 @@ pub(crate) struct StepSettingsUpdate {
     pub(crate) effort: Option<Option<ReasoningEffort>>,
     /// A complete collaboration mode takes precedence over model and effort edits.
     pub(crate) collaboration_mode: Option<CollaborationMode>,
+    pub(crate) reasoning_mode: ReasoningModeUpdate,
     pub(crate) reasoning_summary: Option<ReasoningSummary>,
     pub(crate) service_tier: Option<Option<ServiceTier>>,
     pub(crate) personality: Option<Personality>,
@@ -261,6 +269,10 @@ impl StepSettings {
         });
         if let Some(summary) = update.reasoning_summary {
             next.reasoning_summary = Some(summary);
+        }
+        match update.reasoning_mode {
+            ReasoningModeUpdate::Preserve => {}
+            ReasoningModeUpdate::Set(reasoning_mode) => next.reasoning_mode = reasoning_mode,
         }
         if let Some(service_tier) = update.service_tier {
             next.service_tier = service_tier.unwrap_or_default();

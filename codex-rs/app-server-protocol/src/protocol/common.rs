@@ -3155,6 +3155,7 @@ mod tests {
                 sandbox: v2::SandboxPolicy::DangerFullAccess,
                 active_permission_profile: None,
                 reasoning_effort: None,
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
             },
         };
@@ -3209,6 +3210,7 @@ mod tests {
                     },
                     "activePermissionProfile": null,
                     "reasoningEffort": null,
+                    "reasoningMode": "standard",
                     "multiAgentMode": "explicitRequestOnly"
                 }
             }),
@@ -4403,6 +4405,7 @@ mod tests {
                     model_provider: "openai".to_string(),
                     service_tier: ServiceTier::Default,
                     effort: None,
+                    reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                     summary: None,
                     collaboration_mode: codex_protocol::config_types::CollaborationMode {
                         mode: codex_protocol::config_types::ModeKind::Default,

@@ -13,6 +13,7 @@ use codex_app_server_protocol::ThreadSettingsUpdateParams;
 use codex_config::types::ApprovalsReviewer;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
@@ -60,6 +61,7 @@ impl App {
             thread_id: thread_id.to_string(),
             model: Some(model),
             service_tier: self.chat_widget.config_ref().service_tier,
+            reasoning_mode: self.chat_widget.current_reasoning_mode(),
             collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -106,6 +108,7 @@ impl App {
         Some(ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             service_tier: self.chat_widget.config_ref().service_tier,
+            reasoning_mode: self.chat_widget.current_reasoning_mode(),
             effort,
             collaboration_mode: Some(self.chat_widget.current_collaboration_mode().clone()),
             ..ThreadSettingsUpdateParams::default()
@@ -122,6 +125,7 @@ impl App {
         let params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             service_tier: self.chat_widget.config_ref().service_tier,
+            reasoning_mode: self.chat_widget.current_reasoning_mode(),
             collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -139,6 +143,7 @@ impl App {
         let params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             service_tier: self.chat_widget.config_ref().service_tier,
+            reasoning_mode: self.chat_widget.current_reasoning_mode(),
             personality: Some(personality),
             ..ThreadSettingsUpdateParams::default()
         };
@@ -181,6 +186,7 @@ impl App {
                 .map(|profile| profile.id.clone()),
             model: model.clone(),
             effort: effort.clone().unwrap_or_default(),
+            reasoning_mode: self.chat_widget.current_reasoning_mode(),
             summary: *summary,
             service_tier: *service_tier,
             collaboration_mode: collaboration_mode.clone(),
@@ -209,14 +215,28 @@ impl App {
         }
     }
 
+    pub(super) async fn sync_active_thread_reasoning_mode_setting(
+        &mut self,
+        app_server: &mut AppServerSession,
+        reasoning_mode: ReasoningMode,
+    ) {
+        let Some(thread_id) = self.active_thread_id else {
+            return;
+        };
+        let params = ThreadSettingsUpdateParams {
+            thread_id: thread_id.to_string(),
+            service_tier: self.chat_widget.current_service_tier(),
+            reasoning_mode,
+            ..ThreadSettingsUpdateParams::default()
+        };
+        self.send_thread_settings_update(app_server, params).await;
+    }
+
     pub(super) async fn send_thread_settings_update(
         &mut self,
         app_server: &mut AppServerSession,
         params: ThreadSettingsUpdateParams,
     ) -> bool {
-        if !thread_settings_update_has_changes(&params) {
-            return false;
-        }
         match app_server.thread_settings_update(params).await {
             Ok(settings_updated) => settings_updated,
             Err(err) => {
@@ -236,6 +256,7 @@ fn apply_thread_settings_to_session(session: &mut ThreadSessionState, settings: 
     }
     session.model_provider_id = settings.model_provider.clone();
     session.service_tier = settings.service_tier;
+    session.reasoning_mode = settings.reasoning_mode;
     session.approval_policy = settings.approval_policy;
     session.approvals_reviewer = settings.approvals_reviewer.to_core();
     session.permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
@@ -252,17 +273,4 @@ fn apply_thread_settings_to_session(session: &mut ThreadSessionState, settings: 
         .clone_from(&settings.model);
     collaboration_mode.settings.reasoning_effort = settings.effort.clone();
     session.collaboration_mode = Some(Box::new(collaboration_mode));
-}
-
-fn thread_settings_update_has_changes(params: &ThreadSettingsUpdateParams) -> bool {
-    params.cwd.is_some()
-        || params.approval_policy.is_some()
-        || params.approvals_reviewer.is_some()
-        || params.sandbox_policy.is_some()
-        || params.permissions.is_some()
-        || params.model.is_some()
-        || params.effort.is_some()
-        || params.summary.is_some()
-        || params.collaboration_mode.is_some()
-        || params.personality.is_some()
 }

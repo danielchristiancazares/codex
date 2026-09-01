@@ -1,5 +1,6 @@
 use super::*;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
+use codex_protocol::config_types::ReasoningMode;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
 
@@ -3261,6 +3262,64 @@ async fn slash_rollout_handles_missing_path() {
         rendered.contains("not available"),
         "expected missing rollout path message: {rendered}"
     );
+}
+
+#[tokio::test]
+async fn pro_slash_command_is_visible_in_command_popup() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane
+        .set_composer_text("/pro".to_string(), Vec::new(), Vec::new());
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("/pro"));
+    assert!(popup.contains("toggle Pro reasoning mode"));
+    assert_chatwidget_snapshot!("pro_slash_command_popup", popup);
+}
+
+#[tokio::test]
+async fn pro_slash_command_toggles_and_persists_reasoning_mode() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    assert_eq!(chat.current_reasoning_mode(), ReasoningMode::Standard);
+    chat.dispatch_command(SlashCommand::Pro);
+    assert_eq!(chat.current_reasoning_mode(), ReasoningMode::Pro);
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::PersistReasoningModeSelection {
+            reasoning_mode: ReasoningMode::Pro
+        })
+    );
+
+    chat.dispatch_command(SlashCommand::Pro);
+    assert_eq!(chat.current_reasoning_mode(), ReasoningMode::Standard);
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::PersistReasoningModeSelection {
+            reasoning_mode: ReasoningMode::Standard
+        })
+    );
+}
+
+#[tokio::test]
+async fn user_turn_carries_pro_reasoning_mode_after_toggle() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    set_chatgpt_auth(&mut chat);
+
+    chat.dispatch_command(SlashCommand::Pro);
+    let _events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+
+    chat.bottom_pane
+        .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            reasoning_mode: ReasoningMode::Pro,
+            ..
+        } => {}
+        other => panic!("expected Op::UserTurn with Pro reasoning mode, got {other:?}"),
+    }
 }
 
 #[tokio::test]

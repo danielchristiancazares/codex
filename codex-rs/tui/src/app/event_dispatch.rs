@@ -2288,6 +2288,31 @@ impl App {
                     }
                 }
             }
+            AppEvent::PersistReasoningModeSelection { reasoning_mode } => {
+                self.config.model_reasoning_mode = reasoning_mode;
+                self.chat_widget.set_reasoning_mode(reasoning_mode);
+                self.sync_active_thread_reasoning_mode_to_cached_session()
+                    .await;
+                self.sync_active_thread_reasoning_mode_setting(app_server, reasoning_mode)
+                    .await;
+                let edits = vec![crate::config_update::reasoning_mode_selection_edit(
+                    reasoning_mode,
+                )];
+                match crate::config_update::write_config_batch(app_server.request_handle(), edits)
+                    .await
+                {
+                    Ok(_) => self.chat_widget.add_info_message(
+                        format!("Reasoning mode set to {reasoning_mode}"),
+                        /*hint*/ None,
+                    ),
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist reasoning mode selection");
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save default reasoning mode: {err}"
+                        ));
+                    }
+                }
+            }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 let mut config = self.config.clone();
                 if !self.try_set_approval_policy_on_config(

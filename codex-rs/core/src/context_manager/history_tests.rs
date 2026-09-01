@@ -338,6 +338,7 @@ fn reference_context_item() -> TurnContextItem {
         realtime_active: Some(false),
         cyber_access_program: None,
         effort: None,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     }
 }

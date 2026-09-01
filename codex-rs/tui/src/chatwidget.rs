@@ -417,6 +417,7 @@ use self::review::PreReviewTokenInfo;
 use self::review::ReviewState;
 #[cfg(test)]
 pub(crate) use self::review_popups::show_review_commit_picker_with_entries;
+mod reasoning_modes;
 mod safety_buffering;
 mod service_tiers;
 mod settings;

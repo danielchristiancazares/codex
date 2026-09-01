@@ -284,6 +284,7 @@ mod tests {
             model_provider: "mock_provider".to_string(),
             service_tier: ServiceTier::Default,
             effort: None,
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             summary: None,
             collaboration_mode: CollaborationMode {
                 mode: ModeKind::Default,

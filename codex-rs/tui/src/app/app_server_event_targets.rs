@@ -251,6 +251,7 @@ mod tests {
             model_provider: "openai".to_string(),
             service_tier: ServiceTier::Default,
             effort: Some(ReasoningEffort::High),
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             summary: None,
             collaboration_mode: CollaborationMode {
                 mode: ModeKind::Default,

@@ -83,6 +83,7 @@ use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
 use codex_network_proxy::NetworkMode;
 use codex_protocol::config_types::ModelProviderAuthInfo;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
@@ -329,6 +330,22 @@ consolidation_model = "gpt-5.2"
                 .expect("legacy memories config")
         )
         .disable_on_external_context
+    );
+}
+
+#[test]
+fn reasoning_mode_defaults_to_standard_and_parses_pro() {
+    let default_config =
+        toml::from_str::<ConfigToml>("").expect("empty TOML should deserialize using defaults");
+    let pro_config = toml::from_str::<ConfigToml>("model_reasoning_mode = \"pro\"")
+        .expect("Pro reasoning mode should deserialize");
+
+    assert_eq!(
+        (
+            default_config.model_reasoning_mode,
+            pro_config.model_reasoning_mode,
+        ),
+        (ReasoningMode::Standard, ReasoningMode::Pro),
     );
 }
 
@@ -7911,6 +7928,28 @@ async fn for_config_writes_selected_user_config_file() -> anyhow::Result<()> {
         r#"model_provider = "openai""#
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_profile_omission_resets_reasoning_mode_to_standard() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    let base_config = codex_home.path().join(CONFIG_TOML_FILE);
+    let selected_config = codex_home.path().join("work.config.toml");
+    tokio::fs::write(&base_config, r#"model_reasoning_mode = "pro""#).await?;
+    tokio::fs::write(&selected_config, r#"model = "gpt-5.4""#).await?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .loader_overrides(LoaderOverrides {
+            user_config_path: Some(selected_config.abs()),
+            user_config_profile: Some("work".parse().expect("profile-v2 name")),
+            ..LoaderOverrides::without_managed_config_for_tests()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(config.model_reasoning_mode, ReasoningMode::Standard);
     Ok(())
 }
 

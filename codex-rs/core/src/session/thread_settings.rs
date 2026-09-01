@@ -49,6 +49,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
         windows_sandbox_level,
         model,
         effort,
+        reasoning_mode,
         summary,
         service_tier,
         collaboration_mode,
@@ -58,6 +59,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
         step_settings: StepSettingsUpdate {
             model,
             effort,
+            reasoning_mode,
             collaboration_mode,
             reasoning_summary: summary,
             service_tier,

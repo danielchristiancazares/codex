@@ -17,6 +17,7 @@ use codex_file_system::FileSystemSandboxContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningMode;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
@@ -264,6 +265,10 @@ impl TurnContext {
     /// Step-scoped consumers should use their captured `StepContext::settings`.
     pub(crate) fn reasoning_effort(&self) -> Option<&ReasoningEffortConfig> {
         self.initial_settings.reasoning_effort()
+    }
+
+    pub(crate) fn reasoning_mode(&self) -> ReasoningMode {
+        self.initial_settings.reasoning_mode()
     }
 
     /// Legacy: returns the frozen initial-turn effective reasoning summary.
@@ -605,6 +610,7 @@ impl TurnContext {
             realtime_active: Some(self.realtime_active),
             cyber_access_program: self.cyber_access_program,
             effort: self.reasoning_effort().cloned(),
+            reasoning_mode: self.reasoning_mode(),
             summary: ReasoningSummaryConfig::Auto,
         }
     }
@@ -663,6 +669,7 @@ impl Session {
             .step_settings
             .collaboration_mode
             .reasoning_effort();
+        per_turn_config.model_reasoning_mode = session_configuration.step_settings.reasoning_mode;
         per_turn_config.model_reasoning_summary =
             session_configuration.step_settings.reasoning_summary;
         per_turn_config.service_tier = session_configuration.step_settings.service_tier;
@@ -755,6 +762,7 @@ impl Session {
             super::time_reminder::apply_persistent_defaults(&mut per_turn_config);
         }
         per_turn_config.service_tier = step_settings.service_tier;
+        per_turn_config.model_reasoning_mode = step_settings.reasoning_mode();
         let permission_profile = environments.permission_profile_or_else(|| {
             per_turn_config.permissions.effective_permission_profile()
         });

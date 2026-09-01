@@ -677,6 +677,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                     service_tier: None,
                     service_tier_for_turn: None,
                     effort: None,
+                    reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                     summary: None,
                     personality: None,
                     output_schema: None,

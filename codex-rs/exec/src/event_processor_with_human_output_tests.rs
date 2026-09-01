@@ -226,6 +226,7 @@ async fn config_summary_entries_include_runtime_workspace_roots() {
         active_permission_profile: None,
         cwd,
         reasoning_effort: None,
+        reasoning_mode: Default::default(),
         initial_messages: None,
         network_proxy: None,
         rollout_path: None,
