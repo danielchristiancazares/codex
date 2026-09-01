@@ -15,7 +15,7 @@ evidence are in [TOKEN_AUDIT_EVIDENCE.md](TOKEN_AUDIT_EVIDENCE.md).
 
 ## Active token-burning bug facets
 
-**Summary:** 60 active demonstrated bug facets. Facet labels are authoritative where the same
+**Summary:** 58 active demonstrated bug facets. Facet labels are authoritative where the same
 common-fix ID also appears in one of the other active documents. Completed findings retained in
 the detailed record for traceability are excluded from this count.
 
@@ -27,6 +27,8 @@ user-versus-agent input ordering contract. That review produced
 `56 - 1 + 12 = 67` active facets. CF-092 has since been resolved by invalidating the
 frozen MCP binding on tool-list notifications and session recovery. CF-001, CF-002, CF-003,
 CF-005, CF-006, and CF-012 have also been confirmed fixed, leaving 60 active.
+CF-007 and CF-008 have since been confirmed fixed by the per-turn Code Mode dispatch ownership
+and centralized request-level reasoning-summary policy, leaving 58 active.
 
 **Evidence convention:** “Generated,” “resent,” or “extra request” describes client-observed model work. Provider billing is claimed only where usage or a provider contract establishes it; otherwise the record explicitly marks billing as unknown or conditional.
 
@@ -34,8 +36,6 @@ CF-005, CF-006, and CF-012 have also been confirmed fixed, leaving 60 active.
 
 | Canonical ID | Title & Summary | Reachability / Trigger | Expected Token Impact | Primary Fix Seam |
 | --- | --- | --- | --- | --- |
-| CF-007 | Code Mode callbacks route to stale active turns | Delayed Code Mode callback overlaps a later turn | Medium | `codex-rs/core/src/tools/code_mode/delegate.rs::CodeModeDispatchBroker` |
-| CF-008 | Summary-capable compaction and sync Guardian requests ask for unused reasoning | Compaction/sync Guardian + enabled supported summaries | Medium | `codex-rs/core/src/client.rs::ModelClient::build_responses_request` |
 | CF-009 | Filtered forks inherit stale parent token usage and compact prematurely | Filtered legacy fork near compaction threshold | High | `codex-rs/core/src/agent/control/spawn.rs::keep_forked_rollout_item` |
 | CF-010 | Rollout reconstruction re-injects initial context baseline | Reconstruction from full context without user boundary | High | `codex-rs/core/src/session/rollout_reconstruction.rs::finalize_active_segment` |
 | CF-014 (single-server repeated identity) | Explicit single-server MCP listings repeat server identity per descriptor | Explicit single-server MCP list | Low | `codex-rs/core/src/tools/handlers/mcp_resource.rs` |
@@ -201,21 +201,38 @@ CF-005, CF-006, and CF-012 have also been confirmed fixed, leaving 60 active.
   exactly one application fragment and one untrusted fragment after the same snapshot is
   published again.
 
-### CF-007: Code Mode Callbacks Route to Stale Active Turns via Shared Broker
+### CF-007: Code Mode Callbacks Route to Stale Active Turns via Shared Broker (Complete)
 
-- **Sources & Facet:** #12 (stale callback facet), H028
-- **Trigger, Mechanism & Root Cause:** `CodeModeDispatchBroker` (`codex-rs/core/src/tools/code_mode/delegate.rs:27-42, 101-183`) shares worker dispatch state across the entire session. If an async cell execution yields and completes after the initiating turn has finished, its notification or tool callback is routed to whichever turn is currently active, injecting stale output into an unrelated turn context.
-- **Demonstrated Token Impact:** Injects unbounded stale tool output into later model turns, bloating history and confusing model reasoning.
-- **Remediation Seam:** Bind every Code Mode cell to an immutable turn/generation ID upon creation; reject or drop callbacks whose owning turn is no longer active, and ensure `interrupt_active_cells` only targets cells owned by the interrupted turn.
-- **Required Verification:** Spawn a long-running cell in turn 1, yield, start turn 2, and let turn 1 complete; verify that turn 1's output is not injected into turn 2's request context.
+- **Status:** **Complete** — current `HEAD` binds each ready Code Mode cell to its originating
+  session and turn, then dispatches callbacks through the worker registered for that turn.
+- **Current implementation:** `CodeModeDispatchBroker` stores `CellOwner` alongside each cell gate,
+  rejects callbacks after `Session::is_turn_running(owner.turn_id)` fails, and routes accepted
+  callbacks through the matching per-turn worker. Notifications use the atomic
+  `Session::inject_if_turn_running` path, and interruption selects only cells owned by the
+  interrupted turn.
+- **Preserved behavior:** Yielded cells remain available to explicit `wait` and termination calls.
+  H028's conditional same-turn `StepContext` handoff remains recorded in
+  `TOKEN_AUDIT_EVIDENCE.md`; it does not establish the cross-turn model-token burn claimed here.
+- **Regression evidence:**
+  `code_mode_background_callbacks_do_not_route_through_a_later_turn` verifies that a delayed
+  nested tool and notification from turn 1 cannot execute or enter turn 2, while
+  `code_mode_interrupt_terminates_active_cells_and_nested_tools` verifies turn-scoped interruption.
 
-### CF-008: Compaction and Synchronous Guardian Request Discarded Reasoning Summaries
+### CF-008: Compaction and Synchronous Guardian Request Discarded Reasoning Summaries (Complete)
 
-- **Sources & Facet:** #31, H014, H037
-- **Trigger, Mechanism & Root Cause:** For local/remote compaction (`codex-rs/core/src/compact.rs:742-793`, `codex-rs/core/src/compact_remote_v2.rs:378-476`) and synchronous Guardian review (`codex-rs/core/src/guardian/review_session.rs:1315-1344`), `ModelClient::build_responses_request` (`codex-rs/core/src/client.rs:866-876`) propagates an enabled reasoning-summary setting even though the collectors consume only the compaction item or Guardian verdict. The trigger requires a model/provider that supports summaries and an effective setting other than `none`.
-- **Demonstrated Token Impact:** The request asks the provider to generate unused reasoning summaries. Actual generated/billed tokens are conditional on provider emission; the request-field defect is deterministic on the scoped configuration.
-- **Remediation Seam:** In `build_responses_request`, suppress `reasoning.summary` when `CodexResponsesRequestKind::Compaction` or `ThreadSource::GuardianReview` is set.
-- **Required Verification:** Trigger local compaction and Guardian review on a model with reasoning enabled; assert outbound request omits `reasoning.summary` while preserving reasoning effort.
+- **Status:** **Complete** — compaction and synchronous Guardian requests omit the unused
+  `reasoning.summary` request while retaining their selected reasoning effort.
+- **Current implementation:** `ModelClient::reasoning_summary_for_request` maps summaries to
+  `ReasoningSummary::None` for `CodexResponsesRequestKind::Compaction` and
+  `ThreadSource::GuardianReview`. Local and remote-v2 compaction share this request builder, as do
+  Guardian review sessions.
+- **Preserved behavior:** Ordinary user turns, automation features, and other summary-capable
+  consumers retain their configured or model-default summaries. Model capability filtering and
+  reasoning-effort selection remain unchanged.
+- **Regression evidence:** `reasoning_summary_policy_preserves_supported_consumers` covers the
+  centralized policy and effort preservation. `previous_model_compaction_resolves_selected_settings`
+  exercises the compaction request, and `guardian_denial_rejects_tool_call_with_rationale`
+  exercises a summary-capable synchronous Guardian request with an explicit reasoning effort.
 
 ### CF-009: Filtered Legacy Forks Inherit Stale Parent Token Usage and Compact Prematurely
 

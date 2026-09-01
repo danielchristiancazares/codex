@@ -2166,13 +2166,6 @@ impl App {
                         context_window,
                     );
                 }
-                edits.insert(
-                    0,
-                    crate::config_update::replace_config_value(
-                        "model_provider",
-                        serde_json::json!(self.config.model_provider_id.clone()),
-                    ),
-                );
                 match crate::config_update::write_config_batch(
                     app_server.request_handle(),
                     edits,

@@ -26,6 +26,7 @@ use codex_history::RolloutLine;
 use codex_login::CodexAuth;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
@@ -33,6 +34,7 @@ use codex_protocol::models::PermissionProfileSnapshot;
 use codex_protocol::openai_models::AutoReviewMessages;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -1105,6 +1107,7 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
 
     let mut builder = test_codex()
         .with_model_info_override("gpt-5.6-luna", |model| {
+            model.supports_reasoning_summary_parameter = true;
             model
                 .model_messages
                 .as_mut()
@@ -1130,6 +1133,8 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
             });
         })
         .with_config(move |config| {
+            config.model_reasoning_effort = Some(ReasoningEffort::High);
+            config.model_reasoning_summary = Some(ReasoningSummary::Detailed);
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config
                 .set_legacy_sandbox_policy(sandbox_policy_for_config)
@@ -1205,7 +1210,10 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
         .find(|request| request.body_contains_text("Exercise Guardian denial routing."))
         .expect("expected Guardian review request");
     assert!(guardian_request.body_contains_text(&command));
-    assert_eq!(guardian_request.body_json()["model"], "gpt-5.6-luna");
+    let guardian_body = guardian_request.body_json();
+    assert_eq!(guardian_body["model"], "gpt-5.6-luna");
+    assert_eq!(guardian_body["reasoning"]["effort"], "high");
+    assert_eq!(guardian_body["reasoning"]["summary"], Value::Null);
 
     let tool_output = requests
         .iter()

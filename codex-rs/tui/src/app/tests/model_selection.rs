@@ -4,10 +4,22 @@ use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
-async fn context_window_selection_updates_memory_and_persists_numeric_value() -> Result<()> {
+async fn context_window_selection_updates_memory_and_preserves_configured_provider() -> Result<()> {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
+    app.config.model_provider_id = "copilot".to_string();
+    let config_path = codex_home.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"model_provider = "microsoft"
+
+[model_providers.microsoft]
+name = "Microsoft Azure OpenAI"
+base_url = "https://example.openai.azure.com/openai/v1"
+wire_api = "responses"
+"#,
+    )?;
     let mut app_server = start_config_write_test_app_server(&app).await?;
     let mut tui = crate::tui::test_support::make_test_tui()?;
 
@@ -62,14 +74,23 @@ async fn context_window_selection_updates_memory_and_persists_numeric_value() ->
     app.handle_event(&mut tui, &mut app_server, persist_event)
         .await?;
 
-    let persisted_config = toml::from_str::<TomlValue>(&std::fs::read_to_string(
-        codex_home.path().join("config.toml"),
-    )?)?;
+    let persisted_config = toml::from_str::<TomlValue>(&std::fs::read_to_string(config_path)?)?;
+    let expected_config = toml::from_str::<TomlValue>(
+        r#"model = "gpt-5.6-sol"
+model_provider = "microsoft"
+model_reasoning_effort = "high"
+model_context_window = 922000
+plan_mode_reasoning_effort = "high"
+
+[model_providers.microsoft]
+name = "Microsoft Azure OpenAI"
+base_url = "https://example.openai.azure.com/openai/v1"
+wire_api = "responses"
+"#,
+    )?;
     assert_eq!(
-        persisted_config
-            .get("model_context_window")
-            .and_then(TomlValue::as_integer),
-        Some(922_000)
+        persisted_config, expected_config,
+        "model selection should leave the configured provider intact"
     );
 
     app_server.shutdown().await?;

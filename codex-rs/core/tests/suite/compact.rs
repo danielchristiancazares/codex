@@ -2368,7 +2368,9 @@ async fn previous_model_compaction_resolves_selected_settings() -> Result<()> {
     .await;
 
     // The retained priority selection is filtered out for B, restored for
-    // compaction on A, and still omitted from the following B request.
+    // compaction on A, and still omitted from the following B request. The
+    // compaction request keeps A's reasoning effort while suppressing its
+    // unused reasoning summary.
     let actual = request_log
         .requests()
         .iter()
@@ -2376,6 +2378,7 @@ async fn previous_model_compaction_resolves_selected_settings() -> Result<()> {
             let body = request.body_json();
             json!([
                 body["model"],
+                body["reasoning"]["effort"],
                 body["reasoning"]["summary"],
                 body["service_tier"]
             ])
@@ -2384,9 +2387,9 @@ async fn previous_model_compaction_resolves_selected_settings() -> Result<()> {
     assert_eq!(
         actual,
         vec![
-            json!(["gpt-5.4", "detailed", "priority"]),
-            json!(["gpt-5.4", "detailed", "priority"]),
-            json!(["gpt-5.2", "auto", null]),
+            json!(["gpt-5.4", "medium", "detailed", "priority"]),
+            json!(["gpt-5.4", "medium", null, "priority"]),
+            json!(["gpt-5.2", "medium", "auto", null]),
         ]
     );
     Ok(())
