@@ -3248,9 +3248,14 @@ pub enum TruncationPolicy {
 
 impl From<crate::openai_models::TruncationPolicyConfig> for TruncationPolicy {
     fn from(config: crate::openai_models::TruncationPolicyConfig) -> Self {
+        // `TruncationPolicyConfig::limit` is deserialized as nonnegative, so a
+        // failed conversion can only come from a programmatic negative value.
+        // Clamp to zero instead of wrapping: an oversized allowance silently
+        // disables truncation, while zero fails loudly.
+        let limit = usize::try_from(config.limit).unwrap_or_default();
         match config.mode {
-            crate::openai_models::TruncationMode::Bytes => Self::Bytes(config.limit as usize),
-            crate::openai_models::TruncationMode::Tokens => Self::Tokens(config.limit as usize),
+            crate::openai_models::TruncationMode::Bytes => Self::Bytes(limit),
+            crate::openai_models::TruncationMode::Tokens => Self::Tokens(limit),
         }
     }
 }
@@ -4420,6 +4425,37 @@ mod tests {
         assert_eq!(serde_json::to_value(&decision)?, value);
         assert_eq!(serde_json::from_value::<ReviewDecision>(value)?, decision);
         Ok(())
+    }
+
+    #[test]
+    fn truncation_policy_conversion_never_wraps_negative_limits() {
+        use crate::openai_models::TruncationMode;
+
+        let bytes = TruncationPolicy::from(crate::openai_models::TruncationPolicyConfig {
+            mode: TruncationMode::Bytes,
+            limit: -1,
+        });
+        assert_eq!(bytes, TruncationPolicy::Bytes(0));
+
+        let tokens = TruncationPolicy::from(crate::openai_models::TruncationPolicyConfig {
+            mode: TruncationMode::Tokens,
+            limit: i64::MIN,
+        });
+        assert_eq!(tokens, TruncationPolicy::Tokens(0));
+    }
+
+    #[test]
+    fn truncation_policy_conversion_preserves_nonnegative_limits() {
+        use crate::openai_models::TruncationMode;
+
+        let config = crate::openai_models::TruncationPolicyConfig {
+            mode: TruncationMode::Tokens,
+            limit: 10_000,
+        };
+        assert_eq!(
+            TruncationPolicy::from(config),
+            TruncationPolicy::Tokens(10_000)
+        );
     }
 
     #[test]

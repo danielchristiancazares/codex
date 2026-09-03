@@ -240,12 +240,12 @@ async fn review_op_emits_lifecycle_and_review_output() {
         .expect("review request parent turn metadata");
 
     // Also verify that a user message with the header and a formatted finding
-    // was recorded back in the parent session's rollout.
+    // was recorded back in the parent session's rollout, and that no assistant
+    // message duplicates the findings (CF-082).
     let mut saw_header = false;
     let mut saw_finding_line = false;
     let expected_assistant_text = render_review_output_text(&expected);
-    let mut saw_assistant_plain = false;
-    let mut saw_assistant_xml = false;
+    let mut saw_assistant_duplicate = false;
     for line in text.lines() {
         if line.trim().is_empty() {
             continue;
@@ -268,13 +268,10 @@ async fn review_op_emits_lifecycle_and_review_output() {
                 }
             } else if role == "assistant" {
                 for c in content {
-                    if let ContentItem::OutputText { text } = c {
-                        if text.contains("<user_action>") {
-                            saw_assistant_xml = true;
-                        }
-                        if text == expected_assistant_text {
-                            saw_assistant_plain = true;
-                        }
+                    if let ContentItem::OutputText { text } = c
+                        && text == expected_assistant_text
+                    {
+                        saw_assistant_duplicate = true;
                     }
                 }
             }
@@ -286,12 +283,8 @@ async fn review_op_emits_lifecycle_and_review_output() {
         "formatted finding line missing from rollout"
     );
     assert!(
-        saw_assistant_plain,
-        "assistant review output missing from rollout"
-    );
-    assert!(
-        !saw_assistant_xml,
-        "assistant review output contains user_action markup"
+        !saw_assistant_duplicate,
+        "assistant message duplicates review output in rollout (CF-082)"
     );
 
     let _codex_home_guard = codex_home;
@@ -432,6 +425,102 @@ async fn review_op_with_plain_text_emits_review_fallback() {
     };
     assert_eq!(expected, review);
     let _complete = wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let _codex_home_guard = codex_home;
+    server.verify().await;
+}
+
+/// A completed inline review must persist its findings exactly once in the
+/// parent's model-visible history: the user-action envelope is the canonical
+/// record, and the UI-only AgentMessage item is not recorded as a second
+/// assistant message (CF-082).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn review_exit_records_findings_once_in_parent_history() {
+    skip_if_no_network!();
+
+    let review_json = serde_json::json!({
+        "findings": [
+            {
+                "title": "Single canonical finding",
+                "body": "This body text must appear once in model-visible history.",
+                "confidence_score": 0.9,
+                "priority": 1,
+                "code_location": {
+                    "absolute_file_path": "/tmp/file.rs",
+                    "line_range": {"start": 1, "end": 2}
+                }
+            }
+        ],
+        "overall_correctness": "ok",
+        "overall_explanation": "Canonical review explanation text.",
+        "overall_confidence_score": 0.8
+    })
+    .to_string();
+    let (server, request_log) = {
+        let server = start_mock_server().await;
+        let request_log = mount_sse_sequence(
+            &server,
+            vec![
+                responses::sse(assistant_message_sse(&review_json)),
+                responses::sse(completed_sse()),
+            ],
+        )
+        .await;
+        (server, request_log)
+    };
+    let codex_home = Arc::new(TempDir::new().unwrap());
+    let codex = new_conversation_for_server(&server, codex_home.clone(), |_| {}).await;
+
+    codex
+        .submit(Op::Review {
+            review_request: ReviewRequest {
+                target: ReviewTarget::Custom {
+                    instructions: "Review once, record once".to_string(),
+                },
+                user_facing_hint: None,
+            },
+        })
+        .await
+        .unwrap();
+    let _exited = wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExitedReviewMode(_))).await;
+    let _complete = wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    // A follow-up parent turn reveals the parent's model-visible history in the
+    // second outbound request.
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "Summarize the review results above.".into(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .expect("follow-up parent turn should start");
+    let _follow_up_complete =
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let requests = request_log.requests();
+    assert_eq!(requests.len(), 2, "expected child review + parent turn");
+    let body = requests[1].body_json();
+    let input = body["input"].as_array().expect("input array");
+
+    let finding_body_hits = input
+        .iter()
+        .filter_map(|msg| msg["content"][0]["text"].as_str())
+        .filter(|text| text.contains("This body text must appear once in model-visible history."))
+        .count();
+    assert_eq!(
+        finding_body_hits, 1,
+        "finding body must appear exactly once in parent request history"
+    );
+
+    let explanation_hits = input
+        .iter()
+        .filter_map(|msg| msg["content"][0]["text"].as_str())
+        .filter(|text| text.contains("Canonical review explanation text."))
+        .count();
+    assert_eq!(
+        explanation_hits, 1,
+        "explanation must appear exactly once in parent request history"
+    );
 
     let _codex_home_guard = codex_home;
     server.verify().await;

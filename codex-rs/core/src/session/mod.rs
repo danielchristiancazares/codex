@@ -3555,18 +3555,17 @@ impl Session {
         if !pending_tool_search_exchange.is_empty() {
             // Keep the provider/local compaction summary terminal while restoring the latest
             // search result that the coding model has not consumed yet.
-            let insertion_index = items
-                .last()
-                .is_some_and(|envelope| {
-                    CompactionSummary::is_summary_item(&envelope.item)
-                        || matches!(
-                            &envelope.item,
-                            ResponseItem::Compaction { .. }
-                                | ResponseItem::ContextCompaction { .. }
-                        )
-                })
-                .then(|| items.len().saturating_sub(1))
-                .unwrap_or(items.len());
+            let insertion_index = if items.last().is_some_and(|envelope| {
+                CompactionSummary::is_summary_item(&envelope.item)
+                    || matches!(
+                        &envelope.item,
+                        ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+                    )
+            }) {
+                items.len().saturating_sub(1)
+            } else {
+                items.len()
+            };
             items.splice(
                 insertion_index..insertion_index,
                 pending_tool_search_exchange,

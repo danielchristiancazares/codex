@@ -4,6 +4,8 @@ use codex_prompts::render_review_exit_interrupted;
 use codex_prompts::render_review_exit_success;
 use codex_protocol::ResponseItemId;
 use codex_protocol::config_types::WebSearchMode;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::ExitedReviewModeItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::BaseInstructionsProvenance;
@@ -207,14 +209,16 @@ fn parse_review_output_event(text: &str) -> ReviewOutputEvent {
     }
 }
 
-/// Emits ExitedReviewMode item lifecycle with optional ReviewOutput,
-/// and records the review output back into conversation history.
+/// Emits ExitedReviewMode item lifecycle with optional ReviewOutput, and records
+/// the review output once into model-visible history as the user-action envelope.
+/// The findings text stays available to clients through the ExitedReviewMode turn
+/// item's `review_output` payload, so no duplicate assistant record is written.
 pub(crate) async fn exit_review_mode(
     session: Arc<Session>,
     review_output: Option<ReviewOutputEvent>,
     ctx: Arc<TurnContext>,
 ) {
-    let (user_message, assistant_message) = if let Some(out) = review_output.clone() {
+    let user_message = if let Some(out) = review_output.clone() {
         let mut findings_str = String::new();
         let text = out.overall_explanation.trim();
         if !text.is_empty() {
@@ -224,15 +228,9 @@ pub(crate) async fn exit_review_mode(
             let block = format_review_findings_block(&out.findings, /*selection*/ None);
             findings_str.push_str(&format!("\n{block}"));
         }
-        let rendered = render_review_exit_success(&findings_str);
-        let assistant_message = render_review_output_text(&out);
-        (rendered, assistant_message)
+        render_review_exit_success(&findings_str)
     } else {
-        let rendered = render_review_exit_interrupted();
-        let assistant_message =
-            "Review was interrupted. Please re-run /review and wait for it to complete."
-                .to_string();
-        (rendered, assistant_message)
+        render_review_exit_interrupted()
     };
 
     session
@@ -248,25 +246,34 @@ pub(crate) async fn exit_review_mode(
         )
         .await;
 
+    // Surface the review result text to the UI as an AgentMessage turn item
+    // without recording a second model-visible copy of the findings in history.
+    let assistant_message = if let Some(out) = review_output.as_ref() {
+        render_review_output_text(out)
+    } else {
+        "Review was interrupted. Please re-run /review and wait for it to complete.".to_string()
+    };
     let item = TurnItem::ExitedReviewMode(ExitedReviewModeItem {
         id: uuid::Uuid::now_v7().to_string(),
         review_output,
     });
     session.emit_turn_item_started(ctx.as_ref(), &item).await;
     session.emit_turn_item_completed(ctx.as_ref(), item).await;
+
+    let agent_message_item = TurnItem::AgentMessage(AgentMessageItem {
+        id: uuid::Uuid::now_v7().to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: assistant_message,
+        }],
+        phase: None,
+        memory_citation: None,
+        delivery: None,
+    });
     session
-        .record_response_item_and_emit_turn_item(
-            ctx.as_ref(),
-            ResponseItem::Message {
-                id: Some(ResponseItemId::new("msg")),
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: assistant_message,
-                }],
-                phase: None,
-                internal_chat_message_metadata_passthrough: None,
-            },
-        )
+        .emit_turn_item_started(ctx.as_ref(), &agent_message_item)
+        .await;
+    session
+        .emit_turn_item_completed(ctx.as_ref(), agent_message_item)
         .await;
 
     // Review turns can run before any regular user turn, so explicitly

@@ -15,7 +15,7 @@ evidence are in [TOKEN_AUDIT_EVIDENCE.md](TOKEN_AUDIT_EVIDENCE.md).
 
 ## Active token-burning bug facets
 
-**Summary:** 57 active demonstrated bug facets. Facet labels are authoritative where the same
+**Summary:** 41 active demonstrated bug facets. Facet labels are authoritative where the same
 common-fix ID also appears in one of the other active documents. Completed findings retained in
 the detailed record for traceability are excluded from this count.
 
@@ -31,6 +31,17 @@ CF-007 and CF-008 have since been confirmed fixed by the per-turn Code Mode disp
 and centralized request-level reasoning-summary policy, leaving 58 active.
 CF-009 has since been confirmed fixed by filtering inherited token-count events and recomputing
 fork usage from the retained child history, leaving 57 active.
+CF-010 has since been confirmed fixed by promoting surviving full WorldState and TurnContext
+baselines during reconstruction without a user boundary, leaving 56 active.
+CF-105 has since been confirmed fixed by rejecting negative catalog truncation limits at the
+serde boundary and using a checked conversion to `TruncationPolicy`, leaving 55 active.
+A HEAD verification sweep confirmed the remediations for CF-014, CF-015, CF-016, CF-017,
+CF-018, CF-019, CF-025, CF-030, CF-044, CF-046, CF-077, CF-086, and CF-123 were already landed
+by the batch remediation commit; each row's required verification test now passes at HEAD, so
+those rows are marked Complete, leaving 42 active.
+CF-082 has since been confirmed fixed by recording review findings once in the user-action
+envelope while emitting the UI-facing AgentMessage turn item without a history record, leaving
+41 active.
 
 **Evidence convention:** “Generated,” “resent,” or “extra request” describes client-observed model work. Provider billing is claimed only where usage or a provider contract establishes it; otherwise the record explicitly marks billing as unknown or conditional.
 
@@ -38,26 +49,15 @@ fork usage from the retained child history, leaving 57 active.
 
 | Canonical ID | Title & Summary | Reachability / Trigger | Expected Token Impact | Primary Fix Seam |
 | --- | --- | --- | --- | --- |
-| CF-010 | Rollout reconstruction re-injects initial context baseline | Reconstruction from full context without user boundary | High | `codex-rs/core/src/session/rollout_reconstruction.rs::finalize_active_segment` |
-| CF-014 (single-server repeated identity) | Explicit single-server MCP listings repeat server identity per descriptor | Explicit single-server MCP list | Low | `codex-rs/core/src/tools/handlers/mcp_resource.rs` |
-| CF-015 (projection) | Generic MCP resource reads flatten binary content into JSON/base64 text | Generic MCP binary/media resource read | High | `codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs` |
-| CF-016 (typed-resource) | Normal MCP results JSON-stringify embedded resources and media | MCP result embeds resource/media | High | `codex-rs/protocol/src/models.rs::convert_mcp_content_to_items` |
-| CF-017 (premature-compaction) | Request-fit overestimation triggers avoidable compaction | Near-threshold request shrinks during normalization | High | `codex-rs/core/src/session/turn.rs::run_turn` & `build_prompt` |
-| CF-018 | Local compaction resubmits full prompt iteratively and retains failed output | Local compaction rejection or post-output stream failure | High | `codex-rs/core/src/compact.rs::run_compact_task_inner_impl` |
-| CF-019 (final-payload-cap) | Final Tool Output Can Exceed Its Advertised Per-Output Cap | High-cardinality/token-dense structured output | High | `truncate_function_output_payload` |
 | CF-020 (stale-notice/re-expansion) | Tool output lifecycle re-expands on resume and retains stale notices | Resume under changed output policy or image retention | High | `codex-rs/core/src/session/mod.rs::prepare_conversation_items_for_history` |
 | CF-021 (audio-accounting) | Remote V2 undercharges audio while normal history overcharges durationless audio | Remote V2 audio or valid durationless audio | High | `codex-rs/utils/audio/src/lib.rs::estimate_audio_token_count` |
 | CF-022 | Temporary structured turn timeout fails to cancel active model inference | Temporary title/recap timeout or stale result | Medium | `codex-rs/tui/src/temporary_structured_request.rs::run_temporary_structured_turn` |
-| CF-025 | Queued turn dispatches before durable deletion commits | Queue dispatch + delete failure/crash window | High | `codex-rs/state/src/runtime/queued_items.rs` & `codex-rs/ext/queue/src/service.rs` |
 | CF-027 | Cold resume resets shared rollout budget ledger to zero | Rollout budget enabled + cold resume | High | `codex-rs/core/src/agent/control.rs::AgentControl` & `core/src/rollout_budget.rs` |
 | CF-028 | Same-window resume re-arms one-shot reminder delivery state | Same-window resume after reminder delivery | Low | `codex-rs/core/src/state/session.rs::SessionState` & `apply_rollout_reconstruction` |
-| CF-030 | Direct interruption paths can immediately relaunch an active goal | Direct goal interrupt without prior TUI pause | High | `codex-rs/ext/goal/src/extension.rs::GoalExtension::on_thread_idle` |
 | CF-033 | Goal tool responses echo full objective and derived state | Goal create/update with nontrivial objective | Low | `codex-rs/ext/goal/src/tool.rs::GoalToolExecutor` |
 | CF-034 (swallowed-accounting-error) | Swallowed goal accounting persistence error launches duplicate turn | Goal accounting persistence failure | High | `codex-rs/ext/goal/src/runtime.rs::account_active_goal_progress` |
 | CF-038 (expired-lease duplicate-sampling) | Phase 1 Memory Leases Can Expire Before Queued Jobs Start | Memories; batch >=17; jobs exceed one-hour lease | Medium | `memories/write/src/phase1.rs` |
-| CF-044 | Exhausted memory consolidation retries continue claiming workers | Exhausted Phase 2 job becomes claimable again | High | `codex-rs/state/src/runtime/memories.rs::try_claim_global_phase2_job` |
 | CF-045 (checkpoint-retired discovery-schema) | Memory Phase 1 Reuploads Discovery Schemas Retired by Compaction | Memories + compacted rollout with search schemas | High | `ToolSearchCall` |
-| CF-046 | MCP resource handlers bypass memory external-context suppression | MCP resource output remains memory-eligible | Medium | `codex-rs/core/src/tools/handlers/mcp_resource.rs::run_resource_operation` |
 | CF-049 (ordinary prompt-history citation) | Parsed Memory Citations Remain in Ordinary Model History | Assistant response contains parsed memory citation | Low | Preserve the raw response for rollout provenance, but strip hidden citation syntax in the prompt, compaction, and memory-extraction projections using the already parsed structured citation metadata |
 | CF-052 | Rollback resurrects asynchronous hook context from deleted turns | Async hook completes after rollback | Medium | `codex-rs/core/src/session/handlers.rs::thread_rollback` |
 | CF-054 | Environment World State emits complete bundle on any field change | One common environment field changes | Low | `codex-rs/core/src/context/world_state/environment.rs::EnvironmentsState::render_diff` |
@@ -69,11 +69,9 @@ fork usage from the retained child history, leaving 57 active.
 | CF-071 | Code Mode resume restores dead cell IDs forcing failed wait continuations | Yielded Code Mode cell across cold resume | Medium | `codex-rs/core/src/tools/code_mode/mod.rs` & `code-mode-runtime` |
 | CF-073 | Fatal asynchronous tool errors are swallowed and trigger empty follow-ups | Fatal parallel/asynchronous tool future | High | `codex-rs/core/src/session/turn.rs::drain_in_flight` |
 | CF-076 | Reused V1 subagents fail to rearm completion watchers | Second or later turn on reused V1 agent | High | `codex-rs/core/src/agent/control.rs` |
-| CF-077 (post-render completion-cap) | Rendered Subagent Completion Items Can Exceed Their 1K Cap | Escaping-heavy completion or long agent path | Medium | Render the complete V1/V2 completion envelope first, then enforce the 1K model-visible cap across escaped payload, markers, and agent-path metadata |
 | CF-078 | Nonterminal subagent errors are published as terminal failures | Nonterminal agent `ErrorEvent` | Medium | `codex-rs/core/src/agent/status.rs::agent_status_from_event` |
-| CF-082 | Inline review findings are persisted twice in parent history | Inline review completion | Medium | `codex-rs/core/src/tasks/review.rs::exit_review_mode` |
+
 | CF-083 | Reusable Guardian delta turns re-emit root evidence and advance on parse failure | Reusable Guardian follow-up or parse retry | High | `codex-rs/core/src/guardian/prompt.rs` & `review_session.rs` |
-| CF-086 (literal schema-restatement) | Synchronous Guardian Supplies the Output Contract Twice | Synchronous full Guardian review | Low | `guardian_output_schema()` |
 | CF-088 | Guardian V2 classifier prompt duplicates current tool action in transcript | Guardian V2 reviews current tool action | Medium | `codex-rs/ext/guardian-v2/src/async_scorer/transcript.rs` |
 | CF-089 (discarded-post-classification-output) | Guardian V2 Drains Generated Output After the Classification Is Known | Guardian V2 emits text after first verdict delta | Low | Set a provider output cap where supported or cancel the stream immediately after the first complete classification, while recording any usage already reported |
 | CF-090 | Guardian duplicates a screenshot present in both history and retained REPL evidence | Same screenshot in history and REPL evidence | Medium | `codex-rs/ext/guardian-v2/src/async_scorer/transcript.rs` |
@@ -84,7 +82,6 @@ fork usage from the retained child history, leaving 57 active.
 | CF-100 (duplicate-interruption-marker) | Interrupted Fork Synthesis Can Append a Second Model-Visible Marker | Fork during interrupt marker-to-abort gap | Low | Make interrupted-boundary synthesis prefix-idempotent by detecting an existing interruption marker before appending the synthetic marker and abort event |
 | CF-101 | Last-N forks drop context baselines while retaining context fragments | Last-N fork retains fragments but drops baseline | Medium | `codex-rs/core/src/agent/control/spawn.rs` |
 | CF-104 | Image token heuristics diverge from active GPT-5.6 accounting | Multimodal request near context threshold | High | `codex-rs/core/src/context_manager/history.rs` |
-| CF-105 (negative-catalog-limit) | Negative Catalog Output Limits Wrap to an Enormous Allowance | Negative catalog truncation limit | High | `TruncationPolicy` |
 | CF-109 | Provider ID-less output items defeat incremental continuation | Provider returns missing/empty output item ID | High | `codex-rs/core/src/client.rs::map_response_events` |
 | CF-111 | Hook completion between parallel streamed calls disables continuation | Parallel calls + hook completes between siblings | High | `codex-rs/core/src/stream_events_utils.rs` & `core/src/hook_runtime.rs` |
 | CF-114 | Usage recomputation counts provider-stripped passthrough metadata | Non-OpenAI normalization + metadata-heavy history | High | `codex-rs/core/src/client.rs` & `core/src/session/mod.rs` |
@@ -92,7 +89,6 @@ fork usage from the retained child history, leaving 57 active.
 | CF-116 (lost-terminal regeneration) | Missing terminal delivery discards a complete compaction item and regenerates it | Remote V2 receives compaction item but loses terminal | High | `codex-rs/core/src/compact_remote_v2.rs` |
 | CF-117 | Realtime handoff duplicates user text in input and transcript delta | Realtime voice-to-text handoff | Low | `codex-rs/core/src/realtime_conversation.rs` |
 | CF-120 (assistant-only transcript-tail) | Assistant-Only Realtime Transcript Tail Starts a Coding-Model Turn | Experimental realtime tail flush; assistant-only tail | Medium | `RegularTask` |
-| CF-123 | Shared Remote V1/V2 trimmer stops at first non-output group | Remote V1/V2 over-window trim meets newer non-output | High | `codex-rs/core/src/compact_remote.rs::trim_function_call_history_to_fit_context_window` |
 | CF-124 | Remote V2 retains prior local compaction summaries as real user messages | Remote V2 after prior local compaction | Medium | `codex-rs/core/src/compact_remote_v2.rs::build_v2_compacted_history` |
 | CF-125 | Manual Remote V2 compaction samples pristine history | Manual Remote V2 compact on pristine thread | Medium | `codex-rs/core/src/compact_remote_v2_attempt.rs::run_remote_compact_v2_attempt` |
 
@@ -250,13 +246,26 @@ fork usage from the retained child history, leaving 57 active.
   verifies the child records a smaller local estimate and reaches ordinary inference on turn 1
   without a compaction request.
 
-### CF-010: Rollout Reconstruction Re-Injects Initial Context Baseline
+### CF-010: Rollout Reconstruction Re-Injects Initial Context Baseline (Complete)
 
-- **Sources & Facet:** #11, H076, H074 (context baseline facet)
-- **Trigger, Mechanism & Root Cause:** During rollout reconstruction (`codex-rs/core/src/session/rollout_reconstruction.rs:107-135`), `finalize_active_segment` promotes reference baselines for `WorldState` and `TurnContext` only across user turn boundaries. If a session is reconstructed from a prefix without a user turn boundary (e.g. following token-budget compaction or fork initialization), the baseline is not recognized, causing the session to append a duplicate initial context bundle on the next turn (`codex-rs/core/src/session/mod.rs:3993-4041`).
-- **Demonstrated Token Impact:** Re-injects the complete system instructions, permissions, and environment bundle (several thousand tokens) into model context.
-- **Remediation Seam:** Update `finalize_active_segment` so that surviving full `WorldState` and `TurnContext` snapshots establish the baseline even in the absence of an explicit user boundary.
-- **Required Verification:** Reconstruct a session from a compacted context prefix without a user message; verify that turn 1 does not re-emit system and environment fragments.
+- **Status:** **Complete** — current `HEAD` recognizes surviving full `WorldState` and
+  `TurnContext` snapshots as proof that a replayed prefix already established canonical initial
+  context, so reconstruction without a user turn boundary no longer re-emits the full context
+  bundle on the next turn.
+- **Current implementation:** `finalize_active_segment` in
+  `codex-rs/core/src/session/rollout_reconstruction.rs` computes
+  `has_surviving_context_baseline`: a segment holding both a `TurnContextItem` and a full
+  `WorldState` snapshot recorded before the newest compaction boundary promotes the reference
+  baseline even when the segment contains no user-message boundary.
+- **Preserved behavior:** Segments without that evidence, world-state patches without a full
+  snapshot, snapshots superseded by a newer compaction, and legacy compaction without
+  replacement history continue to re-inject initial context as before.
+- **Regression evidence:**
+  `record_initial_history_restores_context_baselines_without_user_boundary` verifies a resumed
+  compacted-prefix session restores its reference baseline and renders exactly one full context
+  bundle, and `compacted_prefix_fork_reuses_initial_context_without_user_boundary` in
+  `codex-rs/core/tests/suite/fork_thread.rs` forks from a compacted prefix and asserts the model
+  request carries exactly one `<environment_context>` fragment.
 
 ### CF-012: Deferred Tool Search Retains Duplicate Schema Batches in History (Complete)
 
@@ -289,53 +298,120 @@ fork usage from the retained child history, leaving 57 active.
   consumption and rebuild behavior; the existing repeated-search and remote-compaction tests
   continue to prove one retained schema and schema-free compaction projections.
 
-### CF-014: MCP Resource Listings Repeat Server Identity per Descriptor
+### CF-014: MCP Resource Listings Repeat Server Identity per Descriptor (Complete)
 
-- **Sources & Facet:** H059 (resource listing facet), H060, H062 (repeated-identity facet)
-- **Trigger, Mechanism & Root Cause:** In explicit single-server resource/template listings (`codex-rs/core/src/tools/handlers/mcp_resource.rs:104-186,346-362`), the call already identifies the server and the result repeats it at top level, yet every descriptor repeats the same server identity again. Flattened all-server listings are excluded because they have no single top-level server and need per-descriptor ownership.
-- **Demonstrated Token Impact:** Bloats tool output with redundant JSON keys and server strings, wasting model-visible context tokens.
-- **Remediation Seam:** For explicit single-server listing responses, omit per-descriptor server identity and retain one top-level server field. Keep ownership on each descriptor for flattened all-server results.
-- **Required Verification:** Call resource listing for a server returning 50 resources; assert that server name and base URI appear once in the group envelope, not repeated 50 times.
+- **Status:** **Complete** — explicit single-server resource/template listings emit one top-level
+  `server` field and omit per-descriptor server identity.
+- **Current implementation:** `ListResourcesPayload::from_single_server` and
+  `ListResourceTemplatesPayload::from_single_server` in
+  `codex-rs/core/src/tools/handlers/mcp_resource.rs` wrap every descriptor with
+  `ResourceListingEntry::without_server`, so the group envelope carries the server identity once.
+  Flattened all-server listings keep per-descriptor `with_server` ownership for unambiguous
+  attribution, and `next_cursor` passthrough is preserved on the single-server path.
+- **Preserved behavior:** Flattened all-server listings remain sorted by server with ownership on
+  each descriptor, and single-server pagination continues through the existing cursor path.
+- **Regression evidence:** `list_resources_payload_from_single_server_emits_server_once_and_copies_cursor`
+  and `list_resource_templates_payload_from_single_server_omits_child_server` assert the
+  serialized envelope; `explicit_server_resource_listings_emit_server_once` in
+  `codex-rs/core/tests/suite/mcp_resource.rs` proves the server appears once per listing across
+  both resources and templates in a live model round-trip.
 
-### CF-015: Generic MCP Resource Reads Flatten Binary Content into JSON/Base64 Text
+### CF-015: Generic MCP Resource Reads Flatten Binary Content into JSON/Base64 Text (Complete)
 
-- **Sources & Facet:** #24 (generic resource read facet), H059 (oversized read facet) (projection facet)
-- **Trigger, Mechanism & Root Cause:** `ReadMcpResourceHandler` (`codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs:63-94`) and `mcp_resource.rs::serialize_function_output` serialize the complete server metadata, URI, and binary/blob contents into unstructured JSON text. Image and binary resources are emitted as base64 strings in text blocks rather than typed content items.
-- **Demonstrated Token Impact:** Massive token inflation from base64 strings and JSON wrapper boilerplate in prompt history.
-- **Remediation Seam:** Project generic MCP resource reads into typed `FunctionCallOutputContentItem` objects (typed images, blobs, text) rather than JSON stringified envelopes.
-- **Required Verification:** Read an image via `read_mcp_resource`; verify that the tool output produces a typed image content item rather than JSON text containing a base64 string.
+- **Status:** **Complete** — generic MCP resource reads project text, image, and binary content
+  into typed `FunctionCallOutputContentItem` objects rather than JSON-stringified envelopes.
+- **Current implementation:** `project_read_resource_output` in
+  `codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs` renders a compact
+  identity header (URI, server, media type) plus one typed content item per `ResourceContents`:
+  text stays text, supported image media become `InputImage` data URLs, and unhandled binaries
+  are replaced with a bounded `[binary payload omitted: N base64 characters]` notice instead of
+  raw base64.
+- **Preserved behavior:** Server and URI metadata remain available in the compact header, and
+  the output continues through the shared per-output truncation policy.
+- **Regression evidence:** `read_resource_projection_preserves_text_with_compact_identity_header`,
+  `read_resource_projection_emits_image_as_typed_content`, and
+  `read_resource_projection_omits_raw_unhandled_binary_payload` cover the three projections;
+  `read_mcp_image_resource_emits_typed_image_content` in
+  `codex-rs/core/tests/suite/mcp_resource.rs` proves a live read produces a typed image item
+  with no raw base64 in any text segment.
 
-### CF-016: Normal MCP Results JSON-Stringify Embedded Resources and Media
+### CF-016: Normal MCP Results JSON-Stringify Embedded Resources and Media (Complete)
 
-- **Sources & Facet:** #24 (CallToolResult facet), H063 (typed-resource facet)
-- **Trigger, Mechanism & Root Cause:** `codex-rs/protocol/src/models.rs::convert_mcp_content_to_items` (`2243-2384`) treats embedded MCP resource blocks and binary content as unknown types and JSON-stringifies them into raw text content items, destroying their typed modality structure before model prompt construction.
-- **Demonstrated Token Impact:** Forces the model to parse stringified JSON envelopes containing base64 data, significantly inflating token counts and degrading multimodal comprehension.
-- **Remediation Seam:** In `convert_mcp_content_to_items`, map embedded MCP images and resource content directly to typed `FunctionCallOutputContentItem::Image` and structured resource items.
-- **Required Verification:** Return an MCP `CallToolResult` containing an embedded image; assert that the downstream message item is a typed image rather than a JSON text block.
+- **Status:** **Complete** — embedded MCP resource and media blocks project into typed content
+  items instead of JSON-stringified text.
+- **Current implementation:** `convert_mcp_content_to_items` in
+  `codex-rs/protocol/src/models/mcp_content.rs` maps embedded images and audio directly to
+  typed `FunctionCallOutputContentItem::InputImage`/`InputAudio` data URLs (building the data
+  URL prefix when absent), preserves embedded text resources with URI and text, and replaces
+  unhandled blobs with a compact modality notice instead of raw base64.
+- **Preserved behavior:** Ordinary text and structured MCP content keep their existing
+  projection; `structuredContent` and Code Mode paths remain unchanged.
+- **Regression evidence:** `embedded_image_resource_becomes_typed_image_content`,
+  `embedded_text_resource_preserves_uri_and_text`, and `embedded_unhandled_blob_omits_raw_base64`
+  in `codex-rs/protocol/src/models/mcp_content_tests.rs` cover the typed projections, and
+  `embedded_mcp_image_resource_emits_typed_image_content` in
+  `codex-rs/core/tests/suite/mcp_resource.rs` proves a live `CallToolResult` with an embedded
+  image resource produces a typed image item with no base64 in any text segment.
 
-### CF-017: Request-Fit Overestimation Triggers Avoidable Compaction
+### CF-017: Request-Fit Overestimation Triggers Avoidable Compaction (Complete)
 
-- **Sources & Facet:** #3, #15, H066, H107 (premature-compaction facet)
-- **Trigger, Mechanism & Root Cause:** `ContextManager::estimate_token_count_with_base_instructions` calculates context fit before final request-scoped media normalization and filtering occur (`codex-rs/core/src/session/turn.rs:155-188, 350-499`). When history contains media or items that will be stripped or scaled down during request construction (`codex-rs/core/src/client.rs:904-984`), admission overestimates the request size and triggers an unnecessary compaction invocation.
-- **Demonstrated Token Impact:** Launches an expensive full compaction inference (several thousand tokens) when the actual prepared request would have fit comfortably within the model window.
-- **Remediation Seam:** Run admission checks against the exact normalized `ResponsesRequest` payload that will be transmitted, after request-level media scaling and filtering have been applied.
-- **Required Verification:** Construct a turn where raw history exceeds the threshold but normalized request context is below threshold; verify that no compaction is triggered.
+- **Status:** **Complete** — pre-turn admission accounts for the request-scoped normalization
+  delta instead of raw history, so media or items that normalization will strip no longer
+  trigger avoidable compaction.
+- **Current implementation:** `Session::get_model_visible_token_usage` in
+  `codex-rs/core/src/session/mod.rs` adds `history.model_visible_token_delta` — computed against
+  the active model's input modalities and truncation policy — to the authoritative server usage
+  before `context_window_token_status` decides whether
+  `run_pre_sampling_compact` launches compaction.
+- **Preserved behavior:** Server-reported usage remains the baseline so provider-counted
+  instructions and tools are retained; only the media/history items normalization replaces or
+  discards are deducted.
+- **Regression evidence:** `normalized_history_that_fits_does_not_trigger_compaction` in
+  `codex-rs/core/tests/suite/request_fit.rs` seeds a multimodal-history turn over a
+  text-only-model's compact limit, switches to the text model, and asserts the follow-up request
+  contains no `compaction_trigger` input while the normalized image is absent from the
+  transmitted request.
 
-### CF-018: Local Compaction Resubmits Full Prompt Iteratively and Retains Failed Output
+### CF-018: Local Compaction Resubmits Full Prompt Iteratively and Retains Failed Output (Complete)
 
-- **Sources & Facet:** #6, H035, H074 (failed local compaction facet)
-- **Trigger, Mechanism & Root Cause:** `run_compact_task_inner_impl` (`codex-rs/core/src/compact.rs:245-390, 735-806`) implements an iterative retry loop that removes one oldest message group per rejected submission and resubmits nearly the entire prompt again. If a stream fails midway, partial assistant text is flushed to history before terminal completion, polluting history with failed compaction attempts.
-- **Demonstrated Token Impact:** Multiple near-full-window model resubmissions upon rejection, and failed compaction output persists in history requiring subsequent cleanup.
-- **Remediation Seam:** Implement a `LocalCompactionPlan` that removes whole message groups in bulk to reach a safe target budget in one step. Stage compaction output in memory and commit to `Session` history only upon complete, successful terminal response.
-- **Required Verification:** Simulate context rejection during local compaction; verify that history is reduced in a single step rather than one item at a time, and failed partial streams do not write to rollout history.
+- **Status:** **Complete** — local compaction reduces whole message groups in one bulk step per
+  rejection and stages generated output in memory, committing to history only on terminal
+  success.
+- **Current implementation:** `run_compact_task_inner_impl` in
+  `codex-rs/core/src/compact.rs` drives a `LocalCompactionPlan` whose
+  `reduce_after_context_error` removes complete turn groups in bulk to a safe budget, and
+  `drain_to_completed` stages partial streams so an `OutputItemDone` followed by stream failure
+  never writes to live or rollout history.
+- **Preserved behavior:** Interrupted/aborted and session-budget errors continue to surface
+  immediately; a bounded retry count still applies to context-window rejections.
+- **Regression evidence:** `context_rejection_reduces_multiple_complete_turn_groups_once` and
+  the replacement-budget tests in `codex-rs/core/src/compact/local_plan_tests.rs` prove bulk
+  reduction and a bounded final replacement;
+  `failed_local_compaction_output_is_absent_after_resume` in
+  `codex-rs/core/tests/suite/local_compaction.rs` proves a failed compaction stream leaves no
+  persisted or resumed model-visible text.
 
-### CF-019: Final Tool Output Can Exceed Its Advertised Per-Output Cap
+### CF-019: Final Tool Output Can Exceed Its Advertised Per-Output Cap (Complete)
 
-- **Sources & Facet:** #2 (nominal 10K/effective 12K facet), H058, H077, H078 (final-payload-cap facet)
-- **Trigger, Mechanism & Root Cause:** Output truncation uses approximate byte heuristics (`bytes / 4`), applies `* 1.2`, and does not account for JSON escaping or array framing (`codex-rs/utils/output-truncation/src/lib.rs:94-224`). Token-dense text or high-cardinality arrays can exceed the nominal 10K token policy.
-- **Demonstrated Token Impact:** A nominal 10K-token output can serialize to about 99K heuristic tokens with many one-byte items; unsupported-audio projection can reach about 276K heuristic tokens in one output. The oversized item is then persisted and sent in the required follow-up request.
-- **Remediation Seam:** Make `truncate_function_output_payload` the final authority after modality projection: remove the `1.2` expansion, charge complete item/wrapper framing and item count, assign nonzero structural cost, and remeasure the provider-visible payload.
-- **Required Verification:** Cover token-dense text, 12K one-byte items, empty encrypted items, zero-duration audio, and unsupported-audio projection; assert the final serialized function output stays within the configured 10K cap.
+- **Status:** **Complete** — `truncate_function_output_payload` is the final authority over the
+  serialized function/custom-tool output, and the final payload stays within the configured cap.
+- **Current implementation:** `codex-rs/core/src/context_manager/function_output.rs` measures
+  the complete serialized payload with an o200k tokenizer, charges separator and structural
+  framing for every content item (including media and encrypted blocks via
+  `non_text_token_cost`), drops the old `* 1.2` expansion, and re-finalizes after
+  request-scoped unsupported-audio projection through `for_prompt_with_policy`.
+- **Preserved behavior:** Small payloads pass through unchanged, byte policies charge the
+  complete serialized media item, and omission markers participate in the same budget.
+- **Regression evidence:** `token_dense_text_fits_the_nominal_output_limit`,
+  `high_cardinality_text_items_include_structural_cost`,
+  `empty_encrypted_items_have_nonzero_structural_cost`,
+  `zero_duration_audio_items_have_nonzero_structural_cost`,
+  `omission_marker_participates_in_the_same_budget`, and
+  `unsupported_audio_projection_is_finalized_again` in
+  `codex-rs/core/src/context_manager/function_output_tests.rs` cover every required case, and
+  `high_cardinality_mcp_output_stays_within_configured_cap` in
+  `codex-rs/core/tests/suite/final_payload_cap.rs` proves a 12K-item MCP output serializes to
+  at most 10K real o200k tokens in a live round-trip.
 
 ### CF-020: Tool Output Lifecycle Re-Expands on Resume and Retains Stale Notices
 
@@ -361,13 +437,21 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** On timeout or cancellation in `run_temporary_structured_turn`, send an explicit `turn/interrupt` request to the active turn before unsubscribing.
 - **Required Verification:** Trigger a temporary structured request with a simulated client timeout; verify that a `turn/interrupt` RPC is transmitted and the active model turn is aborted.
 
-### CF-025: Queued Turn Dispatches Before Durable Deletion Commits
+### CF-025: Queued Turn Dispatches Before Durable Deletion Commits (Complete)
 
-- **Sources & Facet:** H003
-- **Trigger, Mechanism & Root Cause:** `QueuedItemService::start` (`codex-rs/ext/queue/src/service.rs:391-448`) starts the model turn via `start_if_idle` before deleting the queued row from SQLite (`codex-rs/state/src/runtime/queued_items.rs:152-160`). If the process crashes or DB deletion fails, the item remains in the queue as pending and is dispatched again on the next idle state.
-- **Demonstrated Token Impact:** Causes duplicate model turns and full task replays upon crash or database write error.
-- **Remediation Seam:** Implement a state machine in `QueuedItemsRuntime` (`Pending -> Claimed { turn_id } -> Completed`) so items are marked Claimed before turn dispatch and reconciled on startup.
-- **Required Verification:** Inject a database deletion failure after queue turn dispatch; verify that the item is in Claimed state and is not re-executed on subsequent idle events.
+- **Status:** **Complete** — queued items move through a durable claim state machine
+  (`Pending -> Claimed { turn_id } -> Completed`) so a crash or deletion failure can no longer
+  re-dispatch a turn that already started.
+- **Current implementation:** `QueuedItemService::start` in
+  `codex-rs/ext/queue/src/service.rs` marks the row `Claimed` with the turn ID before
+  dispatching the turn, releases the claim on failure, and `QueuedItemsRuntime` in
+  `codex-rs/state/src/runtime/queued_items.rs` reconciles claimed rows on startup.
+- **Preserved behavior:** FIFO ordering, edits/reordering, pagination, and per-thread queue
+  limits are unchanged.
+- **Regression evidence:** `cf_025_claimed_items_are_hidden_until_released_or_completed` and
+  `cf_025_startup_reconciliation_completes_only_claimed_items` in
+  `codex-rs/state/src/runtime/queued_items_tests.rs` cover the claim lifecycle and startup
+  reconciliation.
 
 ### CF-027: Cold Resume Resets Shared Rollout Budget Ledger to Zero
 
@@ -385,13 +469,19 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Inspect restored history during `apply_rollout_reconstruction` to restore the latest reminder delivery timestamps and prevent duplicate injection in the same window.
 - **Required Verification:** Trigger a reminder, resume the session in the same time window; verify that no duplicate reminder is injected on turn 1.
 
-### CF-030: Goal Continuation Ignores Interrupted Idle Cause and Resumes Active Turn
+### CF-030: Goal Continuation Ignores Interrupted Idle Cause and Resumes Active Turn (Complete)
 
-- **Sources & Facet:** #26
-- **Trigger, Mechanism & Root Cause:** `GoalExtension::on_thread_idle` (`codex-rs/ext/goal/src/extension.rs:148-158`) automatically calls `continue_if_idle` without distinguishing `ThreadIdleCause::Interrupted`. The direct bug applies to app-server or other interruption paths that do not first execute the TUI-specific goal-pause operation; TUI flows that pause the goal before interrupt are excluded.
-- **Demonstrated Token Impact:** Defeats user cancellation and immediately launches an unwanted model inference turn.
-- **Remediation Seam:** In `on_thread_idle`, match on `ThreadIdleCause` and only trigger automatic goal continuation when the cause is `ThreadIdleCause::Completed`.
-- **Required Verification:** Interrupt an active turn in a goal session; verify that the goal pauses and does not launch a new continuation turn.
+- **Status:** **Complete** — automatic goal continuation is gated on the idle cause, so a direct
+  interrupt path can no longer immediately relaunch an active goal.
+- **Current implementation:** `GoalExtension::on_thread_idle` in
+  `codex-rs/ext/goal/src/extension.rs` matches `ThreadIdleCause` and returns early for
+  `Interrupted` and `Failed`, continuing only on `Completed`.
+- **Preserved behavior:** TUI flows that pause the goal before interrupting keep their existing
+  pause/resume semantics, and ordinary completed-turn continuation is unchanged.
+- **Regression evidence:** `cf_030_interrupted_goal_turn_does_not_continue` in
+  `codex-rs/app-server/tests/suite/v2/goal_context.rs` interrupts an active goal turn over the
+  app-server path (no TUI pause), asserts no fourth `response.create` continuation request is
+  issued, and verifies the goal remains persisted as Active.
 
 ### CF-033: Goal Tool Responses Echo Full Objective and Derived State
 
@@ -417,13 +507,19 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Acquire the lease immediately before sampling, heartbeat it while queued/running, and revalidate the ownership token before the model request in `memories/write/src/phase1.rs`.
 - **Required Verification:** Use a non-default batch above the eight-wide concurrency limit and an expired lease; assert only the current owner reaches `stream_stage_one_prompt`.
 
-### CF-044: Exhausted Memory Consolidation Retries Continue Claiming Workers
+### CF-044: Exhausted Memory Consolidation Retries Continue Claiming Workers (Complete)
 
-- **Sources & Facet:** #14
-- **Trigger, Mechanism & Root Cause:** `try_claim_global_phase2_job` (`codex-rs/state/src/runtime/memories.rs:1076-1219, 1305-1325`) queries for consolidation jobs whose backoff timer has expired, but fails to check `retry_remaining > 0`. A job that has failed repeatedly continues to be claimed and launched indefinitely.
-- **Demonstrated Token Impact:** Failed memory consolidation jobs spawn endless model worker tasks, repeatedly burning tokens on unresolvable failures.
-- **Remediation Seam:** In `try_claim_global_phase2_job`, add `AND retry_remaining > 0` to the SQL query and mark jobs as permanently failed when retries reach zero.
-- **Required Verification:** Fail a Phase 2 job until its retry count is 0; assert that subsequent consolidation runs do not claim or spawn workers for that job.
+- **Status:** **Complete** — exhausted Phase 2 consolidation jobs stop being claimed and are
+  marked permanently failed once retries reach zero.
+- **Current implementation:** `try_claim_global_phase2_job` in
+  `codex-rs/state/src/runtime/memories.rs` filters the claim query with
+  `AND retry_remaining > 0` and its completion path marks jobs terminally failed when the
+  retry budget is exhausted.
+- **Preserved behavior:** Fresh jobs, backoff-window gating, lease takeover, and success
+  cooldown behavior are unchanged.
+- **Regression evidence:** `cf_044_phase2_global_lock_stops_after_retry_budget_is_exhausted`
+  in `codex-rs/state/src/runtime/memories.rs` proves an exhausted job is neither claimed nor
+  re-launched by subsequent consolidation runs.
 
 ### CF-045: Memory Phase 1 Reuploads Discovery Schemas Retired by Compaction
 
@@ -433,13 +529,19 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Build the Phase 1 projection from reconstructed active history, or at minimum omit pre-checkpoint `ToolSearchCall` and `ToolSearchOutput` records while preserving semantically necessary tool evidence.
 - **Required Verification:** Compact a rollout containing multiple discovery results, then run Phase 1; assert checkpoint-retired schemas are absent while surviving active evidence remains.
 
-### CF-046: MCP Resource Handlers Bypass Memory External-Context Suppression
+### CF-046: MCP Resource Handlers Bypass Memory External-Context Suppression (Complete)
 
-- **Sources & Facet:** H061
-- **Trigger, Mechanism & Root Cause:** `codex-rs/core/src/tools/handlers/mcp_resource.rs:280-324` returns standard tool outputs without marking them as external context. Consequently, they bypass the external-context memory pollution guard in `codex-rs/core/src/tools/registry.rs:780-786`, making the session eligible for memory extraction that ordinary MCP outputs would suppress.
-- **Demonstrated Token Impact:** Triggers unnecessary background memory extraction passes on threads containing third-party resource dumps.
-- **Remediation Seam:** Mark MCP resource tool outputs with `is_external_context = true` so the memory guard correctly identifies external context.
-- **Required Verification:** Read an MCP resource; verify that the turn is flagged as containing external context and memory extraction is suppressed.
+- **Status:** **Complete** — MCP resource tool outputs are marked as external context, so the
+  memory pollution guard suppresses extraction on threads containing third-party resource
+  dumps.
+- **Current implementation:** `run_resource_operation` in
+  `codex-rs/core/src/tools/handlers/mcp_resource.rs` returns
+  `output.with_external_context()`, flowing through the registry's external-context guard.
+- **Preserved behavior:** Ordinary MCP tool-call outputs and non-resource tools keep their
+  existing external-context behavior.
+- **Regression evidence:** `cf_046_mcp_resource_marks_thread_memory_mode_polluted` in
+  `codex-rs/core/tests/suite/mcp_resource.rs` performs a live `read_mcp_resource` call and
+  asserts the thread's memory mode is recorded as polluted, proving extraction suppression.
 
 ### CF-049: Parsed Memory Citations Remain in Ordinary Model History
 
@@ -529,13 +631,23 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Re-arm the completion watcher in `send_input` whenever a new turn is submitted to an existing subagent.
 - **Required Verification:** Submit multiple turns to a reusable subagent; verify that completion notifications are received automatically without polling.
 
-### CF-077: Rendered Subagent Completion Items Can Exceed Their 1K Cap
+### CF-077: Rendered Subagent Completion Items Can Exceed Their 1K Cap (Complete)
 
-- **Sources & Facet:** H024 (post-render completion-cap facet)
-- **Trigger, Mechanism & Root Cause:** Truncation applies to raw completion text before JSON/XML escaping and agent path metadata are added (`codex-rs/core/src/session_prefix.rs:9-24`).
-- **Demonstrated Token Impact:** A raw completion truncated to 900 heuristic tokens can render to about 1,832 tokens with quotes or newlines and about 5,432 tokens with NUL escaping; unbounded duplicated agent paths add further model-visible bytes.
-- **Remediation Seam:** Render the complete V1/V2 completion envelope first, then enforce the 1K model-visible cap across escaped payload, markers, and agent-path metadata.
-- **Required Verification:** Use quote-heavy, newline-heavy, NUL-heavy payloads and long agent paths; assert the final rendered fragment—not only the raw payload—stays within the item cap.
+- **Status:** **Complete** — the 1K model-visible cap is enforced across the complete rendered
+  completion envelope, including escaped payload, markers, and agent-path metadata.
+- **Current implementation:** `bounded_completion_fragment` in
+  `codex-rs/core/src/session_prefix.rs` renders the full envelope (markers plus body) first,
+  measures it with the shared token estimator, and iteratively reduces the body budget until
+  the rendered fragment fits `COMPLETION_MESSAGE_MAX_TOKENS`;
+  `bounded_completion_status` applies the same reserve to raw completion payloads.
+- **Preserved behavior:** Small completions render unchanged, and V1
+  `<subagent_notification>` markers plus V2 inter-agent messages keep their existing envelope
+  shapes.
+- **Regression evidence:** `escaped_completion_payloads_and_long_paths_stay_within_cap` in
+  `codex-rs/core/src/session_prefix_tests.rs` drives quote-heavy, newline-heavy, and NUL-heavy
+  payloads plus a 3K-character agent path through both V1 and V2 envelopes and asserts each
+  rendered fragment stays within the 1K cap; the error/completion and notification tests cover
+  the ordinary paths.
 
 ### CF-078: Nonterminal Subagent Errors are Published as Terminal Failures
 
@@ -545,13 +657,27 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Check `ErrorEvent::is_terminal` before transitioning agent status to `Failed`.
 - **Required Verification:** Emit a recoverable error event in a subagent; verify that agent status remains running until terminal completion.
 
-### CF-082: Inline Review Findings are Persisted Twice in Parent History
+### CF-082: Inline Review Findings are Persisted Twice in Parent History (Complete)
 
-- **Sources & Facet:** #21
-- **Trigger, Mechanism & Root Cause:** `exit_review_mode` (`codex-rs/core/src/tasks/review.rs:217-264`) records review findings first in a synthetic user review-result envelope and then immediately duplicates the text in a plain assistant message.
-- **Demonstrated Token Impact:** Every completed inline review doubles the token footprint of its findings in parent context.
-- **Remediation Seam:** Store review findings once using a single canonical review message envelope.
-- **Required Verification:** Complete an inline review; verify that findings text appears exactly once in the parent session history.
+- **Status:** **Complete** — current `HEAD` records the review findings once, in the user-action
+  envelope; the UI-facing AgentMessage turn item is emitted without a second history record.
+- **Current implementation:** `exit_review_mode` in
+  `codex-rs/core/src/tasks/review.rs` records the `<user_action>` envelope as the single
+  model-visible copy, then emits the `ExitedReviewMode` and `AgentMessage` turn items directly.
+  The AgentMessage item preserves the client-facing findings text while
+  `record_conversation_items` never sees an assistant message, so prompt construction, compaction
+  projections, and Phase 1 extraction all observe exactly one copy of the findings.
+- **Preserved behavior:** Event ordering (ExitedReviewMode lifecycle, then AgentMessage lifecycle),
+  the interrupted-path envelope, rollout persistence via `ensure_rollout_materialized`, and the
+  v2 client projection that renders display text from the `ExitedReviewMode` item payload remain
+  unchanged. Resume reconstruction reads only persisted ResponseItems, so the removed duplicate
+  cannot reappear on cold resume.
+- **Regression evidence:**
+  `review_exit_records_findings_once_in_parent_history` in `codex-rs/core/tests/suite/review.rs`
+  runs a structured review followed by a parent turn and asserts the finding body and explanation
+  each appear exactly once in the outbound request input.
+  `review_op_emits_lifecycle_and_review_output` now asserts the assistant duplicate is absent from
+  the rollout while the user-action envelope retains the findings.
 
 ### CF-083: Reusable Guardian Delta Turns Re-Emit Root Evidence and Advance on Parse Failure
 
@@ -561,13 +687,19 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Maintain an atomic cursor that tracks both transcript and root evidence, ensuring root context is not re-appended on delta turns.
 - **Required Verification:** Execute multiple Guardian review passes in a reusable session; verify root evidence is sent once and subsequent turns contain only new tool deltas.
 
-### CF-086: Synchronous Guardian Supplies the Output Contract Twice
+### CF-086: Synchronous Guardian Supplies the Output Contract Twice (Complete)
 
-- **Sources & Facet:** H092 (literal schema-restatement facet)
-- **Trigger, Mechanism & Root Cause:** Guardian prompt includes both structured JSON schema and detailed prose instructions restating the output schema (`codex-rs/core/src/guardian/prompt.rs:775-843`).
-- **Demonstrated Token Impact:** Every synchronous full Guardian review repeats the four field names, types, and complete enum sets in both base-instruction prose and `text.format`; the overlapping prose is about 54 heuristic input tokens per uncached attempt and repeats on retries.
-- **Remediation Seam:** Keep read-only investigation guidance and the low-risk shortcut, but remove the literal property/type/enum restatement already carried by `guardian_output_schema()`.
-- **Required Verification:** Capture a synchronous Guardian request and assert each schema field and enum set is defined only in `text.format`, while behavioral guidance remains in instructions; keep Guardian V2 excluded.
+- **Status:** **Complete** — the synchronous Guardian output contract is defined once in
+  `text.format`, with behavioral guidance only in the instructions.
+- **Current implementation:** `guardian_output_schema()` in
+  `codex-rs/core/src/guardian/prompt.rs` is the sole carrier of the property/type/enum
+  contract, and `guardian_output_contract_prompt()` supplies only read-only-investigation
+  guidance plus the low-risk shortcut without restating any schema field.
+- **Preserved behavior:** Guardian V2 remains on its separate classifier path and is excluded;
+  the schema's required-fields and enum semantics are unchanged.
+- **Regression evidence:** `guardian_prompt_leaves_output_shape_to_structured_schema` asserts
+  no schema field name appears in the policy prompt, and the synchronous review request tests
+  assert each field, type, and enum set appears exactly in `text/format/schema`.
 
 ### CF-088: Guardian V2 Classifier Prompt Duplicates Current Tool Action in Transcript
 
@@ -665,13 +797,28 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Adopt provider-aware image token calculation in `ContextManager` matching the active model's patch tiling formula.
 - **Required Verification:** Submit images of various resolutions; verify that calculated token counts match official GPT-5.6 tile formulas.
 
-### CF-105: Negative Catalog Output Limits Wrap to an Enormous Allowance
+### CF-105: Negative Catalog Output Limits Wrap to an Enormous Allowance (Complete)
 
-- **Sources & Facet:** H079 (negative catalog-limit facet)
-- **Trigger, Mechanism & Root Cause:** Truncation limits deserialize as signed `i64` and cast unchecked to `usize` (`codex-rs/protocol/src/openai_models.rs:363-380`), allowing negative values to disable truncation.
-- **Demonstrated Token Impact:** A catalog `limit: -1` reaches `config.limit as usize`, becoming `usize::MAX` on supported 64-bit targets. Direct MCP/function output then bypasses the intended per-output truncation and retains all feasible text up to unrelated transport limits.
-- **Remediation Seam:** Validate catalog and remote-model truncation limits as nonnegative before conversion; use a checked conversion to `TruncationPolicy` and reject invalid catalogs.
-- **Required Verification:** Load a custom and remote model catalog with negative byte/token limits; assert validation fails before model selection and no wrapped policy is constructed.
+- **Status:** **Complete** — current `HEAD` rejects negative catalog and remote-model truncation
+  limits before model selection and can no longer construct a wrapped `TruncationPolicy`.
+- **Current implementation:** `TruncationPolicyConfig::limit` is deserialized through a
+  validating deserializer (`deserialize_nonnegative_limit`) that fails catalog load and remote
+  `/models` decoding with `truncation policy limit must be nonnegative`. The
+  `From<TruncationPolicyConfig> for TruncationPolicy` conversion in
+  `codex-rs/protocol/src/protocol.rs` uses `usize::try_from` with a zero clamp so a
+  programmatic negative value truncates loudly instead of disabling truncation entirely.
+- **Preserved behavior:** Nonnegative limits, including zero and `i64::MAX`, round-trip
+  unchanged. The bundled `models.json` catalog, custom `model_catalog_json` catalogs, the
+  models cache, and the remote `/models` endpoint keep their existing wire shape; a rejected
+  remote catalog still degrades through the existing fetch-failure fallback path.
+- **Regression evidence:** `truncation_policy_rejects_negative_limits` and
+  `truncation_policy_round_trips_nonnegative_limits` cover the serde boundary;
+  `truncation_policy_conversion_never_wraps_negative_limits` and
+  `truncation_policy_conversion_preserves_nonnegative_limits` cover the checked conversion;
+  `model_catalog_json_rejects_negative_truncation_limit` proves a custom catalog fails config
+  load before model selection; and
+  `rejects_models_response_with_negative_truncation_limit` proves the remote `/models` decode
+  fails before the catalog is applied.
 
 ### CF-109: Provider ID-Less Output Items Defeat Incremental Continuation
 
@@ -729,13 +876,20 @@ fork usage from the retained child history, leaving 57 active.
 - **Remediation Seam:** Make transcript-tail admission role-aware: persist/fan out assistant-only tail state without starting `RegularTask`; invoke the model only when the tail contains new user speech.
 - **Required Verification:** Close a realtime session with only assistant entries after the last handoff; assert transcript state is retained but no `/responses` request is issued. Keep a user-tail control that still samples once.
 
-### CF-123: Shared Remote Compaction Trimmer Stops at the First Non-Output Group
+### CF-123: Shared Remote Compaction Trimmer Stops at the First Non-Output Group (Complete)
 
-- **Sources & Facet:** #18
-- **Trigger, Mechanism & Root Cause:** Both Remote V1 and Remote V2 call `trim_function_call_history_to_fit_context_window` (`codex-rs/core/src/compact_remote.rs:399-454`; `codex-rs/core/src/compact_remote_v2_attempt.rs:41-65`). Once over-window rewriting starts, reverse traversal breaks at the newest group that is not a rewritable output, leaving older outputs that the existing policy already considers removable.
-- **Demonstrated Token Impact:** Leaves large historical tool outputs in the compaction prompt, risking window overflow and failed compaction.
-- **Remediation Seam:** Continue scanning all historical tool output groups across user/assistant message boundaries until target reduction is achieved.
-- **Required Verification:** For both Remote V1 and Remote V2, place an oversized removable output behind a newer non-output group; assert traversal reaches and rewrites the older output.
+- **Status:** **Complete** — the shared Remote V1/V2 trimmer continues scanning past newer
+  non-output groups and reaches older rewritable outputs across user/assistant boundaries.
+- **Current implementation:** `trim_function_call_history_for_context_window` in
+  `codex-rs/core/src/compact_remote.rs` walks `history_item_groups` in reverse, tracking
+  position with a `traversed_items` cursor so a non-rewritable group is skipped while older
+  rewritable output groups remain reachable until the reduction target is met.
+- **Preserved behavior:** Non-rewritable groups themselves are left intact, and harness
+  metadata on rewritten outputs is preserved.
+- **Regression evidence:** `shared_trimmer_reaches_outputs_behind_newer_message_groups` in
+  `codex-rs/core/src/compact_remote_metadata_tests.rs` places an oversized removable output
+  behind a newer user message and asserts the traversal rewrites the older output;
+  `rewritten_output_preserves_harness_metadata` covers metadata preservation.
 
 ### CF-124: Remote V2 Retains Prior Local Compaction Summaries as Real User Messages
 

@@ -362,7 +362,21 @@ where
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, TS, JsonSchema)]
 pub struct TruncationPolicyConfig {
     pub mode: TruncationMode,
+    #[serde(deserialize_with = "deserialize_nonnegative_limit")]
     pub limit: i64,
+}
+
+fn deserialize_nonnegative_limit<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let limit = i64::deserialize(deserializer)?;
+    if limit < 0 {
+        return Err(serde::de::Error::custom(format!(
+            "truncation policy limit must be nonnegative, got {limit}"
+        )));
+    }
+    Ok(limit)
 }
 
 impl TruncationPolicyConfig {
@@ -1664,6 +1678,36 @@ mod tests {
         assert_eq!(model.comp_hash, None);
         assert_eq!(model.auto_review_model_override, None);
         assert_eq!(model.tool_mode, None);
+    }
+
+    #[test]
+    fn truncation_policy_rejects_negative_limits() {
+        for (mode, negative_limit) in [("bytes", -1), ("tokens", -100)] {
+            let error = serde_json::from_value::<TruncationPolicyConfig>(serde_json::json!({
+                "mode": mode,
+                "limit": negative_limit
+            }))
+            .expect_err("negative truncation limit should fail deserialization");
+            assert!(
+                error.to_string().contains("nonnegative"),
+                "unexpected error for {mode}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncation_policy_round_trips_nonnegative_limits() {
+        for (mode, limit) in [("bytes", 0), ("tokens", 10_000), ("bytes", i64::MAX)] {
+            let policy = TruncationPolicyConfig {
+                mode: serde_json::from_value(serde_json::json!(mode))
+                    .expect("parse truncation mode"),
+                limit,
+            };
+            let serialized = to_string(&policy).expect("serialize truncation policy");
+            let deserialized: TruncationPolicyConfig =
+                from_str(&serialized).expect("deserialize truncation policy");
+            assert_eq!(deserialized, policy);
+        }
     }
 
     #[test]

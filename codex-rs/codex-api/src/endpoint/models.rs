@@ -133,6 +133,30 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct RawBodyTransport {
+        body: Vec<u8>,
+        etag: Option<String>,
+    }
+
+    impl HttpTransport for RawBodyTransport {
+        async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
+            let mut headers = HeaderMap::new();
+            if let Some(etag) = &self.etag {
+                headers.insert(ETAG, etag.parse().unwrap());
+            }
+            Ok(Response {
+                status: StatusCode::OK,
+                headers,
+                body: self.body.clone().into(),
+            })
+        }
+
+        async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
+            Err(TransportError::Build("stream should not run".to_string()))
+        }
+    }
+
     #[derive(Clone, Default)]
     struct DummyAuth;
 
@@ -239,6 +263,45 @@ mod tests {
         assert_eq!(models[0].slug, "gpt-test");
         assert_eq!(models[0].supported_in_api, true);
         assert_eq!(models[0].priority, 1);
+    }
+
+    #[tokio::test]
+    async fn rejects_models_response_with_negative_truncation_limit() {
+        let raw_body = json!({
+            "models": [{
+                "slug": "gpt-test",
+                "display_name": "gpt-test",
+                "supported_reasoning_levels": [],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "supported_in_api": true,
+                "priority": 1,
+                "upgrade": null,
+                "support_verbosity": false,
+                "default_verbosity": null,
+                "apply_patch_tool_type": null,
+                "truncation_policy": {"mode": "bytes", "limit": -1},
+                "supports_image_detail_original": false,
+                "experimental_supported_tools": [],
+            }]
+        });
+        let transport = RawBodyTransport {
+            body: serde_json::to_vec(&raw_body).expect("serialize models response"),
+            etag: None,
+        };
+
+        let provider = provider("https://example.com/api/codex");
+        let request_url = ModelsClient::<RawBodyTransport>::request_url(&provider, "0.99.0");
+        let client = ModelsClient::new(transport, provider, Arc::new(DummyAuth));
+
+        let err = client
+            .list_models(request_url, HeaderMap::new())
+            .await
+            .expect_err("negative truncation limit should fail catalog decode");
+        assert!(
+            err.to_string().contains("nonnegative"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
