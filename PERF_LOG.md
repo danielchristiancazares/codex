@@ -1,5 +1,72 @@
 # Performance Log
 
+## Windows post-first-token TTFT gate — current baseline
+
+This section describes PERF-004 on top of signed commit `1c39bfc048`. Core records turn time-to-first-token from the first eligible response event. The timestamp itself remains protected by the turn-timing mutex. Once that timestamp exists, later output-text, reasoning-summary, and reasoning-content deltas previously acquired the same mutex only to rediscover that TTFT was already fixed. The retained path uses an acquire/release atomic hint to return before that post-first-token lock.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| TTFT gate after the first eligible event | 26.05 ns/event | 0.2369 ns/event | 99.09% less time; 110.0× throughput | 4.219 G events/s |
+
+### Fixture and command
+
+- Command: `just bench -- turn_ttft_post_first_gate` from the repository root.
+- Path: a focused component fixture mirroring the synchronization operation used by `TurnTimingState::record_ttft_for_response_event` after TTFT has been recorded. Production behavior is validated separately through the private `TurnTimingState` methods and a complete Core telemetry turn.
+- Input: 100,000 sequential post-first-token observations in one current-thread Tokio runtime entry. The state begins in the recorded condition and is black-boxed at each observation.
+- Baseline operation: acquire the uncontended `tokio::sync::Mutex`, read the recorded condition, release the guard, and continue.
+- Retained operation: acquire-load the atomic recorded hint and take the established early-return branch.
+- Sampling: 100 Divan samples × one 100,000-event batch per invocation. Runtime entry is outside the per-event loop, so its fixed cost is amortized equally. One full rebuild-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local post-first-token TTFT synchronization. Event classification, surrounding response handling, provider execution, and network transit lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per 100,000 events | Derived per-event time | Reported throughput |
+|---:|---:|---:|---:|
+| Warmup (excluded) | 2.609 ms | 26.09 ns | 38.32 M events/s |
+| 1 | 2.619 ms | 26.19 ns | 38.16 M events/s |
+| 2 | 2.605 ms | 26.05 ns | 38.37 M events/s |
+| 3 | 2.600 ms | 26.00 ns | 38.45 M events/s |
+| 4 | 2.664 ms | 26.64 ns | 37.52 M events/s |
+| 5 | 2.601 ms | 26.01 ns | 38.43 M events/s |
+
+Median of the five warmed invocation medians: **2.605 ms per 100,000 events**, **26.05 ns/event**, and **38.37 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per 100,000 events | Derived per-event time | Reported throughput |
+|---:|---:|---:|---:|
+| Final-state warmup (excluded) | 23.89 µs | 0.2389 ns | 4.184 G events/s |
+| 1 | 23.49 µs | 0.2349 ns | 4.255 G events/s |
+| 2 | 23.69 µs | 0.2369 ns | 4.219 G events/s |
+| 3 | 23.69 µs | 0.2369 ns | 4.219 G events/s |
+| 4 | 23.64 µs | 0.2364 ns | 4.228 G events/s |
+| 5 | 23.69 µs | 0.2369 ns | 4.219 G events/s |
+
+Median of the five exact-final warmed invocation medians: **23.69 µs per 100,000 events**, **0.2369 ns/event**, and **4.219 G events/s**. Relative to the 26.05 ns baseline, this is **99.09% less synchronization time** and **110.0× stage throughput**. The exact-final invocation range of 0.2349–0.2369 ns/event is disjoint from the baseline range of 26.00–26.64 ns/event. The earlier retained-source set had a 23.79 µs median and independently corroborates the result.
+
+### Retained win
+
+- **PERF-004 — bypass the TTFT mutex after the first eligible response event.** `TurnTimingState` now publishes a recorded hint only after the mutex-protected timestamp is established. The first eligible event in each turn follows the original locked path, concurrent contenders serialize through the timestamp, and `mark_turn_started` clears both the timestamp and hint while holding the state lock. Ineligible events retain their existing classifier-only path. TTFT duration, TTFM state, item timing, profile timing, and telemetry emission preserve their established sources and units.
+
+### Correctness and validation
+
+- `just test -p codex-core -E 'test(/turn_timing_state/)'`: all 6 focused timing tests passed. Coverage includes no pre-start recording, once-per-turn behavior, reset on the next turn, independent TTFM recording, and a 32-way concurrent first-event race that produces exactly one TTFT duration.
+- `just test -p codex-core -E 'test(/process_sse_emits_completed_telemetry/)'`: the complete Core turn passed and emitted response-completion telemetry with TTFT populated.
+- `cargo build -p codex-exec --release`: passed on the retained source and produced the executable used for the secondary process check.
+- `just clippy -p codex-core --lib --bench latency_paths --no-deps`: passed; the repository recipe also covered Core tests.
+- `just fix -p codex-core --lib --bench latency_paths --no-deps`: passed without reported edits; the repository recipe also covered Core tests.
+- `just bench-smoke`: passed every registered benchmark target, including the final TTFT fixture.
+- `python tools/argument-comment-lint/run.py --help`: the source wrapper reported that `cargo-dylint` and `dylint-link` are unavailable on this host. The prebuilt recipe is Unix-only. Manual review found no new call site requiring an argument-name comment under the repository convention.
+
+### Rejected and diagnostic measurements
+
+- **Process-level 20,000-delta WebSocket burst:** a raw loopback WebSocket server modeled the v2 `generate=false` prewarm followed by the real request, sent a 1,040,538-byte uncompressed frame burst, and timed response start through the final JSON-mode agent item. Every run reconstructed all 20,000 `~` characters, emitted completion, exited successfully, and spent at most 0.618 ms in the server send. Baseline invocation medians were 425.039, 420.905, 431.140, 661.903, and 403.620 ms; retained-state medians were 597.220, 616.288, 361.912, 395.621, and 606.675 ms. Both states showed distinct fast and slow scheduling modes with heavily overlapping 361.912–661.903 ms invocation ranges and a large fixed turn-finalization floor. This fixture provides correctness evidence and no attributable performance conclusion for PERF-004.
+- **Bazel exec macrobenchmark:** `bazel test --compilation_mode=opt --cache_test_results=no --test_output=streamed --test_arg=text_delta_response_to_exit //codex-rs/exec:codex-exec-bench` stopped during analysis because the maintainer-owned Cargo update resolved `prost-types` 0.14.4 while `bazel/toolchains/prost` still names 0.14.3. The benchmark-only source edit was fully reverted.
+- **SSE process fixture:** the release binary rejected the custom SSE provider as incompatible with this WebSocket-only build before issuing a request. The production-aligned WebSocket fixture replaced it.
+
 ## Windows metrics-enabled WebSocket telemetry — current baseline
 
 This section describes PERF-001E on top of signed commit `9b13f5bc27`. The Responses WebSocket decoder already constructs an owned `ResponsesStreamEvent` for every successful text frame. Metrics-enabled telemetry previously decoded the same frame again into a generic `serde_json::Value` to recover its `type`. The retained path hands the primary decoder's event kind and original payload to telemetry, preserving the payload parser for the single server-timing event while ordinary response deltas proceed directly to metric recording.

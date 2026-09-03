@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -43,6 +45,7 @@ pub(crate) async fn record_turn_ttfm_metric(turn_context: &TurnContext, item: &T
 #[derive(Debug, Default)]
 pub(crate) struct TurnTimingState {
     state: Mutex<TurnTimingStateInner>,
+    first_token_recorded: AtomicBool,
     profile: StdMutex<TurnProfileState>,
 }
 
@@ -95,6 +98,7 @@ impl TurnTimingState {
         state.item_started_at_ms.clear();
         state.first_token_at = None;
         state.first_message_at = None;
+        self.first_token_recorded.store(false, Ordering::Release);
         self.profile_state().start(started_at);
         started_at_unix_ms
     }
@@ -180,8 +184,15 @@ impl TurnTimingState {
         if !response_event_records_turn_ttft(event) {
             return None;
         }
+        if self.first_token_recorded.load(Ordering::Acquire) {
+            return None;
+        }
         let mut state = self.state.lock().await;
-        state.record_turn_ttft()
+        let duration = state.record_turn_ttft();
+        if duration.is_some() {
+            self.first_token_recorded.store(true, Ordering::Release);
+        }
+        duration
     }
 
     pub(crate) async fn record_ttfm_for_turn_item(&self, item: &TurnItem) -> Option<Duration> {

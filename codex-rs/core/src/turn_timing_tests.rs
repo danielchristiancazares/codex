@@ -5,10 +5,12 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use tokio::sync::Barrier;
 
 use super::TurnProfilePhase;
 use super::TurnProfileState;
@@ -44,6 +46,48 @@ async fn turn_timing_state_records_ttft_only_once_per_turn() {
             .record_ttft_for_response_event(&ResponseEvent::OutputTextDelta("again".to_string()))
             .await,
         None
+    );
+
+    state.mark_turn_started(Instant::now()).await;
+    assert!(
+        state
+            .record_ttft_for_response_event(&ResponseEvent::OutputTextDelta("next".to_string()))
+            .await
+            .is_some()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn turn_timing_state_records_one_ttft_across_concurrent_events() {
+    const CONCURRENT_EVENTS: usize = 32;
+
+    let state = Arc::new(TurnTimingState::default());
+    state.mark_turn_started(Instant::now()).await;
+    let barrier = Arc::new(Barrier::new(CONCURRENT_EVENTS + 1));
+    let mut tasks = Vec::with_capacity(CONCURRENT_EVENTS);
+    for _ in 0..CONCURRENT_EVENTS {
+        let state = Arc::clone(&state);
+        let barrier = Arc::clone(&barrier);
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            state
+                .record_ttft_for_response_event(&ResponseEvent::OutputTextDelta("x".to_string()))
+                .await
+        }));
+    }
+
+    barrier.wait().await;
+    let mut results = Vec::with_capacity(CONCURRENT_EVENTS);
+    for task in tasks {
+        results.push(task.await.expect("TTFT task should complete"));
+    }
+
+    assert_eq!(
+        results
+            .into_iter()
+            .filter(std::option::Option::is_some)
+            .count(),
+        1
     );
 }
 

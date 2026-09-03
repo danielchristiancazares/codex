@@ -29,6 +29,8 @@ use divan::counter::ItemsCount;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::runtime::Builder;
 use tokio_tungstenite::tungstenite::Message;
@@ -41,6 +43,7 @@ mod json;
 mod responses_websocket;
 
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
+const TTFT_EVENT_COUNT: usize = 100_000;
 
 fn main() {
     divan::main();
@@ -182,6 +185,27 @@ fn response_telemetry_text_delta(bencher: Bencher) {
         .bench_local(move || {
             divan::black_box(&telemetry)
                 .record_responses(divan::black_box(&span), divan::black_box(&event))
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1)]
+fn turn_ttft_post_first_gate(bencher: Bencher) {
+    #[allow(clippy::expect_used)]
+    let runtime = Builder::new_current_thread()
+        .build()
+        .expect("benchmark runtime should start");
+    let first_token_recorded = AtomicBool::new(true);
+
+    bencher
+        .counter(ItemsCount::new(TTFT_EVENT_COUNT))
+        .bench_local(move || {
+            runtime.block_on(async {
+                for _ in 0..TTFT_EVENT_COUNT {
+                    if divan::black_box(&first_token_recorded).load(Ordering::Acquire) {
+                        divan::black_box(None::<Duration>);
+                    }
+                }
+            })
         });
 }
 
