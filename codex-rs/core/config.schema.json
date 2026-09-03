@@ -736,6 +736,9 @@
             "guardian_reuse_parent_compaction": {
               "type": "boolean"
             },
+            "guardian_thread_context": {
+              "type": "boolean"
+            },
             "guardianv2": {
               "$ref": "#/definitions/FeatureToml_for_GuardianV2ConfigToml"
             },
@@ -5913,6 +5916,9 @@
           "type": "boolean"
         },
         "guardian_reuse_parent_compaction": {
+          "type": "boolean"
+        },
+        "guardian_thread_context": {
           "type": "boolean"
         },
         "guardianv2": {
