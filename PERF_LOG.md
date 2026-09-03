@@ -60,10 +60,10 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 
 ### Active candidates
 
-1. **PERF-001B:** remove the ordinary-frame wrapped-error parse from the production WebSocket decoder.
-2. **PERF-001C:** construct bounded raw protocol diagnostics only when conversion fails.
-3. **PERF-001D:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
-4. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later deltas.
+1. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
+2. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later deltas.
+3. **PERF-006:** reject non-durable delta events before persistent thread-store work.
+4. **PERF-007:** collapse redundant app-server delta fanout work.
 
 ### Rejected experiments
 
@@ -79,6 +79,66 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 - `just clippy -p codex-core --bench latency_paths --no-deps`: passed. The initial dependency-inclusive invocation reached an existing denied `expect()` in `codex-exec-output-artifacts/src/store.rs:225`; the narrowed run checked the task-owned benchmark crate while compiling its dependency graph.
 - `just argument-comment-lint codex-rs/core/benches/latency_paths.rs`: unavailable because the Windows justfile does not define this Unix-only recipe. The new opaque numeric arguments carry exact `/*count*/` and `/*micros*/` parameter comments.
 - `just fmt`: passed as the final formatting gate.
+
+## Windows response span-name recording — current baseline
+
+This section describes PERF-008 on top of signed commit `ff5b6f6ea5`. Core calls `SessionTelemetry::record_responses` for every decoded response event before turn processing. The benchmark isolates its ordinary output-text-delta path with tracing disabled, which is a common release configuration and the state in which the avoidable name allocation dominated this stage. Enabled spans retain the same label values and also avoid the static-label allocation.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| Response span-name recording, tracing-disabled output-text delta | 21.22 ns/event | 1.72 ns/event | 91.89% less time; 12.34× throughput | 581.3 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- response_telemetry_text_delta` from the repository root.
+- Path: public production `SessionTelemetry::record_responses` with a `ResponseEvent::OutputTextDelta` and `tracing::Span::none()`.
+- Precondition and barriers: the fixture asserts that the span is disabled, then black-boxes the telemetry receiver, span, and event on every timed invocation.
+- Input: one 16-byte text delta. Telemetry metadata and the event are constructed outside the timed loop.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: same Windows 11, Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and optimized benchmark profile recorded above.
+
+### Raw baseline medians
+
+| Run | Median | Reported event throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 21.52 ns/event | 46.46 M events/s |
+| 1 | 21.22 ns/event | 47.12 M events/s |
+| 2 | 21.82 ns/event | 45.82 M events/s |
+| 3 | 21.62 ns/event | 46.25 M events/s |
+| 4 | 21.17 ns/event | 47.23 M events/s |
+| 5 | 21.02 ns/event | 47.57 M events/s |
+
+Median of the five warmed invocation medians: **21.22 ns/event**, or **47.12 M events/s**.
+
+### Raw retained-state medians
+
+The final fixture adds an explicit disabled-span assertion outside the timed loop. Its first post-edit invocation rebuilt downstream benchmark crates in 4m 03s and served as the excluded candidate build warmup. A fresh benchmark-source rebuild after adding the assertion served as the exact-final-source warmup.
+
+| Run | Median | Reported event throughput |
+|---:|---:|---:|
+| Exact-final-source warmup (excluded) | 1.72 ns/event | 581.3 M events/s |
+| 1 | 1.72 ns/event | 581.3 M events/s |
+| 2 | 1.72 ns/event | 581.3 M events/s |
+| 3 | 1.72 ns/event | 581.3 M events/s |
+| 4 | 1.72 ns/event | 581.3 M events/s |
+| 5 | 1.72 ns/event | 581.3 M events/s |
+
+Median of the five exact-final-source invocation medians: **1.72 ns/event**, or **581.3 M events/s**. Relative to the 21.22 ns baseline, this is **91.89% less time** and **12.34× event throughput** for response telemetry on a disabled span.
+
+### Retained win
+
+- **PERF-008 — borrow static response telemetry names.** Response and response-item classifiers now return `Cow<'static, str>`. Every static event label, including the per-delta `text_delta`, remains borrowed through synchronous span recording. The sole dynamic `message_from_{role}` label keeps its owned formatted representation. All emitted `otel.name` values remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-otel`: all 61 tests passed.
+- `just test -p codex-core record_responses_sets_span_fields_for_response_events`: passed an integration stream covering `created`, `rate_limits`, function calls, the dynamic `message_from_assistant` label, reasoning, text/reasoning deltas, and completion.
+- `just bench-smoke`: passed every registered workspace benchmark, including the new fixture.
+- `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the task-owned benchmark target.
+- `just fix -p codex-otel` and final `just fmt`: passed.
+- The Windows justfile has no `argument-comment-lint` recipe. The new opaque numeric argument uses the exact `/*count*/` parameter comment.
 
 ## Windows Responses WebSocket event throughput — current baseline
 
@@ -173,10 +233,12 @@ Median of the five exact-final-source invocation medians: **35.30 ms/response**,
 
 - **BENCH-003 — 4,096-event response fixture.** The first production-path fixture used 30 samples and produced baseline medians 10.31, 10.30, 10.64, 10.42, and 9.845 ms versus candidate medians 10.06, 9.398, 9.974, 9.865, and 9.746 ms. Its 4.32% median time reduction was directional while the invocation ranges overlapped. The 16,384-event fixture replaced it.
 - **BENCH-004 — shared/two-worker loopback scheduling.** The initial amplified fixture shared a two-worker runtime between server deflate and client work, depended implicitly on proxy routing, stopped at the completion event, and inferred compression negotiation. Those measurements were discarded. After direct-route, runtime-isolation, compression, and drain hardening, two nominally identical two-worker client invocations still produced 47.67 and 38.94 ms medians. The retained current-thread client fixture removed that cross-worker placement mode and was rebaselined from the original production source.
+- **PERF-001D — borrow the owned event discriminator during semantic conversion.** Removing the per-event `event.kind` clone produced an excluded 35.12 ms warmup and warmed invocation medians of 35.19, 35.24, 34.29, 35.39, and 35.23 ms/response. The 35.23 ms aggregate median was 0.20% below the immediate 35.30 ms PERF-001C baseline, with fully overlapping invocation ranges. The production edit was reverted exactly.
 
 ### Active candidates
 
-1. **PERF-001D:** eliminate the eager `event.kind` clone performed for semantic error diagnostics on every successfully parsed frame.
-2. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
-3. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
-4. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.
+1. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
+2. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
+3. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.
+4. **PERF-006:** reject non-durable delta events before cloning or persistent thread-store submission where the current event pipeline still permits it.
+5. **PERF-007:** collapse redundant app-server delta-event clones, state locking, ID allocation, and notification construction along the active inference consumer path.

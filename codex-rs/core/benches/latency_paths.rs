@@ -1,6 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_api::ApiError;
+use codex_api::ResponseEvent;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
@@ -94,6 +95,32 @@ fn websocket_telemetry_no_metrics_text_delta(bencher: Bencher) {
                 divan::black_box(&response),
                 Duration::from_micros(/*micros*/ 100),
             )
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn response_telemetry_text_delta(bencher: Bencher) {
+    let telemetry = SessionTelemetry::new(
+        ThreadId::new(),
+        "benchmark-model",
+        "benchmark-model",
+        /*account_id*/ None,
+        /*account_email*/ None,
+        /*auth_mode*/ None,
+        "benchmark".to_string(),
+        /*log_user_prompts*/ false,
+        "benchmark".to_string(),
+        SessionSource::Cli,
+    );
+    let span = tracing::Span::none();
+    assert!(span.is_disabled());
+    let event = ResponseEvent::OutputTextDelta("abcdefghijklmnop".to_string());
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .bench_local(move || {
+            divan::black_box(&telemetry)
+                .record_responses(divan::black_box(&span), divan::black_box(&event))
         });
 }
 

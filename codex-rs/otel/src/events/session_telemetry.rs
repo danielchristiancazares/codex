@@ -57,6 +57,7 @@ use eventsource_stream::EventStreamError as StreamError;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use reqwest::Error;
 use reqwest::Response;
+use std::borrow::Cow;
 use std::future::Future;
 use std::time::Duration;
 use std::time::Instant;
@@ -516,7 +517,8 @@ impl SessionTelemetry {
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {
-        handle_responses_span.record("otel.name", SessionTelemetry::responses_type(event));
+        let response_type = SessionTelemetry::responses_type(event);
+        handle_responses_span.record("otel.name", response_type.as_ref());
 
         match event {
             ResponseEvent::OutputItemDone(item) => {
@@ -1273,7 +1275,7 @@ impl SessionTelemetry {
         }
     }
 
-    fn responses_type(event: &ResponseEvent) -> String {
+    fn responses_type(event: &ResponseEvent) -> Cow<'static, str> {
         match event {
             ResponseEvent::Created => "created".into(),
             ResponseEvent::OutputItemDone(item) | ResponseEvent::OutputItemAdded(item) => {
@@ -1298,10 +1300,10 @@ impl SessionTelemetry {
         }
     }
 
-    fn responses_item_type(item: &ResponseItem) -> String {
+    fn responses_item_type(item: &ResponseItem) -> Cow<'static, str> {
         match item {
             ResponseItem::AdditionalTools { .. } => "additional_tools".into(),
-            ResponseItem::Message { role, .. } => format!("message_from_{role}"),
+            ResponseItem::Message { role, .. } => format!("message_from_{role}").into(),
             ResponseItem::AgentMessage { .. } => "agent_message".into(),
             ResponseItem::Reasoning { .. } => "reasoning".into(),
             ResponseItem::LocalShellCall { .. } => "local_shell_call".into(),
