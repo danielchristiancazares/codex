@@ -8,6 +8,7 @@ use codex_api::WebsocketEventMetadata;
 use codex_api::response_create_client_metadata;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::item_event_to_server_notification;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
@@ -287,6 +288,29 @@ fn app_server_event_owned_handoff(bencher: Bencher) {
             let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
             divan::black_box(event);
             divan::black_box(shutdown_complete);
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn app_server_agent_delta_notification_mapping(bencher: Bencher) {
+    let thread_id = "thread-01234567-89ab-cdef-0123-456789abcdef";
+    let turn_id = "turn-01234567-89ab-cdef-0123-456789abcdef";
+    let event = EventMsg::AgentMessageContentDelta(AgentMessageContentDeltaEvent {
+        thread_id: thread_id.to_string(),
+        turn_id: turn_id.to_string(),
+        item_id: "item-01234567-89ab-cdef-0123-456789abcdef".to_string(),
+        delta: "abcdefghijklmnop".to_string(),
+    });
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .with_inputs(move || event.clone())
+        .bench_local_values(|event| {
+            divan::black_box(item_event_to_server_notification(
+                event,
+                divan::black_box(thread_id),
+                divan::black_box(turn_id),
+            ))
         });
 }
 

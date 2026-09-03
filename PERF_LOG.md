@@ -1,5 +1,78 @@
 # Performance Log
 
+## Windows app-server delta notification mapping — current baseline
+
+This section describes retained PERF-013 on top of signed commit `3aba0e58e9`. Core's agent-message, plan, reasoning-summary, and reasoning-content delta events already own their thread and turn IDs. The app-server protocol mapper previously allocated replacement IDs from its authoritative caller arguments before dispatching every event. The retained path compares the embedded IDs with those arguments and transfers matching strings into the notification. A mismatch follows the established caller-authoritative allocation path.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server agent-message delta notification mapping | 76.62 ns/event | 39.77 ns/event | 48.09% less time; 1.93× throughput | 25.14 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_agent_delta_notification_mapping` from the repository root.
+- Path: public production `item_event_to_server_notification` mapping from an owned Core `AgentMessageContentDeltaEvent` to the v2 `AgentMessageDeltaNotification` payload.
+- Input: a matching 43-byte thread ID, 41-byte turn and item IDs, and a 16-byte delta. Divan clones the complete input event outside each timed invocation.
+- Baseline operation: allocate and copy the caller's thread and turn IDs, move the item ID and delta into the notification, and discard the event's duplicate owned IDs.
+- Retained operation: compare each event ID with its authoritative caller ID, move both matching event strings plus the item ID and delta into the notification, and retain allocation-backed caller IDs for mismatch cases.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full rebuild-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local Core-event to typed-notification mapping and ownership transfer. Subscriber lookup, transport serialization, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 77.57 ns | 12.89 M events/s |
+| 1 | 76.27 ns | 13.11 M events/s |
+| 2 | 76.62 ns | 13.05 M events/s |
+| 3 | 76.42 ns | 13.08 M events/s |
+| 4 | 78.47 ns | 12.74 M events/s |
+| 5 | 77.66 ns | 12.88 M events/s |
+
+Median of the five warmed invocation medians: **76.62 ns/event** and **13.05 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Final-state warmup (excluded) | 40.77 ns | 24.52 M events/s |
+| 1 | 40.72 ns | 24.56 M events/s |
+| 2 | 39.77 ns | 25.14 M events/s |
+| 3 | 35.97 ns | 27.80 M events/s |
+| 4 | 38.22 ns | 26.16 M events/s |
+| 5 | 49.01 ns | 20.40 M events/s |
+
+Median of the five exact-final warmed invocation medians: **39.77 ns/event** and **25.14 M events/s**. Relative to the 76.62 ns baseline, this is **48.09% less mapping time** and **92.61% more event throughput**. The exact-final 35.97–49.01 ns invocation-median range is disjoint from the 76.27–78.47 ns baseline range.
+
+### Retained win
+
+- **PERF-013 — transfer matching delta event IDs into typed notifications.** Agent-message, plan, reasoning-summary, and reasoning-content delta mappings share the same ownership rule. Embedded IDs that equal the caller's authoritative IDs move directly into the notification. Stale or inconsistent event IDs fall back independently to the caller's thread and turn IDs, preserving the established wire payload for every input. All item IDs, delta text, indexes, notification variants, method names, and serialization remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server-protocol`: all 300 tests passed with one pre-existing skipped test on the exact final source.
+- The new whole-payload test covers all four optimized delta variants plus a stale embedded-ID case, confirming caller-authoritative fallback behavior.
+- `just fix -p codex-app-server-protocol --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed. The first pass exposed a large-`Err` Clippy warning in an intermediate helper shape; the final early-match implementation passes cleanly.
+- `cargo build -p codex-exec --release`: passed after rebuilding the complete in-process app-server path from the retained source.
+- The exact-final component benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained invocation-median ranges.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal call site.
+
+### Process-level diagnostic
+
+- The 20,000-delta production-path WebSocket fixture reconstructed all 20,000 characters, emitted completion, and exited successfully in every ordinary sample. Its server delivered the 1,040,538-byte frame burst in 0.146–0.257 ms during the principal batches.
+- A pre-edit batch measured a 359.211 ms response-to-render median and 55,677.57 delta events/s. Two retained-logic batches before the final source-shape cleanup measured 348.927 and 355.939 ms medians. Two exact-final batches then entered the fixture's slow scheduling mode at 613.523 and 623.073 ms.
+- Side-by-side release binaries were alternated against one server instance. A 10-pair run produced 548.385 ms baseline and 649.239 ms candidate medians; paired candidate-minus-baseline values ranged from -235.916 to +654.032 ms. A 30-pair run produced 463.620 ms baseline and 603.606 ms candidate medians; paired deltas ranged from -135.643 ms to a 19,506.094 ms candidate pause, with 17 negative and 13 positive values.
+- The fixture's multi-modal scheduling and extreme pauses dominate the sub-microsecond allocation change. These process measurements are classified as correctness and scheduler diagnostics. The isolated production mapper fixture supplies the attributable performance evidence for PERF-013.
+
+### Rejected experiments since PERF-012
+
+- **PERF-014 — exec notification opt-outs.** Configuring exec to opt out of the five agent, plan, and reasoning delta notifications it already ignores moved the process median from 359.211 to 357.064 ms, a 0.60% rate increase with overlapping samples. The source edit was reverted.
+- **PERF-015 — early app-server notification suppression.** Propagating connection opt-outs into listener capabilities and skipping notification-only handling when every subscriber opted out produced 367.269 and 358.128 ms candidate medians against the 359.211 ms baseline. The source and focused test edits were reverted.
+- **PERF-016 — inline Core response mapping.** Removing Core's second 1,600-entry response channel and mapper task produced a 610.692 ms process median during one slow-mode batch. Later exact-binary interleaving established the fixture's 0.35-second to multi-second scheduler modes, so that batch provides no channel-specific attribution. The change also replaced eager pipelining with consumer-driven mapping and removed a backpressure trace state. The source and test edits were reverted. Reopening this path requires a stable fixture that preserves and measures transport/consumer overlap.
+
 ## Windows app-server owned-event handoff — current baseline
 
 This section describes retained PERF-012 on top of signed commit `724bec936f`. The per-thread app-server listener borrows each Core event for cost tracking, turn-state projection, raw-event policy, and realtime effects. It previously deep-cloned the event for the sole consuming bespoke handler because a shutdown-variant check followed that call. The retained path captures the shutdown condition by reference and transfers the original event directly.
