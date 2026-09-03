@@ -1,5 +1,77 @@
 # Performance Log
 
+## Windows app-server delta state tracking — current baseline
+
+This section describes retained PERF-019 on top of signed commit `fc92d4927b`. The per-thread app-server listener previously acquired its Tokio `ThreadState` mutex for every Core event, including agent-message, plan, reasoning-summary, reasoning-content, and reasoning-section deltas that current-turn history does not consume. The retained listener classifies those variants before the mutex. Agent-message deltas rejoin the stateful path after a paginated thread has observed its first realtime-conversation start; the other four variants remain stateless for both turn and realtime history.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server ordinary agent-delta state decision | 26.10 ns/event | 0.3209 ns/event | 98.77% less time; 81.33× throughput | 3.115 G events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_delta_thread_state_tracking` from the repository root.
+- Path: a focused component fixture reproducing the listener operation immediately before current-turn and realtime-history tracking for an ordinary `AgentMessageContentDelta`.
+- Input: one prebuilt agent-message delta and a batch of 100,000 steady-state decisions in a listener whose realtime history has never started.
+- Baseline operation: enter one current-thread Tokio runtime, acquire and release the listener's uncontended async state mutex for every event, and expose the protected state through an optimization barrier.
+- Retained operation: inspect the event discriminator, load and compare the listener-local realtime lifecycle state through an optimization barrier, and return the stateless decision through a second barrier. Event construction stays outside timing.
+- Sampling: 100 Divan samples × one 100,000-event batch per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations. The batch boundary amortizes runtime entry in the baseline and gives the sub-nanosecond retained decision enough aggregate duration for the 100 ns timer precision.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: listener-side state classification and synchronization for a prebuilt event. Notification mapping, subscriber routing, serialization, transport writes, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per 100,000 events | Median per event | Derived throughput |
+|---:|---:|---:|---:|
+| Warmup (excluded) | 2.607 ms | 26.07 ns | 38.35 M events/s |
+| 1 | 2.597 ms | 25.97 ns | 38.50 M events/s |
+| 2 | 2.584 ms | 25.84 ns | 38.69 M events/s |
+| 3 | 2.610 ms | 26.10 ns | 38.30 M events/s |
+| 4 | 2.670 ms | 26.70 ns | 37.44 M events/s |
+| 5 | 2.632 ms | 26.32 ns | 37.98 M events/s |
+
+Median of the five warmed invocation medians: **2.610 ms per 100,000 events**, **26.10 ns/event**, and **38.30 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per 100,000 events | Median per event | Derived throughput |
+|---:|---:|---:|---:|
+| Final-state warmup (excluded) | 31.89 µs | 0.3189 ns | 3.134 G events/s |
+| 1 | 32.09 µs | 0.3209 ns | 3.115 G events/s |
+| 2 | 41.39 µs | 0.4139 ns | 2.415 G events/s |
+| 3 | 32.29 µs | 0.3229 ns | 3.095 G events/s |
+| 4 | 31.99 µs | 0.3199 ns | 3.125 G events/s |
+| 5 | 32.09 µs | 0.3209 ns | 3.115 G events/s |
+
+Median of the five exact-final warmed invocation medians: **32.09 µs per 100,000 events**, **0.3209 ns/event**, and **3.115 G events/s**. Relative to the 26.10 ns baseline, this is **98.77% less decision and synchronization time** and **81.33× stage throughput**. The exact-final 0.3199–0.4139 ns invocation-median range is disjoint from the 25.84–26.70 ns baseline range. An earlier hardened set independently produced the same 0.3209 ns/event median with a 0.3189–0.3249 ns range. A preliminary fixture with compiler-visible lifecycle state measured 0.2349 ns/event; both hardened sets supersede it by forcing the event and state byte through optimization barriers.
+
+### Retained win
+
+- **PERF-019 — bypass `ThreadState` locking for stateless streaming deltas.** A listener-local `RealtimeDeltaTracking` state distinguishes legacy history, paginated history awaiting its first realtime start, and paginated history after realtime has started. Plan, reasoning-summary, reasoning-content, and reasoning-section deltas always bypass thread state. Ordinary agent-message deltas bypass it in legacy history and before realtime can consume them. The realtime-start event itself follows the original locked path, marks a monotonic thread-lifetime bit, advances the listener-local state, and continues through existing realtime observation. Agent-message deltas then conservatively retain the locked path for the rest of that thread's lifetime. Listener replacement initializes from the monotonic shared bit. State-bearing, terminal, raw-response, item, tool, and lifecycle events retain the established tracking order. Notification payloads, event ordering, subscriber targets, persisted history, and realtime promotion behavior remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server request_processors::delta_thread_state::tests`: both focused lifecycle tests passed. They cover an unchanged complete current-turn snapshot after every bypassed delta, legacy and pre-realtime agent-delta bypass, the transition to stateful agent-delta processing, permanent bypass for the four realtime-independent delta variants, conservative handling for other events, and monotonic state across listener replacement.
+- `just test -p codex-app-server --lib -E 'not test(/collect_resume_override_mismatches_includes_service_tier/)'`: all 287 selected app-server library tests passed, including listener lifecycle, current-turn state, realtime history and promotions, outgoing notification mapping, transport filtering, thread unloading, and the two new fast-path tests. The one excluded service-tier fixture mismatch remains recorded separately as VALIDATION-003.
+- `just test -p codex-app-server realtime_conversation_streams_timeline_items`: passed through the public JSON-RPC API for a paginated thread, including realtime start, streamed transcript effects, item lifecycle notifications, and clean sideband shutdown.
+- `realtime_timeline_splits_accepted_steering_and_persists_promoted_artifacts` reached realtime start, turn start, transcript streaming, and accepted steering, then encountered the fork's existing WebSocket-only rejection for its legacy mock Responses provider. The resulting validation boundary is recorded as VALIDATION-004.
+- `just fix -p codex-app-server --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed on the retained source.
+- `just bench-smoke`: passed every registered benchmark target, including the delta state-tracking fixture.
+- `cargo build -p codex-exec --release`: passed and rebuilt the complete in-process app-server path from the retained source.
+- The exact-final component benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained invocation-median ranges.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal production call site.
+
+### Process-level diagnostic
+
+- The exact retained release binary completed a 20,000-delta production-path WebSocket warmup and five recorded samples. Every process reconstructed all 20,000 characters, emitted completion, and exited successfully. The server delivered each recorded 1,040,538-byte frame burst in 0.245–0.570 ms.
+- Recorded response-to-render times were 359.052, 371.684, 357.674, 366.934, and 680.874 ms, for a 366.934 ms median and 54,505.79 delta events/s. The batch spans the fixture's established scheduling modes, so it serves as an end-to-end correctness and scheduler diagnostic. The isolated state-tracking fixture supplies the attributable performance evidence for PERF-019.
+
+### Rejected experiments since PERF-018
+
+- No production candidate was rejected in this interval. One broader realtime integration fixture encountered the existing transport compatibility boundary recorded as VALIDATION-004; the retained implementation passed its focused, library, sideband integration, release, benchmark, and production-process gates.
+
 ## Windows app-server listener subscriber lookup — current baseline
 
 This section describes retained PERF-018 on top of signed commit `0a58077465`. After PERF-017, each event still acquired the global `ThreadStateManager` Tokio mutex, hashed its thread ID, found the thread entry, and cloned the immutable subscriber snapshot. The retained listener subscribes to that snapshot once during setup, caches the current `Arc`, checks the watch version at each event boundary, and refreshes the cache only after subscriber membership changes.

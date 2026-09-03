@@ -1,3 +1,4 @@
+use super::delta_thread_state::RealtimeDeltaTracking;
 use super::*;
 use crate::extensions::send_thread_warning;
 use crate::realtime_event_handling::apply_realtime_event_effects;
@@ -276,7 +277,7 @@ pub(super) async fn ensure_listener_task_running(
     let realtime_history_enabled =
         matches!(config_snapshot.history_mode, ThreadHistoryMode::Paginated);
     let thread_settings_baseline = thread_settings_from_config_snapshot(&config_snapshot);
-    let (mut listener_command_rx, listener_generation) = {
+    let (mut listener_command_rx, listener_generation, mut realtime_delta_tracking) = {
         let mut thread_state = thread_state.lock().await;
         if thread_state.listener_matches(&conversation) {
             return Ok(());
@@ -296,7 +297,13 @@ pub(super) async fn ensure_listener_task_running(
         listener_task_context
             .thread_state_manager
             .register_listener_command_tx(conversation_id, listener_command_tx);
-        (listener_command_rx, listener_generation)
+        let realtime_delta_tracking =
+            RealtimeDeltaTracking::for_listener(config_snapshot.history_mode, &thread_state);
+        (
+            listener_command_rx,
+            listener_generation,
+            realtime_delta_tracking,
+        )
     };
     let ListenerTaskContext {
         outgoing,
@@ -354,10 +361,11 @@ pub(super) async fn ensure_listener_task_running(
                         );
                     }
 
-                    // Track the event before emitting any typed translations
-                    // so thread-local state such as raw event opt-in stays
-                    // synchronized with the conversation.
-                    let (raw_events_enabled, realtime_effects) = {
+                    // Keep state-bearing events ordered before typed translations. Streaming
+                    // deltas bypass the mutex while neither turn nor realtime history consumes them.
+                    let (raw_events_enabled, realtime_effects) = if realtime_delta_tracking
+                        .requires_thread_state(&event.msg)
+                    {
                         let mut thread_state = thread_state.lock().await;
                         thread_state.track_current_turn_event(&event.id, &event.msg);
                         let realtime_effects = if realtime_history_enabled
@@ -371,6 +379,8 @@ pub(super) async fn ensure_listener_task_running(
                             RealtimeEventEffects::default()
                         };
                         (thread_state.experimental_raw_events, realtime_effects)
+                    } else {
+                        (false, RealtimeEventEffects::default())
                     };
                     if matches!(
                         &event.msg,

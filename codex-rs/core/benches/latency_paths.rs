@@ -52,6 +52,7 @@ mod json;
 mod responses_websocket;
 
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
+const DELTA_STATE_TRACKING_COUNT: usize = 100_000;
 const SUBSCRIBER_LOOKUP_COUNT: usize = 100_000;
 const TTFT_EVENT_COUNT: usize = 100_000;
 
@@ -342,6 +343,31 @@ fn app_server_subscriber_lookup(bencher: Bencher) {
                     subscribers = Arc::clone(&subscriber_rx.borrow_and_update());
                 }
                 divan::black_box(Arc::clone(&subscribers));
+            }
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1)]
+fn app_server_delta_thread_state_tracking(bencher: Bencher) {
+    let event = EventMsg::AgentMessageContentDelta(AgentMessageContentDeltaEvent {
+        thread_id: "thread-performance".to_string(),
+        turn_id: "turn-performance".to_string(),
+        item_id: "item-performance".to_string(),
+        delta: "abcdefghijklmnop".to_string(),
+    });
+    let realtime_history_started = false;
+
+    bencher
+        .counter(ItemsCount::new(DELTA_STATE_TRACKING_COUNT))
+        .bench_local(move || {
+            for _ in 0..DELTA_STATE_TRACKING_COUNT {
+                let requires_thread_state = match divan::black_box(&event) {
+                    EventMsg::AgentMessageContentDelta(_) => {
+                        *divan::black_box(&realtime_history_started)
+                    }
+                    _ => true,
+                };
+                divan::black_box(requires_thread_state);
             }
         });
 }
