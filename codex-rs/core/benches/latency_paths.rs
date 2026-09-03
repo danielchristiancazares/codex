@@ -51,6 +51,9 @@ mod json;
 #[path = "latency_paths/responses_websocket.rs"]
 mod responses_websocket;
 
+#[path = "latency_paths/app_server_bespoke.rs"]
+mod app_server_bespoke;
+
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
 const DELTA_STATE_TRACKING_COUNT: usize = 100_000;
 const SUBSCRIBER_LOOKUP_COUNT: usize = 100_000;

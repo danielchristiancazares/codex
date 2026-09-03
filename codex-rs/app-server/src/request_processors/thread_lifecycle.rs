@@ -412,13 +412,13 @@ pub(super) async fn ensure_listener_task_running(
                     apply_bespoke_event_handling(
                         event,
                         conversation_id,
-                        conversation.clone(),
-                        thread_manager.clone(),
+                        &conversation,
+                        &thread_manager,
                         thread_outgoing,
-                        thread_state.clone(),
-                        thread_watch_manager.clone(),
-                        thread_list_state_permit.clone(),
-                        fallback_model_provider.clone(),
+                        &thread_state,
+                        &thread_watch_manager,
+                        &thread_list_state_permit,
+                        fallback_model_provider.as_str(),
                     )
                     .await;
                     if shutdown_complete

@@ -1,5 +1,75 @@
 # Performance Log
 
+## Windows app-server bespoke dependency handoff — current baseline
+
+This section describes retained PERF-021 on top of signed commit `e0d928650c`. The per-thread listener previously cloned the conversation, thread manager, thread state, thread watch manager, list-state semaphore, and fallback-provider string before every Core event entered bespoke handling. Cloning `ThreadWatchManager` increments three shared reference counts, so an ordinary inference delta paid seven `Arc` increments and decrements plus one string allocation even though its notification arm uses none of those dependencies. The retained boundary borrows the shared dependencies and provider string. Event arms that spawn response tasks acquire the specific owned `Arc` handles they retain immediately before spawning.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server bespoke dependency handoff | 75.52 ns/event | 1.12 ns/event | 98.52% less time; 67.43× throughput | 892.8 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_bespoke_dependency_handoff` from the repository root.
+- Path: a focused component fixture reproducing dependency ownership at the listener-to-bespoke-handler call boundary.
+- Input: seven prebuilt `Arc` values representing the conversation, thread manager, thread state, the three shared fields cloned by `ThreadWatchManager`, and the list-state semaphore, plus one prebuilt fallback-provider `String`.
+- Baseline operation: clone and drop all seven `Arc` values and clone and drop the provider string, matching the former unconditional dependency handoff.
+- Retained operation: expose borrowed references for the conversation, thread manager, thread state, watch-manager stand-in, and semaphore plus a borrowed provider `&str`. Every value crosses an optimization barrier.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations. A second exact-final retained set was collected after the focused Clippy gates and release build.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: ownership handoff for stable listener dependencies. Event mapping, subscriber routing, transport writes, response-task work, provider execution, and model generation lie outside this fixture. The unchanged owned outgoing sender also lies outside the measured tuple.
+
+### Raw baseline medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 75.42 ns | 13.25 M events/s |
+| 1 | 76.32 ns | 13.10 M events/s |
+| 2 | 76.22 ns | 13.11 M events/s |
+| 3 | 75.12 ns | 13.31 M events/s |
+| 4 | 75.52 ns | 13.24 M events/s |
+| 5 | 74.72 ns | 13.38 M events/s |
+
+Median of the five warmed invocation medians: **75.52 ns/event** and **13.24 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Final-state warmup (excluded) | 1.12 ns | 892.8 M events/s |
+| 1 | 1.22 ns | 819.6 M events/s |
+| 2 | 1.12 ns | 892.8 M events/s |
+| 3 | 1.12 ns | 892.8 M events/s |
+| 4 | 1.22 ns | 819.6 M events/s |
+| 5 | 1.12 ns | 892.8 M events/s |
+
+Median of the five exact-final warmed invocation medians: **1.12 ns/event** and **892.8 M events/s**. Relative to the 75.52 ns baseline, this is **98.52% less dependency-handoff time** and **67.43× stage throughput**. The exact-final 1.12–1.22 ns invocation-median range is fully disjoint from the 74.72–76.32 ns baseline range. An earlier retained-state set independently produced the same 1.12 ns/event median with a 1.12–1.32 ns range.
+
+### Retained win
+
+- **PERF-021 — borrow bespoke-handler dependencies at the common event boundary.** `apply_bespoke_event_handling` now receives references to the conversation, thread manager, thread state, thread watch manager, list-state semaphore, and fallback-provider string. Ordinary delta notification arms carry those references through the match without shared-reference mutations or provider-string allocation. File-change approval, command approval, user input, MCP elicitation, permission, and dynamic-tool response arms clone the conversation and thread state immediately before their `'static` spawned tasks. Other helper calls consume the borrowed handles directly. The event and outgoing sender retain their established ownership. Notification payloads, request lifetimes, event ordering, subscriber targets, thread state, and response handling remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server --lib -E 'not test(/collect_resume_override_mismatches_includes_service_tier/)'`: all 287 selected app-server library tests passed. Direct handler tests cover guardian events, turn lifecycle, interrupted subagent cleanup, canonical dynamic-tool request dispatch, and complete notification delivery. Response-helper tests cover permission and elicitation result mapping. The one excluded service-tier fixture mismatch remains recorded separately as VALIDATION-003.
+- A six-test public-API selection covering file-change approval, command approval, user input, permissions, MCP elicitation, and dynamic-tool response reached the fork's existing WebSocket-only rejection for its legacy mock Responses provider before the modeled response events. That transport-fixture boundary is recorded as VALIDATION-005.
+- `just fix -p codex-app-server --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed on the retained source.
+- `just bench-smoke`: passed every registered benchmark target, including the bespoke dependency-handoff fixture.
+- `cargo build -p codex-exec --release`: passed and rebuilt the complete in-process app-server path from the retained source.
+- The exact-final component benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained invocation-median ranges.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal production call site.
+
+### Process-level diagnostic
+
+- The exact retained release binary completed a 20,000-delta production-path WebSocket warmup and five recorded samples. Every process reconstructed all 20,000 characters, emitted completion, and exited successfully. The server delivered each recorded 1,040,538-byte frame burst in 0.203–0.300 ms.
+- Recorded response-to-render times were 601.830, 626.476, 633.385, 413.178, and 414.726 ms, for a 601.830 ms median and 33,231.96 delta events/s. The batch spans the fixture's established scheduling modes, so it serves as an end-to-end correctness and scheduler diagnostic. The isolated dependency-handoff fixture supplies the attributable performance evidence for PERF-021.
+
+### Rejected experiments since PERF-020
+
+- No production candidate was rejected in this interval. The six model-backed integration fixtures encountered the existing transport compatibility boundary recorded as VALIDATION-005; the retained implementation passed its library, Clippy, benchmark, release, and production-process gates.
+
 ## Windows app-server empty realtime effects — current baseline
 
 This section describes retained PERF-020 on top of signed commit `7a0f0d2016`. Every Core event reached `apply_realtime_event_effects`, which formatted the thread UUID into a new `String` before discovering that ordinary inference deltas carried neither a realtime transcript stream nor persisted realtime items. The retained listener checks those two effect fields before entering the async function, so the empty path avoids the UUID allocation, empty async call, and empty persistence future.
