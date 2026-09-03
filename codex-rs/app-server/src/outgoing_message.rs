@@ -129,12 +129,12 @@ struct PendingCallbackEntry {
 impl ThreadScopedOutgoingMessageSender {
     pub(crate) fn new(
         outgoing: Arc<OutgoingMessageSender>,
-        connection_ids: Vec<ConnectionId>,
+        connection_ids: impl Into<Arc<Vec<ConnectionId>>>,
         thread_id: ThreadId,
     ) -> Self {
         Self {
             outgoing,
-            connection_ids: Arc::new(connection_ids),
+            connection_ids: connection_ids.into(),
             thread_id,
         }
     }

@@ -1258,8 +1258,11 @@ mod thread_processor_behavior_tests {
         );
 
         assert_eq!(
-            manager.subscribed_connection_ids(thread_id).await,
-            vec![connection_b]
+            manager
+                .subscribed_connection_ids(thread_id)
+                .await
+                .as_slice(),
+            &[connection_b]
         );
         Ok(())
     }

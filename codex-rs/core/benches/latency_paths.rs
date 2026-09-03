@@ -315,6 +315,16 @@ fn app_server_agent_delta_notification_mapping(bencher: Bencher) {
 }
 
 #[divan::bench(sample_count = 100, sample_size = 1000)]
+fn app_server_subscriber_snapshot_handoff(bencher: Bencher) {
+    let connection_ids = HashSet::from([42_u64]);
+    let connection_ids = Arc::new(connection_ids.iter().copied().collect::<Vec<_>>());
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .bench_local(move || divan::black_box(Arc::clone(divan::black_box(&connection_ids))));
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
 fn server_notification_opt_out_lookup(bencher: Bencher) {
     let notification = ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
         thread_id: "thread-performance".to_string(),
