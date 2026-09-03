@@ -837,6 +837,10 @@ impl SessionTelemetry {
         >,
         duration: Duration,
     ) {
+        if self.metrics.is_none() {
+            return;
+        }
+
         let mut kind = None;
         let mut success = true;
 
