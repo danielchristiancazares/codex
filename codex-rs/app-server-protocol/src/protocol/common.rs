@@ -16,6 +16,7 @@ use crate::protocol::v2;
 use codex_experimental_api_macros::ExperimentalApi;
 use serde::Deserialize;
 use serde::Serialize;
+use strum_macros::AsRefStr;
 use strum_macros::Display;
 
 /// Authentication mode for OpenAI-backed providers.
@@ -1600,6 +1601,7 @@ macro_rules! server_notification_definitions {
             Clone,
             JsonSchema,
             TS,
+            AsRefStr,
             Display,
             ExperimentalApi,
         )]

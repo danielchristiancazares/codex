@@ -115,8 +115,7 @@ fn should_skip_notification_for_connection(
             {
                 return true;
             }
-            let method = envelope.notification.to_string();
-            opted_out_notification_methods.contains(method.as_str())
+            opted_out_notification_methods.contains(envelope.notification.as_ref())
         }
         _ => false,
     }

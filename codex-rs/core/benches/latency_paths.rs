@@ -2,6 +2,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
+use codex_app_server_protocol::AgentMessageDeltaNotification;
+use codex_app_server_protocol::ServerNotification;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
@@ -12,6 +14,7 @@ use codex_utils_audio::prepare_response_items;
 use divan::Bencher;
 use divan::counter::BytesCount;
 use divan::counter::ItemsCount;
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -121,6 +124,23 @@ fn response_telemetry_text_delta(bencher: Bencher) {
         .bench_local(move || {
             divan::black_box(&telemetry)
                 .record_responses(divan::black_box(&span), divan::black_box(&event))
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn server_notification_opt_out_lookup(bencher: Bencher) {
+    let notification = ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
+        thread_id: "thread-performance".to_string(),
+        turn_id: "turn-performance".to_string(),
+        item_id: "item-performance".to_string(),
+        delta: "abcdefghijklmnop".to_string(),
+    });
+    let opted_out = HashSet::from(["item/reasoning/textDelta".to_string()]);
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .bench_local(move || {
+            divan::black_box(&opted_out).contains(divan::black_box(&notification).as_ref())
         });
 }
 

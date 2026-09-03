@@ -1,5 +1,68 @@
 # Performance Log
 
+## Windows app-server notification opt-out lookup — current baseline
+
+This section describes PERF-010 on top of signed commit `bceef00ef8`. App-server checks each typed notification against the destination connection's opt-out set before enqueueing it. Streaming agent, reasoning, and plan deltas can therefore visit this lookup once per destination connection and per delta. The retained path borrows the notification method's static wire name through the existing enum metadata.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server notification opt-out miss, agent-message delta | 39.02 ns/lookup | 9.92 ns/lookup | 74.58% less time; 3.93× throughput | 100.8 M lookups/s |
+
+### Fixture and command
+
+- Command: `just bench -- server_notification_opt_out_lookup` from the repository root.
+- Path: the exact notification method-name conversion and `HashSet<String>::contains` operation used by `should_skip_notification_for_connection`.
+- Input: one `ServerNotification::AgentMessageDelta` carrying three IDs and a 16-byte delta. The connection opt-out set contains the distinct explicit wire method `item/reasoning/textDelta`, exercising the ordinary lookup-miss path.
+- Baseline operation: convert the notification to a newly allocated `String`, then hash and query its borrowed `str`.
+- Retained operation: borrow the notification's static wire name with `AsRef<str>`, then hash and query it directly.
+- Barriers: the benchmark constructs the notification and opt-out set outside the timed loop and black-boxes both references inside every iteration.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+
+### Raw baseline medians
+
+| Run | Median | Reported lookup throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 40.12 ns/lookup | 24.92 M lookups/s |
+| 1 | 38.92 ns/lookup | 25.69 M lookups/s |
+| 2 | 39.12 ns/lookup | 25.56 M lookups/s |
+| 3 | 38.32 ns/lookup | 26.09 M lookups/s |
+| 4 | 39.02 ns/lookup | 25.62 M lookups/s |
+| 5 | 39.82 ns/lookup | 25.11 M lookups/s |
+
+Median of the five warmed invocation medians: **39.02 ns/lookup**, or **25.62 M lookups/s**.
+
+### Raw retained-state medians
+
+An initial candidate set produced warmed medians of 10.12, 9.92, 10.02, 9.92, and 9.82 ns/lookup. After correctness and lint validation, the exact final source was measured again from a fresh excluded warmup.
+
+| Run | Median | Reported lookup throughput |
+|---:|---:|---:|
+| Exact-final-source warmup (excluded) | 9.82 ns/lookup | 101.8 M lookups/s |
+| 1 | 9.82 ns/lookup | 101.8 M lookups/s |
+| 2 | 9.92 ns/lookup | 100.8 M lookups/s |
+| 3 | 9.82 ns/lookup | 101.8 M lookups/s |
+| 4 | 10.01 ns/lookup | 99.90 M lookups/s |
+| 5 | 9.92 ns/lookup | 100.8 M lookups/s |
+
+Median of the five exact-final-source invocation medians: **9.92 ns/lookup**, or **100.8 M lookups/s**. Relative to the 39.02 ns baseline, this is **74.58% less lookup time** and **3.93× lookup throughput**. The retained invocation range of 9.82–10.01 ns is disjoint from the baseline range of 38.32–39.82 ns.
+
+### Retained win
+
+- **PERF-010 — borrow notification method names during opt-out filtering.** The macro-generated `ServerNotification` enum now derives `AsRefStr` from the same Strum camel-case and explicit per-variant wire-name metadata already used by `Display`. App-server queries the opt-out set with that borrowed static name, eliminating one `String` allocation, method-name copy, and deallocation from each typed-notification lookup. Serialization, `Display`, experimental gating, and connection routing retain their established behavior.
+
+### Correctness and validation
+
+- `just test -p codex-app-server-protocol`: 299 tests passed and 1 was skipped, including the generated stable and experimental schema fixture gates.
+- `just test -p codex-app-server to_connection_notification_respects_opt_out_filters`: passed. The focused transport test opts out of `item/agentMessage/delta`, directly proving that `AsRef<str>` honors an explicitly renamed wire method. The sibling default-name test continues to cover `configWarning`.
+- `just bench-smoke`: passed every registered workspace benchmark, including the retained fixture.
+- `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the task-owned benchmark target and its dependency graph.
+- The Windows justfile has no `argument-comment-lint` recipe. The new opaque numeric argument uses the exact `/*count*/` parameter comment.
+- `just fix -p codex-app-server-protocol` and `just fix -p codex-app-server`: passed.
+- `just fmt`: passed as the final formatting gate.
+
 ## Windows cloud inference telemetry — current baseline
 
 This section describes the retained source state based on `cdee9db6662a437fb66d5cad962b4eca703334bd`, plus the task-owned benchmark and metrics-absence fast path. The worktree also contains pre-existing maintainer changes outside this performance work.

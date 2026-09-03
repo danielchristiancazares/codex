@@ -1,4 +1,5 @@
 use super::*;
+use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
@@ -35,8 +36,9 @@ async fn to_connection_notification_respects_opt_out_filters() {
     let connection_id = ConnectionId(7);
     let (writer_tx, mut writer_rx) = mpsc::channel(1);
     let initialized = Arc::new(AtomicBool::new(true));
-    let opted_out_notification_methods =
-        Arc::new(RwLock::new(HashSet::from(["configWarning".to_string()])));
+    let opted_out_notification_methods = Arc::new(RwLock::new(HashSet::from([
+        "item/agentMessage/delta".to_string(),
+    ])));
 
     let mut connections = HashMap::new();
     connections.insert(
@@ -54,12 +56,12 @@ async fn to_connection_notification_respects_opt_out_filters() {
         &mut connections,
         OutgoingEnvelope::ToConnection {
             connection_id,
-            message: app_server_notification(ServerNotification::ConfigWarning(
-                ConfigWarningNotification {
-                    summary: "task_started".to_string(),
-                    details: None,
-                    path: None,
-                    range: None,
+            message: app_server_notification(ServerNotification::AgentMessageDelta(
+                AgentMessageDeltaNotification {
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    item_id: "item-1".to_string(),
+                    delta: "delta".to_string(),
                 },
             )),
             write_complete_tx: None,
