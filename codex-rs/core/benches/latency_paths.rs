@@ -2,8 +2,11 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
+use codex_api::WebsocketEventMetadata;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::ServerNotification;
+use codex_otel::MetricsClient;
+use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::models::BaseInstructions;
@@ -23,6 +26,7 @@ use codex_utils_audio::prepare_response_items;
 use divan::Bencher;
 use divan::counter::BytesCount;
 use divan::counter::ItemsCount;
+use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -107,6 +111,49 @@ fn websocket_telemetry_no_metrics_text_delta(bencher: Bencher) {
         .bench_local(move || {
             divan::black_box(&telemetry).record_websocket_event(
                 divan::black_box(&response),
+                Duration::from_micros(/*micros*/ 100),
+            )
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 100)]
+fn websocket_telemetry_metrics_text_delta(bencher: Bencher) {
+    #[allow(clippy::expect_used)]
+    let metrics = MetricsClient::new(MetricsConfig::in_memory(
+        "benchmark",
+        "codex-core-benchmark",
+        env!("CARGO_PKG_VERSION"),
+        InMemoryMetricExporter::default(),
+    ))
+    .expect("benchmark metrics client should start");
+    let telemetry = SessionTelemetry::new(
+        ThreadId::new(),
+        "benchmark-model",
+        "benchmark-model",
+        /*account_id*/ None,
+        /*account_email*/ None,
+        /*auth_mode*/ None,
+        "benchmark".to_string(),
+        /*log_user_prompts*/ false,
+        "benchmark".to_string(),
+        SessionSource::Cli,
+    )
+    .with_metrics(metrics);
+    let payload =
+        r#"{"type":"response.output_text.delta","sequence_number":42,"delta":"abcdefghijklmnop"}"#;
+    let payload_bytes = payload.len();
+    let metadata = WebsocketEventMetadata {
+        kind: "response.output_text.delta",
+        payload,
+    };
+    telemetry.record_parsed_websocket_event(metadata, Duration::from_micros(/*micros*/ 100));
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .counter(BytesCount::new(payload_bytes))
+        .bench_local(move || {
+            divan::black_box(&telemetry).record_parsed_websocket_event(
+                divan::black_box(metadata),
                 Duration::from_micros(/*micros*/ 100),
             )
         });

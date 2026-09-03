@@ -1,5 +1,69 @@
 # Performance Log
 
+## Windows metrics-enabled WebSocket telemetry — current baseline
+
+This section describes PERF-001E on top of signed commit `9b13f5bc27`. The Responses WebSocket decoder already constructs an owned `ResponsesStreamEvent` for every successful text frame. Metrics-enabled telemetry previously decoded the same frame again into a generic `serde_json::Value` to recover its `type`. The retained path hands the primary decoder's event kind and original payload to telemetry, preserving the payload parser for the single server-timing event while ordinary response deltas proceed directly to metric recording.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| WebSocket telemetry, metrics active, 85-byte text delta | 2.301 µs/event | 1.763 µs/event | 23.38% less time; 1.31× throughput | 567.1 K events/s |
+
+### Fixture and command
+
+- Command: `just bench -- websocket_telemetry_metrics_text_delta` from the repository root.
+- Path: public production `SessionTelemetry` WebSocket-event methods with an active `MetricsClient` backed by `InMemoryMetricExporter`.
+- Input: one 85-byte `response.output_text.delta` text frame carrying a 16-byte delta and sequence number 42, with a recorded socket-poll duration of 100 µs. The telemetry object, frame, and parsed metadata are constructed outside timing and black-boxed inside each iteration.
+- Baseline operation: parse the already protocol-decoded frame again into `serde_json::Value`, allocate the event-kind `String`, build metric tags, and record the event counter and duration.
+- Retained operation: borrow the event kind produced by the primary protocol decoder, build the same metric tags, and record the same event counter and duration. The original payload remains available for established server-timing extraction.
+- Sampling: 100 Divan samples × 100 iterations per invocation. One full build-and-run invocation per exact source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local metrics-enabled telemetry processing after socket delivery. Provider execution and network transit lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median | Reported event throughput | Reported byte throughput |
+|---:|---:|---:|---:|
+| Warmup (excluded) | 2.304 µs/event | 433.9 K events/s | 36.88 MB/s |
+| 1 | 2.294 µs/event | 435.8 K events/s | 37.04 MB/s |
+| 2 | 2.300 µs/event | 434.6 K events/s | 36.94 MB/s |
+| 3 | 2.301 µs/event | 434.5 K events/s | 36.93 MB/s |
+| 4 | 2.314 µs/event | 432.0 K events/s | 36.72 MB/s |
+| 5 | 2.322 µs/event | 430.6 K events/s | 36.60 MB/s |
+
+Median of the five warmed invocation medians: **2.301 µs/event**, **434.5 K events/s**, and **36.93 MB/s**.
+
+### Raw retained-state medians
+
+An initial candidate shape retained the decoded timing object in `ResponsesStreamEvent` and produced a corroborating 1.683 µs median. The exact final shape keeps `timing_metrics` opaque to the protocol schema and carries the original payload by borrowed reference, preserving duplicate-field handling. Its first release rebuild serves as the excluded warmup below.
+
+| Run | Median | Reported event throughput | Reported byte throughput |
+|---:|---:|---:|---:|
+| Exact-final-source warmup (excluded) | 1.803 µs/event | 554.3 K events/s | 47.12 MB/s |
+| 1 | 1.815 µs/event | 550.8 K events/s | 46.82 MB/s |
+| 2 | 1.763 µs/event | 567.1 K events/s | 48.20 MB/s |
+| 3 | 1.741 µs/event | 574.1 K events/s | 48.79 MB/s |
+| 4 | 1.751 µs/event | 570.8 K events/s | 48.52 MB/s |
+| 5 | 1.783 µs/event | 560.5 K events/s | 47.65 MB/s |
+
+Median of the five exact-final-source invocation medians: **1.763 µs/event**, **567.1 K events/s**, and **48.20 MB/s**. Relative to the 2.301 µs baseline, this is **23.38% less telemetry time** and **30.52% more event throughput**. The retained invocation range of 1.741–1.815 µs is disjoint from the baseline range of 2.294–2.322 µs.
+
+### Retained win
+
+- **PERF-001E — reuse decoded WebSocket event metadata in active telemetry.** `WebsocketTelemetry` now offers a defaulted parsed-event callback, preserving existing implementors through the raw callback. The production Core adapter overrides it and records metrics from the borrowed event kind. The endpoint captures socket-poll duration at the established boundary, decodes each successful text frame once, and invokes raw telemetry for schema-invalid text, transport outcomes, and non-text frames. Server timing events parse their original payload through the established generic JSON path. Wrapped-error precedence, `response.failed` tagging, ping/pong suppression, runtime counters, and timing summaries retain their established behavior.
+
+### Correctness and validation
+
+- `just test -p codex-api`: all 186 tests passed on the exact final source, including the 10 Responses WebSocket endpoint cases.
+- `just test -p codex-otel`: all 61 tests passed, including raw event recording, parsed server-timing extraction, and the complete runtime summary.
+- `just test -p codex-core responses_websocket_emits_websocket_telemetry_events`: passed through the production dynamic callback and loopback transport.
+- `just test -p codex-core responses_websocket_includes_timing_metrics_header_when_runtime_metrics_enabled`: passed all six extracted timing values through the production parsed-event path.
+- The exact-final optimized benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained ranges.
+- `just bench-smoke`: passed every registered workspace benchmark, including both WebSocket telemetry configurations and the persistent production-path loopback fixture.
+- `just fix -p codex-api`, `just fix -p codex-otel`, `just fix -p codex-core --lib --no-deps`, and `just fix -p codex-core --bench latency_paths --no-deps`: passed.
+- The Windows justfile has no `argument-comment-lint` recipe. New opaque numeric arguments use exact parameter comments.
+
 ## Windows transient rollout append — current baseline
 
 This section describes PERF-011 on top of signed commit `3439fdfb9e`. Core sends streaming agent, reasoning, and plan deltas through `LiveThread::append_items`, where the shared rollout policy rejects them from durable history. `LiveThread` already constructs that filtered batch for metadata projection. The retained path also uses it for the backing-store append, removing a second raw-delta clone and redundant policy pass while preserving store lifecycle checks and persistence telemetry.
@@ -187,10 +251,9 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 
 ### Active candidates
 
-1. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
-2. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later deltas.
-3. **PERF-006:** reject non-durable delta events before persistent thread-store work.
-4. **PERF-007:** collapse redundant app-server delta fanout work.
+1. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later deltas.
+2. **PERF-006:** reject non-durable delta events before persistent thread-store work.
+3. **PERF-007:** collapse redundant app-server delta fanout work.
 
 ### Rejected experiments
 
@@ -383,8 +446,7 @@ Median of the five exact-final-source invocation medians: **35.30 ms/response**,
 
 ### Active candidates
 
-1. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
-2. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
-3. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.
-4. **PERF-006:** reject non-durable delta events before cloning or persistent thread-store submission where the current event pipeline still permits it.
-5. **PERF-007:** collapse redundant app-server delta-event clones, state locking, ID allocation, and notification construction along the active inference consumer path.
+1. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
+2. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.
+3. **PERF-006:** reject non-durable delta events before cloning or persistent thread-store submission where the current event pipeline still permits it.
+4. **PERF-007:** collapse redundant app-server delta-event clones, state locking, ID allocation, and notification construction along the active inference consumer path.

@@ -14,6 +14,15 @@ use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Error;
 use tokio_tungstenite::tungstenite::Message;
 
+/// Metadata already decoded from a Responses WebSocket event.
+#[derive(Clone, Copy, Debug)]
+pub struct WebsocketEventMetadata<'a> {
+    /// The event discriminator from the wire-level `type` field.
+    pub kind: &'a str,
+    /// The original text-frame payload.
+    pub payload: &'a str,
+}
+
 /// Generic telemetry.
 pub trait SseTelemetry: Send + Sync {
     fn on_sse_poll(
@@ -40,6 +49,19 @@ pub trait WebsocketTelemetry: Send + Sync {
         result: &Result<Option<Result<Message, Error>>, ApiError>,
         duration: Duration,
     );
+
+    /// Records a text event whose protocol metadata has already been decoded.
+    ///
+    /// Implementations may override this callback to reuse `metadata`. The
+    /// default delegates to [`Self::on_ws_event`] for compatibility.
+    fn on_parsed_ws_event(
+        &self,
+        result: &Result<Option<Result<Message, Error>>, ApiError>,
+        duration: Duration,
+        _metadata: WebsocketEventMetadata<'_>,
+    ) {
+        self.on_ws_event(result, duration);
+    }
 }
 
 pub(crate) trait WithStatus {

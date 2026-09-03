@@ -59,6 +59,7 @@ use codex_api::SharedAuthProvider;
 use codex_api::SseTelemetry;
 use codex_api::StreamOptions;
 use codex_api::TransportError;
+use codex_api::WebsocketEventMetadata;
 use codex_api::WebsocketTelemetry;
 use codex_api::auth_header_telemetry;
 use codex_api::build_session_headers;
@@ -2708,6 +2709,16 @@ impl WebsocketTelemetry for ApiTelemetry {
     ) {
         self.session_telemetry
             .record_websocket_event(result, duration);
+    }
+
+    fn on_parsed_ws_event(
+        &self,
+        _result: &std::result::Result<Option<std::result::Result<Message, Error>>, ApiError>,
+        duration: Duration,
+        metadata: WebsocketEventMetadata<'_>,
+    ) {
+        self.session_telemetry
+            .record_parsed_websocket_event(metadata, duration);
     }
 }
 

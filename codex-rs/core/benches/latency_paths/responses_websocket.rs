@@ -7,6 +7,7 @@ use codex_api::ResponsesWebsocketClient;
 use codex_api::ResponsesWebsocketConnection;
 use codex_api::ResponsesWsRequest;
 use codex_api::RetryConfig;
+use codex_api::WebsocketEventMetadata;
 use codex_api::WebsocketTelemetry;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
@@ -78,6 +79,16 @@ impl WebsocketTelemetry for BenchmarkWebsocketTelemetry {
         duration: Duration,
     ) {
         self.session.record_websocket_event(result, duration);
+    }
+
+    fn on_parsed_ws_event(
+        &self,
+        _result: &Result<Option<Result<Message, tokio_tungstenite::tungstenite::Error>>, ApiError>,
+        duration: Duration,
+        metadata: WebsocketEventMetadata<'_>,
+    ) {
+        self.session
+            .record_parsed_websocket_event(metadata, duration);
     }
 }
 

@@ -1,3 +1,4 @@
+use codex_api::WebsocketEventMetadata;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::Result;
@@ -87,14 +88,14 @@ fn runtime_metrics_summary_collects_tool_api_and_streaming_metrics() -> Result<(
         r#"{"type":"response.created"}"#.into(),
     ))));
     manager.record_websocket_event(&ws_response, Duration::from_millis(80));
-    let ws_timing_response: std::result::Result<
-        Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>,
-        codex_api::ApiError,
-    > = Ok(Some(Ok(Message::Text(
-        r#"{"type":"responsesapi.websocket_timing","timing_metrics":{"responses_duration_excl_engine_and_client_tool_time_ms":124.25,"engine_service_total_ms":457,"engine_iapi_ttft_total_ms":211,"engine_service_ttft_total_ms":233,"engine_iapi_tbt_across_engine_calls_ms":2.450638,"engine_service_tbt_across_engine_calls_ms":5.267279}}"#
-            .into(),
-    ))));
-    manager.record_websocket_event(&ws_timing_response, Duration::from_millis(20));
+    let timing_payload = r#"{"type":"responsesapi.websocket_timing","timing_metrics":{"responses_duration_excl_engine_and_client_tool_time_ms":124.25,"engine_service_total_ms":457,"engine_iapi_ttft_total_ms":211,"engine_service_ttft_total_ms":233,"engine_iapi_tbt_across_engine_calls_ms":2.450638,"engine_service_tbt_across_engine_calls_ms":5.267279}}"#;
+    manager.record_parsed_websocket_event(
+        WebsocketEventMetadata {
+            kind: "responsesapi.websocket_timing",
+            payload: timing_payload,
+        },
+        Duration::from_millis(20),
+    );
     manager.record_duration(
         "codex.turn.ttft.duration_ms",
         Duration::from_millis(95),
