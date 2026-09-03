@@ -1856,6 +1856,9 @@ async fn responses_websocket_invalid_request_error_with_status_is_forwarded() {
     let invalid_request_error = json!({
         "type": "error",
         "status": 400,
+        // Keep a general-event field with an incompatible type so this exercises
+        // wrapped-error precedence after the general event parse fails.
+        "delta": 7,
         "error": {
             "type": "invalid_request_error",
             "message": "Model 'castor-raikou-0205-ev3' does not support image inputs."

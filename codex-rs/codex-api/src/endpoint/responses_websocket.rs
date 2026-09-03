@@ -161,6 +161,7 @@ const WEBSOCKET_CONNECTION_LIMIT_REACHED_MESSAGE: &str = "Responses websocket co
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE: &str = "previous_response_not_found";
 const PREVIOUS_RESPONSE_NOT_FOUND_MESSAGE: &str =
     "Previous response was not found. Retrying the full request.";
+const WRAPPED_WEBSOCKET_ERROR_KIND: &str = "error";
 const RESPONSES_WEBSOCKET_TIMING_KIND: &str = "responsesapi.websocket_timing";
 const RESPONSES_WEBSOCKET_TIMING_EVENT_TARGET: &str = "codex_api::responses_websocket_timing";
 const SESSION_ID_CLIENT_METADATA_KEY: &str = "session_id";
@@ -609,7 +610,7 @@ struct WrappedWebsocketErrorEvent {
 
 fn parse_wrapped_websocket_error_event(payload: &str) -> Option<WrappedWebsocketErrorEvent> {
     let event: WrappedWebsocketErrorEvent = serde_json::from_str(payload).ok()?;
-    if event.kind != "error" {
+    if event.kind != WRAPPED_WEBSOCKET_ERROR_KIND {
         return None;
     }
     Some(event)
@@ -727,14 +728,20 @@ async fn run_websocket_response_stream(
 
         match message {
             Message::Text(text) => {
-                if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
+                let event_result = serde_json::from_str::<ResponsesStreamEvent>(&text);
+                let should_parse_wrapped_error = match &event_result {
+                    Ok(event) => event.kind() == WRAPPED_WEBSOCKET_ERROR_KIND,
+                    Err(_) => true,
+                };
+                if should_parse_wrapped_error
+                    && let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
                 {
                     return Err(error);
                 }
 
-                let event = match serde_json::from_str::<ResponsesStreamEvent>(&text) {
+                let event = match event_result {
                     Ok(mut event) => {
                         event.raw = Some(crate::sse::responses::bounded_response_protocol_payload(
                             text.as_str(),

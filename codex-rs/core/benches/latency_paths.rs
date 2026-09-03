@@ -18,6 +18,9 @@ use tokio_tungstenite::tungstenite::Message;
 #[allow(dead_code, unused_imports)]
 mod json;
 
+#[path = "latency_paths/responses_websocket.rs"]
+mod responses_websocket;
+
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
 
 fn main() {

@@ -79,3 +79,83 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 - `just clippy -p codex-core --bench latency_paths --no-deps`: passed. The initial dependency-inclusive invocation reached an existing denied `expect()` in `codex-exec-output-artifacts/src/store.rs:225`; the narrowed run checked the task-owned benchmark crate while compiling its dependency graph.
 - `just argument-comment-lint codex-rs/core/benches/latency_paths.rs`: unavailable because the Windows justfile does not define this Unix-only recipe. The new opaque numeric arguments carry exact `/*count*/` and `/*micros*/` parameter comments.
 - `just fmt`: passed as the final formatting gate.
+
+## Windows Responses WebSocket event throughput — current baseline
+
+This section begins at signed commit `b28d181e8f`, including PERF-001A, plus the task-owned production-path benchmark harness and PERF-001B. It measures the persistent Responses WebSocket event pipeline used by ordinary cloud inference. Server model execution sits outside this loopback saturation fixture.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| Persistent WebSocket response, 16,384 text deltas plus completion | 39.47 ms/response | 38.13 ms/response | 3.40% less time; 3.49% more throughput | 429.6 K events/s |
+
+### Fixture and command
+
+- Command: `just bench -- responses_websocket_16384_text_deltas` from the repository root.
+- Path: public `ResponsesWebsocketClient::connect` and `ResponsesWebsocketConnection::stream_request`, the production metrics-absent per-frame telemetry behavior, WebSocket decompression and frame handling, event decoding/conversion, the production 1,600-entry response channel, and a consumer that drains through channel closure so parser-task teardown stays inside each sample.
+- Transport: one persistent direct loopback WebSocket. A setup precondition verifies that Tungstenite's environment proxy resolution selects a direct route. The server handshake records and asserts negotiated `permessage-deflate` before timing begins.
+- Runtime isolation: client pump, decoder, and consumer use one cooperative current-thread Tokio runtime. Server framing and deflate run on an independently owned one-worker runtime, removing artificial client/server executor contention.
+- Response: 16,384 independently framed 85-byte `response.output_text.delta` messages plus one 183-byte `response.completed` message; 16,385 events and 1,392,823 decoded JSON payload bytes per sample. The repeated 16-byte delta yields 262,144 accumulated text bytes and intentionally amplifies parser throughput under a warmed compression dictionary.
+- Correctness: every sample compares the complete `ResponseSummary`: 16,384 deltas, 262,144 accumulated delta bytes, matching completion ID, and zero unexpected events. The consumer treats duplicate completion events as unexpected and reaches the closed response channel before returning.
+- Sampling: 50 Divan samples × one complete response per invocation. Every process performs one full untimed response warmup before sampling. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: same Windows 11, Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and optimized benchmark profile recorded above.
+
+### Raw baseline medians
+
+| Run | Median | Reported event throughput | Reported payload throughput |
+|---:|---:|---:|---:|
+| Warmup (excluded) | 41.72 ms/response | 392.7 K events/s | 33.38 MB/s |
+| 1 | 40.09 ms/response | 408.6 K events/s | 34.73 MB/s |
+| 2 | 41.06 ms/response | 398.9 K events/s | 33.91 MB/s |
+| 3 | 39.47 ms/response | 415.1 K events/s | 35.28 MB/s |
+| 4 | 39.33 ms/response | 416.5 K events/s | 35.41 MB/s |
+| 5 | 38.48 ms/response | 425.7 K events/s | 36.19 MB/s |
+
+Median of the five warmed invocation medians: **39.47 ms/response**, or **415.1 K events/s**.
+
+### Raw retained-state medians
+
+The first post-edit invocation rebuilt downstream benchmark crates in 5m 29s and served as the excluded warmup. Its measured median was 38.32 ms/response.
+
+| Run | Median | Reported event throughput | Reported payload throughput |
+|---:|---:|---:|---:|
+| 1 | 38.34 ms/response | 427.2 K events/s | 36.32 MB/s |
+| 2 | 36.66 ms/response | 446.8 K events/s | 37.98 MB/s |
+| 3 | 36.67 ms/response | 446.8 K events/s | 37.98 MB/s |
+| 4 | 38.13 ms/response | 429.6 K events/s | 36.52 MB/s |
+| 5 | 38.26 ms/response | 428.2 K events/s | 36.40 MB/s |
+| Final confirmation (outside aggregate) | 36.84 ms/response | 444.6 K events/s | 37.79 MB/s |
+
+Median of the five warmed invocation medians: **38.13 ms/response**, or **429.6 K events/s**. Relative to the 39.47 ms baseline, this is **3.40% less response-processing time** and **3.49% more event throughput**. Every retained-state invocation median was below every baseline invocation median.
+
+### Retained win
+
+- **PERF-001B — wrapped-error parse gating.** Ordinary successfully parsed frames use the general `ResponsesStreamEvent` decoder once and skip the specialized wrapped-error decoder when their top-level kind differs from `error`. Parsed `error` events still receive wrapped-error mapping before semantic event processing. General parse failures still invoke wrapped-error mapping first, preserving specialized HTTP/retry error precedence for schema-conflicting error bodies. A shared error-kind constant keeps both recognition sites aligned.
+
+### Correctness coverage
+
+- The invalid-request WebSocket integration fixture now includes a numeric `delta` field. General event decoding rejects that field while wrapped-error decoding accepts and maps the HTTP 400 body, directly guarding failure-path precedence.
+- Existing unit coverage retains mapped 429, mapped invalid-request 400, retryable connection-limit 400, ignored ordinary events, and unmapped status-free error behavior.
+- `just test -p codex-api`: 186 tests passed.
+- `just test -p codex-core responses_websocket_invalid_request_error_with_status_is_forwarded`: passed the precedence fixture.
+- `just test -p codex-core responses_websocket_connection_limit_error_reconnects_and_completes`: passed the retryable mapped-error path.
+- `just test -p codex-core websocket_rate_limit_with_nested_retry_after_is_terminal`: passed the mapped 429 retry-after path.
+- `just test -p codex-guardian-v2 sampler_retries_expired_websockets_on_another_warm_connection` and `sampler_reconnects_after_transient_service_failures`: passed both Guardian transport recovery paths.
+- `just bench-smoke`: passed every registered workspace benchmark. A final optimized confirmation after correctness validation measured 36.84 ms/response and 444.6 K events/s.
+- `just fix -p codex-api`: passed without changing the maintainer-owned `endpoint/models.rs` worktree edit.
+- `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the benchmark target and its task-owned harness.
+- The Windows justfile has no `argument-comment-lint` recipe. New opaque numeric arguments use exact `/*val*/` and `/*secs*/` parameter comments.
+- `just fmt`: passed as the final formatting gate.
+
+### Rejected and superseded measurements
+
+- **BENCH-003 — 4,096-event response fixture.** The first production-path fixture used 30 samples and produced baseline medians 10.31, 10.30, 10.64, 10.42, and 9.845 ms versus candidate medians 10.06, 9.398, 9.974, 9.865, and 9.746 ms. Its 4.32% median time reduction was directional while the invocation ranges overlapped. The 16,384-event fixture replaced it.
+- **BENCH-004 — shared/two-worker loopback scheduling.** The initial amplified fixture shared a two-worker runtime between server deflate and client work, depended implicitly on proxy routing, stopped at the completion event, and inferred compression negotiation. Those measurements were discarded. After direct-route, runtime-isolation, compression, and drain hardening, two nominally identical two-worker client invocations still produced 47.67 and 38.94 ms medians. The retained current-thread client fixture removed that cross-worker placement mode and was rebaselined from the original production source.
+
+### Active candidates
+
+1. **PERF-001C:** construct bounded raw protocol diagnostics only when conversion fails, removing one allocation and payload copy from every successfully parsed frame.
+2. **PERF-001D:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
+3. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
+4. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.
