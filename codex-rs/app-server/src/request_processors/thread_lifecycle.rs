@@ -396,13 +396,17 @@ pub(super) async fn ensure_listener_task_running(
                         conversation_id,
                     );
 
-                    apply_realtime_event_effects(
-                        conversation.as_ref(),
-                        &thread_outgoing,
-                        conversation_id,
-                        realtime_effects,
-                    )
-                    .await;
+                    if realtime_effects.transcript_stream.is_some()
+                        || !realtime_effects.items.is_empty()
+                    {
+                        apply_realtime_event_effects(
+                            conversation.as_ref(),
+                            &thread_outgoing,
+                            conversation_id,
+                            realtime_effects,
+                        )
+                        .await;
+                    }
 
                     let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
                     apply_bespoke_event_handling(

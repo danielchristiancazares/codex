@@ -1,5 +1,75 @@
 # Performance Log
 
+## Windows app-server empty realtime effects — current baseline
+
+This section describes retained PERF-020 on top of signed commit `7a0f0d2016`. Every Core event reached `apply_realtime_event_effects`, which formatted the thread UUID into a new `String` before discovering that ordinary inference deltas carried neither a realtime transcript stream nor persisted realtime items. The retained listener checks those two effect fields before entering the async function, so the empty path avoids the UUID allocation, empty async call, and empty persistence future.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server empty realtime-effects gate | 33.22 ns/event | 0.42 ns/event | 98.74% less time; 79.10× throughput | 2.381 G events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_empty_realtime_effects` from the repository root.
+- Path: a focused component fixture reproducing the empty-effect control flow at the listener and `apply_realtime_event_effects` boundary.
+- Input: one prebuilt `ThreadId`, an absent transcript stream, and an empty item vector.
+- Baseline operation: format the thread UUID into an owned `String`, inspect the absent transcript stream, inspect the empty item vector, and drop the formatted string. The surrounding async function and empty persistence future are outside this conservative component timing.
+- Retained operation: inspect the same two effect fields and keep the empty path in the listener. Both field values and the thread ID cross optimization barriers.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: empty-effect classification and the baseline UUID string allocation. Subscriber routing, notification mapping, transport writes, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 34.61 ns | 28.89 M events/s |
+| 1 | 33.22 ns | 30.10 M events/s |
+| 2 | 33.02 ns | 30.28 M events/s |
+| 3 | 33.52 ns | 29.83 M events/s |
+| 4 | 33.62 ns | 29.74 M events/s |
+| 5 | 32.92 ns | 30.38 M events/s |
+
+Median of the five warmed invocation medians: **33.22 ns/event** and **30.10 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Final-state warmup (excluded) | 0.42 ns | 2.381 G events/s |
+| 1 | 0.42 ns | 2.381 G events/s |
+| 2 | 0.42 ns | 2.381 G events/s |
+| 3 | 0.42 ns | 2.381 G events/s |
+| 4 | 0.42 ns | 2.381 G events/s |
+| 5 | 0.42 ns | 2.381 G events/s |
+
+Median of the five exact-final warmed invocation medians: **0.42 ns/event** and **2.381 G events/s**. Relative to the 33.22 ns baseline, this is **98.74% less empty-effect boundary time** and **79.10× stage throughput**. Every exact-final invocation median is 0.42 ns, fully disjoint from the 32.92–33.62 ns baseline range.
+
+### Retained win
+
+- **PERF-020 — skip empty realtime-effect application.** The listener tests `transcript_stream` and `items` after realtime history tracking and before calling `apply_realtime_event_effects`. Any nonempty field enters the unchanged async application path with the complete owned effect value. Ordinary agent, plan, and reasoning deltas carry the default empty value and proceed directly to bespoke notification handling. Realtime item persistence, transcript notifications, warning behavior, event ordering, subscriber targets, and ordinary delta payloads remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server realtime_conversation_streams_timeline_items`: passed through the public JSON-RPC API for a paginated thread. The test exercises the retained nonempty path through realtime start, transcript stream effects, item lifecycle notifications, persistence, and clean sideband shutdown.
+- `just test -p codex-app-server --lib -E 'not test(/collect_resume_override_mismatches_includes_service_tier/)'`: all 287 selected app-server library tests passed, including realtime-history effect generation, promotion and persistence behavior, listener lifecycle, notification mapping, transport filtering, and thread unloading. The one excluded service-tier fixture mismatch remains recorded separately as VALIDATION-003.
+- `just fix -p codex-app-server --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed on the retained source.
+- `just bench-smoke`: passed every registered benchmark target, including the empty realtime-effects fixture.
+- `cargo build -p codex-exec --release`: passed and rebuilt the complete in-process app-server path from the retained source.
+- The exact-final component benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained invocation-median ranges.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal production call site.
+
+### Process-level diagnostic
+
+- The exact retained release binary completed a 20,000-delta production-path WebSocket warmup and five recorded samples. Every process reconstructed all 20,000 characters, emitted completion, and exited successfully. The server delivered each recorded 1,040,538-byte frame burst in 0.187–0.205 ms.
+- Recorded response-to-render times were 664.570, 702.704, 670.915, 544.789, and 642.950 ms, for a 664.570 ms median and 30,094.67 delta events/s. The batch occupies the fixture's established slow scheduling mode, so it serves as an end-to-end correctness and scheduler diagnostic. The isolated empty-effects fixture supplies the attributable performance evidence for PERF-020.
+
+### Rejected experiments since PERF-019
+
+- No production candidate was rejected in this interval.
+
 ## Windows app-server delta state tracking — current baseline
 
 This section describes retained PERF-019 on top of signed commit `fc92d4927b`. The per-thread app-server listener previously acquired its Tokio `ThreadState` mutex for every Core event, including agent-message, plan, reasoning-summary, reasoning-content, and reasoning-section deltas that current-turn history does not consume. The retained listener classifies those variants before the mutex. Agent-message deltas rejoin the stateful path after a paginated thread has observed its first realtime-conversation start; the other four variants remain stateless for both turn and realtime history.

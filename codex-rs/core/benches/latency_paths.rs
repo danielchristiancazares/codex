@@ -373,6 +373,19 @@ fn app_server_delta_thread_state_tracking(bencher: Bencher) {
 }
 
 #[divan::bench(sample_count = 100, sample_size = 1000)]
+fn app_server_empty_realtime_effects(bencher: Bencher) {
+    let thread_id = ThreadId::new();
+    let effects = (None::<()>, Vec::<()>::new());
+
+    bencher.bench_local(move || {
+        divan::black_box(thread_id);
+        let has_effects =
+            divan::black_box(&effects.0).is_some() || !divan::black_box(&effects.1).is_empty();
+        divan::black_box(has_effects);
+    });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
 fn server_notification_opt_out_lookup(bencher: Bencher) {
     let notification = ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
         thread_id: "thread-performance".to_string(),
