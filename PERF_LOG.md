@@ -82,13 +82,13 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 
 ## Windows Responses WebSocket event throughput — current baseline
 
-This section begins at signed commit `b28d181e8f`, including PERF-001A, plus the task-owned production-path benchmark harness and PERF-001B. It measures the persistent Responses WebSocket event pipeline used by ordinary cloud inference. Server model execution sits outside this loopback saturation fixture.
+This section begins at signed commit `b28d181e8f`, including PERF-001A, plus the task-owned production-path benchmark harness, PERF-001B, and PERF-001C. It measures the persistent Responses WebSocket event pipeline used by ordinary cloud inference. Server model execution sits outside this loopback saturation fixture.
 
 ### Current timings
 
 | Benchmark | Baseline | Current | Delta | Throughput |
 |---|---:|---:|---:|---:|
-| Persistent WebSocket response, 16,384 text deltas plus completion | 39.47 ms/response | 38.13 ms/response | 3.40% less time; 3.49% more throughput | 429.6 K events/s |
+| Persistent WebSocket response, 16,384 text deltas plus completion | 39.47 ms/response | 35.30 ms/response | 10.56% less time; 11.80% more throughput | 464.1 K events/s |
 
 ### Fixture and command
 
@@ -114,7 +114,7 @@ This section begins at signed commit `b28d181e8f`, including PERF-001A, plus the
 
 Median of the five warmed invocation medians: **39.47 ms/response**, or **415.1 K events/s**.
 
-### Raw retained-state medians
+### PERF-001B retained-state / PERF-001C baseline medians
 
 The first post-edit invocation rebuilt downstream benchmark crates in 5m 29s and served as the excluded warmup. Its measured median was 38.32 ms/response.
 
@@ -129,9 +129,25 @@ The first post-edit invocation rebuilt downstream benchmark crates in 5m 29s and
 
 Median of the five warmed invocation medians: **38.13 ms/response**, or **429.6 K events/s**. Relative to the 39.47 ms baseline, this is **3.40% less response-processing time** and **3.49% more event throughput**. Every retained-state invocation median was below every baseline invocation median.
 
-### Retained win
+### PERF-001C retained-state medians
+
+The first candidate-source invocation served as the excluded build warmup and measured 35.24 ms/response. Its five warmed invocation medians were 35.51, 36.80, 35.66, 35.12, and 35.07 ms/response, yielding a corroborating median of 35.51 ms/response and 461.4 K events/s. Clippy then identified a redundant `Option<&str>::as_deref` left by the first implementation shape. The final helper accepts `&str` directly; the exact final source was rebuilt and remeasured from a fresh excluded warmup.
+
+| Run | Median | Reported event throughput | Reported payload throughput |
+|---:|---:|---:|---:|
+| Final-source rebuild warmup (excluded) | 36.69 ms/response | 446.5 K events/s | 37.96 MB/s |
+| 1 | 42.34 ms/response | 386.9 K events/s | 32.89 MB/s |
+| 2 | 35.12 ms/response | 466.4 K events/s | 39.65 MB/s |
+| 3 | 34.75 ms/response | 471.4 K events/s | 40.07 MB/s |
+| 4 | 35.30 ms/response | 464.1 K events/s | 39.45 MB/s |
+| 5 | 35.94 ms/response | 455.8 K events/s | 38.74 MB/s |
+
+Median of the five exact-final-source invocation medians: **35.30 ms/response**, or **464.1 K events/s**. Relative to the immediate PERF-001B baseline of 38.13 ms, this is **7.42% less response-processing time** and **8.03% more event throughput**. Relative to the original 39.47 ms parser-order baseline, the cumulative retained result is **10.56% less time** and **11.80% more event throughput**. Run 1 spanned a broad 35.59–51.36 ms intra-invocation range under host noise; the other four exact-final invocation medians were below every PERF-001B baseline median, and the independent first candidate set corroborated the result.
+
+### Retained wins
 
 - **PERF-001B — wrapped-error parse gating.** Ordinary successfully parsed frames use the general `ResponsesStreamEvent` decoder once and skip the specialized wrapped-error decoder when their top-level kind differs from `error`. Parsed `error` events still receive wrapped-error mapping before semantic event processing. General parse failures still invoke wrapped-error mapping first, preserving specialized HTTP/retry error precedence for schema-conflicting error bodies. A shared error-kind constant keeps both recognition sites aligned.
+- **PERF-001C — lazy raw protocol diagnostics.** Successfully decoded SSE and WebSocket frames retain a borrow of their original payload through synchronous semantic conversion. The bounded diagnostic `String` is now allocated and copied only when semantic conversion returns a response-protocol error. Malformed JSON diagnostics and wrapped-error mapping preserve their existing behavior. This removes one allocation, payload copy, and deallocation from every successfully converted response event.
 
 ### Correctness coverage
 
@@ -147,6 +163,11 @@ Median of the five warmed invocation medians: **38.13 ms/response**, or **429.6 
 - `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the benchmark target and its task-owned harness.
 - The Windows justfile has no `argument-comment-lint` recipe. New opaque numeric arguments use exact `/*val*/` and `/*secs*/` parameter comments.
 - `just fmt`: passed as the final formatting gate.
+- PERF-001C strengthened the protocol-schema test across all 12 model-visible event error shapes, including `response.incomplete`. The fixture places a four-byte UTF-8 scalar across the 2,048-byte diagnostic boundary and compares the complete bounded payload, directly preserving exact truncation behavior after delayed construction.
+- PERF-001C `just test -p codex-api`: all 186 tests passed.
+- PERF-001C targeted Core coverage passed `malformed_completed_is_terminal_and_preserves_completed_output`, `process_sse_failed_event_logs_response_completed_parse_error`, and `responses_websocket_invalid_request_error_with_status_is_forwarded`.
+- PERF-001C `just clippy -p codex-api` and `just bench-smoke`: passed on the final source.
+- PERF-001C `just fix -p codex-api` and final `just fmt`: passed.
 
 ### Rejected and superseded measurements
 
@@ -155,7 +176,7 @@ Median of the five warmed invocation medians: **38.13 ms/response**, or **429.6 
 
 ### Active candidates
 
-1. **PERF-001C:** construct bounded raw protocol diagnostics only when conversion fails, removing one allocation and payload copy from every successfully parsed frame.
-2. **PERF-001D:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
+1. **PERF-001D:** eliminate the eager `event.kind` clone performed for semantic error diagnostics on every successfully parsed frame.
+2. **PERF-001E:** share the primary event discriminator with metrics-enabled WebSocket telemetry.
 3. **PERF-003:** eliminate the deep client-metadata clone that WebSocket request assembly immediately replaces.
 4. **PERF-004:** avoid post-first-token TTFT mutex acquisitions on later eligible deltas.

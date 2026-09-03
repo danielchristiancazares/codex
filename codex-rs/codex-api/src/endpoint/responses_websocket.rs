@@ -742,12 +742,7 @@ async fn run_websocket_response_stream(
                 }
 
                 let event = match event_result {
-                    Ok(mut event) => {
-                        event.raw = Some(crate::sse::responses::bounded_response_protocol_payload(
-                            text.as_str(),
-                        ));
-                        event
-                    }
+                    Ok(event) => event,
                     Err(err) => {
                         debug!(
                             error_category = ?err.classify(),
@@ -836,7 +831,7 @@ async fn run_websocket_response_stream(
                         "response event consumer dropped".to_string(),
                     ));
                 }
-                match process_responses_event(event) {
+                match process_responses_event(event, text.as_str()) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
                         let _ = tx_event.send(Ok(event)).await;

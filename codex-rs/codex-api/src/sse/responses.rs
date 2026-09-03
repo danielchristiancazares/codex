@@ -195,8 +195,6 @@ pub struct ResponsesStreamEvent {
     content_index: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_present_value")]
     safety_buffering: Option<Value>,
-    #[serde(skip)]
-    pub(crate) raw: Option<String>,
 }
 
 fn deserialize_present_value<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
@@ -386,34 +384,26 @@ pub(crate) fn response_protocol_api_error(kind: &str, raw: Option<&str>, detail:
     }
 }
 
-fn response_protocol_event_error(
-    kind: &str,
-    raw: Option<&str>,
-    detail: &str,
-) -> ResponsesEventError {
-    ResponsesEventError::Api(response_protocol_api_error(kind, raw, detail))
+fn response_protocol_event_error(kind: &str, raw: &str, detail: &str) -> ResponsesEventError {
+    ResponsesEventError::Api(response_protocol_api_error(kind, Some(raw), detail))
 }
 
 pub fn process_responses_event(
     event: ResponsesStreamEvent,
+    raw: &str,
 ) -> std::result::Result<Option<ResponseEvent>, ResponsesEventError> {
     let event_kind = event.kind.clone();
-    let event_raw = event.raw;
     match event.kind.as_str() {
         "response.output_item.done" => {
             let Some(item_val) = event.item else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing item",
                 ));
             };
             let item = serde_json::from_value::<ResponseItem>(item_val).map_err(|err| {
-                response_protocol_event_error(
-                    &event_kind,
-                    event_raw.as_deref(),
-                    &format!("invalid item: {err}"),
-                )
+                response_protocol_event_error(&event_kind, raw, &format!("invalid item: {err}"))
             })?;
             return Ok(Some(ResponseEvent::OutputItemDone(item)));
         }
@@ -421,7 +411,7 @@ pub fn process_responses_event(
             let Some(delta) = event.delta else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing delta",
                 ));
             };
@@ -431,14 +421,14 @@ pub fn process_responses_event(
             let Some(delta) = event.delta else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing delta",
                 ));
             };
             let Some(item_id) = event.item_id.or_else(|| event.call_id.clone()) else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing item_id and call_id",
                 ));
             };
@@ -452,7 +442,7 @@ pub fn process_responses_event(
             let (Some(delta), Some(summary_index)) = (event.delta, event.summary_index) else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing delta or summary_index",
                 ));
             };
@@ -467,7 +457,7 @@ pub fn process_responses_event(
             else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing item_id, text, or summary_index",
                 ));
             };
@@ -481,7 +471,7 @@ pub fn process_responses_event(
             let (Some(delta), Some(content_index)) = (event.delta, event.content_index) else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing delta or content_index",
                 ));
             };
@@ -494,7 +484,7 @@ pub fn process_responses_event(
             if event.response.is_none() {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing response",
                 ));
             }
@@ -504,14 +494,14 @@ pub fn process_responses_event(
             let Some(resp_val) = event.response else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing response",
                 ));
             };
             let Some(error_val) = resp_val.get("error") else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing response.error",
                 ));
             };
@@ -524,7 +514,7 @@ pub fn process_responses_event(
             let error = serde_json::from_value::<Error>(error_val.clone()).map_err(|err| {
                 response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     &format!("invalid response.error: {err}"),
                 )
             })?;
@@ -574,7 +564,7 @@ pub fn process_responses_event(
             let Some(resp_val) = event.response else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing response",
                 ));
             };
@@ -582,7 +572,7 @@ pub fn process_responses_event(
                 serde_json::from_value::<ResponseIncomplete>(resp_val).map_err(|err| {
                     response_protocol_event_error(
                         &event_kind,
-                        event_raw.as_deref(),
+                        raw,
                         &format!("invalid response: {err}"),
                     )
                 })?;
@@ -600,16 +590,12 @@ pub fn process_responses_event(
             let Some(resp_val) = event.response else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing response",
                 ));
             };
             let resp = serde_json::from_value::<ResponseCompleted>(resp_val).map_err(|err| {
-                response_protocol_event_error(
-                    &event_kind,
-                    event_raw.as_deref(),
-                    &format!("invalid response: {err}"),
-                )
+                response_protocol_event_error(&event_kind, raw, &format!("invalid response: {err}"))
             })?;
             return Ok(Some(ResponseEvent::Completed {
                 response_id: resp.id,
@@ -622,16 +608,12 @@ pub fn process_responses_event(
             let Some(item_val) = event.item else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing item",
                 ));
             };
             let item = serde_json::from_value::<ResponseItem>(item_val).map_err(|err| {
-                response_protocol_event_error(
-                    &event_kind,
-                    event_raw.as_deref(),
-                    &format!("invalid item: {err}"),
-                )
+                response_protocol_event_error(&event_kind, raw, &format!("invalid item: {err}"))
             })?;
             return Ok(Some(ResponseEvent::OutputItemAdded(item)));
         }
@@ -639,7 +621,7 @@ pub fn process_responses_event(
             let Some(summary_index) = event.summary_index else {
                 return Err(response_protocol_event_error(
                     &event_kind,
-                    event_raw.as_deref(),
+                    raw,
                     "missing summary_index",
                 ));
             };
@@ -733,10 +715,7 @@ async fn process_sse_with_treatment(
         trace!("SSE event: {}", &sse.data);
 
         let event = match serde_json::from_str::<ResponsesStreamEvent>(&sse.data) {
-            Ok(mut event) => {
-                event.raw = Some(bounded_response_protocol_payload(&sse.data));
-                event
-            }
+            Ok(event) => event,
             Err(e) => {
                 debug!(
                     error_category = ?e.classify(),
@@ -796,7 +775,7 @@ async fn process_sse_with_treatment(
             return;
         }
 
-        match process_responses_event(event) {
+        match process_responses_event(event, &sse.data) {
             Ok(Some(event)) => {
                 let is_completed = matches!(event, ResponseEvent::Completed { .. });
                 if tx_event.send(Ok(event)).await.is_err() {
@@ -2214,27 +2193,26 @@ mod tests {
             json!({"type": "response.reasoning_text.delta", "delta": "x"}),
             json!({"type": "response.created"}),
             json!({"type": "response.failed", "response": {}}),
+            json!({"type": "response.incomplete"}),
             json!({"type": "response.completed"}),
             json!({"type": "response.output_item.added"}),
             json!({"type": "response.reasoning_summary_part.added"}),
         ];
+        let diagnostic_prefix = "x".repeat(RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES - "…".len() - 1);
+        let raw = format!("{diagnostic_prefix}🦀suffix");
+        let expected_raw = format!("{diagnostic_prefix}…");
 
         for value in cases {
             let kind = value["type"].as_str().expect("event type").to_string();
-            let mut event: ResponsesStreamEvent =
+            let event: ResponsesStreamEvent =
                 serde_json::from_value(value).expect("event should deserialize");
-            event.raw = Some("x".repeat(RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES * 2));
             let Err(ResponsesEventError::Api(ApiError::ResponseProtocol { message, raw_event })) =
-                process_responses_event(event)
+                process_responses_event(event, &raw)
             else {
                 panic!("{kind} should return a protocol error");
             };
             assert!(message.starts_with(&kind), "{message}");
-            assert!(
-                raw_event
-                    .as_ref()
-                    .is_some_and(|raw| raw.len() <= RESPONSE_PROTOCOL_DIAGNOSTIC_MAX_BYTES)
-            );
+            assert_eq!(raw_event, Some(expected_raw.clone()));
         }
     }
 
@@ -2250,7 +2228,7 @@ mod tests {
         .expect("event should deserialize");
 
         let Err(ResponsesEventError::Api(ApiError::Retryable { message, delay })) =
-            process_responses_event(event)
+            process_responses_event(event, "")
         else {
             panic!("null response.error should return a retryable error");
         };
