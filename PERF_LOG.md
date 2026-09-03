@@ -1,5 +1,67 @@
 # Performance Log
 
+## Windows WebSocket client-metadata handoff — current baseline
+
+This section describes retained PERF-003 on top of signed commit `34cc98b7b3`. Each Responses request already owns a complete `client_metadata` map. The WebSocket path previously rebuilt that map independently, then `ResponseCreateWsRequest::from(&request)` deep-cloned the request-owned map into a temporary field that the struct update immediately replaced. The retained path moves the request-owned map at the final payload boundary and enriches that allocation in place.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| Responses request metadata handoff into a WebSocket create payload | 1.255 µs/request | 485.8 ns/request | 61.29% less time; 2.58× throughput | 2.058 M requests/s |
+
+### Fixture and command
+
+- Command: `just bench -- websocket_request_metadata_handoff` from the repository root.
+- Path: a focused component fixture reproducing the ownership and conversion operations at the production `ResponsesApiRequest` → `ResponseCreateWsRequest` boundary.
+- Input: one prebuilt request with eight realistic metadata entries: installation, session, thread, turn, window, serialized turn metadata, Responses Lite, and sticky turn state. A traceparent and tracestate exercise the existing W3C enrichment path. Divan prepares a fresh request clone outside each timed invocation.
+- Baseline operation: deep-clone the request metadata for the explicit WebSocket field, invoke the cross-crate `ResponseCreateWsRequest::from` conversion that deep-clones the same map into its base value, replace and drop that temporary base field, then drop the resulting payload.
+- Retained operation: take the existing map from the request, invoke the same W3C enrichment, let the base conversion observe an empty metadata option, then drop the resulting payload.
+- Conservative boundary: production previously called `CodexResponsesMetadata::client_metadata()` a second time, including turn-metadata JSON serialization. The fixture represents that second construction as a map clone, so the measured improvement is a lower bound for the production request path.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full rebuild-and-run invocation per source state is excluded, followed by five independently launched warmed invocations. A separate pre-gate candidate set corroborated the final state with a 457.9 ns median.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local WebSocket request assembly. Request serialization, compression, socket transit, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per request | Derived throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 1.248 µs | 801.3 K requests/s |
+| 1 | 1.254 µs | 797.4 K requests/s |
+| 2 | 1.282 µs | 780.0 K requests/s |
+| 3 | 1.270 µs | 787.4 K requests/s |
+| 4 | 1.255 µs | 796.8 K requests/s |
+| 5 | 1.254 µs | 797.4 K requests/s |
+
+Median of the five warmed invocation medians: **1.255 µs/request** and **796.8 K requests/s**.
+
+### Raw retained-state medians
+
+| Run | Median per request | Derived throughput |
+|---:|---:|---:|
+| Final-state warmup (excluded) | 496.5 ns | 2.014 M requests/s |
+| 1 | 485.8 ns | 2.058 M requests/s |
+| 2 | 488.2 ns | 2.048 M requests/s |
+| 3 | 491.2 ns | 2.036 M requests/s |
+| 4 | 455.1 ns | 2.197 M requests/s |
+| 5 | 449.5 ns | 2.225 M requests/s |
+
+Median of the five exact-final warmed invocation medians: **485.8 ns/request** and **2.058 M requests/s**. Relative to the 1.255 µs baseline, this is **61.29% less request-assembly time** and **2.58× stage throughput**. The exact-final 449.5–491.2 ns invocation range is disjoint from the 1.254–1.282 µs baseline range.
+
+### Retained win
+
+- **PERF-003 — move existing client metadata into the WebSocket payload.** Request telemetry, incremental-reuse comparison, response-item preparation, and the warmup inference-trace path all consume the original request before the ownership transfer. The payload then takes the map, adds Responses Lite and sticky-turn entries in place, adds W3C trace fields through the established helper, and serializes through the unchanged wire type. `last_request` retains every field used by the exhaustive WebSocket reuse comparator, which deliberately excludes per-response metadata.
+
+### Correctness and validation
+
+- `just test -p codex-core -E 'test(/responses_metadata_includes_window_lineage_and_turn_metadata/)'`: the focused metadata test passed and compared installation, session, thread, turn, window, parent-thread, subagent, and serialized turn-metadata values.
+- `just test -p codex-core -E 'test(/client_websockets/)'`: all 44 WebSocket integration tests passed. Coverage includes ordinary metadata, caller-supplied metadata, per-turn traceparent/tracestate, Responses Lite toggling, preconnect and prewarm, incremental creates, canonical turn metadata, post-error full creates, connection-limit recovery, and session-cache reuse.
+- `just clippy -p codex-core --lib --bench latency_paths --no-deps`: passed; the repository recipe also covered Core tests.
+- `just fix -p codex-core --lib --bench latency_paths --no-deps`: passed without reported edits; the repository recipe also covered Core tests.
+- `just bench-smoke`: passed every registered benchmark target, including the metadata-handoff fixture.
+- `cargo build -p codex-exec --release`: passed on the retained source.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. Manual review found no new opaque positional-literal call site.
+
 ## Windows post-first-token TTFT gate — current baseline
 
 This section describes PERF-004 on top of signed commit `1c39bfc048`. Core records turn time-to-first-token from the first eligible response event. The timestamp itself remains protected by the turn-timing mutex. Once that timestamp exists, later output-text, reasoning-summary, and reasoning-content deltas previously acquired the same mutex only to rediscover that TTFT was already fixed. The retained path uses an acquire/release atomic hint to return before that post-first-token lock.

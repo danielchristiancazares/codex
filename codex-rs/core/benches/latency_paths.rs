@@ -1,14 +1,18 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_api::ApiError;
+use codex_api::ResponseCreateWsRequest;
 use codex_api::ResponseEvent;
+use codex_api::ResponsesApiRequest;
 use codex_api::WebsocketEventMetadata;
+use codex_api::response_create_client_metadata;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -16,6 +20,7 @@ use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
+use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout::RolloutItem;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::InMemoryThreadStore;
@@ -27,6 +32,7 @@ use divan::Bencher;
 use divan::counter::BytesCount;
 use divan::counter::ItemsCount;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -206,6 +212,58 @@ fn turn_ttft_post_first_gate(bencher: Bencher) {
                     }
                 }
             })
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn websocket_request_metadata_handoff(bencher: Bencher) {
+    let request = ResponsesApiRequest {
+        model: "benchmark-model".to_string(),
+        instructions: String::new(),
+        input: Vec::new(),
+        tools: None,
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        stream_options: None,
+        include: vec!["reasoning.encrypted_content".to_string()],
+        service_tier: ServiceTier::Default,
+        prompt_cache_key: Some("benchmark-thread".to_string()),
+        text: None,
+        client_metadata: Some(HashMap::from([
+            ("x-codex-installation-id".to_string(), "installation-id".to_string()),
+            ("session_id".to_string(), "session-id".to_string()),
+            ("thread_id".to_string(), "thread-id".to_string()),
+            ("turn_id".to_string(), "turn-id".to_string()),
+            ("x-codex-window-id".to_string(), "thread-id:0".to_string()),
+            (
+                "x-codex-turn-metadata".to_string(),
+                r#"{"request_kind":"turn","session_id":"session-id","thread_id":"thread-id","turn_id":"turn-id","window_id":"thread-id:0"}"#.to_string(),
+            ),
+            (
+                "ws_request_header_x_openai_internal_codex_responses_lite".to_string(),
+                "true".to_string(),
+            ),
+            ("x-codex-turn-state".to_string(), "sticky-state".to_string()),
+        ])),
+        access_programs: None,
+    };
+    let trace = W3cTraceContext {
+        traceparent: Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()),
+        tracestate: Some("codex=benchmark".to_string()),
+    };
+
+    bencher
+        .with_inputs(move || request.clone())
+        .bench_local_values(move |mut request| {
+            let client_metadata = request.client_metadata.take();
+            let payload = ResponseCreateWsRequest {
+                client_metadata: response_create_client_metadata(client_metadata, Some(&trace)),
+                ..ResponseCreateWsRequest::from(&request)
+            };
+            divan::black_box(&payload);
         });
 }
 
