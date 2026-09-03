@@ -6,16 +6,27 @@ use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadHistoryMode;
+use codex_protocol::protocol::ThreadMemoryMode;
+use codex_rollout::RolloutItem;
+use codex_thread_store::CreateThreadParams;
+use codex_thread_store::InMemoryThreadStore;
+use codex_thread_store::LiveThread;
+use codex_thread_store::ThreadPersistenceMetadata;
 use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_audio::prepare_response_items;
 use divan::Bencher;
 use divan::counter::BytesCount;
 use divan::counter::ItemsCount;
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::runtime::Builder;
 use tokio_tungstenite::tungstenite::Message;
 
 #[path = "../src/utils/json.rs"]
@@ -141,6 +152,70 @@ fn server_notification_opt_out_lookup(bencher: Bencher) {
         .counter(ItemsCount::new(/*count*/ 1usize))
         .bench_local(move || {
             divan::black_box(&opted_out).contains(divan::black_box(&notification).as_ref())
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn live_thread_transient_delta_append(bencher: Bencher) {
+    assert!(codex_otel::global().is_none());
+    #[allow(clippy::expect_used)]
+    let runtime = Builder::new_current_thread()
+        .build()
+        .expect("benchmark runtime should start");
+    let thread_id = ThreadId::new();
+    let store = Arc::new(InMemoryThreadStore::default());
+    #[allow(clippy::expect_used)]
+    let live_thread = runtime
+        .block_on(LiveThread::create(
+            store,
+            CreateThreadParams {
+                session_id: thread_id.into(),
+                thread_id,
+                extra_config: None,
+                forked_from_id: None,
+                parent_thread_id: None,
+                source: SessionSource::Exec,
+                thread_source: None,
+                originator: "benchmark".to_string(),
+                base_instructions: BaseInstructions::default(),
+                dynamic_tools: Vec::new(),
+                selected_capability_roots: Vec::new(),
+                multi_agent_version: None,
+                history_mode: ThreadHistoryMode::Legacy,
+                history_base: None,
+                subagent_history_start_ordinal: None,
+                initial_window_id: "window-performance".to_string(),
+                metadata: ThreadPersistenceMetadata {
+                    cwd: None,
+                    model_provider: "benchmark-provider".to_string(),
+                    memory_mode: ThreadMemoryMode::Enabled,
+                },
+            },
+        ))
+        .expect("benchmark live thread should start");
+    let items = [RolloutItem::EventMsg(
+        codex_protocol::protocol::EventMsg::AgentMessageContentDelta(
+            AgentMessageContentDeltaEvent {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-performance".to_string(),
+                item_id: "item-performance".to_string(),
+                delta: "abcdefghijklmnop".to_string(),
+            },
+        ),
+    )];
+    assert!(!codex_rollout::is_persisted_rollout_item(
+        &items[0],
+        ThreadHistoryMode::Legacy
+    ));
+
+    bencher
+        .counter(ItemsCount::new(/*count*/ 1usize))
+        .bench_local(move || {
+            divan::black_box(
+                runtime.block_on(
+                    divan::black_box(&live_thread).append_items(divan::black_box(&items)),
+                ),
+            )
         });
 }
 

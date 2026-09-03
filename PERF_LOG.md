@@ -1,5 +1,69 @@
 # Performance Log
 
+## Windows transient rollout append — current baseline
+
+This section describes PERF-011 on top of signed commit `3439fdfb9e`. Core sends streaming agent, reasoning, and plan deltas through `LiveThread::append_items`, where the shared rollout policy rejects them from durable history. `LiveThread` already constructs that filtered batch for metadata projection. The retained path also uses it for the backing-store append, removing a second raw-delta clone and redundant policy pass while preserving store lifecycle checks and persistence telemetry.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| `LiveThread` transient agent-message delta append | 402.2 ns/event | 238.2 ns/event | 40.78% less time; 1.69× throughput | 4.197 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- live_thread_transient_delta_append` from the repository root.
+- Path: public production `LiveThread::append_items`, shared rollout filtering, and the production `InMemoryThreadStore` append boundary on a current-thread Tokio runtime.
+- Input: one legacy-history `AgentMessageContentDelta` with three IDs and a 16-byte delta. The event and `LiveThread` are constructed outside timing.
+- Precondition and barriers: the fixture asserts that global persistence metrics are absent and that the shared rollout policy classifies the input as transient. It black-boxes the `LiveThread`, item slice, and complete async result on every iteration.
+- Baseline operation: filter and clone retained items inside `LiveThread`, clone the original raw batch into the backing-store request, and filter it again inside the backing store.
+- Retained operation: filter once, clone the filtered batch into the backing-store request, and retain the existing metadata projection. For this transient event, the backing store receives an empty batch and performs its established empty-append path.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+
+### Raw baseline medians
+
+| Run | Median | Reported event throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 404.4 ns/event | 2.472 M events/s |
+| 1 | 399.5 ns/event | 2.502 M events/s |
+| 2 | 419.4 ns/event | 2.383 M events/s |
+| 3 | 403.0 ns/event | 2.480 M events/s |
+| 4 | 402.2 ns/event | 2.485 M events/s |
+| 5 | 401.7 ns/event | 2.488 M events/s |
+
+Median of the five warmed invocation medians: **402.2 ns/event**, or **2.485 M events/s**.
+
+### Raw retained-state medians
+
+The first candidate set produced warmed medians of 236.1, 243.6, 240.9, 242.0, and 238.8 ns/event, yielding a corroborating 240.9 ns median. The final fixture adds two assertions outside the timed loop. Its first invocation rebuilt the downstream benchmark graph and serves as the exact-final-source warmup.
+
+| Run | Median | Reported event throughput |
+|---:|---:|---:|
+| Exact-final-source warmup (excluded) | 237.8 ns/event | 4.203 M events/s |
+| 1 | 237.1 ns/event | 4.217 M events/s |
+| 2 | 238.2 ns/event | 4.197 M events/s |
+| 3 | 238.1 ns/event | 4.199 M events/s |
+| 4 | 242.7 ns/event | 4.119 M events/s |
+| 5 | 241.5 ns/event | 4.140 M events/s |
+
+Median of the five exact-final-source invocation medians: **238.2 ns/event**, or **4.197 M events/s**. Relative to the 402.2 ns baseline, this is **40.78% less transient-append time** and **1.69× event throughput**. The retained invocation range of 237.1–242.7 ns is disjoint from the baseline range of 399.5–419.4 ns.
+
+### Retained win
+
+- **PERF-011 — reuse the filtered `LiveThread` append batch.** `LiveThread::persist_appended_items` now sends the already-filtered items to `ThreadStore::append_items`. Transient response deltas therefore avoid a deep `EventMsg` clone and a second meaningful filter pass. Mixed batches preserve durable-item order and metadata observation. Local backing stores still receive empty append calls, retaining defensive `ThreadNotFound` behavior for writes racing with discard or shutdown. Raw items remain available to rollout persistence telemetry before recording the batch.
+
+### Correctness and validation
+
+- `just test -p codex-thread-store --test live_thread`: 2 tests passed. The integration target compares the complete serialized history after a mixed transient/durable append and verifies that a transient append after local-store discard still returns the exact missing thread ID.
+- `just test -p codex-thread-store live_thread::tests` reached four maintainer-owned unit-test compile gaps where the active `reasoning_mode` protocol change has not yet populated new fields. The task-owned assertion compile issue from that attempt was corrected by comparing complete serialized histories. The public-API integration target compiles the production library independently of those unrelated unit-test fixtures.
+- `just bench-smoke`: passed every registered workspace benchmark, including the retained fixture.
+- `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the task-owned benchmark and compiled the changed `codex-thread-store` library dependency.
+- The Windows justfile has no `argument-comment-lint` recipe. New opaque numeric arguments use exact parameter comments.
+- `just fix -p codex-core --bench latency_paths --no-deps`: passed for the task-owned benchmark target.
+- The crate-wide `just fix -p codex-thread-store` gate shares the four pre-existing unit-test compile errors recorded above, so it is unavailable until those maintainer-owned fixtures are updated. The changed production library compiled cleanly through the integration, benchmark, smoke, and Clippy paths.
+- `just fmt`: passed as the final formatting gate.
+
 ## Windows app-server notification opt-out lookup — current baseline
 
 This section describes PERF-010 on top of signed commit `bceef00ef8`. App-server checks each typed notification against the destination connection's opt-out set before enqueueing it. Streaming agent, reasoning, and plan deltas can therefore visit this lookup once per destination connection and per delta. The retained path borrows the notification method's static wire name through the existing enum metadata.
