@@ -17,6 +17,8 @@ use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageContentDeltaEvent;
+use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -264,6 +266,27 @@ fn websocket_request_metadata_handoff(bencher: Bencher) {
                 ..ResponseCreateWsRequest::from(&request)
             };
             divan::black_box(&payload);
+        });
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1000)]
+fn app_server_event_owned_handoff(bencher: Bencher) {
+    let event = Event {
+        id: "turn-01234567-89ab-cdef-0123-456789abcdef".to_string(),
+        msg: EventMsg::AgentMessageContentDelta(AgentMessageContentDeltaEvent {
+            thread_id: "thread-01234567-89ab-cdef-0123-456789abcdef".to_string(),
+            turn_id: "turn-01234567-89ab-cdef-0123-456789abcdef".to_string(),
+            item_id: "item-01234567-89ab-cdef-0123-456789abcdef".to_string(),
+            delta: "abcdefghijklmnop".to_string(),
+        }),
+    };
+
+    bencher
+        .with_inputs(move || event.clone())
+        .bench_local_values(|event| {
+            let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
+            divan::black_box(event);
+            divan::black_box(shutdown_complete);
         });
 }
 

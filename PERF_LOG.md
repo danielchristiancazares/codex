@@ -1,5 +1,67 @@
 # Performance Log
 
+## Windows app-server owned-event handoff — current baseline
+
+This section describes retained PERF-012 on top of signed commit `724bec936f`. The per-thread app-server listener borrows each Core event for cost tracking, turn-state projection, raw-event policy, and realtime effects. It previously deep-cloned the event for the sole consuming bespoke handler because a shutdown-variant check followed that call. The retained path captures the shutdown condition by reference and transfers the original event directly.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server owned handoff for an agent-message delta event | 193.4 ns/event | 64.37 ns/event | 66.72% less time; 3.00× throughput | 15.54 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_event_owned_handoff` from the repository root.
+- Path: a focused component fixture reproducing the ownership operations immediately around `apply_bespoke_event_handling` in the production thread listener.
+- Input: one `EventMsg::AgentMessageContentDelta` with a correlation ID plus owned thread, turn, item, and 16-byte delta strings. Divan constructs a fresh input clone outside each timed invocation.
+- Baseline operation: classify the borrowed event for shutdown, deep-clone the complete event for the consuming handoff, black-box and drop the clone, then drop the original input.
+- Retained operation: classify the borrowed event for shutdown, black-box and consume the original event directly, then retain the classification bit.
+- Sampling: 100 Divan samples × 1,000 iterations per invocation. One full rebuild-and-run invocation per source state is excluded, followed by five independently launched warmed invocations. A separate pre-gate candidate set corroborated the final state with a 64.62 ns median.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local event ownership transfer and destruction. Turn-state tracking, notification mapping, serialization, transport writes, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 199.5 ns | 5.013 M events/s |
+| 1 | 190.6 ns | 5.247 M events/s |
+| 2 | 202.1 ns | 4.948 M events/s |
+| 3 | 190.1 ns | 5.260 M events/s |
+| 4 | 193.7 ns | 5.163 M events/s |
+| 5 | 193.4 ns | 5.171 M events/s |
+
+Median of the five warmed invocation medians: **193.4 ns/event** and **5.171 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per event | Derived throughput |
+|---:|---:|---:|
+| Final-state warmup (excluded) | 70.07 ns | 14.27 M events/s |
+| 1 | 64.37 ns | 15.54 M events/s |
+| 2 | 67.52 ns | 14.81 M events/s |
+| 3 | 64.12 ns | 15.60 M events/s |
+| 4 | 63.57 ns | 15.73 M events/s |
+| 5 | 68.02 ns | 14.70 M events/s |
+
+Median of the five exact-final warmed invocation medians: **64.37 ns/event** and **15.54 M events/s**. Relative to the 193.4 ns baseline, this is **66.72% less ownership-handoff time** and **3.00× stage throughput**. The exact-final 63.57–68.02 ns invocation range is disjoint from the 190.1–202.1 ns baseline range.
+
+### Retained win
+
+- **PERF-012 — transfer the listener's owned event directly.** Every pre-handler observer retains the same borrowed event and ordering. Raw-response filtering still occurs before downstream work. The listener records `ShutdownComplete` as a boolean immediately before the consuming handler, awaits the handler exactly once, then resolves the shutdown-drain waiter at the same post-handler point. Typed notification payloads and ordering remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server --lib -E 'not test(/collect_resume_override_mismatches_includes_service_tier/)'`: all 284 relevant app-server library tests passed with one explicit exclusion. This covers 27 bespoke-event tests, thread state/status, realtime history, outgoing messages, shutdown behavior, listener FIFO behavior, and in-process delivery.
+- The unfiltered 285-test library run passed 284 tests and found one deterministic, unrelated service-tier wording mismatch: the implementation produced `requested=fast`, while its fixture expected `requested=priority`. The exact exclusion and reopen condition are recorded in `FAILED_PATHS.md` under VALIDATION-003.
+- The v2 plan-item integration probe reached normal listener notifications, then its legacy mock model provider hit the fork's WebSocket-only guard on both retries. `FAILED_PATHS.md` records this under VALIDATION-002.
+- `just clippy -p codex-app-server --lib --no-deps` and `just clippy -p codex-core --bench latency_paths --no-deps`: passed; both repository recipes also compiled their test targets.
+- `just fix -p codex-app-server --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed without reported edits.
+- `just bench-smoke`: passed every registered benchmark target, including the owned-event fixture.
+- `cargo build -p codex-exec --release`: passed on the retained source and linked the in-process app-server path.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal call site.
+
 ## Windows WebSocket client-metadata handoff — current baseline
 
 This section describes retained PERF-003 on top of signed commit `34cc98b7b3`. Each Responses request already owns a complete `client_metadata` map. The WebSocket path previously rebuilt that map independently, then `ResponseCreateWsRequest::from(&request)` deep-cloned the request-owned map into a temporary field that the struct update immediately replaced. The retained path moves the request-owned map at the final payload boundary and enriches that allocation in place.

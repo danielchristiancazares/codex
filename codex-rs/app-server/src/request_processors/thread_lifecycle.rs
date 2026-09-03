@@ -370,8 +370,9 @@ pub(super) async fn ensure_listener_task_running(
                     )
                     .await;
 
+                    let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
                     apply_bespoke_event_handling(
-                        event.clone(),
+                        event,
                         conversation_id,
                         conversation.clone(),
                         thread_manager.clone(),
@@ -382,7 +383,7 @@ pub(super) async fn ensure_listener_task_running(
                         fallback_model_provider.clone(),
                     )
                     .await;
-                    if matches!(event.msg, EventMsg::ShutdownComplete)
+                    if shutdown_complete
                         && let Some(completion_tx) = thread_state
                             .lock()
                             .await
