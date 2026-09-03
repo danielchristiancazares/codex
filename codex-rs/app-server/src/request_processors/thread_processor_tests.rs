@@ -1288,33 +1288,39 @@ mod thread_processor_behavior_tests {
             )
             .await
             .expect("connection_a should be live");
-        let mut has_connections = manager
-            .subscribe_to_has_connections(thread_id)
+        let mut subscribed_connection_ids = manager
+            .subscribe_to_connection_ids(thread_id)
             .await
-            .expect("thread should have a has-connections watcher");
-        assert!(*has_connections.borrow());
+            .expect("thread should have a subscriber watcher");
+        assert_eq!(
+            subscribed_connection_ids.borrow().as_slice(),
+            &[connection_a]
+        );
 
         assert!(
             manager
                 .unsubscribe_connection_from_thread(thread_id, connection_a)
                 .await
         );
-        tokio::time::timeout(Duration::from_secs(1), has_connections.changed())
+        tokio::time::timeout(Duration::from_secs(1), subscribed_connection_ids.changed())
             .await
             .expect("timed out waiting for no-subscriber update")
-            .expect("has-connections watcher should remain open");
-        assert!(!*has_connections.borrow());
+            .expect("subscriber watcher should remain open");
+        assert!(subscribed_connection_ids.borrow().is_empty());
 
         assert!(
             manager
                 .try_add_connection_to_thread(thread_id, connection_b)
                 .await
         );
-        tokio::time::timeout(Duration::from_secs(1), has_connections.changed())
+        tokio::time::timeout(Duration::from_secs(1), subscribed_connection_ids.changed())
             .await
             .expect("timed out waiting for subscriber update")
-            .expect("has-connections watcher should remain open");
-        assert!(*has_connections.borrow());
+            .expect("subscriber watcher should remain open");
+        assert_eq!(
+            subscribed_connection_ids.borrow().as_slice(),
+            &[connection_b]
+        );
         Ok(())
     }
 

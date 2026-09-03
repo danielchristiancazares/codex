@@ -1,5 +1,75 @@
 # Performance Log
 
+## Windows app-server listener subscriber lookup — current baseline
+
+This section describes retained PERF-018 on top of signed commit `0a58077465`. After PERF-017, each event still acquired the global `ThreadStateManager` Tokio mutex, hashed its thread ID, found the thread entry, and cloned the immutable subscriber snapshot. The retained listener subscribes to that snapshot once during setup, caches the current `Arc`, checks the watch version at each event boundary, and refreshes the cache only after subscriber membership changes.
+
+### Current timings
+
+| Benchmark | Baseline | Current | Delta | Throughput |
+|---|---:|---:|---:|---:|
+| App-server steady-state listener subscriber lookup | 36.37 ns/event | 7.651 ns/event | 78.96% less time; 4.75× throughput | 130.7 M events/s |
+
+### Fixture and command
+
+- Command: `just bench -- app_server_subscriber_lookup` from the repository root.
+- Path: a focused component fixture reproducing subscriber lookup immediately before `ThreadScopedOutgoingMessageSender` construction in the per-thread event listener.
+- Input: one thread with one subscribed connection and unchanged membership across a batch of 100,000 event lookups.
+- Baseline operation: enter one current-thread Tokio runtime, acquire the uncontended global async manager mutex for every event, hash and look up the thread ID, clone its immutable subscriber-snapshot `Arc`, and release the mutex.
+- Retained operation: test the listener-owned watch receiver's version for each event and clone the cached subscriber-snapshot `Arc`; the change-refresh branch stays cold while membership is unchanged.
+- Sampling: 100 Divan samples × one 100,000-event batch per invocation. One full build-and-run invocation per source state is excluded, followed by five independently launched warmed invocations. The batch boundary amortizes the benchmark runtime entry while retaining each per-event synchronization operation.
+- Environment: Windows 11 Pro 10.0.26200, AMD Ryzen 9 9900X, rustc 1.98.0, High performance power scheme, and the optimized workspace benchmark profile described below.
+- Metric boundary: local subscriber lookup and snapshot ownership inside an already running listener. Notification mapping, serialization, transport writes, provider execution, and model generation lie outside this fixture.
+
+### Raw baseline medians
+
+| Run | Median per 100,000 events | Median per event | Derived throughput |
+|---:|---:|---:|---:|
+| Warmup (excluded) | 3.600 ms | 36.00 ns | 27.77 M events/s |
+| 1 | 3.626 ms | 36.26 ns | 27.57 M events/s |
+| 2 | 3.619 ms | 36.19 ns | 27.62 M events/s |
+| 3 | 3.642 ms | 36.42 ns | 27.45 M events/s |
+| 4 | 3.637 ms | 36.37 ns | 27.49 M events/s |
+| 5 | 3.650 ms | 36.50 ns | 27.39 M events/s |
+
+Median of the five warmed invocation medians: **3.637 ms per 100,000 events**, **36.37 ns/event**, and **27.49 M events/s**.
+
+### Raw retained-state medians
+
+| Run | Median per 100,000 events | Median per event | Derived throughput |
+|---:|---:|---:|---:|
+| Final-state warmup (excluded) | 763.3 µs | 7.633 ns | 130.9 M events/s |
+| 1 | 912.4 µs | 9.124 ns | 109.5 M events/s |
+| 2 | 789.9 µs | 7.899 ns | 126.5 M events/s |
+| 3 | 764.7 µs | 7.647 ns | 130.7 M events/s |
+| 4 | 765.1 µs | 7.651 ns | 130.7 M events/s |
+| 5 | 765.0 µs | 7.650 ns | 130.7 M events/s |
+
+Median of the five exact-final warmed invocation medians: **765.1 µs per 100,000 events**, **7.651 ns/event**, and **130.7 M events/s**. Relative to the 36.37 ns baseline, this is **78.96% less lookup time** and **4.75× stage throughput**. The exact-final 7.647–9.124 ns invocation-median range is disjoint from the 36.19–36.50 ns baseline range. An earlier direct-watch-borrow candidate produced a corroborating 15.28 ns/event median before the listener cache removed its unchanged-value borrow cost.
+
+### Retained win
+
+- **PERF-018 — route listener events from a locally cached subscriber snapshot.** `ThreadEntry` publishes its immutable `Arc<Vec<ConnectionId>>` through a Tokio watch channel from the same manager-mutex critical section that changes authoritative membership. `UnloadingState` subscribes once during listener setup and owns the last observed snapshot. Its steady-state event path performs a version check and one `Arc` clone. A changed version refreshes the cached snapshot before routing. The same snapshot's emptiness now drives subscriber waiting and delayed-unload state, replacing the separate boolean watch value. Other manager callers retain their established locked lookup. Subscriber targets, resume/listener ordering, unloading timestamps, per-connection filters, notification payloads, and transport behavior remain unchanged.
+
+### Correctness and validation
+
+- `just test -p codex-app-server -E 'test(/subscriber_snapshot_is_reused_until_membership_changes/)|test(/adding_connection_to_thread_updates_has_connections_watcher/)|test(/wait_for_thread_subscriber_unblocks_after_connection_attaches/)|test(/removing_auto_attached_connection_preserves_listener_for_other_connections/)'`: all four focused tests passed on the exact retained source. They cover immutable snapshot reuse, duplicate subscriptions, exact add/remove values, watcher publication, waiter wakeup, and multi-connection listener retention.
+- `just test -p codex-app-server --lib -E 'not test(/collect_resume_override_mismatches_includes_service_tier/)'`: all 285 selected app-server library tests passed, including extension routing, in-process delivery, transport filtering, listener lifecycle, realtime history, and thread unloading. The one excluded service-tier fixture mismatch remains recorded separately as VALIDATION-003.
+- `just fix -p codex-app-server --lib --no-deps` and `just fix -p codex-core --bench latency_paths --no-deps`: passed on the retained source.
+- `just bench-smoke`: passed every registered benchmark target, including both subscriber fixtures.
+- `cargo build -p codex-exec --release`: passed and rebuilt the complete in-process app-server path from the retained source.
+- The exact-final component benchmark completed one excluded warmup and five recorded invocations with fully disjoint baseline and retained invocation-median ranges.
+- The argument-comment source wrapper remains unavailable on this host because `cargo-dylint` and `dylint-link` are absent; the prebuilt recipe is Unix-only. This candidate adds no opaque positional-literal production call site.
+
+### Process-level diagnostic
+
+- The exact retained release binary completed a 20,000-delta production-path WebSocket warmup and five recorded samples. Every process reconstructed all 20,000 characters, emitted completion, and exited successfully. The server delivered each recorded 1,040,538-byte frame burst in 0.188–0.216 ms.
+- Recorded response-to-render times were 595.072, 681.106, 603.060, 584.053, and 593.444 ms, for a 595.072 ms median and 33,609.38 delta events/s. The batch occupies the fixture's established slow scheduling mode, so it serves as an end-to-end correctness and scheduler diagnostic. The isolated subscriber-lookup fixture supplies the attributable performance evidence for PERF-018.
+
+### Rejected experiments since PERF-017
+
+- No production candidate was rejected in this interval. The direct watch-borrow implementation was refined into the retained cached-snapshot path and its 15.28 ns/event intermediate result was superseded.
+
 ## Windows app-server subscriber snapshot handoff — current baseline
 
 This section describes retained PERF-017 on top of signed commit `e688e994a4`. The app-server resolves a thread's subscribed connection IDs before routing every Core event. The previous path walked the unchanged subscriber `HashSet` into a fresh `Vec`, then wrapped that vector in a fresh `Arc` inside `ThreadScopedOutgoingMessageSender`. The retained path materializes one immutable `Arc<Vec<ConnectionId>>` while membership changes under the existing manager mutex and shares that snapshot across subsequent events.

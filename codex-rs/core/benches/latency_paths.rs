@@ -52,6 +52,7 @@ mod json;
 mod responses_websocket;
 
 const PCM_SAMPLE_COUNTS: [usize; 2] = [8_000, 5 * 1024 * 1024];
+const SUBSCRIBER_LOOKUP_COUNT: usize = 100_000;
 const TTFT_EVENT_COUNT: usize = 100_000;
 
 fn main() {
@@ -322,6 +323,27 @@ fn app_server_subscriber_snapshot_handoff(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(/*count*/ 1usize))
         .bench_local(move || divan::black_box(Arc::clone(divan::black_box(&connection_ids))));
+}
+
+#[divan::bench(sample_count = 100, sample_size = 1)]
+fn app_server_subscriber_lookup(bencher: Bencher) {
+    let (subscriber_tx, mut subscriber_rx) = tokio::sync::watch::channel(Arc::new(vec![7_u64]));
+    let mut subscribers = Arc::clone(&subscriber_rx.borrow_and_update());
+
+    bencher
+        .counter(ItemsCount::new(SUBSCRIBER_LOOKUP_COUNT))
+        .bench_local(move || {
+            divan::black_box(&subscriber_tx);
+            for _ in 0..SUBSCRIBER_LOOKUP_COUNT {
+                if divan::black_box(&subscriber_rx)
+                    .has_changed()
+                    .unwrap_or(true)
+                {
+                    subscribers = Arc::clone(&subscriber_rx.borrow_and_update());
+                }
+                divan::black_box(Arc::clone(&subscribers));
+            }
+        });
 }
 
 #[divan::bench(sample_count = 100, sample_size = 1000)]
