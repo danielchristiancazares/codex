@@ -82,13 +82,13 @@ Median of the five warmed invocation medians: **1.92 ns/frame**. Relative to the
 
 ## Windows response span-name recording — current baseline
 
-This section describes PERF-008 on top of signed commit `ff5b6f6ea5`. Core calls `SessionTelemetry::record_responses` for every decoded response event before turn processing. The benchmark isolates its ordinary output-text-delta path with tracing disabled, which is a common release configuration and the state in which the avoidable name allocation dominated this stage. Enabled spans retain the same label values and also avoid the static-label allocation.
+This section describes PERF-008 and PERF-009 on top of signed commit `ff5b6f6ea5`. Core calls `SessionTelemetry::record_responses` for every decoded response event before turn processing. The benchmark isolates its ordinary output-text-delta path with tracing disabled, which is a common release configuration and the state in which the avoidable name allocation dominated this stage. Enabled spans retain the same label values and also avoid the static-label allocation.
 
 ### Current timings
 
 | Benchmark | Baseline | Current | Delta | Throughput |
 |---|---:|---:|---:|---:|
-| Response span-name recording, tracing-disabled output-text delta | 21.22 ns/event | 1.72 ns/event | 91.89% less time; 12.34× throughput | 581.3 M events/s |
+| Response telemetry, tracing-disabled output-text delta | 21.22 ns/event | 1.32 ns/event | 93.78% less time; 16.08× throughput | 757.5 M events/s |
 
 ### Fixture and command
 
@@ -112,7 +112,7 @@ This section describes PERF-008 on top of signed commit `ff5b6f6ea5`. Core calls
 
 Median of the five warmed invocation medians: **21.22 ns/event**, or **47.12 M events/s**.
 
-### Raw retained-state medians
+### PERF-008 retained-state / PERF-009 baseline medians
 
 The final fixture adds an explicit disabled-span assertion outside the timed loop. Its first post-edit invocation rebuilt downstream benchmark crates in 4m 03s and served as the excluded candidate build warmup. A fresh benchmark-source rebuild after adding the assertion served as the exact-final-source warmup.
 
@@ -127,9 +127,25 @@ The final fixture adds an explicit disabled-span assertion outside the timed loo
 
 Median of the five exact-final-source invocation medians: **1.72 ns/event**, or **581.3 M events/s**. Relative to the 21.22 ns baseline, this is **91.89% less time** and **12.34× event throughput** for response telemetry on a disabled span.
 
-### Retained win
+### PERF-009 retained-state medians
+
+The first post-edit invocation rebuilt downstream benchmark crates in 1m 40s and served as the excluded warmup.
+
+| Run | Median | Reported event throughput |
+|---:|---:|---:|
+| Warmup (excluded) | 1.32 ns/event | 757.5 M events/s |
+| 1 | 1.32 ns/event | 757.5 M events/s |
+| 2 | 1.32 ns/event | 757.5 M events/s |
+| 3 | 1.32 ns/event | 757.5 M events/s |
+| 4 | 1.32 ns/event | 757.5 M events/s |
+| 5 | 1.32 ns/event | 757.5 M events/s |
+
+Median of the five warmed invocation medians: **1.32 ns/event**, or **757.5 M events/s**. Relative to the immediate 1.72 ns PERF-008 baseline, this is **23.26% less time** and **30.31% more event throughput**. Relative to the original 21.22 ns baseline, the cumulative result is **93.78% less time** and **16.08× event throughput**.
+
+### Retained wins
 
 - **PERF-008 — borrow static response telemetry names.** Response and response-item classifiers now return `Cow<'static, str>`. Every static event label, including the per-delta `text_delta`, remains borrowed through synchronous span recording. The sole dynamic `message_from_{role}` label keeps its owned formatted representation. All emitted `otel.name` values remain unchanged.
+- **PERF-009 — skip disabled response spans at entry.** `record_responses` now returns immediately when its span is disabled. Such a span discards every field recording operation; the guard also skips event classification and the second event match. Enabled spans proceed through the established label and metadata path.
 
 ### Correctness and validation
 
@@ -139,6 +155,9 @@ Median of the five exact-final-source invocation medians: **1.72 ns/event**, or 
 - `just clippy -p codex-core --bench latency_paths --no-deps`: passed for the task-owned benchmark target.
 - `just fix -p codex-otel` and final `just fmt`: passed.
 - The Windows justfile has no `argument-comment-lint` recipe. The new opaque numeric argument uses the exact `/*count*/` parameter comment.
+- PERF-009 `just test -p codex-otel`: all 61 tests passed on the guarded source.
+- PERF-009 `just test -p codex-core record_responses_sets_span_fields_for_response_events`: passed the enabled-span integration stream and every exact static/dynamic field assertion.
+- PERF-009 `just bench-smoke`, `just fix -p codex-otel`, and final `just fmt`: passed.
 
 ## Windows Responses WebSocket event throughput — current baseline
 

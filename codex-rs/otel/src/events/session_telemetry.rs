@@ -517,6 +517,10 @@ impl SessionTelemetry {
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {
+        if handle_responses_span.is_disabled() {
+            return;
+        }
+
         let response_type = SessionTelemetry::responses_type(event);
         handle_responses_span.record("otel.name", response_type.as_ref());
 
