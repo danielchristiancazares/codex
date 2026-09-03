@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backport"
+  short_description: "Backport commits safely across branches"
+  default_prompt: "Use $backport to fetch upstream/main, always use its tip commit as the source when I omit a source identifier, and backport it onto the current branch with validation."
