@@ -5,10 +5,11 @@ expression: popup
   Select model
   Choose a model; effort follows.
 
-  1. gpt-5.6-sol (default)  Latest frontier agentic coding model.
-  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.
-  3. gpt-5.6-luna           Fast and affordable agentic coding model.
-  4. gpt-5.5                Frontier model for complex coding, research, and …
-› 5. gpt-5.2 ✓              Optimized for professional work and long-running …
+  1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+  2. gpt-5.6-sol            Latest frontier agentic coding model.
+  3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  4. gpt-5.6-luna           Fast and affordable agentic coding model.
+  5. gpt-5.5                Frontier model for complex coding, research, and …
+› 6. gpt-5.2 ✓              Optimized for professional work and long-running …
 
   enter confirm · esc back
