@@ -395,15 +395,19 @@ async fn mcp_result_processing_precedes_completion(
     });
     let mut extensions = ExtensionRegistryBuilder::<Config>::new();
     extensions.tool_lifecycle_contributor(contributor.clone());
-    let test = apps_enabled_builder(apps_server.chatgpt_base_url)
-        .with_extensions(Arc::new(extensions.build()))
-        .with_config(move |config| {
-            if matches!(mode, McpCallMode::CodeMode) {
-                let _ = config.features.enable(Feature::CodeMode);
-            }
-        })
-        .build_with_auto_env(&server)
-        .await?;
+    let mut builder = apps_enabled_builder(apps_server.chatgpt_base_url)
+        .with_extensions(Arc::new(extensions.build()));
+    if matches!(mode, McpCallMode::CodeMode) {
+        builder = builder
+            .with_code_mode_host_program(codex_utils_cargo_bin::cargo_bin("codex-code-mode-host")?)
+            .with_config(|config| {
+                config
+                    .features
+                    .enable(Feature::CodeMode)
+                    .expect("code mode should be enabled for the lifecycle test");
+            });
+    }
+    let test = builder.build_with_auto_env(&server).await?;
     wait_for_mcp_server(&test.codex, CODEX_APPS_MCP_SERVER_NAME).await?;
 
     let call_id = "mcp-result-call";
@@ -438,7 +442,9 @@ async fn mcp_result_processing_precedes_completion(
         .await?;
 
     assert_eq!(
-        timeout(Duration::from_secs(30), entered_rx).await??,
+        timeout(Duration::from_secs(30), entered_rx)
+            .await
+            .context("MCP result contributor should receive the tool result")??,
         server_result
     );
     assert!(
