@@ -16,6 +16,8 @@ pub const EXEC_OUTPUT_ARTIFACT_AUTHORIZATION_FAILURE_METRIC: &str =
 pub const EXEC_OUTPUT_ARTIFACT_CORRUPTION_FAILURE_METRIC: &str =
     "codex.exec_output_artifact.corruption_failure";
 pub const PROCESS_START_METRIC: &str = "codex.process.start";
+/// Caller-side exec-server RPC attempts, including local admission and transport failures.
+pub const EXEC_SERVER_CLIENT_REQUEST_COUNT_METRIC: &str = "exec_server_client_requests_total";
 pub const API_CALL_COUNT_METRIC: &str = "codex.api_request";
 pub const API_CALL_DURATION_METRIC: &str = "codex.api_request.duration_ms";
 pub const SSE_EVENT_COUNT_METRIC: &str = "codex.sse_event";
