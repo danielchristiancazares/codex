@@ -472,7 +472,7 @@ async fn spawn_agent_service_tier_inheritance_uses_root_preference_and_child_mod
             .config_snapshot()
             .await;
 
-        assert_eq!(snapshot.service_tier, ServiceTier::Default);
+        assert_eq!(snapshot.service_tier, ServiceTier::Fast);
     }
 
     {

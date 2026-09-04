@@ -219,12 +219,22 @@ async fn thread_settings_update_while_turn_is_active_emits_notification() -> Res
 
 #[tokio::test]
 async fn thread_settings_update_default_service_tier_resets_selection() -> Result<()> {
-    let server = create_mock_responses_server_sequence_unchecked(vec![
-        create_final_assistant_message_sse_response("done")?,
-    ])
+    let server = responses::start_websocket_server(vec![vec![
+        vec![
+            responses::ev_response_created("warmup"),
+            responses::ev_completed("warmup"),
+        ],
+        vec![
+            responses::ev_response_created("response"),
+            responses::ev_assistant_message("message", "done"),
+            responses::ev_completed("response"),
+        ],
+    ]])
     .await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
+    MockResponsesConfig::new(&server.uri().replacen("ws://", "http://", 1))
+        .with_provider_config("supports_websockets = true")
+        .write(codex_home.path())?;
     write_models_cache(codex_home.path())?;
     let (model_id, service_tier) = service_tier_model_and_tier()?;
 
@@ -274,16 +284,13 @@ async fn thread_settings_update_default_service_tier_resets_selection() -> Resul
     )
     .await??;
 
-    let request_bodies = received_response_bodies(&server).await?;
-    assert!(
-        request_bodies.iter().any(|body| {
-            body.get("model").and_then(Value::as_str) == Some(model_id.as_str())
-                && body
-                    .as_object()
-                    .is_some_and(|object| !object.contains_key("service_tier"))
-        }),
-        "future turn did not clear service tier: {request_bodies:#?}"
-    );
+    let request = server
+        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 1)
+        .await
+        .body_json();
+    assert_eq!(request["model"].as_str(), Some(model_id.as_str()));
+    assert_eq!(request.get("service_tier"), None);
+    server.shutdown().await;
     Ok(())
 }
 

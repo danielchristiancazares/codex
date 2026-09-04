@@ -43,14 +43,17 @@ async fn clock_tools_emit_control_tool_analytics() -> Result<()> {
         ("sleep", json!({"duration_ms": 43_200_000}), "interrupted"),
     ];
     let server = responses::start_mock_server().await;
-    let response_mock = responses::mount_sse_sequence(
-        &server,
+    let requests = std::iter::once(vec![
+        responses::ev_response_created("warmup"),
+        responses::ev_completed("warmup"),
+    ])
+    .chain(
         calls
             .iter()
             .enumerate()
             .map(|(index, (tool, arguments, _))| {
                 let response_id = format!("resp-{index}");
-                responses::sse(vec![
+                vec![
                     responses::ev_response_created(&response_id),
                     responses::ev_function_call_with_namespace(
                         &format!("call-{index}"),
@@ -59,15 +62,15 @@ async fn clock_tools_emit_control_tool_analytics() -> Result<()> {
                         &arguments.to_string(),
                     ),
                     responses::ev_completed(&response_id),
-                ])
-            })
-            .collect(),
+                ]
+            }),
     )
-    .await;
+    .collect();
+    let responses_server = responses::start_websocket_server(vec![requests]).await;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new(&responses_server.uri().replacen("ws://", "http://", 1))
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
-        .with_provider_config("supports_websockets = false")
+        .with_provider_config("supports_websockets = true")
         .with_extra_config("[features.current_time_reminder]\nenabled = true\nsleep_tool = true")
         .write(codex_home.path())?;
     mount_analytics_capture(&server, codex_home.path()).await?;
@@ -155,7 +158,8 @@ async fn clock_tools_emit_control_tool_analytics() -> Result<()> {
         }),
         json!({"total": calls.len(), "dynamic": 0})
     );
-    assert_eq!(response_mock.requests().len(), calls.len());
+    assert_eq!(responses_server.single_connection().len(), calls.len() + 1);
+    responses_server.shutdown().await;
     Ok(())
 }
 

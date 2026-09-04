@@ -719,22 +719,37 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
 
 #[tokio::test]
 async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let body = responses::sse(vec![
+    let body = vec![
         responses::ev_response_created("resp-1"),
         responses::ev_assistant_message("msg-1", "Done"),
         responses::ev_completed("resp-1"),
-    ]);
-    let response_mock = responses::mount_sse_once(&server, body.clone()).await;
+    ];
+    let server = responses::start_websocket_server(vec![vec![
+        vec![
+            responses::ev_response_created("warmup"),
+            responses::ev_completed("warmup"),
+        ],
+        body.clone(),
+        body.clone(),
+        body,
+    ]])
+    .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+    MockResponsesConfig::new(&server.uri().replacen("ws://", "http://", 1))
+        .with_provider_config("supports_websockets = true")
+        .write(codex_home.path())?;
     write_models_cache(codex_home.path())?;
     let service_tier_model = all_model_presets()
         .iter()
         .find(|preset| preset.show_in_picker && !preset.service_tiers.is_empty())
         .expect("bundled model catalog should include a picker model with service tiers");
     let service_tier = service_tier_model.service_tiers[0].id;
+    let wire_service_tier = match service_tier {
+        ServiceTier::Fast => "priority",
+        ServiceTier::Flex => "flex",
+        ServiceTier::Default => panic!("test needs an explicit routing tier"),
+    };
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -769,15 +784,20 @@ async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
     .await??;
 
     assert_eq!(
-        response_mock.single_request().body_json()["service_tier"],
-        json!(service_tier)
+        server
+            .wait_for_request(/*connection_index*/ 0, /*request_index*/ 1)
+            .await
+            .body_json()["service_tier"],
+        json!(wire_service_tier)
     );
 
-    for (service_tier_for_turn, expected_service_tier) in [
+    for (index, (service_tier_for_turn, expected_service_tier)) in [
         (Some(ServiceTier::Default), None),
-        (None, Some(json!(service_tier))),
-    ] {
-        let response_mock = responses::mount_sse_once(&server, body.clone()).await;
+        (None, Some(json!(wire_service_tier))),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         mcp.start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.id.clone(),
             service_tier_for_turn,
@@ -789,8 +809,9 @@ async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
         })
         .await?;
         assert_eq!(
-            response_mock
-                .single_request()
+            server
+                .wait_for_request(/*connection_index*/ 0, index + 2)
+                .await
                 .body_json()
                 .get("service_tier")
                 .cloned(),
@@ -798,6 +819,7 @@ async fn turn_start_sends_service_tier_to_model_request() -> Result<()> {
         );
     }
 
+    server.shutdown().await;
     Ok(())
 }
 

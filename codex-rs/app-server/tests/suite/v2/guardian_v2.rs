@@ -336,7 +336,14 @@ async fn parent_response(
     State(state): State<Arc<MockResponsesState>>,
     Json(request): Json<Value>,
 ) -> impl IntoResponse {
-    let events = if request
+    (
+        [(header::CONTENT_TYPE, "text/event-stream")],
+        responses::sse(parent_response_events(&state, request).await),
+    )
+}
+
+async fn parent_response_events(state: &MockResponsesState, request: Value) -> Vec<Value> {
+    if request
         .pointer("/client_metadata/x-openai-subagent")
         .and_then(Value::as_str)
         == Some("guardian")
@@ -462,12 +469,7 @@ async fn parent_response(
                 responses::ev_completed("guardian-complete"),
             ]
         }
-    };
-
-    (
-        [(header::CONTENT_TYPE, "text/event-stream")],
-        responses::sse(events),
-    )
+    }
 }
 
 async fn luna_websocket(
@@ -480,6 +482,29 @@ async fn luna_websocket(
                 continue;
             };
             let request: Value = serde_json::from_str(&text).expect("valid Luna request");
+            if !request["prompt_cache_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("guardian-v2:"))
+            {
+                let events = if request["generate"] == false {
+                    vec![
+                        responses::ev_response_created("warmup"),
+                        responses::ev_completed("warmup"),
+                    ]
+                } else {
+                    parent_response_events(&state, request).await
+                };
+                for event in events {
+                    if socket
+                        .send(Message::Text(event.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                continue;
+            }
             let is_root_sample = state.root_worker
                 && state
                     .root_thread_id
@@ -689,7 +714,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
     };
     let mut mock_config = MockResponsesConfig::new(&responses_url)
         .with_model(MODEL)
-        .with_provider_config("supports_websockets = false")
+        .with_provider_config("supports_websockets = true")
         .with_approval_policy("on-request")
         .with_root_config(reviewer_config)
         .with_extra_config(&format!(

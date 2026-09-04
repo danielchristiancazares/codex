@@ -40,6 +40,8 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - `just bazel-lock-update` passed after the history-image test dependency update; `MODULE.bazel.lock` remained unchanged.
 - `just write-config-schema` passed after the first 44 backports; the schema was already current.
 - `git diff --check 99e6dbb05d..HEAD` passed through source #41354.
+- Focused cross-crate batch through #41354: 460/480 passed initially. The 20 failures comprised stale service-tier assertions, a missing standalone MCP test server, and app-server fixtures using HTTP against the fork's WebSocket-only runtime. Test fixtures now use the existing WebSocket helpers, preserving runtime transport restrictions and the `Fast` to `priority` wire mapping. All 28 selected corrective-rerun cases passed.
+- `just test -p codex-rmcp-client -E 'binary(mcp_2026_stdio_discovery)' --retries 0`: 3 passed. An initial name filter built `test_stdio_server.exe` but selected zero tests; the binary filter ran the intended coverage.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
 
