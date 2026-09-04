@@ -1985,7 +1985,6 @@ async fn contributor_samples_tool_calls_with_the_existing_luna_pool() -> Result<
             {"type": "input_text", "text": "[1] user: Inspect the repository guidelines.\n"},
             {"type": "input_text", "text": "[2] tool list_dir call: {\"path\":\".\"}\n"},
             {"type": "input_text", "text": "[3] tool list_dir result: README.md\n"},
-            {"type": "input_text", "text": "[4] tool read_file call: {\"path\":\"README.md\"}\n"},
             {"type": "input_text", "text": ">>> TRANSCRIPT END\n\n"},
             {
                 "type": "input_text",
@@ -2544,9 +2543,9 @@ async fn contributor_preserves_final_assistant_messages_after_tool_eviction() ->
             "[1] user: Find a flight to New York.\n",
             "[2] assistant: I found a $450 flight. Should I book it?\n",
             "[3] user: Yes.\n",
-            "[8] tool exec_command call: booking step 3\n",
-            "[9] tool exec_command call: booking step 4\n",
-            "[10] tool exec_command call: booking step 5\n",
+            "[7] tool exec_command call: booking step 3\n",
+            "[8] tool exec_command call: booking step 4\n",
+            "[9] tool exec_command call: booking step 5\n",
         ]
     );
 

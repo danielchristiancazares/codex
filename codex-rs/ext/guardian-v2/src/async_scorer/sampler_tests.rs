@@ -340,7 +340,8 @@ async fn preconnected_sampler_reuses_authenticated_websocket_for_classifications
 
     let scripted_requests = vec![
         vec![
-            ev_output_text_delta("low"),
+            // A completed classification returns its socket to the reusable pool.
+            // Early-delta lease cancellation has separate focused coverage.
             ev_model_verification_metadata("response-1", vec!["trusted_access_for_cyber"]),
             ev_assistant_message("sample-1", "low"),
             ev_completed("response-1"),
