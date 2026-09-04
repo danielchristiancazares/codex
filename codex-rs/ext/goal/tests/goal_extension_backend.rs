@@ -736,7 +736,7 @@ async fn subagent_usage_resets_when_root_goal_is_replaced() -> anyhow::Result<()
         .await?;
     assert_eq!(
         json!(25),
-        completed.code_mode_result(&completion.payload)["goal"]["tokensUsed"]
+        completed.code_mode_result(&completion.payload)["tokensUsed"]
     );
 
     child
