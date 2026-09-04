@@ -953,6 +953,7 @@ mod tests {
                 realtime_active: None,
                 cyber_access_program: None,
                 effort: None,
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 summary: ReasoningSummary::Auto,
             })
         };

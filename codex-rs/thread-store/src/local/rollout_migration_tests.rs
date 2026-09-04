@@ -1455,6 +1455,7 @@ async fn migration_compacts_subagent_prefix_and_does_not_project_it() {
                 realtime_active: None,
                 cyber_access_program: None,
                 effort: None,
+                reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                 summary: ReasoningSummary::Auto,
             }),
             user_message("child question"),

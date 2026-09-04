@@ -647,6 +647,7 @@ fn turn_context(root: &Path, turn_id: &str) -> RolloutItem {
         realtime_active: None,
         cyber_access_program: None,
         effort: None,
+        reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
         summary: ReasoningSummary::Auto,
     })
 }

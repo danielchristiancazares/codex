@@ -649,6 +649,7 @@ mod tests {
                     active_permission_profile: None,
                     cwd: cwd.clone().try_into().expect("absolute settings cwd"),
                     reasoning_effort: Some(ReasoningEffort::Ultra),
+                    reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
                     reasoning_summary: Some(ReasoningSummary::Auto),
                     personality: None,
                     collaboration_mode: CollaborationMode {

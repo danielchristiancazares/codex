@@ -42,6 +42,9 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - `git diff --check 99e6dbb05d..HEAD` passed through source #41354.
 - Focused cross-crate batch through #41354: 460/480 passed initially. The 20 failures comprised stale service-tier assertions, a missing standalone MCP test server, and app-server fixtures using HTTP against the fork's WebSocket-only runtime. Test fixtures now use the existing WebSocket helpers, preserving runtime transport restrictions and the `Fast` to `priority` wire mapping. All 28 selected corrective-rerun cases passed.
 - `just test -p codex-rmcp-client -E 'binary(mcp_2026_stdio_discovery)' --retries 0`: 3 passed. An initial name filter built `test_stdio_server.exe` but selected zero tests; the binary filter ran the intended coverage.
+- The tightened service-tier reset assertion passed its focused rerun (1/1); fixture corrections are committed in `e9d25caf2c`.
+- `just write-config-schema` passed again through source #41380; generated schema matched the integrated source.
+- The first full rollout/thread-store build found four older test fixtures missing the fork's `ReasoningMode` field. They now explicitly use `Standard`; the persistence and focused plugin/core rerun is in progress.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
 
@@ -95,13 +98,13 @@ This ledger is in progress. “Pending” entries still require source review an
 | `92f887ec35098c479dbe7f0d48d23f7f955055a0` | Use refreshed MCP tool caches during binding capture (#41344) | backported | Exact prepared patch; freshest catalogs preferred, expiry fallback retained, server cache opt-out honored. |
 | `868c9edb0da913a5fc699a71664e65f44f6058b0` | Assign stable IDs to generated Responses input items (#41349) | backported | Exact source delta after import conflict resolution; generated IDs assigned once before retries, existing IDs preserved. |
 | `39507eea5360b994d5f41f25e456d7f86733dc70` | Reject NUL bytes in reviewed terminal input (#41354) | backported | Exact prepared patch; reviewed NUL input rejected before approval and terminal delivery. |
-| `1cc81ca89a0b7660bcb332da09d1c3e966cf0298` | Support compression for shared rollout lineages (#41357) | pending |  |
-| `f4f85add41288c2059dc1a4326a598f739e47fe9` | Measure Codex home usage at app-server startup (#41360) | pending |  |
-| `8faf7252f07127ec4f46e0f308e6cf136bb57d63` | Test resuming compressed shared rollouts (#41364) | pending |  |
-| `7e41be641ed1133711e4f75b2e142de7affaff7a` | Restrict async user messages to questions (#41365) | pending | Prepared candidate: `67b37a18c9e195b551c4e2c10e1528d72246ea62`. |
-| `5ed294d49d64f79b25ae63cd1cdaf54db7a797fd` | Match Windows shell guidance to the executor platform (#41368) | pending |  |
-| `8bcac28f93f78b70d1159d97dbf11254bfb56a49` | Preload plugin recommendations during session startup (#41375) | pending |  |
-| `4ee04c0aa5833ac39b1763f6ea44c7bc777c83dd` | Clarify proactive multi-agent delegation guidance (#41380) | pending | Prepared candidate: `9d17b99637e15a3572dd5430a94774bf91da82fd`. |
+| `1cc81ca89a0b7660bcb332da09d1c3e966cf0298` | Support compression for shared rollout lineages (#41357) | backported | Exact source patch (patch-id 4e8862168515305b4593707163df533b0ce2587c); seekable anonymous decoded snapshots preserve JSONL offsets and first-reference compatibility; shared compression remains opt-in. |
+| `f4f85add41288c2059dc1a4326a598f739e47fe9` | Measure Codex home usage at app-server startup (#41360) | backported | Exact source patch; best-effort standalone metrics scan, regular-file metadata only, cancellation and incomplete-scan handling retained. |
+| `8faf7252f07127ec4f46e0f308e6cf136bb57d63` | Test resuming compressed shared rollouts (#41364) | backported | Exact source integration regression; real compression worker plus paginated resume verifies frozen parent cutoff and compressed ancestor preservation. |
+| `7e41be641ed1133711e4f75b2e142de7affaff7a` | Restrict async user messages to questions (#41365) | backported | Prepared candidate: `67b37a18c9e195b551c4e2c10e1528d72246ea62`. Exact prepared tool guidance change; later source revisions remain in chronological scope. |
+| `5ed294d49d64f79b25ae63cd1cdaf54db7a797fd` | Match Windows shell guidance to the executor platform (#41368) | backported | Exact source patch; shell guidance follows single executor OS, with documented host fallback for mixed/legacy environments and remote request coverage. |
+| `8bcac28f93f78b70d1159d97dbf11254bfb56a49` | Preload plugin recommendations during session startup (#41375) | backported | Exact source patch; concurrent plugin recommendation prewarm, shared feature gate, cache identity guard against invalidated initializers, and startup race coverage. |
+| `4ee04c0aa5833ac39b1763f6ea44c7bc777c83dd` | Clarify proactive multi-agent delegation guidance (#41380) | backported | Prepared candidate: `9d17b99637e15a3572dd5430a94774bf91da82fd`. Exact prepared bounded multi-agent instruction update and world-state snapshot; later source wording fixes remain in scope. |
 | `e4d0ba4e927363f695bb8d0fef187fd229700657` | Support configurable timeouts for thread shell commands (#41384) | pending |  |
 | `60fc6995608e8188c0c9f8407d6cd98676efa247` | Give Guardian classifications distinct turn identities (#41385) | pending |  |
 | `4878401e8fbd205c683255b0d224a4592ff95a09` | Add shared Guardian context primitives (#41392) | pending |  |
