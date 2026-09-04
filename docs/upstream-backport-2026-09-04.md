@@ -44,7 +44,11 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - `just test -p codex-rmcp-client -E 'binary(mcp_2026_stdio_discovery)' --retries 0`: 3 passed. An initial name filter built `test_stdio_server.exe` but selected zero tests; the binary filter ran the intended coverage.
 - The tightened service-tier reset assertion passed its focused rerun (1/1); fixture corrections are committed in `e9d25caf2c`.
 - `just write-config-schema` passed again through source #41380; generated schema matched the integrated source.
-- The first full rollout/thread-store build found four older test fixtures missing the fork's `ReasoningMode` field. They now explicitly use `Standard`; the persistence and focused plugin/core rerun is in progress.
+- The full rollout/thread-store and focused core/plugin batch passed **422/422** after four older fixtures were aligned with the fork's explicit `ReasoningMode::Standard` (`e57fd12d52`). Command: `just test -p codex-rollout -p codex-thread-store -p codex-core -p codex-core-plugins -E 'package(codex-rollout) | package(codex-thread-store) | test(rollout_compression) | test(exec_command_guidance) | test(multi_agent_mode) | test(recommended_plugins) | test(request_plugin_install)' --retries 0`.
+- Stable and experimental app-server schema regeneration passed for shell-command timeouts (#41384).
+- Bazel lock refresh passed unchanged for Guardian classifier UUIDs and the new `codex-guardian-context` crate; the new crate uses version 0.153.4.
+- Validation through source 58 is awaiting disk-space recovery: MCP and combined core/Guardian/app-server/plugin/CLI builds failed with Windows error 112 before test execution. The D: drive is full; its debug incremental cache is approximately 109 GiB. Cleanup was blocked by execution policy and escalated approval is unavailable in this session. Source files, stashes, binaries, and release artifacts remain intact.
+- Current ledger: **58 backported, 1 already present, 286 pending**.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
 
@@ -105,13 +109,13 @@ This ledger is in progress. “Pending” entries still require source review an
 | `5ed294d49d64f79b25ae63cd1cdaf54db7a797fd` | Match Windows shell guidance to the executor platform (#41368) | backported | Exact source patch; shell guidance follows single executor OS, with documented host fallback for mixed/legacy environments and remote request coverage. |
 | `8bcac28f93f78b70d1159d97dbf11254bfb56a49` | Preload plugin recommendations during session startup (#41375) | backported | Exact source patch; concurrent plugin recommendation prewarm, shared feature gate, cache identity guard against invalidated initializers, and startup race coverage. |
 | `4ee04c0aa5833ac39b1763f6ea44c7bc777c83dd` | Clarify proactive multi-agent delegation guidance (#41380) | backported | Prepared candidate: `9d17b99637e15a3572dd5430a94774bf91da82fd`. Exact prepared bounded multi-agent instruction update and world-state snapshot; later source wording fixes remain in scope. |
-| `e4d0ba4e927363f695bb8d0fef187fd229700657` | Support configurable timeouts for thread shell commands (#41384) | pending |  |
-| `60fc6995608e8188c0c9f8407d6cd98676efa247` | Give Guardian classifications distinct turn identities (#41385) | pending |  |
-| `4878401e8fbd205c683255b0d224a4592ff95a09` | Add shared Guardian context primitives (#41392) | pending |  |
-| `b836aecd4ddca2275f064920b52585d4e36c987e` | Preserve one-shot exec when unified exec is disabled (#41393) | pending |  |
-| `bb998aeb8e8aca2f707f83ce07f52adbb3cf2eb5` | Refresh runtimes for remote plugin state changes (#41396) | pending |  |
-| `d9511fb7888d98f89526d4ae019dd9be2f14199e` | Refresh MCP HTTP helper headers after authorization failures (#41400) | pending | Prepared candidate: `00cad68781657412bb8b4f260913929a954795ff`. |
-| `3ae4225b1761c135c6d3bbc1ea0cfcfc95752cdc` | Restrict cloud task credentials to trusted origins (#41403) | pending | Prepared candidate: `4b9257eb63a9ef9aa7a27ae0126fc4ece833680d`. |
+| `e4d0ba4e927363f695bb8d0fef187fd229700657` | Support configurable timeouts for thread shell commands (#41384) | backported | Regenerated stable and experimental schemas; preserved fork WebSocket-only transport in active-turn timeout fixture. |
+| `60fc6995608e8188c0c9f8407d6cd98676efa247` | Give Guardian classifications distinct turn identities (#41385) | backported | Preserved retry-stable classifier identity and trusted root omission; Bazel lock refresh passed unchanged. |
+| `4878401e8fbd205c683255b0d224a4592ff95a09` | Add shared Guardian context primitives (#41392) | backported | New focused crate uses fork version 0.153.4 and explicit pretty_assertions std feature; Bazel lock refresh passed unchanged. |
+| `b836aecd4ddca2275f064920b52585d4e36c987e` | Preserve one-shot exec when unified exec is disabled (#41393) | backported | Exact source patch with named Interactive/OneShot lifetime; retained fork terminal-permission enforcement. POSIX timeout/cancellation fixtures need compatible-host validation. |
+| `bb998aeb8e8aca2f707f83ce07f52adbb3cf2eb5` | Refresh runtimes for remote plugin state changes (#41396) | backported | Exact source patch; traced changed-only notifications through fork MCP/hooks/skills invalidation before materialization-only trust refresh. |
+| `d9511fb7888d98f89526d4ae019dd9be2f14199e` | Refresh MCP HTTP helper headers after authorization failures (#41400) | backported | Exact prepared single-flight header refresh with epoch fencing, effective-header retry comparison, OAuth precedence, deadline and redirect checks. |
+| `3ae4225b1761c135c6d3bbc1ea0cfcfc95752cdc` | Restrict cloud task credentials to trusted origins (#41403) | backported | Exact prepared trusted-origin check precedes credential loading; preserved fork route-aware cookies and disabled redirects for authenticated cloud requests. |
 | `170da98842877c730a1d8ec9ee7421e54c06bb6d` | Optimize history item lookups (#41413) | pending |  |
 | `03147407e3a078c559f92f9fbad39d13541c3049` | Add app-server notification media filtering (#41416) | pending |  |
 | `f742dabc6f9c575ca43428a84b66fb42a7f3e4b2` | Support per-tool MCP output limits (#41421) | pending | Prepared candidate: `c374194b19507145d959291c3316dfa211b2f419`. |
