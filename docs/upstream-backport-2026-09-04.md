@@ -52,6 +52,7 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
 - Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
 - Current ledger: **58 backported, 1 already present, 297 pending**.
+- Source #41413 has a recorded warmed release baseline in [the history performance audit](upstream-history-performance-2026-09-04.md), mirrored into the existing ignored `PERFORMANCE_LOG.md`. Its performance candidate is pending.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
 
