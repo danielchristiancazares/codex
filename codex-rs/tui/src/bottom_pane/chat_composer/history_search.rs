@@ -20,6 +20,11 @@
 
 use std::ops::Range;
 
+#[path = "history_match_ranges.rs"]
+mod history_match_ranges;
+
+use history_match_ranges::case_insensitive_match_ranges;
+
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -409,56 +414,7 @@ impl ChatComposer {
         if !matches!(search.status, HistorySearchStatus::Match) || search.query.is_empty() {
             return Vec::new();
         }
-        Self::case_insensitive_match_ranges(self.draft.textarea.text(), &search.query)
-    }
-
-    fn case_insensitive_match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-
-        let query_lower = query
-            .chars()
-            .flat_map(char::to_lowercase)
-            .collect::<String>();
-        if query_lower.is_empty() {
-            return Vec::new();
-        }
-
-        let mut folded = String::new();
-        let mut folded_spans: Vec<(Range<usize>, Range<usize>)> = Vec::new();
-        for (original_start, ch) in text.char_indices() {
-            let original_range = original_start..original_start + ch.len_utf8();
-            for lower in ch.to_lowercase() {
-                let folded_start = folded.len();
-                folded.push(lower);
-                folded_spans.push((folded_start..folded.len(), original_range.clone()));
-            }
-        }
-
-        let mut ranges = Vec::new();
-        let mut search_from = 0;
-        while search_from <= folded.len()
-            && let Some(relative_start) = folded[search_from..].find(&query_lower)
-        {
-            let folded_start = search_from + relative_start;
-            let folded_end = folded_start + query_lower.len();
-            if let Some((_, first_original)) = folded_spans.iter().find(|(folded_range, _)| {
-                folded_range.end > folded_start && folded_range.start < folded_end
-            }) {
-                let original_end = folded_spans
-                    .iter()
-                    .rev()
-                    .find(|(folded_range, _)| {
-                        folded_range.end > folded_start && folded_range.start < folded_end
-                    })
-                    .map(|(_, original_range)| original_range.end)
-                    .unwrap_or(first_original.end);
-                ranges.push(first_original.start..original_end);
-            }
-            search_from = folded_end;
-        }
-        ranges
+        case_insensitive_match_ranges(self.draft.textarea.text(), &search.query)
     }
 
     /// Returns the screen cursor position for the footer query when search mode is active.
@@ -573,19 +529,6 @@ mod tests {
                 .as_ref()
                 .is_some_and(|search| matches!(search.status, HistorySearchStatus::Idle))
         );
-    }
-
-    #[test]
-    fn history_search_match_ranges_are_case_insensitive() {
-        assert_eq!(
-            ChatComposer::case_insensitive_match_ranges("git status git", "GIT"),
-            vec![0..3, 11..14]
-        );
-        assert_eq!(
-            ChatComposer::case_insensitive_match_ranges("aİ i", "i"),
-            vec![1..3, 4..5]
-        );
-        assert!(ChatComposer::case_insensitive_match_ranges("git", "").is_empty());
     }
 
     #[test]

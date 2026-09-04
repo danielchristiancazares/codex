@@ -9,8 +9,9 @@
 - Recovery ref: `backup/main-before-upstream-20260904-99e6dbb05d`.
 - Shared base: `5f49aba876922d6f2f55caa153bbb0ed1b46feba`.
 - Latest published upstream release verified: [0.153.2](https://github.com/openai/codex/releases/tag/rust-v0.153.2). The maintainer-selected fork version is 0.153.4.
-- Freshly fetched, pinned source: `upstream/main` at `a482e65b8643509f2217b3a34453f3c4a1968228`.
-- Source range contains 345 commits. Git patch equivalence initially identified #42529 as present.
+- Initially pinned source: `upstream/main` at `a482e65b8643509f2217b3a34453f3c4a1968228`.
+- After disk recovery, upstream refresh advanced the pinned source to `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`, adding 11 commits to the requested range.
+- Source range now contains 356 commits. Git patch equivalence initially identified #42529 as present.
 - Existing stashes and other worktrees are preserved. This task includes local commits; pushes and releases remain separate.
 - Existing prepared semantic backports are available on `integrate/upstream-semantic-backports-20260903`; each reused change is checked against its upstream intent and current fork behavior.
 
@@ -47,8 +48,10 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
 - The full rollout/thread-store and focused core/plugin batch passed **422/422** after four older fixtures were aligned with the fork's explicit `ReasoningMode::Standard` (`e57fd12d52`). Command: `just test -p codex-rollout -p codex-thread-store -p codex-core -p codex-core-plugins -E 'package(codex-rollout) | package(codex-thread-store) | test(rollout_compression) | test(exec_command_guidance) | test(multi_agent_mode) | test(recommended_plugins) | test(request_plugin_install)' --retries 0`.
 - Stable and experimental app-server schema regeneration passed for shell-command timeouts (#41384).
 - Bazel lock refresh passed unchanged for Guardian classifier UUIDs and the new `codex-guardian-context` crate; the new crate uses version 0.153.4.
-- Validation through source 58 is awaiting disk-space recovery: MCP and combined core/Guardian/app-server/plugin/CLI builds failed with Windows error 112 before test execution. The D: drive is full; its debug incremental cache is approximately 109 GiB. Cleanup was blocked by execution policy and escalated approval is unavailable in this session. Source files, stashes, binaries, and release artifacts remain intact.
-- Current ledger: **58 backported, 1 already present, 286 pending**.
+- Initial validation through source 58 exhausted D: space with Windows error 112 before test execution. The maintainer cleared build artifacts; the resumed check found approximately 174 GiB free. Subsequent debug validation uses `--config build.incremental=false` to limit cache growth.
+- MCP authorization/header-helper and OAuth-startup rerun passed **16/16**: `just test -p codex-rmcp-client --config build.incremental=false -E 'test(http_headers) | test(www_authenticate) | binary(streamable_http_oauth_startup)' --retries 0`. The standalone HTTP helper was rebuilt. Unix-only transport concurrency tests remain unverified on this Windows host.
+- Combined core/Guardian/app-server/plugin/CLI validation through source 58 passed 429/433 initially. Two Guardian expectations included the currently reviewed call; a socket-reuse fixture emitted an early-result delta that intentionally releases its connection; and the parallel-review HTTP fixture inherited WebSocket capability. Test-only corrections preserve production transport and transcript behavior. All six selected corrective/adjacent cases passed, including parallel trunk/fork retries, lineage, stale completion handling, authenticated socket reuse and early-result coverage.
+- Current ledger: **58 backported, 1 already present, 297 pending**.
 - Full backport validation is pending. Final tests precede `just fix` and `just fmt`.
 - `just argument-comment-lint` is unavailable in this Windows Justfile; report that limitation explicitly.
 
@@ -403,3 +406,14 @@ This ledger is in progress. “Pending” entries still require source review an
 | `87628df77ab1a2622d1193ad835df02ced565bf2` | Preserve root authorization context in Guardian reviews (#42832) | pending |  |
 | `f1aac1e885f676a1129f2da0c46a3dba86392fc6` | Preserve SystemRoot for Windows sandbox wrapper setup (#42833) | pending |  |
 | `a482e65b8643509f2217b3a34453f3c4a1968228` | Preserve Windows managed deny reads in the sandbox CLI (#42835) | pending |  |
+| `83b62a02fab5c0fc797cbc9896c332148f1fd9d0` | Make GPT-6-Astra user input guidance conditional (#42836) | pending |  |
+| `773f0b081de689b0d54f2809e7b17bfdb4c9f341` | Preserve executor paths in Guardian approval reviews (#42838) | pending |  |
+| `60888d08685f3caa8ad4979518924d373d7477cf` | Add a native Windows MXC sandbox adapter (#42841) | pending |  |
+| `147137c1f4118175d3f8db92f2f33faf9c14f6d8` | Add Astra sparkle effects to the TUI composer (#42842) | pending |  |
+| `9c4253ffc1b954337bf2f494aadc55e9cd132a48` | Retain user instructions in Guardian context (#42844) | pending |  |
+| `7a8092a4479ad401c36b58580f1a3aeafe9ce890` | Preserve Markdown formatting when copying TUI responses (#42847) | pending |  |
+| `8e4b7d31dede18adba90479cab2bbf75c258ad40` | Use jemalloc for Linux musl binaries (#42850) | pending |  |
+| `4636819a352bfd4271c669c568a92f1bccfcd7e0` | Harden Guardian reviews after context compaction (#42852) | pending |  |
+| `3921a30d6b11218883e5bb81a48082095cf79b7c` | Persist Daybreak preferences in thread metadata (#42854) | pending |  |
+| `d2d5b70241fb448044c1c088a977cc720d70443a` | Preserve precedence across feature requirement aliases (#42863) | pending |  |
+| `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4` | Avoid redundant filesystem sandbox path resolution (#42870) | pending |  |

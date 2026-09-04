@@ -8,6 +8,9 @@ use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 
+#[path = "rendering/history_lookups.rs"]
+mod history_lookups;
+
 #[path = "../src/test_backend.rs"]
 mod test_backend;
 
