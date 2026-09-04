@@ -2,13 +2,14 @@
 source: tui/src/bottom_pane/approval_overlay.rs
 expression: "normalize_snapshot_paths(render_overlay_lines(&view, 120))"
 ---
-  Would you like to make the following edits?
+
+  Apply proposed changes?
 
   Description: Apply proposed file edits
   Destination: unavailable
 
-› 1. Yes, proceed (y)
-  2. Yes, and don't ask again for these files (a)
-  3. No, and tell Codex what to do differently (esc)
+› 1. Apply changes (y)                       Applies only these proposed changes.
+  2. Allow these paths for this session (a)  Allows changes to these paths for this session.
+  3. Tell Codex what to do instead (esc)       Keeps these proposed changes from being applied.
 
-  Press enter to confirm or esc to cancel
+  enter select · esc cancel

@@ -3,6 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Span;
 
 use crate::key_hint;
 use crate::line_truncation::truncate_line_to_width;
@@ -14,6 +15,8 @@ use crate::wrapping::adaptive_wrap_lines;
 ///
 /// Rejected steers get first claim on its fixed row budget, followed by active
 /// steers and queued messages; counts and configured hints disclose the rest.
+/// Hint rows never wrap: narrow widths shorten hint labels and then drop the
+/// least urgent hint, so counts and item text keep their rows.
 pub(crate) struct PendingInputPreview {
     pub pending_steers: Vec<String>,
     pub rejected_steers: Vec<String>,
@@ -34,6 +37,130 @@ enum PreviewKind {
     Rejected,
     Pending,
     Queued,
+}
+
+/// Whether a hint renders its full label or its shorter fallback.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HintLength {
+    Full,
+    Compact,
+}
+
+/// One `·`-separated hint, with an optional shorter label tried before the hint is dropped.
+struct Hint {
+    full: Vec<Span<'static>>,
+    compact: Option<Vec<Span<'static>>>,
+}
+
+impl Hint {
+    fn new(full: Vec<Span<'static>>) -> Self {
+        Self {
+            full,
+            compact: None,
+        }
+    }
+
+    fn with_compact(full: Vec<Span<'static>>, compact: Vec<Span<'static>>) -> Self {
+        Self {
+            full,
+            compact: Some(compact),
+        }
+    }
+
+    fn spans(&self, length: HintLength) -> &[Span<'static>] {
+        match (length, self.compact.as_ref()) {
+            (HintLength::Compact, Some(compact)) => compact,
+            _ => &self.full,
+        }
+    }
+}
+
+/// A row of `·`-separated hints that reflows on hint boundaries.
+///
+/// Hint rows are the preview's smallest, least urgent content, so they degrade in a fixed order:
+/// render on one row, then shorten every hint label, and only then spill onto a continuation row.
+/// Spilling breaks between hints so no row starts or ends with a bare `·`, which is what made the
+/// character-wrapped rows read as noise. `lead` carries primary state such as the item counts and
+/// always stays on the first row.
+struct HintRow {
+    indent: &'static str,
+    continuation_indent: &'static str,
+    lead: Vec<Span<'static>>,
+    /// Hints ordered from most to least important.
+    hints: Vec<Hint>,
+}
+
+impl HintRow {
+    fn line(&self, length: HintLength) -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        if !self.indent.is_empty() {
+            spans.push(self.indent.into());
+        }
+        let mut has_content = !self.lead.is_empty();
+        spans.extend(self.lead.iter().cloned());
+        for hint in &self.hints {
+            if has_content {
+                spans.push(" · ".dim());
+            }
+            spans.extend(hint.spans(length).iter().cloned());
+            has_content = true;
+        }
+        Line::from(spans)
+    }
+
+    fn fit(self, width: u16) -> Vec<Line<'static>> {
+        if self.lead.is_empty() && self.hints.is_empty() {
+            return Vec::new();
+        }
+
+        let width = width as usize;
+        for length in [HintLength::Full, HintLength::Compact] {
+            let line = self.line(length);
+            if line.width() <= width {
+                return vec![line];
+            }
+        }
+
+        let rows = self.reflowed_rows(width);
+        if rows.iter().all(|row| row.width() <= width) {
+            return rows.into_iter().take(ITEM_ROW_CAP).collect();
+        }
+        // A single hint is wider than the row: fall back to character wrapping so the text is at
+        // least reachable instead of being clipped at the row edge.
+        adaptive_wrap_lines(
+            std::iter::once(self.line(HintLength::Compact)),
+            RtOptions::new(width).subsequent_indent(Line::from(self.continuation_indent.dim())),
+        )
+        .into_iter()
+        .take(ITEM_ROW_CAP)
+        .collect()
+    }
+
+    fn reflowed_rows(&self, width: usize) -> Vec<Line<'static>> {
+        let span_width = |spans: &[Span<'static>]| spans.iter().map(Span::width).sum::<usize>();
+        let mut rows: Vec<Line<'static>> = Vec::new();
+        let mut current: Vec<Span<'static>> = Vec::new();
+        if !self.indent.is_empty() {
+            current.push(self.indent.into());
+        }
+        current.extend(self.lead.iter().cloned());
+        let mut has_content = !self.lead.is_empty();
+
+        for hint in &self.hints {
+            let spans = hint.spans(HintLength::Compact);
+            let separator = Span::from(" · ").dim();
+            if has_content && span_width(&current) + separator.width() + span_width(spans) > width {
+                rows.push(Line::from(std::mem::take(&mut current)));
+                current.push(self.continuation_indent.dim());
+            } else if has_content {
+                current.push(separator);
+            }
+            current.extend(spans.iter().cloned());
+            has_content = true;
+        }
+        rows.push(Line::from(current));
+        rows
+    }
 }
 
 impl PendingInputPreview {
@@ -67,6 +194,7 @@ impl PendingInputPreview {
             .filter(|count| *count > 0)
             .count();
         let mut spans = vec!["• ".dim()];
+        let mut hint: Option<Hint> = None;
 
         match (populated_categories, rejected, pending, queued) {
             (1, rejected, 0, 0) => spans.extend(vec![
@@ -82,19 +210,21 @@ impl PendingInputPreview {
                 if pending != 1 {
                     spans.push("s".cyan());
                 }
-                if let Some(binding) = self.interrupt_binding {
-                    spans.extend(vec![" · ".dim(), binding.into(), " send steers".dim()]);
-                }
+                hint = self.interrupt_binding.map(|binding| {
+                    Hint::with_compact(
+                        vec![binding.into(), " send steers".dim()],
+                        vec![binding.into(), " steers".dim()],
+                    )
+                });
             }
             (1, 0, 0, queued) => {
                 spans.push(format!("{queued} queued").into());
-                if let Some(binding) = self.edit_binding {
-                    spans.extend(vec![
-                        " · ".dim(),
-                        binding.into(),
-                        " edit latest queued".dim(),
-                    ]);
-                }
+                hint = self.edit_binding.map(|binding| {
+                    Hint::with_compact(
+                        vec![binding.into(), " edit latest queued".dim()],
+                        vec![binding.into(), " edit queue".dim()],
+                    )
+                });
             }
             _ if width >= 48 => {
                 if rejected > 0 {
@@ -125,13 +255,13 @@ impl PendingInputPreview {
             _ => spans.push(format!("{} pending inputs", rejected + pending + queued).into()),
         }
 
-        adaptive_wrap_lines(
-            std::iter::once(Line::from(spans)),
-            RtOptions::new(width as usize).subsequent_indent(Line::from("  ".dim())),
-        )
-        .into_iter()
-        .take(ITEM_ROW_CAP)
-        .collect()
+        HintRow {
+            indent: "",
+            continuation_indent: "  ",
+            lead: spans,
+            hints: hint.into_iter().collect(),
+        }
+        .fit(width)
     }
 
     fn action_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -147,56 +277,54 @@ impl PendingInputPreview {
             return Vec::new();
         }
 
-        let mut spans = vec!["  ".into()];
+        let mut hints: Vec<Hint> = Vec::new();
         if let Some(binding) = self
             .interrupt_binding
             .filter(|_| !self.pending_steers.is_empty())
         {
-            spans.extend(vec![binding.into(), " steers".dim()]);
+            hints.push(Hint::new(vec![binding.into(), " steers".dim()]));
         }
         if let Some(binding) = self
             .edit_binding
             .filter(|_| !self.queued_messages.is_empty())
         {
-            if spans.len() > 1 {
-                spans.push(" · ".dim());
-            }
-            spans.extend(vec![binding.into(), " edit latest queued".dim()]);
-        }
-        if spans.len() == 1 {
-            return Vec::new();
+            hints.push(Hint::with_compact(
+                vec![binding.into(), " edit latest queued".dim()],
+                vec![binding.into(), " edit queue".dim()],
+            ));
         }
 
-        adaptive_wrap_lines(
-            std::iter::once(Line::from(spans)),
-            RtOptions::new(width as usize).subsequent_indent(Line::from("  ".dim())),
-        )
-        .into_iter()
-        .take(ITEM_ROW_CAP)
-        .collect()
+        HintRow {
+            indent: "  ",
+            continuation_indent: "  ",
+            lead: Vec::new(),
+            hints,
+        }
+        .fit(width)
     }
 
     fn hidden_lines(&self, width: u16, hidden_items: usize) -> Vec<Line<'static>> {
-        let mut spans = vec![format!("… {hidden_items} hidden").dim()];
+        let mut hints: Vec<Hint> = Vec::new();
         if let Some(binding) = self
             .interrupt_binding
             .filter(|_| !self.pending_steers.is_empty())
         {
-            spans.extend(vec![" · ".dim(), binding.into(), " steers".dim()]);
+            hints.push(Hint::new(vec![binding.into(), " steers".dim()]));
         }
         if let Some(binding) = self
             .edit_binding
             .filter(|_| !self.queued_messages.is_empty())
         {
-            spans.extend(vec![" · ".dim(), binding.into(), " edit queue".dim()]);
+            hints.push(Hint::new(vec![binding.into(), " edit queue".dim()]));
         }
-        adaptive_wrap_lines(
-            std::iter::once(Line::from(spans)),
-            RtOptions::new(width as usize).subsequent_indent(Line::from("    ".dim())),
-        )
-        .into_iter()
-        .take(ITEM_ROW_CAP)
-        .collect()
+
+        HintRow {
+            indent: "",
+            continuation_indent: "    ",
+            lead: vec![format!("… {hidden_items} hidden").dim()],
+            hints,
+        }
+        .fit(width)
     }
 
     fn item_lines(kind: PreviewKind, text: &str, width: u16) -> Vec<Line<'static>> {
@@ -485,7 +613,7 @@ mod tests {
 
         let width = 36;
         let height = queue.desired_height(width);
-        assert_eq!(height, 4);
+        assert_eq!(height, 3);
 
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
         queue.render(Rect::new(0, 0, width, height), &mut buf);

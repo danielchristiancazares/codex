@@ -2,4 +2,4 @@
 source: tui/src/bottom_pane/footer.rs
 expression: terminal.backend()
 ---
-"  ? shortcuts                                                 Context 72% left  "
+"  ? shortcuts                                                 72% context left  "

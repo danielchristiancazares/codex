@@ -3,7 +3,7 @@ source: tui/src/chatwidget/tests/exec_flow.rs
 expression: normalized_backend_snapshot(terminal.backend())
 ---
 "                                                                                "
-"✦ Working · 0s · Esc interrupt                                                  "
+"✦ Working                                                     0s · Esc interrupt"
 "  └ Terminal running · /ps inspect · /stop terminate                            "
 "                                                                                "
 "────────────────────────────────────────────────────────────────────────────────"

@@ -1,0 +1,28 @@
+---
+source: tui/src/app/agents_overview_tests.rs
+expression: "render_bottom_popup(&app.chat_widget,\n54).replace(&format!(\"{project}  2\"),\n&normalized_project_group).replace(&project, \"/tmp/project\")"
+---
+  Agents
+  1 awaiting input · 1 working · 0 ready
+
+  /tmp/project  2  
+  › ! Build the dashboard · current · Needs input
+    ● Repair authentication · Working
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  New task › Describe a task and press enter to dis…
+  enter open · esc back · ↑↓ navigate

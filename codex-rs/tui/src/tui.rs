@@ -597,9 +597,9 @@ pub enum InlineViewportPlacement {
 /// Describes whether an inline frame owns durable transcript layout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InlineViewportRole {
-    /// A durable surface such as the composer or startup draft.
+    /// A durable surface such as the composer or startup draft that owns transcript docking.
     Persistent,
-    /// A popup or modal whose height must not relocate transcript rows.
+    /// A popup or modal that defers history-tail docking until persistent layout resumes.
     Transient,
 }
 
@@ -1206,13 +1206,21 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
+        // A full-screen history batch advances from the viewport origin by its own row count.
+        // Restore the persistent bottom anchor before flushing a batch queued under a transient
+        // view, including batches shorter than the height vacated by that view.
+        let has_pending_history = !self.pending_history_lines.is_empty();
+        let resumes_persistent_layout_with_pending_history = self.scrollback
+            == ScrollbackStrategy::FullScreen
+            && placement == InlineViewportPlacement::FollowExisting
+            && role == InlineViewportRole::Persistent
+            && self.last_resize_reflow_role == InlineViewportRole::Transient
+            && has_pending_history;
         let history_tail_dock = if role == InlineViewportRole::Transient
-            || self.last_resize_reflow_role == InlineViewportRole::Transient
+            || resumes_persistent_layout_with_pending_history
         {
             HistoryTailDock::PreservePosition
-        } else if self.scrollback == ScrollbackStrategy::FullScreen
-            && !self.pending_history_lines.is_empty()
-        {
+        } else if self.scrollback == ScrollbackStrategy::FullScreen && has_pending_history {
             HistoryTailDock::DeferToPendingHistory
         } else {
             HistoryTailDock::Immediate

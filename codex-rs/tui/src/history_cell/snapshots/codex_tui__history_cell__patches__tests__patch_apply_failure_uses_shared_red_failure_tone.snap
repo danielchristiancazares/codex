@@ -1,0 +1,6 @@
+---
+source: tui/src/history_cell/patches_tests.rs
+expression: "render_lines(&lines).join(\"\\n\")"
+---
+✗ Failed to apply patch
+  └ error: hunk #1 failed to apply

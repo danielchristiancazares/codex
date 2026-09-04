@@ -178,16 +178,13 @@ impl UnarchivePrompt {
             self.highlighted == UnarchiveChoice::Cancel,
         ));
         column.push("");
-        column.push(
-            Paragraph::new(Line::from(vec![
-                "Press ".dim(),
-                key_hint::plain(KeyCode::Enter).into(),
-                " to continue or ".dim(),
-                key_hint::plain(KeyCode::Esc).into(),
-                " to cancel".dim(),
-            ]))
-            .wrap(Wrap { trim: false }),
-        );
+        column.push(Paragraph::new(key_hint::action_hint_line(
+            "  ",
+            [
+                (key_hint::plain(KeyCode::Enter), "confirm"),
+                (key_hint::plain(KeyCode::Esc), "cancel"),
+            ],
+        )));
         column
     }
 }

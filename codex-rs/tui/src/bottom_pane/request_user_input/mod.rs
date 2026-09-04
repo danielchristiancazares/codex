@@ -4127,6 +4127,30 @@ mod tests {
     }
 
     #[test]
+    fn request_user_input_multi_question_narrow_snapshot() {
+        let (tx, _rx) = test_sender();
+        let overlay = RequestUserInputOverlay::new(
+            request_event(
+                "turn-1",
+                vec![
+                    question_with_options("q1", "Area"),
+                    question_without_options("q2", "Goal"),
+                ],
+            ),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+        let width = 47;
+        let area = Rect::new(0, 0, width, overlay.desired_height(width));
+        insta::assert_snapshot!(
+            "request_user_input_multi_question_narrow",
+            render_snapshot(&overlay, area)
+        );
+    }
+
+    #[test]
     fn request_user_input_multi_question_last_snapshot() {
         let (tx, _rx) = test_sender();
         let mut overlay = RequestUserInputOverlay::new(

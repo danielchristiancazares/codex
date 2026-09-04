@@ -16,7 +16,7 @@ const LINUX_APP_TOOLTIP: &str = "Try the **Desktop app** on Linux: install it fr
 const FAST_TOOLTIP: &str =
     "*New* Use **/fast** to enable our fastest inference with increased plan usage.";
 const OTHER_TOOLTIP: &str = "*New* Build faster with the **Desktop app**. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true";
-const OTHER_TOOLTIP_NON_MAC: &str = "*New* Build faster with Codex.";
+const OTHER_TOOLTIP_NON_MAC: &str = "Type **/** to browse commands.";
 const FREE_GO_TOOLTIP: &str =
     "*New* For a limited time, Codex is included in your plan for free – let’s build together.";
 
@@ -56,7 +56,19 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
         return Some(announcement);
     }
 
-    // Leave small chance for a random tooltip to be shown.
+    pick_startup_tooltip(&mut rng, plan, fast_mode_enabled)
+}
+
+fn pick_startup_tooltip<R: Rng + ?Sized>(
+    rng: &mut R,
+    plan: Option<PlanType>,
+    fast_mode_enabled: bool,
+) -> Option<String> {
+    // Keep routine startup focused while still rotating occasional discovery hints.
+    if !rng.random_ratio(2, 10) {
+        return None;
+    }
+
     if rng.random_ratio(8, 10) {
         match plan {
             Some(plan_type)
@@ -66,7 +78,7 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
                 ) || plan_type.is_team_like()
                     || plan_type.is_business_like() =>
             {
-                if let Some(tooltip) = pick_paid_tooltip(&mut rng, fast_mode_enabled) {
+                if let Some(tooltip) = pick_paid_tooltip(rng, fast_mode_enabled) {
                     return Some(tooltip.to_string());
                 }
             }
@@ -84,7 +96,7 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
         }
     }
 
-    pick_tooltip(&mut rng).map(str::to_string)
+    pick_tooltip(rng).map(str::to_string)
 }
 
 struct LinuxDesktopSession {
@@ -373,6 +385,22 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(7);
         assert_eq!(expected, pick_tooltip(&mut rng));
+    }
+
+    #[test]
+    fn routine_startup_tips_are_occasional() {
+        let outcomes = (0..64)
+            .map(|seed| {
+                pick_startup_tooltip(
+                    &mut StdRng::seed_from_u64(seed),
+                    /*plan*/ None,
+                    /*fast_mode_enabled*/ false,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert!(outcomes.iter().any(Option::is_none));
+        assert!(outcomes.iter().any(Option::is_some));
     }
 
     #[test]

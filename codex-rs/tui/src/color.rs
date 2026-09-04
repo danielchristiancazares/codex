@@ -11,19 +11,53 @@ pub(crate) fn blend(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> (u8, u8, 
     (r, g, b)
 }
 
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn relative_luminance((r, g, b): (u8, u8, u8)) -> f32 {
+    0.2126 * srgb_to_linear(r) + 0.7152 * srgb_to_linear(g) + 0.0722 * srgb_to_linear(b)
+}
+
+pub(crate) fn contrast_ratio(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    let a = relative_luminance(a);
+    let b = relative_luminance(b);
+    let (lighter, darker) = if a >= b { (a, b) } else { (b, a) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Moves a foreground toward whichever neutral endpoint improves contrast most.
+pub(crate) fn strengthen_contrast(
+    foreground: (u8, u8, u8),
+    background: (u8, u8, u8),
+    amount: f32,
+) -> (u8, u8, u8) {
+    let amount = amount.clamp(0.0, 1.0);
+    let candidates = [
+        foreground,
+        blend((0, 0, 0), foreground, amount),
+        blend((255, 255, 255), foreground, amount),
+    ];
+    let mut best = foreground;
+    let mut best_ratio = contrast_ratio(foreground, background);
+    for candidate in candidates.into_iter().skip(1) {
+        let candidate_ratio = contrast_ratio(candidate, background);
+        if candidate_ratio > best_ratio {
+            best = candidate;
+            best_ratio = candidate_ratio;
+        }
+    }
+    best
+}
+
 /// Returns the perceptual color distance between two RGB colors.
 /// Uses the CIE76 formula (Euclidean distance in Lab space approximation).
 pub(crate) fn perceptual_distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
-    // Convert sRGB to linear RGB
-    fn srgb_to_linear(c: u8) -> f32 {
-        let c = c as f32 / 255.0;
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    }
-
     // Convert RGB to XYZ
     fn rgb_to_xyz(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
         let r = srgb_to_linear(r);
@@ -72,4 +106,38 @@ pub(crate) fn perceptual_distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
     let db = b1 - b2;
 
     (dl * dl + da * da + db * db).sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn strengthen_contrast_chooses_the_safer_neutral_direction() {
+        assert_eq!(
+            [
+                strengthen_contrast((180, 180, 180), (0, 0, 0), 0.25),
+                strengthen_contrast((80, 80, 80), (255, 255, 255), 0.25),
+                strengthen_contrast((255, 255, 255), (0, 0, 0), 0.25),
+            ],
+            [(198, 198, 198), (60, 60, 60), (255, 255, 255)]
+        );
+    }
+
+    #[test]
+    fn strengthen_contrast_never_reduces_the_original_ratio() {
+        for (foreground, background) in [
+            ((210, 210, 210), (16, 18, 20)),
+            ((40, 45, 50), (245, 245, 240)),
+            ((0, 175, 175), (0, 0, 0)),
+            ((0, 95, 135), (255, 255, 255)),
+        ] {
+            let strengthened = strengthen_contrast(foreground, background, 0.35);
+            assert!(
+                contrast_ratio(strengthened, background) >= contrast_ratio(foreground, background)
+            );
+        }
+    }
 }

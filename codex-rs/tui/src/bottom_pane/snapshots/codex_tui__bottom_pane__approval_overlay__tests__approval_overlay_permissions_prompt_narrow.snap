@@ -1,0 +1,23 @@
+---
+source: tui/src/bottom_pane/approval_overlay.rs
+expression: "normalize_snapshot_paths(render_overlay_lines(&view, 47))"
+---
+
+  Grant additional permissions?
+
+  Reason: need workspace access
+
+  Permission rule: network; read
+  `/tmp/readme.txt`; write `/tmp/out.txt`
+
+› 1. Allow for this turn (y)
+     Applies only to the current turn.
+  2. Allow this turn with strict review (r)
+     Applies this turn and keeps strict
+     review enabled.
+  3. Allow for this session (a)
+     Applies through the current session.
+  4. Don't allow (d)
+     Continues without granting access.
+
+  enter select · esc cancel

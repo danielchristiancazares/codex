@@ -3,17 +3,21 @@ source: tui/src/status_indicator_widget.rs
 expression: "snapshots.join(\"\\n\\n\")"
 ---
 width 20:
-✦ Waiting · 0s
-  ├ Esc interrupt
+✦ Waiting   Esc stop
   ├ Terminal
   ├ /ps inspect
   ├ /stop terminate
   └ cargo test
 
+width 47:
+✦ Waiting for background terminal      Esc stop
+  ├ Terminal · /ps inspect · /stop terminate
+  └ cargo test
+
 width 80:
-✦ Waiting for background terminal · cargo test · 0s · Esc interrupt
+✦ Waiting for background terminal · cargo test                0s · Esc interrupt
   └ Terminal running · /ps inspect · /stop terminate
 
 width 120:
-✦ Waiting for background terminal · cargo test · 0s · Esc interrupt
+✦ Waiting for background terminal · cargo test                                                        0s · Esc interrupt
   └ Terminal running · /ps inspect · /stop terminate

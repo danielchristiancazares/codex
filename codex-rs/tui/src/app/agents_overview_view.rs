@@ -33,6 +33,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -72,6 +73,32 @@ impl AgentsOverviewGroup {
             Self::Finished => "Finished",
         }
     }
+}
+
+fn push_footer_hint(
+    spans: &mut Vec<Span<'static>>,
+    hint: Option<ShortcutHint>,
+    label: &'static str,
+    max_width: usize,
+) -> bool {
+    let Some(hint) = hint else {
+        return false;
+    };
+    let key = hint.display_label().replace(" + ", "+");
+    let separator_width = if spans.is_empty() { 0 } else { 3 };
+    let current_width = spans
+        .iter()
+        .map(|span| span.content.as_ref().width())
+        .sum::<usize>();
+    if current_width + separator_width + key.width() + 1 + label.width() > max_width {
+        return false;
+    }
+    if !spans.is_empty() {
+        spans.push(" · ".dim());
+    }
+    spans.push(key.bold());
+    spans.push(format!(" {label}").dim());
+    true
 }
 
 #[derive(Clone)]
@@ -270,10 +297,10 @@ impl AgentsOverviewView {
 
     fn status(row: &AgentsOverviewRow) -> (&'static str, Span<'static>) {
         match row.group {
-            AgentsOverviewGroup::NeedsYou => ("Needs input", "●".red()),
-            AgentsOverviewGroup::Working => ("Working", "●".green()),
-            AgentsOverviewGroup::Ready => ("Ready", "○".cyan()),
-            AgentsOverviewGroup::Finished => ("Finished", "✓".dim()),
+            AgentsOverviewGroup::NeedsYou => ("Needs input", "!".red().bold()),
+            AgentsOverviewGroup::Working => ("Working", "●".cyan()),
+            AgentsOverviewGroup::Ready => ("Ready", "○".dim()),
+            AgentsOverviewGroup::Finished => ("Finished", "✓".green()),
         }
     }
 
@@ -286,6 +313,16 @@ impl AgentsOverviewView {
             .unwrap_or_else(PoisonError::into_inner)
             .status_grouping;
         let visible = self.visible_indices();
+        let visible_set = visible.iter().copied().collect::<HashSet<_>>();
+        if visible.is_empty() {
+            let message = if self.state().searching {
+                "No sessions match this search."
+            } else {
+                "No agent sessions yet. Dispatch a task below."
+            };
+            Line::from(message.dim()).render(area, buf);
+            return;
+        }
         let mut first = visible
             .iter()
             .position(|index| *index == self.selected)
@@ -306,7 +343,7 @@ impl AgentsOverviewView {
             height += added_height;
             first -= 1;
         }
-        for index in visible.into_iter().skip(first) {
+        for index in visible.iter().copied().skip(first) {
             if offset >= area.height {
                 break;
             }
@@ -324,12 +361,14 @@ impl AgentsOverviewView {
                 let count = self
                     .rows
                     .iter()
-                    .filter(|candidate| {
-                        if project_grouping {
-                            candidate.thread.cwd == row.thread.cwd
-                        } else {
-                            candidate.group == row.group
-                        }
+                    .enumerate()
+                    .filter(|(candidate_index, candidate)| {
+                        visible_set.contains(candidate_index)
+                            && if project_grouping {
+                                candidate.thread.cwd == row.thread.cwd
+                            } else {
+                                candidate.group == row.group
+                            }
                     })
                     .count();
                 Line::from(vec![group.clone().bold(), format!("  {count}").dim()])
@@ -352,17 +391,25 @@ impl AgentsOverviewView {
                 .or_else(|| (!row.thread.preview.is_empty()).then_some(row.thread.preview.as_str()))
                 .unwrap_or("Untitled task");
             let (status, dot) = Self::status(row);
-            let current = if row.is_current { "  current" } else { "" };
-            let mut spans = vec![
-                marker,
-                " ".into(),
-                dot,
-                " ".into(),
-                title.into(),
-                current.dim(),
-            ];
+            let current = if row.is_current { " · current" } else { "" };
+            let suffix_width = current.width()
+                + if project_grouping {
+                    status.width() + 3
+                } else {
+                    0
+                };
+            let title = crate::text_formatting::truncate_text(
+                title,
+                usize::from(area.width).saturating_sub(suffix_width + 4),
+            );
+            let title = if self.selected == index {
+                title.bold()
+            } else {
+                title.into()
+            };
+            let mut spans = vec![marker, " ".into(), dot, " ".into(), title, current.dim()];
             if project_grouping {
-                spans.extend(["  ".into(), status.dim()]);
+                spans.extend([" · ".dim(), status.dim()]);
             }
             Line::from(spans).render(Rect::new(area.x, area.y + offset, area.width, 1), buf);
             offset += 1;
@@ -374,14 +421,18 @@ impl AgentsOverviewView {
             return;
         };
         let (status, dot) = Self::status(row);
+        let title = row.thread.name.as_deref().unwrap_or("Untitled task");
+        let mut status_line = vec![dot, " ".into(), status.into()];
+        if row.is_current {
+            status_line.extend([" · ".dim(), "current session".dim()]);
+        }
         let mut lines = vec![
-            Line::from("Task details".bold()),
-            Line::default(),
-            Line::from(row.thread.name.as_deref().unwrap_or("Untitled task").bold()),
-            Line::from(vec![dot, " ".into(), status.into()]),
-            Line::default(),
-            Line::from("Project".dim()),
-            Line::from(row.thread.cwd.display().to_string()),
+            Line::from(title.bold()),
+            Line::from(status_line),
+            Line::from(vec![
+                "Project  ".dim(),
+                Span::from(row.thread.cwd.display().to_string()),
+            ]),
         ];
         if let Some(branch) = row
             .thread
@@ -389,22 +440,22 @@ impl AgentsOverviewView {
             .as_ref()
             .and_then(|git| git.branch.as_ref())
         {
-            lines.push(Line::default());
-            lines.push("Branch".dim().into());
-            lines.push(branch.clone().into());
+            lines.push(Line::from(vec![
+                "Branch  ".dim(),
+                Span::from(branch.clone()),
+            ]));
         }
         let preview = crate::text_formatting::truncate_text(
             &row.thread.preview,
             usize::from(area.width) * usize::from(area.height),
         );
-        lines.extend([
-            Line::default(),
-            Line::from("Latest activity".dim()),
-            Line::from(match preview.as_str() {
-                "" => "No activity yet.",
-                preview => preview,
-            }),
-        ]);
+        if !preview.is_empty() && preview != title {
+            lines.extend([
+                Line::default(),
+                Line::from("Latest activity".dim()),
+                Line::from(preview),
+            ]);
+        }
         Paragraph::new(crate::wrapping::word_wrap_lines(
             lines,
             usize::from(area.width),
@@ -581,7 +632,7 @@ impl Renderable for AgentsOverviewView {
             return;
         }
         Clear.render(area, buf);
-        let [header, summary, divider, body, prompt, footer] = Layout::vertical([
+        let [header, summary, _spacing, body, prompt, footer] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -592,7 +643,7 @@ impl Renderable for AgentsOverviewView {
         .areas(area);
         let inset =
             |rect: Rect| rect.inner(Margin::new(/*horizontal*/ 2, /*vertical*/ 0));
-        Line::from("Agent command center".bold()).render(inset(header), buf);
+        Line::from("Agents".bold()).render(inset(header), buf);
         let (needs_you, working, ready) = self.rows.iter().fold((0, 0, 0), |counts, row| {
             let (needs_you, working, ready) = counts;
             match row.group {
@@ -602,11 +653,23 @@ impl Renderable for AgentsOverviewView {
                 AgentsOverviewGroup::Finished => counts,
             }
         });
-        let attention = format!("{needs_you} need input");
-        Line::from(format!("{attention}   {working} working   {ready} ready").dim())
-            .render(inset(summary), buf);
-        Line::from("─".repeat(usize::from(area.width.saturating_sub(4))).dim())
-            .render(inset(divider), buf);
+        let attention = format!("{needs_you} awaiting input");
+        Line::from(vec![
+            if needs_you == 0 {
+                attention.dim()
+            } else {
+                attention.red().bold()
+            },
+            " · ".dim(),
+            if working == 0 {
+                format!("{working} working").dim()
+            } else {
+                format!("{working} working").bold()
+            },
+            " · ".dim(),
+            format!("{ready} ready").dim(),
+        ])
+        .render(inset(summary), buf);
         let body = inset(body);
         if body.width >= 90 {
             let [list, gap, details] = Layout::horizontal([
@@ -652,8 +715,16 @@ impl Renderable for AgentsOverviewView {
             visible_start = index;
         }
         let input = &input[visible_start..];
-        Line::from(vec![label.cyan().bold(), input.into(), placeholder.dim()])
-            .render(inset(prompt), buf);
+        let prompt_area = inset(prompt);
+        crate::line_truncation::truncate_line_with_ellipsis_if_overflow(
+            Line::from(vec![
+                label.cyan().bold(),
+                input.to_string().into(),
+                placeholder.dim(),
+            ]),
+            usize::from(prompt_area.width),
+        )
+        .render(prompt_area, buf);
         let list_hint = |action| {
             self.keymap.primary_hint(action).filter(|hint| {
                 !matches!(hint, ShortcutHint::Single(binding)
@@ -687,52 +758,81 @@ impl Renderable for AgentsOverviewView {
             },
         );
         let mut footer_spans = Vec::new();
-        if !navigation_hint.is_empty() {
-            footer_spans.extend([navigation_hint.bold(), " navigate  ".dim()]);
-        }
-        let mut add_hint = |hint: Option<ShortcutHint>, label: &'static str, enabled: bool| {
-            if let Some(hint) = hint {
-                let key = hint.display_label().replace(" + ", "+");
-                footer_spans.push(if enabled { key.bold() } else { key.dim() });
-                footer_spans.push(format!(" {label}  ").dim());
-            }
-        };
-        add_hint(list_hint(ListAction::Accept), "open", true);
-        add_hint(
-            self.agents_keymap
-                .primary_hint("search", &self.agents_keymap.search),
-            "search",
-            true,
-        );
-        add_hint(
-            self.agents_keymap
-                .primary_hint("toggle_grouping", &self.agents_keymap.toggle_grouping),
-            "group",
-            true,
-        );
-        add_hint(
-            self.agents_keymap
-                .primary_hint("rename", &self.agents_keymap.rename),
-            "rename",
-            true,
-        );
-        add_hint(
-            self.agents_keymap
-                .primary_hint("stop", &self.agents_keymap.stop),
-            "stop",
-            self.selected_row()
-                .is_some_and(|row| matches!(row.thread.status, ThreadStatus::Active { .. })),
-        );
-        add_hint(list_hint(ListAction::Cancel), "back", true);
         let footer_area = inset(footer);
-        let mut footer_line: Line = footer_spans.into();
-        if footer_line.width() > usize::from(footer_area.width) {
-            for span in &mut footer_line.spans {
-                if span.content.ends_with("  ") {
-                    span.content.to_mut().pop();
+        let footer_width = usize::from(footer_area.width);
+        let has_selection = self.selected_row().is_some();
+        let accept_label = if state.renaming {
+            "save"
+        } else if !state.input.is_empty() || !has_selection {
+            "dispatch"
+        } else {
+            "open"
+        };
+        if !state.searching || has_selection {
+            push_footer_hint(
+                &mut footer_spans,
+                list_hint(ListAction::Accept),
+                accept_label,
+                footer_width,
+            );
+        }
+        push_footer_hint(
+            &mut footer_spans,
+            list_hint(ListAction::Cancel),
+            "back",
+            footer_width,
+        );
+        if has_selection && !navigation_hint.is_empty() {
+            let current_width = footer_spans
+                .iter()
+                .map(|span| span.content.as_ref().width())
+                .sum::<usize>();
+            let separator_width = if footer_spans.is_empty() { 0 } else { 3 };
+            if current_width + separator_width + navigation_hint.width() + " navigate".width()
+                <= footer_width
+            {
+                if !footer_spans.is_empty() {
+                    footer_spans.push(" · ".dim());
                 }
+                footer_spans.extend([navigation_hint.bold(), " navigate".dim()]);
             }
         }
-        footer_line.render(footer_area, buf);
+        let show_secondary_hints = has_selection
+            && push_footer_hint(
+                &mut footer_spans,
+                self.agents_keymap
+                    .primary_hint("search", &self.agents_keymap.search),
+                "search",
+                footer_width,
+            );
+        let stop_enabled = self
+            .selected_row()
+            .is_some_and(|row| matches!(row.thread.status, ThreadStatus::Active { .. }));
+        if stop_enabled {
+            push_footer_hint(
+                &mut footer_spans,
+                self.agents_keymap
+                    .primary_hint("stop", &self.agents_keymap.stop),
+                "stop",
+                footer_width,
+            );
+        }
+        if show_secondary_hints {
+            push_footer_hint(
+                &mut footer_spans,
+                self.agents_keymap
+                    .primary_hint("toggle_grouping", &self.agents_keymap.toggle_grouping),
+                "group",
+                footer_width,
+            );
+            push_footer_hint(
+                &mut footer_spans,
+                self.agents_keymap
+                    .primary_hint("rename", &self.agents_keymap.rename),
+                "rename",
+                footer_width,
+            );
+        }
+        Line::from(footer_spans).render(footer_area, buf);
     }
 }

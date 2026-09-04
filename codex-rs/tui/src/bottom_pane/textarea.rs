@@ -33,6 +33,7 @@ use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+#[cfg(test)]
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
@@ -2115,7 +2116,7 @@ impl TextArea {
         base_style: Style,
         highlights: &[(Range<usize>, Style)],
     ) {
-        let element_style = base_style.fg(Color::Cyan);
+        let element_style = base_style.patch(crate::style::accent_style());
         for (row, idx) in range.clone().enumerate() {
             let r = &lines[idx];
             let y = area.y + row as u16;

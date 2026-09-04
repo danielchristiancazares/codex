@@ -288,9 +288,9 @@ impl RequestUserInputOverlay {
                 break;
             }
             let question_line = if answered {
-                Line::from(line.clone())
+                Line::from(line.clone()).bold()
             } else {
-                Line::from(line.clone()).cyan()
+                Line::from(line.clone()).cyan().bold()
             };
             Paragraph::new(question_line).render(
                 Rect {

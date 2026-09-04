@@ -12,7 +12,7 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
 
 
 
-✦ Working · 0s · Esc interrupt
+✦ Working                                                     0s · Esc interrupt
 
 • 30 queued · ⌥ + ↑ edit latest queued
   + Queued: Hello, world! 0

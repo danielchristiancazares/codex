@@ -4,7 +4,7 @@ expression: lines
 ---
 [
     Line::from_iter([
-        Span::from("•").dim(),
+        Span::from("•"),
         Span::from(" "),
         Span::from("Running 1 of 3 commands").bold(),
         Span::from(" · ").dim(),

@@ -15,7 +15,7 @@ before scroll:
   7. Item 7                                         desc 7                                      
   8. Item 8                                         desc 8                                      
                                                                                                 
-  ↵ ok · esc back                                                                               
+  ↵ ok · esc back · 1/9 · +1 more ↓                                                             
 
 after scroll:
                                                                                                 
@@ -30,4 +30,4 @@ after scroll:
   8. Item 8                                         desc 8                                      
 › 9. Item 9 with an intentionally much longer name  desc 9                                      
                                                                                                 
-  ↵ ok · esc back
+  ↵ ok · esc back · 9/9 · ↑ 1 more

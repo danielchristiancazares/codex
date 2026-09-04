@@ -2,9 +2,9 @@ use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::plain_lines;
-use crate::history_cell::with_border_with_inner_width;
 use crate::legacy_core::config::Config;
 use crate::line_truncation::line_width;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::style::StatusTone;
 use crate::style::status_style;
 use crate::token_usage::TokenUsage;
@@ -35,7 +35,6 @@ use url::Url;
 use super::account::StatusAccountDisplay;
 use super::format::FieldFormatter;
 use super::format::push_label;
-use super::format::truncate_line_to_width;
 use super::helpers::compose_account_display;
 use super::helpers::compose_model_display;
 use super::helpers::format_directory_display;
@@ -51,7 +50,6 @@ use super::rate_limits::render_status_limit_progress_bar;
 use super::remote_connection::RemoteConnectionStatus;
 use super::thread_usage::StatusThreadUsage;
 use crate::wrapping::RtOptions;
-use crate::wrapping::adaptive_wrap_lines;
 use crate::wrapping::word_wrap_lines;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -749,13 +747,12 @@ impl HistoryCell for StatusHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
-            Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
+            Span::from(format!("{}>_ ", FieldFormatter::INDENT)).magenta(),
             Span::from("OpenAI Codex").bold(),
-            Span::from(" ").dim(),
-            Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
+            Span::from(format!(" v{CODEX_CLI_VERSION}")).dim(),
         ]));
 
-        let available_inner_width = usize::from(width.saturating_sub(4));
+        let available_inner_width = usize::from(width);
         if available_inner_width == 0 {
             return Vec::new();
         }
@@ -815,28 +812,10 @@ impl HistoryCell for StatusHistoryCell {
         self.collect_rate_limit_labels(&rate_limit_state, &mut seen, &mut labels);
         self.thread_usage.push_labels(&mut labels, &mut seen);
 
-        let formatter = FieldFormatter::from_labels(labels.iter().map(String::as_str));
+        let formatter = FieldFormatter::from_labels(labels.iter().map(String::as_str))
+            .with_max_label_width((available_inner_width / 3).max(12));
         let value_width = formatter.value_width(available_inner_width);
-
-        let note_first_line = Line::from(vec![
-            Span::from("Visit ").cyan(),
-            CHATGPT_USAGE_URL.cyan().underlined(),
-            Span::from(" for up-to-date").cyan(),
-        ]);
-        let note_second_line = Line::from(vec![
-            Span::from("information on rate limits and credits").cyan(),
-        ]);
-        let note_lines = adaptive_wrap_lines(
-            [note_first_line, note_second_line],
-            RtOptions::new(available_inner_width),
-        );
         lines.push(Line::from(Vec::<Span<'static>>::new()));
-        // The ChatGPT usage page only applies to providers backed by OpenAI auth;
-        // providers like Bedrock manage limits and billing elsewhere.
-        if self.show_chatgpt_usage_link {
-            lines.extend(note_lines);
-            lines.push(Line::from(Vec::<Span<'static>>::new()));
-        }
         if let Some(remote_connection) = self.remote_connection.as_ref() {
             let wrapped_remote = word_wrap_lines(
                 [Line::from(vec![
@@ -908,14 +887,29 @@ impl HistoryCell for StatusHistoryCell {
             lines.extend(thread_usage_lines);
         }
 
-        let content_width = lines.iter().map(line_width).max().unwrap_or(0);
-        let inner_width = content_width.min(available_inner_width);
-        let truncated_lines: Vec<Line<'static>> = lines
-            .into_iter()
-            .map(|line| truncate_line_to_width(line, inner_width))
-            .collect();
+        // The ChatGPT usage page only applies to providers backed by OpenAI auth;
+        // providers like Bedrock manage limits and billing elsewhere.
+        if self.show_chatgpt_usage_link {
+            lines.push(Line::from(Vec::<Span<'static>>::new()));
+            let usage_line = Line::from(vec![
+                Span::from(format!("{}Live usage:  ", FieldFormatter::INDENT)).dim(),
+                CHATGPT_USAGE_URL.cyan().underlined(),
+            ]);
+            if line_width(&usage_line) <= available_inner_width {
+                lines.push(usage_line);
+            } else {
+                lines.push(Line::from(format!("{}Live usage:", FieldFormatter::INDENT)).dim());
+                lines.push(Line::from(vec![
+                    Span::from(FieldFormatter::INDENT),
+                    CHATGPT_USAGE_URL.cyan().underlined(),
+                ]));
+            }
+        }
 
-        with_border_with_inner_width(truncated_lines, inner_width)
+        lines
+            .into_iter()
+            .map(|line| truncate_line_with_ellipsis_if_overflow(line, available_inner_width))
+            .collect()
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

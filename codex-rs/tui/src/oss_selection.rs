@@ -8,6 +8,7 @@ mod layout;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
+use crate::style::accent_style;
 use codex_http_client::HttpClient;
 use codex_http_client::HttpClientBuilder;
 use codex_model_provider_info::DEFAULT_LMSTUDIO_PORT;
@@ -34,7 +35,6 @@ use ratatui::layout::Margin;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::style::Color;
-use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -133,8 +133,8 @@ impl OssSelectionWidget<'_> {
 
         let mut contents: Vec<Line> = vec![
             Line::from(vec![
-                "? ".fg(Color::Blue),
-                "Select an open-source provider".bold(),
+                Span::styled("› ", accent_style()),
+                "Local providers".bold(),
             ]),
             Line::from(""),
             Line::from("  Choose which local AI server to use for your session."),
@@ -151,12 +151,16 @@ impl OssSelectionWidget<'_> {
             ]));
         }
         contents.push(Line::from(""));
-        contents.push(Line::from("  ● Running  ○ Not Running").add_modifier(Modifier::DIM));
+        contents.push(Line::from("  ● running  ○ not running  ? unknown").dim());
 
         contents.push(Line::from(""));
-        contents.push(
-            Line::from("  Press Enter to select • Ctrl+C to exit").add_modifier(Modifier::DIM),
-        );
+        contents.push(Line::from(vec![
+            "  ".into(),
+            key_hint::plain(KeyCode::Enter).into(),
+            " select · ".dim(),
+            key_hint::ctrl(KeyCode::Char('c')).into(),
+            " exit".dim(),
+        ]));
 
         let confirmation_prompt = Paragraph::new(contents).wrap(Wrap { trim: false });
 
@@ -281,15 +285,19 @@ impl WidgetRef for &OssSelectionWidget<'_> {
             .iter()
             .enumerate()
             .map(|(idx, opt)| {
-                let style = if idx == self.selected_option {
-                    Style::new().bg(Color::Cyan).fg(Color::Black)
+                let is_selected = idx == self.selected_option;
+                let mut line = Line::from(format!(
+                    "{} {}. ",
+                    if is_selected { "›" } else { " " },
+                    idx + 1
+                ));
+                line.spans.extend(opt.label.spans.clone());
+                line = line.alignment(HorizontalAlignment::Center);
+                if is_selected {
+                    line.style(accent_style().underlined())
                 } else {
-                    Style::new().bg(Color::DarkGray)
-                };
-                opt.label
-                    .clone()
-                    .alignment(HorizontalAlignment::Center)
-                    .style(style)
+                    line
+                }
             })
             .collect();
 
@@ -297,7 +305,7 @@ impl WidgetRef for &OssSelectionWidget<'_> {
             .clone()
             .render(layout.prompt_area, buf);
         if let Some(title_area) = layout.title_area {
-            Line::from("Select provider?").render(title_area, buf);
+            Line::from("Choose provider").bold().render(title_area, buf);
         }
         if let Some(button_area) = layout.button_area {
             let areas = Layout::horizontal(
@@ -314,7 +322,8 @@ impl WidgetRef for &OssSelectionWidget<'_> {
         }
         if let Some(description_area) = layout.description_area {
             Line::from(self.select_options[self.selected_option].description)
-                .style(Style::new().italic().fg(Color::DarkGray))
+                .dim()
+                .italic()
                 .render(description_area.inner(Margin::new(1, 0)), buf);
         }
     }

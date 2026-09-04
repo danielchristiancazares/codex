@@ -4,7 +4,9 @@ use super::auth::AuthModeWidget;
 use super::auth::SignInState;
 use super::auth::onboarding_request_id;
 use super::keys;
+use crate::key_hint;
 use crate::key_hint::KeyBindingListExt;
+use crate::style::accent_style;
 use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::AwsCredentialType;
 use codex_app_server_protocol::BedrockAwsProfile;
@@ -26,6 +28,7 @@ use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use std::sync::PoisonError;
 
@@ -377,7 +380,7 @@ impl BedrockState {
                 lines.push("".into());
                 lines.push(Line::from(vec![
                     "  AWS profile: ".into(),
-                    value.clone().cyan(),
+                    Span::styled(value.clone(), accent_style().underlined()),
                 ]));
             }
             BedrockView::ApiKeyEntry(value) => {
@@ -389,7 +392,7 @@ impl BedrockState {
                 }
                 lines.push(Line::from(vec![
                     "  Bedrock API key: ".into(),
-                    masked_value.cyan(),
+                    Span::styled(masked_value, accent_style().underlined()),
                 ]));
             }
             BedrockView::RegionEntry { value, .. } => {
@@ -397,7 +400,7 @@ impl BedrockState {
                 lines.push("".into());
                 lines.push(Line::from(vec![
                     "  AWS Region: ".into(),
-                    value.clone().cyan(),
+                    Span::styled(value.clone(), accent_style().underlined()),
                 ]));
             }
             BedrockView::AccessKeyEntry {
@@ -414,7 +417,7 @@ impl BedrockState {
                 .into_iter()
                 .enumerate()
                 {
-                    let marker = if index == *selected_field { ">" } else { " " };
+                    let marker = if index == *selected_field { "›" } else { " " };
                     let value = if index == 0 {
                         values[index].clone()
                     } else if index == *selected_field {
@@ -429,7 +432,7 @@ impl BedrockState {
                     };
                     let line = format!("{marker} {label}: {value}");
                     lines.push(if index == *selected_field {
-                        line.cyan().into()
+                        Line::styled(line, accent_style().underlined())
                     } else {
                         line.into()
                     });
@@ -453,18 +456,18 @@ impl BedrockState {
         let mut footer = Vec::new();
         if !matches!(self.view, BedrockView::Discovering(_)) {
             footer.push("".into());
-            if !matches!(self.view, BedrockView::Configuring(_)) {
-                footer.push(Line::from(vec![
-                    "  Press ".dim(),
-                    keys::CONFIRM[0].into(),
-                    " to continue".dim(),
-                ]));
-            }
-            footer.push(Line::from(vec![
-                "  Press ".dim(),
-                keys::CANCEL[0].into(),
-                " to go back".dim(),
-            ]));
+            footer.push(if matches!(self.view, BedrockView::Configuring(_)) {
+                key_hint::action_hint_line("  ", [(keys::CANCEL[0], "back")])
+            } else {
+                let confirm_action = if area.width < 27 { "next" } else { "continue" };
+                key_hint::action_hint_line(
+                    "  ",
+                    [
+                        (keys::CONFIRM[0], confirm_action),
+                        (keys::CANCEL[0], "back"),
+                    ],
+                )
+            });
         }
         if let Some(error) = error {
             footer.push("".into());
@@ -489,7 +492,7 @@ impl BedrockState {
             .find_map(|(index, line)| {
                 line.spans
                     .first()
-                    .is_some_and(|span| span.content.starts_with("> "))
+                    .is_some_and(|span| span.content.starts_with("› "))
                     .then_some(index)
             })
             .unwrap_or_default();
@@ -574,10 +577,10 @@ impl BedrockState {
                 ),
             };
             let selected = index == self.highlighted;
-            let marker = if selected { ">" } else { " " };
+            let marker = if selected { "›" } else { " " };
             let title_line = format!("{marker} {}. {title}", index + 1);
             lines.push(if selected {
-                title_line.cyan().into()
+                Line::styled(title_line, accent_style().underlined())
             } else {
                 title_line.into()
             });

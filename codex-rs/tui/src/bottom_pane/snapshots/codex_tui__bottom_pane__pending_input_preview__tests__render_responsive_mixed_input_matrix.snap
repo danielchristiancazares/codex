@@ -12,7 +12,7 @@ Buffer {
         "  ↳ Steer: Inspect the  ",
         "    … +3 hidden lines   ",
         "… 3 hidden · esc steers ",
-        "    · ⌥ + ↑ edit queue  ",
+        "    ⌥ + ↑ edit queue    ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
@@ -28,9 +28,13 @@ Buffer {
         x: 4, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 21, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 13, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 16, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 23, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 22, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 9, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 20, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
 
@@ -43,8 +47,8 @@ Buffer {
         "           first.                       ",
         "  ↳ Steer: Inspect the current result   ",
         "           before continuing.           ",
-        "… 3 hidden · esc steers · ⌥ + ↑ edit    ",
-        "    queue                               ",
+        "… 3 hidden · esc steers                 ",
+        "    ⌥ + ↑ edit queue                    ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
@@ -60,9 +64,13 @@ Buffer {
         x: 11, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 29, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 36, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 13, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 16, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 23, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 9, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 9, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 20, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
 
@@ -106,7 +114,10 @@ Buffer {
         x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 12, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
         x: 78, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 5, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 15, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 20, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 39, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
@@ -151,7 +162,10 @@ Buffer {
         x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 12, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
         x: 78, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 5, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 15, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 20, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 39, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

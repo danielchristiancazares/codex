@@ -274,9 +274,12 @@ pub(crate) fn compose_rate_limit_data_many(
                 format!(
                     "{} {} limit",
                     limit_bucket_label,
-                    primary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ false)
-                    ))
+                    primary_label
+                        .clone()
+                        .unwrap_or_else(|| {
+                            capitalize_first(fallback_limit_label(/*is_secondary*/ false))
+                        })
+                        .to_lowercase()
                 )
             } else {
                 format!(
@@ -301,9 +304,12 @@ pub(crate) fn compose_rate_limit_data_many(
                 format!(
                     "{} {} limit",
                     limit_bucket_label,
-                    secondary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ true)
-                    ))
+                    secondary_label
+                        .clone()
+                        .unwrap_or_else(|| {
+                            capitalize_first(fallback_limit_label(/*is_secondary*/ true))
+                        })
+                        .to_lowercase()
                 )
             } else {
                 format!(

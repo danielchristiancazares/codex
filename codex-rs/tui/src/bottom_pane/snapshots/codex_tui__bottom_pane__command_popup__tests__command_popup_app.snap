@@ -9,7 +9,9 @@ Buffer {
         "  /approve  approve one retry of a recent auto-review denial            ",
     ],
     styles: [
-        x: 0, y: 0, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 12, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 52, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 3, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 6, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

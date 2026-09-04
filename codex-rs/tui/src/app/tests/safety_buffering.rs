@@ -760,14 +760,15 @@ goals = true
     }
 
     drive_until_request_count(&mut app, &mut app_server, &server, expected_request_count).await;
-    let mut replayed_history = String::new();
-    while let Ok(event) = app_event_rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = event {
-            replayed_history.push_str(&lines_to_single_string(
-                &cell.transcript_lines(/*width*/ 80),
-            ));
-        }
-    }
+    let replayed_history = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+        .filter_map(|event| match event {
+            AppEvent::InsertHistoryCell(cell) => {
+                Some(lines_to_single_string(&cell.transcript_lines(/*width*/ 80)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
     assert_eq!(
         replayed_history.contains("Conversation interrupted"),
         scenario == SafetyRetryScenario::InterruptedPrevious
@@ -786,7 +787,8 @@ goals = true
             .lines()
             .skip_while(|line| !line.contains(RETRY_PROMPT))
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n")
+            .replace(&source_thread_id.to_string(), "THREAD_ID");
         insta::assert_snapshot!("safety_retry_committed_steer_history", rendered_retry);
     }
 

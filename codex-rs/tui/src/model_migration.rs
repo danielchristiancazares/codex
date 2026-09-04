@@ -126,7 +126,10 @@ pub(crate) fn migration_copy_for_models(
             "You can continue using {current_model} if you prefer."
         )));
     } else {
-        content.push(Line::from("Press enter to continue".dim()));
+        content.push(key_hint::action_hint_line(
+            "",
+            [(key_hint::plain(KeyCode::Enter), "continue")],
+        ));
     }
 
     ModelMigrationCopy {

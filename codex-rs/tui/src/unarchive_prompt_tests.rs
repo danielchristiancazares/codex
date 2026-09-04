@@ -40,7 +40,7 @@ fn resume_prompt_snapshot() {
     › 1. Unarchive and resume
       2. Cancel
 
-    Press enter to continue or esc to cancel
+      enter confirm · esc cancel
     ");
 }
 
@@ -58,7 +58,7 @@ fn fork_prompt_cancel_snapshot() {
       1. Unarchive and fork
     › 2. Cancel
 
-    Press enter to continue or esc to cancel
+      enter confirm · esc cancel
     ");
     assert_eq!(
         screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),

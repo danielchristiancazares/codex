@@ -82,6 +82,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 #[cfg(test)]
 use codex_utils_cli::format_env_display;
 use ratatui::prelude::*;
+#[cfg(test)]
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -139,6 +140,10 @@ pub(crate) use session::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "transcript_showcase_tests.rs"]
+mod transcript_showcase_tests;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HistoryRenderMode {

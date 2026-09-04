@@ -108,7 +108,7 @@ impl HistoryCell for ProposedPlanCell {
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
         self.rendered_lines.render(width, || {
             let mut lines = vec![
-                HyperlinkLine::new(vec!["• ".dim(), "Proposed Plan".bold()].into()),
+                HyperlinkLine::new(vec!["• ".dim(), "Proposed plan".bold()].into()),
                 HyperlinkLine::new(Line::from(" ")),
             ];
 
@@ -243,7 +243,7 @@ impl HistoryCell for PlanUpdateCell {
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
-        let mut lines = vec![Line::from("Updated Plan")];
+        let mut lines = vec![Line::from("Updated plan")];
         if let Some(explanation) = self
             .explanation
             .as_ref()

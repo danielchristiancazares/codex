@@ -1,0 +1,28 @@
+---
+source: tui/src/motion.rs
+expression: states
+---
+[
+    (
+        "animated emphasized",
+        Some(
+            Span::from("•").bold(),
+        ),
+    ),
+    (
+        "animated resting",
+        Some(
+            Span::from("•"),
+        ),
+    ),
+    (
+        "reduced static",
+        Some(
+            Span::from("•"),
+        ),
+    ),
+    (
+        "reduced hidden",
+        None,
+    ),
+]

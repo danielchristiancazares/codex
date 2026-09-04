@@ -94,7 +94,7 @@ fn tab_bar_lines(tabs: &[SelectionTab], active_idx: usize, width: u16) -> Vec<Li
 
 fn tab_unit(label: &str, active: bool) -> Vec<Span<'static>> {
     if active {
-        let style = accent_style();
+        let style = accent_style().underlined();
         vec![
             "[".set_style(style),
             label.to_string().set_style(style),

@@ -41,6 +41,8 @@ use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::resume_picker::SessionSelection;
+use crate::style::StatusTone;
+use crate::style::status_style;
 use crate::tui;
 use crate::tui::FrameRequester;
 use crate::tui::InlineViewportPlacement;
@@ -515,7 +517,10 @@ impl HistoryCell for StartupSessionHeader {
             );
             let access = if self.yolo_mode {
                 vec![
-                    "  YOLO mode".magenta().bold(),
+                    Span::styled(
+                        "  [!] Unrestricted access",
+                        status_style(StatusTone::Attention),
+                    ),
                     "  ".into(),
                     "/permissions".cyan(),
                     " to change".dim(),
@@ -566,7 +571,7 @@ impl HistoryCell for StartupSessionHeader {
             )),
         ];
         if self.yolo_mode {
-            lines.push(Line::from("permissions: YOLO mode"));
+            lines.push(Line::from("permissions: [!] unrestricted access"));
         }
         lines
     }

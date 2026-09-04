@@ -1,0 +1,40 @@
+---
+source: tui/src/history_cell/transcript_showcase_tests.rs
+expression: render_showcase(120)
+---
+› Can you check why the Grafana client silently drops retry errors, then send me a patch and a plan for finishing the
+│ cleanup?
+
+• Looked at the retry helper and its tests; the timeout branch returns early without logging, so failures never surface.
+  I'll patch that path and outline the rest as a plan.
+
+• Explored
+  ├ Searched grafana
+  ├ Read grafana_client.rs
+  └ Read grafana_client_tests.rs
+
+• Ran 1 command
+  └ cargo test -p grafana_client --quiet
+    test result: ok. 4 passed; 0 failed
+
+• Edited src/net/grafana_client.rs (+4 -1)
+
+• Plan 1/3
+  │ Finish the Grafana client cleanup in three steps.
+  ├ ✓ Log the timeout reason before returning the cached response
+  ├ ● Add a regression test for silent timeout drops
+  └ ○ Document retry/backoff behavior in the client's module docs
+
+• Fixed it — timeouts now log via warn! before falling back to the cached response, and I added a regression test. Two
+  things left:
+
+  - Document the retry/backoff behavior in the module docs
+  - Consider surfacing a metric for timeout frequency
+
+  Let me know if you'd like the metric added now or later.
+
+• Running 1 command
+  └ cargo test -p grafana_client --quiet
+    test retry::backs_off_on_timeout ... ok
+
+✦ Worked for 47s

@@ -43,8 +43,9 @@ pub(crate) fn new_patch_event(
 pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Failure title
-    lines.push(Line::from("✘ Failed to apply patch".magenta().bold()));
+    // Failure title. Red matches every other failure indicator in the transcript (approvals,
+    // image generation, hooks); magenta is reserved for the Codex brand accent, not error tone.
+    lines.push(Line::from("✗ Failed to apply patch".red().bold()));
 
     if !stderr.trim().is_empty() {
         let output = output_lines(
@@ -70,7 +71,7 @@ pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString, cwd: &Path) ->
         .unwrap_or_else(|| path.into_string());
 
     let lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Viewed Image".bold()].into(),
+        vec!["• ".dim(), "Viewed image".bold()].into(),
         vec!["  └ ".dim(), display_path.dim()].into(),
     ];
 
@@ -87,7 +88,7 @@ pub(crate) fn new_image_generation_call(
     let heading = if status == "failed" {
         vec!["✗ ".red().bold(), "Image generation failed".bold()].into()
     } else {
-        vec!["• ".dim(), "Generated Image:".bold()].into()
+        vec!["• ".dim(), "Generated image:".bold()].into()
     };
     let mut lines: Vec<Line<'static>> = vec![heading, vec!["  └ ".dim(), detail.dim()].into()];
     if let Some(saved_path) = saved_path {
@@ -99,3 +100,7 @@ pub(crate) fn new_image_generation_call(
 
     PlainHistoryCell { lines }
 }
+
+#[cfg(test)]
+#[path = "patches_tests.rs"]
+mod tests;

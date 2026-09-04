@@ -6,4 +6,4 @@ expression: normalized_backend_snapshot(terminal.backend())
 "────────────────────────────────────────────────────────────────────────────────"
 "│›                                                                              "
 "────────────────────────────────────────────────────────────────────────────────"
-"  GPT 5.4 XHigh Fast · Context 100% left · /tmp/project                         "
+"  GPT 5.4 XHigh Fast · 100% context left · /tmp/project                         "

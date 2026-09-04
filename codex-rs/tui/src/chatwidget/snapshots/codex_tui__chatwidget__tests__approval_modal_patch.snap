@@ -1,14 +1,19 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-expression: contents
+expression: normalize_snapshot_paths(contents)
 ---
-  Would you like to make the following edits?
+
+
+  Apply proposed changes?
 
   Description: The model wants to apply changes
   Destination: /tmp/project/README.md
 
-› 1. Yes, proceed (y)
-  2. Yes, and don't ask again for these files (a)
-  3. No, and tell Codex what to do differently (esc)
+› 1. Apply changes (y)                       Applies only these proposed
+                                         changes.
+  2. Allow these paths for this session (a)  Allows changes to these paths for
+                                         this session.
+  3. Tell Codex what to do instead (esc)       Keeps these proposed changes
+                                         from being applied.
 
-  Press enter to confirm or esc to cancel
+  enter select · esc cancel

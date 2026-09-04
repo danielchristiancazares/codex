@@ -1011,7 +1011,7 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
 pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'static> {
     if let Some(percent) = percent {
         let percent = percent.clamp(0, 100);
-        return Line::from(vec![Span::from(format!("Context {percent}% left")).dim()]);
+        return Line::from(vec![Span::from(format!("{percent}% context left")).dim()]);
     }
 
     if let Some(tokens) = used_tokens {
@@ -1019,7 +1019,7 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
         return Line::from(vec![Span::from(format!("Context {used_fmt} used")).dim()]);
     }
 
-    Line::from(vec![Span::from("Context 100% left").dim()])
+    Line::from(vec![Span::from("100% context left").dim()])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

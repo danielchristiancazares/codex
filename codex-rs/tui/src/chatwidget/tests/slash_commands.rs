@@ -415,7 +415,7 @@ async fn assert_cancelled_queued_menu_drains_next_input(
 async fn queued_slash_menu_cancel_drains_next_input() {
     assert_cancelled_queued_menu_drains_next_input(
         "/model",
-        "Select Model",
+        "Select model",
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
     )
     .await;
@@ -433,7 +433,7 @@ async fn queued_slash_menu_cancel_drains_next_input() {
     .await;
     assert_cancelled_queued_menu_drains_next_input(
         "/permissions",
-        "Update Model Permissions",
+        "Update model permissions",
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
     )
     .await;
@@ -477,7 +477,7 @@ async fn queued_settings_selection_applies_before_next_input() {
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(
-        popup.contains("Select Model and Effort"),
+        popup.contains("Select model"),
         "expected model menu to open; popup:\n{popup}"
     );
 
@@ -2597,7 +2597,7 @@ async fn queued_menu_slash_keeps_agent_turn_complete_notification() {
         chat.pending_notification,
         Some(Notification::AgentTurnComplete { ref response }) if response == "Done"
     );
-    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("Select Model"));
+    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("Select model"));
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
 }
 

@@ -2,8 +2,8 @@
 source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
-"  Google Calendar  [Skill] Find availability and plan event changes     "
-"  Google Calendar  [App] Look up events and availability                "
+"  › Google Calendar  [Skill] Find availability and plan event changes   "
+"    Google Calendar  [App] Look up events and availability              "
 "                                                                        "
 "  Press enter to insert or esc to close                                 "
 "────────────────────────────────────────────────────────────────────────"

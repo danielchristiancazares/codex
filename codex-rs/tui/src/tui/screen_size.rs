@@ -79,5 +79,9 @@ impl Tui {
 }
 
 #[cfg(test)]
+#[path = "resize_reflow_role_tests.rs"]
+mod resize_reflow_role_tests;
+
+#[cfg(test)]
 #[path = "screen_size_tests.rs"]
 mod tests;

@@ -7,15 +7,12 @@ use crate::terminal_palette::default_bg;
 use crate::terminal_palette::default_fg;
 use crate::terminal_palette::effective_stdout_color_level;
 use crate::terminal_palette::rgb_color;
-use crate::terminal_palette::stdout_color_level;
 use ratatui::style::Color;
 use ratatui::style::Style;
 
-const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (0, 95, 135);
-const DARK_BG_ATTACHMENT_RGB: (u8, u8, u8) = (0, 175, 175);
-const ATTACHMENT_CHIP_BG_ALPHA: f32 = 0.16;
+const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (132, 0, 120);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StatusTone {
     Success,
     Attention,
@@ -24,22 +21,42 @@ pub(crate) enum StatusTone {
 
 /// Semantic status colors that preserve the terminal's configured palette.
 pub(crate) fn status_style(tone: StatusTone) -> Style {
-    status_style_for(tone, default_bg(), effective_stdout_color_level())
+    status_style_for(tone, effective_stdout_color_level())
 }
 
-fn status_style_for(
-    tone: StatusTone,
-    terminal_bg: Option<(u8, u8, u8)>,
-    color_level: StdoutColorLevel,
-) -> Style {
-    let light = terminal_bg.is_some_and(is_light);
-    let color = match (tone, color_level) {
-        (_, StdoutColorLevel::Unknown) => Color::Reset,
-        (StatusTone::Success, _) => Color::Green,
-        (StatusTone::Failure, _) => Color::Red,
-        // Yellow can disappear on light themes; use it only with a known dark background.
-        (StatusTone::Attention, _) if light || terminal_bg.is_none() => Color::Reset,
-        (StatusTone::Attention, _) => Color::Yellow,
+fn status_style_for(tone: StatusTone, color_level: StdoutColorLevel) -> Style {
+    let color = match tone {
+        StatusTone::Success => Color::Green,
+        StatusTone::Attention => Color::Reset,
+        StatusTone::Failure => Color::Red,
+    };
+    emphasized_ansi_style(color, color_level)
+}
+
+/// Returns the low-emphasis style for supporting copy and metadata.
+pub(crate) fn secondary_style() -> Style {
+    Style::default().dim()
+}
+
+/// Returns the high-contrast, non-color-dependent style for shortcut tokens.
+pub(crate) fn key_hint_style() -> Style {
+    Style::default().fg(Color::Reset).bold().not_dim()
+}
+
+/// Returns the Codex identity style used by a single meaningful visual mark.
+pub(crate) fn brand_style() -> Style {
+    brand_style_for(effective_stdout_color_level())
+}
+
+fn brand_style_for(color_level: StdoutColorLevel) -> Style {
+    emphasized_ansi_style(Color::Magenta, color_level)
+}
+
+fn emphasized_ansi_style(color: Color, color_level: StdoutColorLevel) -> Style {
+    let color = if color_level == StdoutColorLevel::Unknown {
+        Color::Reset
+    } else {
+        color
     };
     Style::default().fg(color).bold()
 }
@@ -56,40 +73,45 @@ pub fn proposed_plan_style() -> Style {
 
 /// Returns a low-contrast rule style for separators within markdown tables.
 pub(crate) fn table_separator_style() -> Style {
-    table_separator_style_for(default_fg(), default_bg(), stdout_color_level())
+    table_separator_style_for(default_fg(), default_bg(), effective_stdout_color_level())
 }
 
 /// Returns the shared accent style for active or selected TUI controls.
 pub(crate) fn accent_style() -> Style {
-    accent_style_for(default_bg())
+    accent_style_for(default_bg(), effective_stdout_color_level())
 }
 
 /// Returns the shared chip style for image attachments and references.
 pub(crate) fn attachment_chip_style() -> Style {
-    attachment_chip_style_for(default_bg(), stdout_color_level())
+    attachment_chip_style_for(default_bg(), effective_stdout_color_level())
 }
 
-/// Returns the style for a user-authored message using the provided terminal background.
-pub fn user_message_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
-    match terminal_bg {
-        Some(bg) => Style::default().bg(user_message_bg(bg)),
-        None => Style::default(),
-    }
+/// Returns the flat style for a user-authored message.
+pub fn user_message_style_for(_terminal_bg: Option<(u8, u8, u8)>) -> Style {
+    Style::default()
 }
 
-pub fn proposed_plan_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
-    match terminal_bg {
-        Some(bg) => Style::default().bg(proposed_plan_bg(bg)),
-        None => Style::default(),
-    }
+pub fn proposed_plan_style_for(_terminal_bg: Option<(u8, u8, u8)>) -> Style {
+    Style::default()
 }
 
 /// Returns the shared accent style for the provided terminal background.
-pub(crate) fn accent_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
-    if terminal_bg.is_some_and(is_light) {
-        Style::default().fg(best_color(LIGHT_BG_ACCENT_RGB)).bold()
-    } else {
-        Style::default().fg(Color::Cyan).bold()
+fn accent_style_for(terminal_bg: Option<(u8, u8, u8)>, color_level: StdoutColorLevel) -> Style {
+    match color_level {
+        StdoutColorLevel::Unknown => emphasized_ansi_style(Color::Reset, color_level),
+        StdoutColorLevel::Ansi16 if terminal_bg.is_some_and(is_light) => {
+            emphasized_ansi_style(Color::Reset, color_level)
+        }
+        StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256
+            if terminal_bg.is_some_and(is_light) =>
+        {
+            Style::default()
+                .fg(best_color_for_level(LIGHT_BG_ACCENT_RGB, color_level))
+                .bold()
+        }
+        StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256 | StdoutColorLevel::Ansi16 => {
+            emphasized_ansi_style(Color::Magenta, color_level)
+        }
     }
 }
 
@@ -97,31 +119,7 @@ fn attachment_chip_style_for(
     terminal_bg: Option<(u8, u8, u8)>,
     color_level: StdoutColorLevel,
 ) -> Style {
-    if terminal_bg.is_none()
-        || matches!(
-            color_level,
-            StdoutColorLevel::Ansi16 | StdoutColorLevel::Unknown
-        )
-    {
-        return Style::default().fg(Color::Cyan).bold();
-    }
-
-    let foreground_rgb = if terminal_bg.is_some_and(is_light) {
-        LIGHT_BG_ACCENT_RGB
-    } else {
-        DARK_BG_ATTACHMENT_RGB
-    };
-    let mut style = Style::default()
-        .fg(best_color_for_level(foreground_rgb, color_level))
-        .bold();
-    let terminal_bg = terminal_bg.expect("terminal background checked above");
-    let chip_bg = blend(foreground_rgb, terminal_bg, ATTACHMENT_CHIP_BG_ALPHA);
-    style = match color_level {
-        StdoutColorLevel::TrueColor => style.bg(rgb_color(chip_bg)),
-        StdoutColorLevel::Ansi256 => style.bg(best_color_for_level(chip_bg, color_level)),
-        StdoutColorLevel::Ansi16 | StdoutColorLevel::Unknown => unreachable!(),
-    };
-    style
+    accent_style_for(terminal_bg, color_level)
 }
 
 fn table_separator_style_for(
@@ -140,11 +138,6 @@ fn table_separator_style_for(
     }
 }
 
-#[allow(clippy::disallowed_methods)]
-pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
-    best_color(user_message_bg_rgb(terminal_bg))
-}
-
 pub(crate) fn user_message_bg_rgb(terminal_bg: (u8, u8, u8)) -> (u8, u8, u8) {
     let (top, alpha) = if is_light(terminal_bg) {
         ((0, 0, 0), 0.04)
@@ -154,11 +147,6 @@ pub(crate) fn user_message_bg_rgb(terminal_bg: (u8, u8, u8)) -> (u8, u8, u8) {
     blend(top, terminal_bg, alpha)
 }
 
-#[allow(clippy::disallowed_methods)]
-pub fn proposed_plan_bg(terminal_bg: (u8, u8, u8)) -> Color {
-    user_message_bg(terminal_bg)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,80 +154,71 @@ mod tests {
     use ratatui::style::Modifier;
 
     #[test]
-    fn status_colors_preserve_light_terminal_themes() {
-        for level in [StdoutColorLevel::TrueColor, StdoutColorLevel::Ansi256] {
-            for bg in [(255, 255, 255), (130, 130, 130), (220, 210, 180)] {
-                for (tone, color) in [
-                    (StatusTone::Success, Color::Green),
-                    (StatusTone::Attention, Color::Reset),
-                    (StatusTone::Failure, Color::Red),
-                ] {
-                    assert_eq!(
-                        status_style_for(tone, Some(bg), level),
-                        Style::default().fg(color).bold(),
-                    );
-                }
-            }
-            for bg in [(0, 0, 0), (0, 218, 0)] {
-                assert_eq!(
-                    status_style_for(StatusTone::Attention, Some(bg), level),
-                    Style::default().fg(Color::Yellow).bold(),
-                );
-            }
+    fn status_styles_use_color_and_text_redundancy() {
+        for level in [
+            StdoutColorLevel::TrueColor,
+            StdoutColorLevel::Ansi256,
+            StdoutColorLevel::Ansi16,
+        ] {
             assert_eq!(
-                status_style_for(StatusTone::Attention, /*terminal_bg*/ None, level),
-                Style::default().fg(Color::Reset).bold(),
+                [
+                    status_style_for(StatusTone::Success, level),
+                    status_style_for(StatusTone::Attention, level),
+                    status_style_for(StatusTone::Failure, level),
+                ],
+                [
+                    Style::default().fg(Color::Green).bold(),
+                    Style::default().fg(Color::Reset).bold(),
+                    Style::default().fg(Color::Red).bold(),
+                ]
             );
         }
+        assert_eq!(
+            [
+                status_style_for(StatusTone::Success, StdoutColorLevel::Unknown),
+                status_style_for(StatusTone::Attention, StdoutColorLevel::Unknown),
+                status_style_for(StatusTone::Failure, StdoutColorLevel::Unknown),
+            ],
+            [Style::default().fg(Color::Reset).bold(); 3]
+        );
     }
 
     #[test]
-    fn status_colors_preserve_ansi16_and_no_color_fallbacks() {
-        for (tone, light, dark) in [
-            (StatusTone::Success, Color::Green, Color::Green),
-            (StatusTone::Attention, Color::Reset, Color::Yellow),
-            (StatusTone::Failure, Color::Red, Color::Red),
-        ] {
-            for (bg, expected) in [((255, 255, 255), light), ((0, 0, 0), dark)] {
-                assert_eq!(
-                    status_style_for(tone, Some(bg), StdoutColorLevel::Ansi16),
-                    Style::default().fg(expected).bold()
-                );
-                assert_eq!(
-                    status_style_for(tone, Some(bg), StdoutColorLevel::Unknown),
-                    Style::default().fg(Color::Reset).bold()
-                );
-            }
-        }
+    fn brand_accent_and_key_hint_styles_adapt_without_losing_emphasis() {
+        assert_eq!(
+            [
+                brand_style_for(StdoutColorLevel::TrueColor),
+                brand_style_for(StdoutColorLevel::Unknown),
+                accent_style_for(Some((0, 0, 0)), StdoutColorLevel::TrueColor),
+                accent_style_for(Some((255, 255, 255)), StdoutColorLevel::TrueColor),
+                accent_style_for(Some((0, 0, 0)), StdoutColorLevel::Ansi16),
+                accent_style_for(Some((255, 255, 255)), StdoutColorLevel::Ansi16),
+                accent_style_for(Some((0, 0, 0)), StdoutColorLevel::Unknown),
+            ],
+            [
+                Style::default().fg(Color::Magenta).bold(),
+                Style::default().fg(Color::Reset).bold(),
+                Style::default().fg(Color::Magenta).bold(),
+                Style::default()
+                    .fg(best_color_for_level(
+                        LIGHT_BG_ACCENT_RGB,
+                        StdoutColorLevel::TrueColor
+                    ))
+                    .bold(),
+                Style::default().fg(Color::Magenta).bold(),
+                Style::default().fg(Color::Reset).bold(),
+                Style::default().fg(Color::Reset).bold(),
+            ]
+        );
+        assert!(key_hint_style().add_modifier.contains(Modifier::BOLD));
+        assert!(key_hint_style().sub_modifier.contains(Modifier::DIM));
     }
 
     #[test]
-    fn accent_style_uses_darker_cyan_on_light_backgrounds() {
-        let style = accent_style_for(Some((255, 255, 255)));
-
-        assert_eq!(style.fg, Some(best_color(LIGHT_BG_ACCENT_RGB)));
-        assert!(style.add_modifier.contains(Modifier::BOLD));
-    }
-
-    #[test]
-    fn accent_style_uses_cyan_on_dark_or_unknown_backgrounds() {
-        let expected = Style::default().fg(Color::Cyan).bold();
-
-        assert_eq!(accent_style_for(Some((0, 0, 0))), expected);
-        assert_eq!(accent_style_for(/*terminal_bg*/ None), expected);
-    }
-
-    #[test]
-    fn attachment_chip_style_blends_teal_into_the_terminal_background() {
+    fn attachment_chip_style_uses_the_shared_accent_without_a_fill() {
         assert_eq!(
             attachment_chip_style_for(Some((0, 0, 0)), StdoutColorLevel::TrueColor),
-            Style::default()
-                .fg(best_color_for_level(
-                    DARK_BG_ATTACHMENT_RGB,
-                    StdoutColorLevel::TrueColor
-                ))
-                .bg(rgb_color((0, 28, 28)))
-                .bold()
+            Style::default().fg(Color::Magenta).bold()
         );
         assert_eq!(
             attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::TrueColor),
@@ -248,26 +227,25 @@ mod tests {
                     LIGHT_BG_ACCENT_RGB,
                     StdoutColorLevel::TrueColor
                 ))
-                .bg(rgb_color((214, 229, 235)))
                 .bold()
         );
     }
 
     #[test]
-    fn attachment_chip_style_uses_cyan_when_palette_information_is_incomplete() {
-        let expected = Style::default().fg(Color::Cyan).bold();
-
+    fn attachment_chip_fallbacks_follow_the_shared_accent_role() {
         assert_eq!(
-            attachment_chip_style_for(/*terminal_bg*/ None, StdoutColorLevel::TrueColor),
-            expected
-        );
-        assert_eq!(
-            attachment_chip_style_for(Some((0, 0, 0)), StdoutColorLevel::Ansi16),
-            expected
-        );
-        assert_eq!(
-            attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::Unknown),
-            expected
+            [
+                attachment_chip_style_for(/*terminal_bg*/ None, StdoutColorLevel::TrueColor),
+                attachment_chip_style_for(Some((0, 0, 0)), StdoutColorLevel::Ansi16),
+                attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::Ansi16),
+                attachment_chip_style_for(Some((255, 255, 255)), StdoutColorLevel::Unknown),
+            ],
+            [
+                Style::default().fg(Color::Magenta).bold(),
+                Style::default().fg(Color::Magenta).bold(),
+                Style::default().fg(Color::Reset).bold(),
+                Style::default().fg(Color::Reset).bold(),
+            ]
         );
     }
 
@@ -313,5 +291,71 @@ mod tests {
             ),
             expected
         );
+    }
+
+    #[test]
+    fn semantic_styles_snapshot_across_terminal_capabilities() {
+        let fixtures = [
+            (
+                "dark truecolor",
+                Some((12, 15, 18)),
+                StdoutColorLevel::TrueColor,
+            ),
+            (
+                "light truecolor",
+                Some((245, 245, 240)),
+                StdoutColorLevel::TrueColor,
+            ),
+            (
+                "dark 256-color",
+                Some((12, 15, 18)),
+                StdoutColorLevel::Ansi256,
+            ),
+            (
+                "light 256-color",
+                Some((245, 245, 240)),
+                StdoutColorLevel::Ansi256,
+            ),
+            (
+                "dark 16-color",
+                Some((12, 15, 18)),
+                StdoutColorLevel::Ansi16,
+            ),
+            (
+                "light 16-color",
+                Some((245, 245, 240)),
+                StdoutColorLevel::Ansi16,
+            ),
+            ("no color", None, StdoutColorLevel::Unknown),
+        ]
+        .map(|(environment, terminal_bg, color_level)| {
+            (
+                environment,
+                [
+                    ("brand", brand_style_for(color_level)),
+                    ("accent", accent_style_for(terminal_bg, color_level)),
+                    (
+                        "success",
+                        status_style_for(StatusTone::Success, color_level),
+                    ),
+                    (
+                        "attention",
+                        status_style_for(StatusTone::Attention, color_level),
+                    ),
+                    (
+                        "failure",
+                        status_style_for(StatusTone::Failure, color_level),
+                    ),
+                    ("key hint", key_hint_style()),
+                    ("secondary", secondary_style()),
+                    (
+                        "attachment",
+                        attachment_chip_style_for(terminal_bg, color_level),
+                    ),
+                ],
+            )
+        });
+
+        insta::assert_debug_snapshot!("semantic_styles_across_terminal_capabilities", fixtures);
     }
 }

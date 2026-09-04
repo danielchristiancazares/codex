@@ -5,4 +5,4 @@ expression: "render_lines(&lines).join(\"\\n\")"
   >_ OpenAI Codex vtest
   gpt-5.6-sol xhigh · fast  /model to change
   project
-  YOLO mode  /permissions to change
+  [!] Unrestricted access  /permissions to …

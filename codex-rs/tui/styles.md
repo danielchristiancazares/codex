@@ -7,10 +7,11 @@
 # Foreground colors
 
 - **Default:** Most of the time, just use the default foreground color. `reset` can help get it back.
-- **User input tips, selection, and status indicators:** Use ANSI `cyan`.
+- **Codex mark, active selection, and user input tips:** Use ANSI `magenta` with a
+  text or shape cue so meaning never depends on color alone.
 - **Success and additions:** Use ANSI `green`.
 - **Errors, failures and deletions:** Use ANSI `red`.
-- **Codex:** Use ANSI `magenta`.
+- **Supporting status:** Prefer the default foreground with `bold` or `dim` hierarchy.
 
 # Avoid
 

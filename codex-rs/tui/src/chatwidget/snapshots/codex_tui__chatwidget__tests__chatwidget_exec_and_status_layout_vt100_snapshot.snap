@@ -36,9 +36,9 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
   ├ Searched Change Approved
   └ Read diff_render.rs
 
-✦ Investigating rendering code · 0s · Esc interrupt
+✦ Investigating rendering code                                0s · Esc interrupt
 
 ────────────────────────────────────────────────────────────────────────────────
 │› Summarize recent commits
 ────────────────────────────────────────────────────────────────────────────────
-  Tab queue this message                                     Context 100% left
+  Tab queue this message                                     100% context left

@@ -5,19 +5,16 @@ expression: "render(&widget, Rect::new(0, 0, 40, 2))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 40, height: 2 },
     content: [
-        " LM Studio   Ollama                     ",
+        "   1. LM Studio   › 2. Ollama           ",
         " Local Ollama server (Responses API, de ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 1, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: UNDERLINED,
-        x: 2, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 12, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: NONE,
-        x: 13, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: UNDERLINED,
-        x: 14, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: NONE,
-        x: 20, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 1, y: 1, fg: DarkGray, bg: Reset, underline: Reset, modifier: ITALIC,
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
+        x: 7, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 17, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 30, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 1, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
         x: 39, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

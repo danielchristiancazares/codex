@@ -86,7 +86,7 @@ async fn resumed_session_hides_unknown_token_usage_until_an_update_arrives() {
     chat.refresh_status_line();
     assert_eq!(
         status_line_text(&chat),
-        Some("Context 30% left · Context used 70% · 0 in · 0 out".to_string())
+        Some("30% context left · Context used 70% · 0 in · 0 out".to_string())
     );
 }
 
@@ -3149,7 +3149,7 @@ async fn status_line_context_remaining_renders_labeled_percent() {
 
     assert_eq!(
         status_line_text(&chat),
-        Some("Context 100% left".to_string())
+        Some("100% context left".to_string())
     );
     assert!(
         drain_insert_history(&mut rx).is_empty(),

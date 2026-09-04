@@ -2,16 +2,22 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::color::blend;
+use crate::color::strengthen_contrast;
+use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::default_bg;
 use crate::terminal_palette::default_fg;
+use crate::terminal_palette::effective_stdout_color_level;
+use crate::terminal_palette::rgb_color;
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
+const SHIMMER_PADDING: usize = 8;
+const SHIMMER_SWEEP_SECONDS: f32 = 2.4;
+const SHIMMER_BAND_HALF_WIDTH: f32 = 4.0;
+const SHIMMER_CONTRAST_BOOST: f32 = 0.28;
 
 fn elapsed_since_start() -> Duration {
     let start = PROCESS_START.get_or_init(Instant::now);
@@ -23,58 +29,176 @@ pub(super) fn shimmer_spans(text: &str) -> Vec<Span<'static>> {
     if chars.is_empty() {
         return Vec::new();
     }
-    // Use time-based sweep synchronized to process start.
-    let padding = 10usize;
-    let period = chars.len() + padding * 2;
-    let sweep_seconds = 2.0f32;
-    let pos_f =
-        (elapsed_since_start().as_secs_f32() % sweep_seconds) / sweep_seconds * (period as f32);
-    let pos = pos_f as usize;
-    let has_true_color = supports_color::on_cached(supports_color::Stream::Stdout)
-        .map(|level| level.has_16m)
-        .unwrap_or(false);
-    let band_half_width = 5.0;
 
+    let period = chars.len() + SHIMMER_PADDING * 2;
+    let position = ((elapsed_since_start().as_secs_f32() % SHIMMER_SWEEP_SECONDS)
+        / SHIMMER_SWEEP_SECONDS
+        * period as f32) as usize;
+    shimmer_spans_at_position(
+        chars,
+        position,
+        default_fg().zip(default_bg()),
+        effective_stdout_color_level(),
+    )
+}
+
+fn shimmer_spans_at_position(
+    chars: Vec<char>,
+    position: usize,
+    terminal_colors: Option<((u8, u8, u8), (u8, u8, u8))>,
+    color_level: StdoutColorLevel,
+) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(chars.len());
-    let base_color = default_fg().unwrap_or((128, 128, 128));
-    let highlight_color = default_bg().unwrap_or((255, 255, 255));
-    for (i, ch) in chars.iter().enumerate() {
-        let i_pos = i as isize + padding as isize;
-        let pos = pos as isize;
-        let dist = (i_pos - pos).abs() as f32;
+    for (index, ch) in chars.into_iter().enumerate() {
+        let char_position = index as isize + SHIMMER_PADDING as isize;
+        let distance = (char_position - position as isize).abs() as f32;
 
-        let t = if dist <= band_half_width {
-            let x = std::f32::consts::PI * (dist / band_half_width);
+        let intensity = if distance <= SHIMMER_BAND_HALF_WIDTH {
+            let x = std::f32::consts::PI * (distance / SHIMMER_BAND_HALF_WIDTH);
             0.5 * (1.0 + x.cos())
         } else {
             0.0
         };
-        let style = if has_true_color {
-            let highlight = t.clamp(0.0, 1.0);
-            let (r, g, b) = blend(highlight_color, base_color, highlight * 0.9);
-            // Allow custom RGB colors, as the implementation is thoughtfully
-            // adjusting the level of the default foreground color.
-            #[allow(clippy::disallowed_methods)]
-            {
-                Style::default()
-                    .fg(Color::Rgb(r, g, b))
-                    .add_modifier(Modifier::BOLD)
+        let style = match (color_level, terminal_colors) {
+            (StdoutColorLevel::TrueColor, Some((foreground, background))) => {
+                truecolor_style(intensity, foreground, background)
             }
-        } else {
-            color_for_level(t)
+            (
+                StdoutColorLevel::TrueColor
+                | StdoutColorLevel::Ansi256
+                | StdoutColorLevel::Ansi16
+                | StdoutColorLevel::Unknown,
+                _,
+            ) => emphasis_for_level(intensity),
         };
         spans.push(Span::styled(ch.to_string(), style));
     }
     spans
 }
 
-fn color_for_level(intensity: f32) -> Style {
-    // Tune fallback styling so the shimmer band reads even without RGB support.
-    if intensity < 0.2 {
-        Style::default().add_modifier(Modifier::DIM)
-    } else if intensity < 0.6 {
-        Style::default()
+fn truecolor_style(intensity: f32, foreground: (u8, u8, u8), background: (u8, u8, u8)) -> Style {
+    if intensity <= f32::EPSILON {
+        return Style::default();
+    }
+
+    let color = strengthen_contrast(
+        foreground,
+        background,
+        intensity.clamp(0.0, 1.0) * SHIMMER_CONTRAST_BOOST,
+    );
+    let style = Style::default().fg(rgb_color(color));
+    if intensity >= 0.90 {
+        style.add_modifier(Modifier::BOLD)
     } else {
+        style
+    }
+}
+
+fn emphasis_for_level(intensity: f32) -> Style {
+    if intensity >= 0.90 {
         Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
+
+    use super::*;
+    use crate::color::contrast_ratio;
+
+    #[test]
+    fn shimmer_snapshot_preserves_legibility_across_color_levels() {
+        let chars = || "Working".chars().collect::<Vec<_>>();
+        let position = SHIMMER_PADDING + 3;
+        let cases = [
+            (
+                "dark truecolor",
+                shimmer_spans_at_position(
+                    chars(),
+                    position,
+                    Some(((218, 220, 224), (15, 17, 20))),
+                    StdoutColorLevel::TrueColor,
+                ),
+            ),
+            (
+                "light truecolor",
+                shimmer_spans_at_position(
+                    chars(),
+                    position,
+                    Some(((45, 48, 52), (246, 246, 242))),
+                    StdoutColorLevel::TrueColor,
+                ),
+            ),
+            (
+                "256-color fallback",
+                shimmer_spans_at_position(
+                    chars(),
+                    position,
+                    Some(((218, 220, 224), (15, 17, 20))),
+                    StdoutColorLevel::Ansi256,
+                ),
+            ),
+            (
+                "16-color fallback",
+                shimmer_spans_at_position(
+                    chars(),
+                    position,
+                    Some(((218, 220, 224), (15, 17, 20))),
+                    StdoutColorLevel::Ansi16,
+                ),
+            ),
+            (
+                "no-color fallback",
+                shimmer_spans_at_position(
+                    chars(),
+                    position,
+                    /*terminal_colors*/ None,
+                    StdoutColorLevel::Unknown,
+                ),
+            ),
+        ];
+
+        insta::assert_debug_snapshot!("shimmer_across_terminal_capabilities", cases);
+    }
+
+    #[test]
+    fn truecolor_shimmer_never_weakens_foreground_contrast() {
+        for (foreground, background) in [
+            ((218, 220, 224), (15, 17, 20)),
+            ((45, 48, 52), (246, 246, 242)),
+        ] {
+            let spans = shimmer_spans_at_position(
+                "Working".chars().collect(),
+                SHIMMER_PADDING + 3,
+                Some((foreground, background)),
+                StdoutColorLevel::TrueColor,
+            );
+            let highlighted = spans[3].style.fg.expect("highlight foreground");
+            let Color::Rgb(r, g, b) = highlighted else {
+                panic!("expected derived RGB highlight, got {highlighted:?}");
+            };
+            assert!(
+                contrast_ratio((r, g, b), background) >= contrast_ratio(foreground, background)
+            );
+        }
+    }
+
+    #[test]
+    fn truecolor_without_detected_defaults_uses_modifier_only_fallback() {
+        let spans = shimmer_spans_at_position(
+            "Busy".chars().collect(),
+            SHIMMER_PADDING + 2,
+            /*terminal_colors*/ None,
+            StdoutColorLevel::TrueColor,
+        );
+
+        assert_eq!(
+            spans.iter().map(|span| span.style.fg).collect::<Vec<_>>(),
+            vec![None; 4]
+        );
     }
 }

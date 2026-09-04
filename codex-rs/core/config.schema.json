@@ -3997,8 +3997,8 @@
           "type": "array"
         },
         "status_line_use_colors": {
-          "default": true,
-          "description": "Color status line items with colors derived from the active syntax theme. Defaults to `true`.",
+          "default": false,
+          "description": "Color status line items with colors derived from the active syntax theme. Defaults to `false` for a quieter terminal-native footer.",
           "type": "boolean"
         },
         "terminal_resize_reflow_max_rows": {

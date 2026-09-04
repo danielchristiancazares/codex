@@ -2069,7 +2069,7 @@ async fn plugins_popup_search_no_matches_and_backspace_restores_results() {
         "expected popup to show the typed search query, got:\n{no_matches}"
     );
     assert!(
-        no_matches.contains("no matches"),
+        no_matches.contains("No matching options"),
         "expected popup to render the no-matches UX, got:\n{no_matches}"
     );
 
@@ -3252,6 +3252,36 @@ async fn model_selection_popup_density_snapshot() {
 }
 
 #[tokio::test]
+async fn model_selection_popup_full_viewport_placement_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+
+    let snapshots = [(120, 36), (47, 24)]
+        .map(|(width, height)| {
+            let viewport = Rect::new(0, 0, width, height);
+            let mut buf = Buffer::empty(viewport);
+            let pane_height = chat.desired_height(width).min(height);
+            let pane_area = Rect::new(0, height - pane_height, width, pane_height);
+            chat.render(pane_area, &mut buf);
+            let rows = (0..height)
+                .filter_map(|row| {
+                    let text = (0..width)
+                        .map(|column| buf[(column, row)].symbol())
+                        .collect::<String>();
+                    let text = text.trim_end();
+                    (!text.is_empty()).then(|| format!("{row:02}: {text}"))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("{width}x{height}:\n{rows}")
+        })
+        .join("\n\n");
+
+    assert_chatwidget_snapshot!("model_selection_popup_full_viewport_placement", snapshots);
+}
+
+#[tokio::test]
 async fn provider_selection_popup_snapshot_and_selection_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.thread_id = Some(ThreadId::new());
@@ -3936,7 +3966,7 @@ async fn reasoning_popup_escape_returns_to_model_popup() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
     let after_escape = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(after_escape.contains("Select Model"));
+    assert!(after_escape.contains("Select model"));
     assert!(!after_escape.contains("Select Reasoning Level"));
 }
 

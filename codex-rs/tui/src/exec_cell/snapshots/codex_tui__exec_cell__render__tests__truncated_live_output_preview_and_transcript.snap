@@ -5,7 +5,7 @@ expression: "(preview, transcript)"
 (
     [
         Line::from_iter([
-            Span::from("•").dim(),
+            Span::from("•"),
             Span::from(" "),
             Span::from("Running 1 command").bold(),
         ]),

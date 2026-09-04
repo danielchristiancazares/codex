@@ -10,6 +10,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
+use crate::custom_terminal::InlineViewportState;
 use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::insert_history::InsertHistoryMode;
@@ -230,8 +231,69 @@ async fn inline_viewport_starts_bottom_aligned_and_stays_docked_when_content_shr
     );
 }
 
+#[tokio::test]
+async fn persistent_viewport_redocks_history_after_transient_popup() {
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let screen_size = Size::new(/*width*/ 32, /*height*/ 12);
+    tui.scrollback = ScrollbackStrategy::FullScreen;
+    tui.terminal.last_known_screen_size = screen_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 8,
+        screen_size.width,
+        /*height*/ 4,
+    ));
+    tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+
+    tui.draw_with_resize_reflow(
+        /*height*/ 8,
+        screen_size,
+        InlineViewportPlacement::FollowExisting,
+        InlineViewportRole::Transient,
+        |_| {},
+    )
+    .expect("draw popup viewport");
+    let popup_state = tui.terminal.inline_viewport_state();
+
+    tui.draw_with_resize_reflow(
+        /*height*/ 4,
+        screen_size,
+        InlineViewportPlacement::FollowExisting,
+        InlineViewportRole::Persistent,
+        |_| {},
+    )
+    .expect("restore persistent viewport");
+    let composer_state = tui.terminal.inline_viewport_state();
+
+    assert_eq!(
+        [popup_state, composer_state],
+        [
+            InlineViewportState {
+                area: Rect::new(
+                    /*x*/ 0,
+                    /*y*/ 4,
+                    screen_size.width,
+                    /*height*/ 8,
+                ),
+                visible_history_rows: 2,
+                docked_history_gap_rows: 0,
+            },
+            InlineViewportState {
+                area: Rect::new(
+                    /*x*/ 0,
+                    /*y*/ 8,
+                    screen_size.width,
+                    /*height*/ 4,
+                ),
+                visible_history_rows: 2,
+                docked_history_gap_rows: 4,
+            },
+        ]
+    );
+}
+
 #[test]
-fn full_screen_popup_close_preserves_history_position() {
+fn full_screen_popup_close_restores_history_position() {
     let screen_size = Size::new(/*width*/ 32, /*height*/ 12);
     let backend = VT100Backend::with_scrollback(
         screen_size.width,
@@ -269,7 +331,7 @@ fn full_screen_popup_close_preserves_history_position() {
         screen_size,
         InlineViewportPlacement::FollowExisting,
         ScrollbackStrategy::FullScreen,
-        HistoryTailDock::PreservePosition,
+        HistoryTailDock::Immediate,
     )
     .expect("shrink provider popup viewport");
     assert!(needs_full_repaint);
@@ -299,15 +361,15 @@ fn full_screen_popup_close_preserves_history_position() {
 
     let contents = terminal.backend().vt100().screen().contents();
     assert!(!contents.contains("stale-provider"), "{contents}");
-    insta::assert_snapshot!(contents, @r"
+    insta::assert_snapshot!(contents, @"
     shell-history-marker
+
+
+
+
 
     history-tail-one
     history-tail-two
-
-
-
-
     composer-top
     │› ready
     ────────────────
@@ -327,7 +389,7 @@ fn full_screen_popup_close_preserves_history_position() {
             terminal.visible_history_rows(),
             terminal.docked_history_gap_rows(),
         ),
-        (Rect::new(0, 8, screen_size.width, 4), 3, 0)
+        (Rect::new(0, 8, screen_size.width, 4), 3, 3)
     );
     assert_eq!(terminal.viewport_area.bottom(), screen_size.height);
 
@@ -360,13 +422,14 @@ fn full_screen_popup_close_preserves_history_position() {
     );
 
     let contents = terminal.backend().vt100().screen().contents();
-    insta::assert_snapshot!(contents, @r"
+    insta::assert_snapshot!(contents, @"
+    shell-history-marker
+
+
+
+
     history-tail-one
     history-tail-two
-
-
-
-
     new-history-row
     composer-top
     │› ready

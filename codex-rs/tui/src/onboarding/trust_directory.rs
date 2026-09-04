@@ -10,6 +10,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
+use crate::key_hint;
 use crate::key_hint::KeyBindingListExt;
 use crate::onboarding::keys;
 use crate::onboarding::onboarding_screen::KeyboardHandler;
@@ -80,8 +81,8 @@ impl WidgetRef for &TrustDirectoryWidget {
         column.push("");
 
         let options: Vec<(&str, TrustDirectorySelection)> = vec![
-            ("Yes, continue", TrustDirectorySelection::Trust),
-            ("No, quit", TrustDirectorySelection::Quit),
+            ("Trust this directory", TrustDirectorySelection::Trust),
+            ("Quit Codex", TrustDirectorySelection::Quit),
         ];
 
         for (idx, (text, selection)) in options.iter().enumerate() {
@@ -107,15 +108,17 @@ impl WidgetRef for &TrustDirectoryWidget {
         }
 
         column.push(
-            Line::from(vec![
-                "Press ".dim(),
-                keys::CONFIRM[0].into(),
-                if self.show_windows_create_sandbox_hint {
-                    " to continue and create a sandbox...".dim()
-                } else {
-                    " to continue".dim()
-                },
-            ])
+            key_hint::action_hint_line(
+                "",
+                [(
+                    keys::CONFIRM[0],
+                    if self.show_windows_create_sandbox_hint {
+                        "select and create sandbox…"
+                    } else {
+                        "select"
+                    },
+                )],
+            )
             .inset(Insets::tlbr(
                 /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
             )),
@@ -258,6 +261,19 @@ mod tests {
 
         let mut terminal =
             Terminal::new(VT100Backend::new(/*width*/ 70, /*height*/ 14)).expect("terminal");
+        terminal
+            .draw(|f| (&widget).render_ref(f.area(), f.buffer_mut()))
+            .expect("draw");
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn renders_snapshot_for_narrow_terminal() {
+        let widget = widget(/*error*/ None);
+
+        let mut terminal =
+            Terminal::new(VT100Backend::new(/*width*/ 47, /*height*/ 16)).expect("terminal");
         terminal
             .draw(|f| (&widget).render_ref(f.area(), f.buffer_mut()))
             .expect("draw");

@@ -53,7 +53,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Widget;
 
 use super::selection_popup_common::GenericDisplayRow;
@@ -72,7 +72,6 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
-use crate::style::user_message_style;
 use crate::text_formatting::truncate_text;
 
 use self::multi_select_footer::MultiSelectFooter;
@@ -619,9 +618,7 @@ impl Renderable for MultiSelectPicker {
         let [content_area, footer_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_height)]).areas(area);
 
-        Block::default()
-            .style(user_message_style())
-            .render(content_area, buf);
+        Clear.render(content_area, buf);
 
         let header_height = self
             .header
@@ -893,6 +890,8 @@ mod tests {
     use crate::app_event::AppEvent;
     use crate::key_hint;
     use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;
 
     fn test_picker(items: Vec<MultiSelectItem>) -> MultiSelectPicker {
@@ -915,6 +914,49 @@ mod tests {
             section_break_after,
             ..Default::default()
         }
+    }
+
+    fn render_picker(picker: &MultiSelectPicker, width: u16) -> String {
+        let height = picker.desired_height(width);
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        picker.render(area, &mut buf);
+        (0..area.height)
+            .map(|row| {
+                (0..area.width)
+                    .map(|column| buf[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn multi_select_picker_responsive_snapshot() {
+        let mut picker = test_picker(vec![
+            item(
+                "theme-colors",
+                /*orderable*/ false,
+                /*section_break_after*/ false,
+            ),
+            item(
+                "long-option-for-narrow-terminals",
+                /*orderable*/ true,
+                /*section_break_after*/ false,
+            ),
+        ]);
+        picker.move_down();
+
+        insta::assert_snapshot!(
+            "multi_select_picker_responsive",
+            format!(
+                "wide:\n{}\n\nnarrow:\n{}",
+                render_picker(&picker, /*width*/ 64),
+                render_picker(&picker, /*width*/ 28),
+            )
+        );
     }
 
     #[test]

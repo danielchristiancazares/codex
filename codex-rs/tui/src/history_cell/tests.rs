@@ -599,7 +599,7 @@ fn image_generation_call_renders_saved_path() {
     assert_eq!(
         render_lines(&cell.display_lines(/*width*/ 80)),
         vec![
-            "• Generated Image:".to_string(),
+            "• Generated image:".to_string(),
             "  └ A tiny blue square".to_string(),
             expected_saved_path,
         ],
@@ -2457,7 +2457,7 @@ fn user_history_cell_trims_trailing_blank_message_lines() {
         .rev()
         .take_while(|line| line.trim().is_empty())
         .count();
-    assert_eq!(trailing_blank_count, 1);
+    assert_eq!(trailing_blank_count, 0);
     assert!(rendered.iter().any(|line| line.contains("line one")));
 }
 
@@ -2480,7 +2480,7 @@ fn user_history_cell_trims_trailing_blank_message_lines_with_text_elements() {
         .rev()
         .take_while(|line| line.trim().is_empty())
         .count();
-    assert_eq!(trailing_blank_count, 1);
+    assert_eq!(trailing_blank_count, 0);
     assert!(rendered.iter().any(|line| line.contains("tokenized")));
 }
 

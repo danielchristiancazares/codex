@@ -133,6 +133,11 @@
 //! same composer block). These rows represent image attachments rehydrated from app-server/backtrack
 //! history; TUI users can remove them, but cannot type into that row region.
 //!
+//! Selecting a row hides the terminal cursor, so the composer moves its prompt caret onto the
+//! selected row and spells out the removal key there. See `chat_composer/prompt_gutter.rs` for the
+//! single-caret rule that keeps focus unambiguous across the text area, remote rows, and disabled
+//! input.
+//!
 //! Keyboard behavior:
 //!
 //! - `Up` at textarea cursor `0` enters remote-row selection at the last remote image.
@@ -280,7 +285,6 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
-use crate::style::accent_style;
 use crate::style::attachment_chip_style;
 use crate::style::table_separator_style;
 use crate::style::user_message_style;
@@ -295,6 +299,7 @@ mod draft_state;
 mod footer_state;
 mod history_search;
 mod popup_state;
+mod prompt_gutter;
 mod slash_input;
 
 use self::attachment_state::AttachmentState;
@@ -305,6 +310,7 @@ use self::history_search::HistorySearchSession;
 use self::popup_state::ActivePopup;
 use self::popup_state::DismissedToken;
 use self::popup_state::PopupState;
+use self::prompt_gutter::PromptGutterState;
 use self::slash_input::SlashInput;
 use self::slash_input::SlashValidation;
 use self::slash_input::SubmissionValidation;
@@ -4666,7 +4672,9 @@ impl ChatComposer {
                 } else {
                     popup_rect
                 };
-                if let Some(line) = self.history_search_footer_line() {
+                if let Some(line) = self.history_search_footer_line(
+                    hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16),
+                ) {
                     render_footer_line(hint_rect, buf, line);
                 } else {
                     let available_width =
@@ -4891,11 +4899,7 @@ impl ChatComposer {
             .border_style(table_separator_style())
             .style(style)
             .render(composer_rect, buf);
-        let rail_style = if self.has_focus && self.draft.input_enabled {
-            accent_style()
-        } else {
-            table_separator_style()
-        };
+        let rail_style = table_separator_style();
         if !composer_rect.is_empty() {
             let rail_bottom = composer_rect
                 .bottom()
@@ -4906,32 +4910,41 @@ impl ChatComposer {
                     .set_style(rail_style);
             }
         }
+        let prompt_gutter = PromptGutterState {
+            input_enabled: self.draft.input_enabled,
+            is_bash_mode: self.draft.is_bash_mode,
+            effort_tier: self.effort_tier,
+            ignition_charge: self
+                .effort_ignition
+                .as_ref()
+                .map(EffortIgnition::charge_alpha)
+                .unwrap_or(1.0),
+            selected_remote_image_index: self.attachments.selected_remote_image_index,
+        }
+        .resolve();
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
                 .render(remote_images_rect, buf);
+            if let Some((index, caret)) = prompt_gutter.remote_image_row.as_ref()
+                && let Ok(row) = u16::try_from(*index)
+                && row < remote_images_rect.height
+            {
+                buf.set_span(
+                    remote_images_rect.x.saturating_sub(/*rhs*/ 2),
+                    remote_images_rect.y.saturating_add(row),
+                    caret,
+                    /*width*/ 1,
+                );
+            }
         }
-        if !textarea_rect.is_empty() {
-            let prompt = if self.draft.input_enabled {
-                if self.draft.is_bash_mode {
-                    Span::from("!").light_red().bold()
-                } else if let Some(tier) = self.effort_tier {
-                    let charge = self
-                        .effort_ignition
-                        .as_ref()
-                        .map(EffortIgnition::charge_alpha)
-                        .unwrap_or(1.0);
-                    tier.prompt(charge)
-                } else {
-                    Span::styled("›", accent_style())
-                }
-            } else {
-                "›".dim()
-            };
+        if !textarea_rect.is_empty()
+            && let Some(caret) = prompt_gutter.textarea.as_ref()
+        {
             buf.set_span(
                 textarea_rect.x.saturating_sub(/*rhs*/ 2),
                 textarea_rect.y,
-                &prompt,
+                caret,
                 /*width*/ 1,
             );
         }
@@ -5170,10 +5183,7 @@ mod tests {
             let mut buffer = Buffer::empty(area);
             composer.render(area, &mut buffer);
 
-            assert_eq!(
-                buffer[(0, 1)].bg,
-                crate::terminal_palette::rgb_color((244, 244, 244))
-            );
+            assert_eq!(buffer[(0, 1)].bg, ratatui::style::Color::Reset);
             insta::assert_snapshot!("light_terminal_palette_composer", format!("{buffer:?}"));
         });
     }
@@ -7852,7 +7862,8 @@ mod tests {
                         let mut buf = Buffer::empty(area);
                         composer.render(area, &mut buf);
                         assert!(buf.content.iter().any(|cell| {
-                            cell.symbol() == "@" && cell.style().fg == Some(Color::Cyan)
+                            cell.symbol() == "@"
+                                && cell.style().fg == crate::style::accent_style().fg
                         }));
                     }
                 },
@@ -9437,6 +9448,44 @@ mod tests {
                     composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
             },
         );
+    }
+
+    /// The terminal cursor is hidden while a remote image row is selected, so the composer's caret
+    /// glyph is the only focus cue. Exactly one row may own it.
+    #[test]
+    fn selecting_a_remote_image_row_moves_the_composer_caret_off_the_text_area() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (mut composer, _rx) = new_test_composer();
+        composer.set_remote_image_urls(vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ]);
+        composer.set_text_content("describe these".to_string(), Vec::new(), Vec::new());
+        composer.draft.textarea.set_cursor(/*pos*/ 0);
+
+        let area = Rect::new(0, 0, 40, 9);
+        let caret_column = |buf: &Buffer| {
+            (area.y..area.bottom())
+                .filter(|y| buf[(1, *y)].symbol() == "›")
+                .collect::<Vec<_>>()
+        };
+
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        let unselected_caret_rows = caret_column(&buf);
+        assert_eq!(unselected_caret_rows.len(), 1);
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        let selected_caret_rows = caret_column(&buf);
+
+        assert_eq!(selected_caret_rows.len(), 1);
+        assert_ne!(selected_caret_rows, unselected_caret_rows);
+        assert_eq!(composer.cursor_pos(area), None);
     }
 
     #[test]

@@ -1,14 +1,15 @@
 ---
 source: tui/src/update_prompt.rs
-expression: terminal.backend()
+expression: "render_prompt(&screen, 80, 12)"
 ---
 
-  ✨ Update available! 0.150.4131 -> 9.9.9
+  Update available v0.153.0 -> v9.9.9
 
-  Release notes: https://github.com/openai/codex/releases/latest
+  View release notes
 
-› 1. Update now (runs `npm install -g @openai/codex`)                           
-  2. Skip
-  3. Skip until next version
+› 1. Update now                                                                 
+     Runs npm to install the latest release.
+  2. Not now
+  3. Don't remind me about this version
 
-  Press enter to continue
+  enter select · esc skip

@@ -68,8 +68,10 @@ fn search_mode_indicator_line(active_search_mode: SearchMode) -> Line<'static> {
         if search_mode == active_search_mode {
             let label = format!("[{}]", search_mode.label());
             let span = match search_mode {
-                SearchMode::Results | SearchMode::FilesystemOnly => label.cyan().bold(),
-                SearchMode::Tools => label.magenta().bold(),
+                SearchMode::Results | SearchMode::FilesystemOnly => {
+                    label.cyan().bold().underlined()
+                }
+                SearchMode::Tools => label.magenta().bold().underlined(),
             };
             spans.push(span);
         } else {

@@ -18,8 +18,11 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
-use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
 use ratatui::text::Span;
+
+use crate::style::key_hint_style;
 
 #[cfg(test)]
 const ALT_PREFIX: &str = "⌥ + ";
@@ -201,6 +204,24 @@ pub(crate) const fn ctrl_alt(key: KeyCode) -> KeyBinding {
     KeyBinding::new(key, KeyModifiers::CONTROL.union(KeyModifiers::ALT))
 }
 
+pub(crate) fn action_hint_line<const N: usize>(
+    prefix: &'static str,
+    actions: [(KeyBinding, &'static str); N],
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(1 + actions.len() * 3);
+    if !prefix.is_empty() {
+        spans.push(prefix.into());
+    }
+    for (index, (binding, label)) in actions.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(" · ".dim());
+        }
+        spans.push(binding.into());
+        spans.push(format!(" {label}").dim());
+    }
+    Line::from(spans)
+}
+
 fn modifiers_to_string(modifiers: KeyModifiers) -> String {
     let mut result = String::new();
     if modifiers.contains(KeyModifiers::CONTROL) {
@@ -230,10 +251,6 @@ impl From<ShortcutHint> for Span<'static> {
     fn from(hint: ShortcutHint) -> Self {
         Span::styled(hint.display_label(), key_hint_style())
     }
-}
-
-fn key_hint_style() -> Style {
-    Style::default().dim()
 }
 
 pub(crate) fn has_ctrl_or_alt(mods: KeyModifiers) -> bool {
@@ -461,5 +478,23 @@ mod tests {
         assert!(!has_ctrl_or_alt(KeyModifiers::CONTROL | KeyModifiers::ALT));
         #[cfg(not(windows))]
         assert!(has_ctrl_or_alt(KeyModifiers::CONTROL | KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn rendered_key_hints_snapshot_semantic_emphasis() {
+        let hints = [
+            Span::from(plain(KeyCode::Esc)),
+            Span::from(ctrl(KeyCode::Char('x'))),
+            Span::from(ShortcutHint::Chord {
+                prefix: ctrl(KeyCode::Char('x')),
+                completion: plain(KeyCode::Enter),
+            }),
+        ];
+
+        assert_eq!(
+            hints.iter().map(|span| span.style).collect::<Vec<_>>(),
+            vec![key_hint_style(); 3]
+        );
+        insta::assert_debug_snapshot!("semantic_key_hints", hints);
     }
 }

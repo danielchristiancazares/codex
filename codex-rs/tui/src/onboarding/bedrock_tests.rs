@@ -31,13 +31,13 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
 
     let mut configuring = discovering;
     configuring.view = BedrockView::Configuring(RequestId::Integer(2));
-    insta::assert_snapshot!(render_visible(&configuring), @r###"
+    insta::assert_snapshot!(render_visible(&configuring), @"
     > Set up Amazon Bedrock
 
       Setting up Amazon Bedrock...
 
-      Press esc to go back
-    "###);
+      esc back
+    ");
     assert!(
         configuring
             .handle_key_event(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
@@ -127,13 +127,13 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
             BedrockMethod::ApiKey,
         ]
     );
-    insta::assert_snapshot!(render_visible(&profile_and_bearer), @r###"
+    insta::assert_snapshot!(render_visible(&profile_and_bearer), @"
     > Set up Amazon Bedrock
 
       AWS profile detected: engineering
       Region: us-east-2
 
-    > 1. Continue with engineering
+    › 1. Continue with engineering
          Use your existing AWS credentials
 
       2. Continue with detected credentials
@@ -146,9 +146,8 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
          Enter a Bedrock API key
 
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
     profile_and_bearer.select_method(BedrockMethod::OtherMethods);
     assert_eq!(
         profile_and_bearer.methods(),
@@ -158,12 +157,12 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
             BedrockMethod::EnvironmentInstructions,
         ]
     );
-    insta::assert_snapshot!(render_visible(&profile_and_bearer), @r###"
+    insta::assert_snapshot!(render_visible(&profile_and_bearer), @"
     > Set up Amazon Bedrock
 
       Choose how you authenticate with AWS.
 
-    > 1. AWS profile
+    › 1. AWS profile
          Use AWS SSO or a named profile
 
       2. AWS access keys
@@ -173,21 +172,20 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
          Configure AWS credentials in your environment, then return here.
 
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
 
     let profile_state = BedrockState::discovered(BedrockDiscoverResponse {
         profiles: vec![profile],
         environment_credentials: Vec::new(),
     });
-    insta::assert_snapshot!(render_visible(&profile_state), @r###"
+    insta::assert_snapshot!(render_visible(&profile_state), @"
     > Set up Amazon Bedrock
 
       AWS profile detected: engineering
       Region: us-east-2
 
-    > 1. Continue with engineering
+    › 1. Continue with engineering
          Use your existing AWS credentials
 
       2. Other AWS sign-in methods
@@ -197,9 +195,8 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
          Enter a Bedrock API key
 
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
 
     let multiple_profiles = BedrockState::discovered(BedrockDiscoverResponse {
         profiles: vec![
@@ -219,7 +216,7 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
 
       Choose an AWS profile.
 
-    > 1. engineering
+    › 1. engineering
          us-east-2
 
       2. production
@@ -232,8 +229,7 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
          Enter a Bedrock API key
 
 
-      Press enter to continue
-      Press esc to go back
+      enter continue · esc back
     "###);
 
     let environment_state = BedrockState::discovered(BedrockDiscoverResponse {
@@ -248,15 +244,14 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
 
       AWS credentials detected in your environment.
 
-    > 1. Continue with detected credentials
+    › 1. Continue with detected credentials
 
       2. Other AWS sign-in methods
 
       3. Bedrock API key
 
 
-      Press enter to continue
-      Press esc to go back
+      enter continue · esc back
     "###);
 
     let empty_state = BedrockState::discovered(BedrockDiscoverResponse {
@@ -269,7 +264,7 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
       No AWS credentials found.
       Choose how you authenticate with AWS.
 
-    > 1. AWS profile
+    › 1. AWS profile
          Use AWS SSO or a named profile
 
       2. AWS access keys
@@ -282,8 +277,7 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
          Enter a Bedrock API key
 
 
-      Press enter to continue
-      Press esc to go back
+      enter continue · esc back
     "###);
 
     let mut many_profiles = BedrockState::discovered(BedrockDiscoverResponse {
@@ -304,8 +298,8 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
         .map(|position| buffer[position].symbol())
         .collect::<String>();
     assert!(visible.contains("Bedrock API key"));
-    assert!(visible.contains("Press enter to continue"));
-    assert!(visible.contains("Press esc to go back"));
+    assert!(visible.contains("enter continue"));
+    assert!(visible.contains("esc back"));
 
     let narrow_area = Rect::new(0, 0, 24, 12);
     let mut narrow_buffer = Buffer::empty(narrow_area);
@@ -322,9 +316,8 @@ fn discovery_prioritizes_profiles_and_keeps_bedrock_api_key_last() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(narrow_visible.contains("Press enter to"));
-    assert!(narrow_visible.contains("continue"));
-    assert!(narrow_visible.contains("Press esc to go back"));
+    assert!(narrow_visible.contains("enter next"));
+    assert!(narrow_visible.contains("esc back"));
     assert!(narrow_visible.contains("AWS credentials"));
     assert!(narrow_visible.contains("unavailable"));
 }
@@ -371,18 +364,17 @@ fn credential_entries_share_region_and_keep_aws_secrets_hidden() {
         selected_field: 1,
     };
     let visible = render_visible(&access_keys);
-    insta::assert_snapshot!(visible, @r###"
+    insta::assert_snapshot!(visible, @"
     > Set up Amazon Bedrock
 
       Enter your AWS access keys.
 
       AWS access key ID: AKIAEXAMPLE
-    > AWS secret access key: •••••••••••e
+    › AWS secret access key: •••••••••••e
       AWS session token (optional): •••••••••••••
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
     assert!(visible.contains("AKIAEXAMPLE"));
     assert!(visible.contains("AWS secret access key: •••••••••••e"));
     assert!(!visible.contains("secret-value"));
@@ -393,48 +385,45 @@ fn credential_entries_share_region_and_keep_aws_secrets_hidden() {
 
     access_keys.handle_key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     let visible = render_visible(&access_keys);
-    insta::assert_snapshot!(visible, @r###"
+    insta::assert_snapshot!(visible, @"
     > Set up Amazon Bedrock
 
       Enter your AWS access keys.
 
       AWS access key ID: AKIAEXAMPLE
       AWS secret access key: •••••••••••••
-    > AWS session token (optional): ••••••••••••e
+    › AWS session token (optional): ••••••••••••e
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
     assert!(!visible.contains("secret-value"));
     assert!(!visible.contains("session-value"));
 
     access_keys.view = BedrockView::ApiKeyEntry("bedrock-api-key".to_string());
     let visible = render_visible(&access_keys);
-    insta::assert_snapshot!(visible, @r###"
+    insta::assert_snapshot!(visible, @"
     > Set up Amazon Bedrock
 
       Enter your Amazon Bedrock API key.
 
       Bedrock API key: ••••••••••••••y
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
     assert!(!visible.contains("bedrock-api-key"));
     access_keys.handle_key_event(&KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
     assert!(render_visible(&access_keys).contains("Bedrock API key: •••••••••••••••z"));
 
     access_keys.view = BedrockView::ProfileEntry("engineering".to_string());
-    insta::assert_snapshot!(render_visible(&access_keys), @r###"
+    insta::assert_snapshot!(render_visible(&access_keys), @"
     > Set up Amazon Bedrock
 
       Enter the name of your AWS profile.
 
       AWS profile: engineering
 
-      Press enter to continue
-      Press esc to go back
-    "###);
+      enter continue · esc back
+    ");
 
     access_keys.enter_region(BedrockCredential::Environment, "us-west-1".to_string());
     insta::assert_snapshot!(render_visible(&access_keys), @r###"
@@ -444,8 +433,7 @@ fn credential_entries_share_region_and_keep_aws_secrets_hidden() {
 
       AWS Region: us-west-1
 
-      Press enter to continue
-      Press esc to go back
+      enter continue · esc back
     "###);
 
     access_keys.view = BedrockView::EnvironmentInstructions;
@@ -456,11 +444,10 @@ fn credential_entries_share_region_and_keep_aws_secrets_hidden() {
 
       Setup guide: https://learn.chatgpt.com/docs/amazon-bedrock
 
-    > 1. Choose another sign-in method
+    › 1. Choose another sign-in method
 
 
-      Press enter to continue
-      Press esc to go back
+      enter continue · esc back
     "###);
 
     for view in [

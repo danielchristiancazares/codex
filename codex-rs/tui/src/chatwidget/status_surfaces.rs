@@ -710,7 +710,7 @@ impl ChatWidget {
             }
             StatusLineItem::ContextRemaining => self
                 .status_line_context_remaining_percent()
-                .map(|remaining| format!("Context {remaining}% left")),
+                .map(|remaining| format!("{remaining}% context left")),
             StatusLineItem::ContextUsed => self
                 .status_line_context_used_percent()
                 .map(|used| format!("Context used {used}%")),

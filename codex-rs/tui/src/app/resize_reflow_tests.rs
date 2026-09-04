@@ -367,8 +367,10 @@ async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<(
     );
     assert_eq!(
         tui.terminal.docked_history_gap_rows(),
-        0,
-        "model popup transitions must not create blank rows above transcript history"
+        composer_area
+            .top()
+            .saturating_sub(restored_model_area.top()),
+        "restoring the composer must track the vacated full-screen history band"
     );
     insta::assert_debug_snapshot!(
         "model_selection_stages_keep_inline_viewport_bottom_docked",

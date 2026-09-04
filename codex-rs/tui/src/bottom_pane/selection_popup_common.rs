@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Widget;
 
 use crate::key_hint::ShortcutHint;
@@ -14,7 +14,6 @@ use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 use crate::style::accent_style;
-use crate::style::user_message_style;
 use crate::width::display_width;
 
 use super::scroll_state::ScrollState;
@@ -104,18 +103,17 @@ pub(crate) const fn menu_surface_padding_height() -> u16 {
     MENU_SURFACE_INSET_V * 2
 }
 
-/// Paint the shared menu background and return the inset content area.
+/// Reserve the shared menu spacing and return the inset content area.
 ///
-/// This keeps the surface treatment consistent across selection-style overlays
-/// (for example `/model`, approvals, and request-user-input). Callers should
-/// render all inner content in the returned rect, not the original area.
+/// Selection-style overlays remain flat so their content uses the terminal's
+/// native background while retaining a consistent, calm visual boundary.
+/// Callers should render all inner content in the returned rect, not the
+/// original area.
 pub(crate) fn render_menu_surface(area: Rect, buf: &mut Buffer) -> Rect {
     if area.is_empty() {
         return area;
     }
-    Block::default()
-        .style(user_message_style())
-        .render(area, buf);
+    Clear.render(area, buf);
     menu_surface_inset(area)
 }
 
@@ -329,9 +327,7 @@ fn wrap_row_lines(
 fn apply_row_state_style(lines: &mut [Line<'static>], selected: bool, is_disabled: bool) {
     if selected {
         for line in lines.iter_mut() {
-            line.spans.iter_mut().for_each(|span| {
-                span.style = accent_style();
-            });
+            line.spans.iter_mut().for_each(apply_selected_span_style);
         }
     }
     if is_disabled {
@@ -341,6 +337,15 @@ fn apply_row_state_style(lines: &mut [Line<'static>], selected: bool, is_disable
             });
         }
     }
+}
+
+fn apply_selected_span_style(span: &mut Span<'static>) {
+    let style = accent_style();
+    span.style = if span.content.trim().is_empty() {
+        style
+    } else {
+        style.underlined()
+    };
 }
 
 fn compute_item_window_start(
@@ -662,9 +667,10 @@ pub(crate) fn render_rows_single_line_with_col_width_mode(
 
         let mut full_line = build_full_line(row, desc_col, column_width.description_layout);
         if Some(i) == state.selected_idx && !row.is_disabled {
-            full_line.spans.iter_mut().for_each(|span| {
-                span.style = accent_style();
-            });
+            full_line
+                .spans
+                .iter_mut()
+                .for_each(apply_selected_span_style);
         }
         if row.is_disabled {
             full_line.spans.iter_mut().for_each(|span| {
@@ -938,5 +944,6 @@ mod tests {
         let expected = accent_style();
         assert_eq!(style.fg, expected.fg);
         assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
     }
 }

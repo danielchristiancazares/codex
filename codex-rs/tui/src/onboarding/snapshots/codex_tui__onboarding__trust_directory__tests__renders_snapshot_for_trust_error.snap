@@ -9,11 +9,11 @@ expression: terminal.backend()
   directory allows project-local config, hooks, and exec policies to
   load.
 
-› 1. Yes, continue                                                    
-  2. No, quit
+› 1. Trust this directory                                             
+  2. Quit Codex
 
   Failed to set trust for /workspace/project: config/batchWrite failed
   in TUI: Invalid configuration: features.fast_mode=true is not       
   supported; allowed set [fast_mode=false]                            
 
-  Press enter to continue
+  enter select

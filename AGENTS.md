@@ -5,7 +5,7 @@ easy to reconcile with future upstream updates.
 
 ## Fork workflow
 
-- The user directing the current task is the decision authority for product behavior, validation,
+- Your operator directing the current task is the decision authority for product behavior, validation,
   commits, pushes, and releases in this fork.
 - `origin` is the maintained personal repository. `upstream` is OpenAI's source repository and is
   used for reference and synchronization.
@@ -127,19 +127,14 @@ In the codex-rs folder where the rust code lives:
 
 After code changes:
 
-1. Use `just test` in place of direct `cargo test`, with the smallest crate or test filter that
-   covers the change.
-2. For TUI-only work, run `just test -p codex-tui`, then `just fix -p codex-tui`, then `just fmt`.
-3. Once targeted tests pass, changes in common, core, or protocol may require the complete
-   `just test` suite. Explain the coverage need and estimated duration, then get user approval
-   before starting it. Reserve `--all-features` for changes that require that build matrix.
-4. Before finalizing a large change, run `just fix -p <project>`. Use workspace-wide `just fix`
-   only for shared-crate changes.
-5. Run `just fmt` last. Do not rerun tests after the final `just fix` and `just fmt`.
+1. Use the smallest crate or test filter that covers the change.
+2. Before finalizing a large change, use `just fix` and `just fmt`
+   Do not rerun tests after the final `just fix` and `just fmt`.
 
+- `just test` takes a long time so try to strategize your changes to streamline `just test` runs.
 - Before a long validation run, ensure the required repository tools are installed: `just`,
   `cargo-nextest`, `dotslash`, and `uv`; TUI snapshot work also needs `cargo-insta`.
-- Give automated subtasks the same repository validation commands; use root `just` recipes in
+- Give automated subtasks the same repository validation commands; prefer root `just` recipes in
   place of direct `cargo test`, `cargo fmt`, or `cargo clippy` commands.
 - Targeted `argument-comment-lint` runs use a prebuilt package that does not support Intel macOS.
   On `x86_64-apple-darwin`, use the repo-wide Bazel path or record the targeted check as
@@ -192,11 +187,11 @@ Performance work must be evidence-driven:
 2. Change and measure one candidate at a time with identical fixtures and sampling.
 3. Keep only repeatable improvements outside run-to-run variance; revert regressions and noise.
 4. Add correctness coverage for retained behavior changes.
-5. Update `PERF_LOG.md` with a current-baseline section, retained wins, rejected experiments, exact
-   commands, fixtures, and medians so future sessions do not repeat failed work.
+5. Update `PERFORMANCE_LOG.md` with a current-baseline section, retained wins, rejected experiments,
+   exact commands, fixtures, and medians so future sessions do not repeat failed work.
 6. Before declaring completion, rerun the retained final state and make the current-baseline
-   section describe that state. The final report must name the updated `PERF_LOG.md` section and
-   summarize retained and rejected experiments.
+   section describe that state. The final report must name the updated `PERFORMANCE_LOG.md` section
+   and summarize retained and rejected experiments.
 
 For TUI performance, separate widget computation, buffer diff/ANSI serialization, and terminal or
 VT100 end-to-end costs. Use the requested benchmark as the primary performance evidence.

@@ -1,6 +1,7 @@
-#![cfg(not(debug_assertions))]
+#![cfg(any(not(debug_assertions), test))]
 
 use crate::key_hint;
+#[cfg(not(debug_assertions))]
 use crate::legacy_core::config::Config;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
@@ -8,10 +9,14 @@ use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt as _;
 use crate::selection_list::selection_option_row;
 use crate::tui::FrameRequester;
+#[cfg(not(debug_assertions))]
 use crate::tui::Tui;
+#[cfg(not(debug_assertions))]
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
+#[cfg(not(debug_assertions))]
 use crate::updates;
+#[cfg(not(debug_assertions))]
 use color_eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -24,15 +29,18 @@ use ratatui::style::Stylize as _;
 use ratatui::text::Line;
 use ratatui::widgets::Clear;
 use ratatui::widgets::WidgetRef;
+#[cfg(not(debug_assertions))]
 use tokio_stream::StreamExt;
 
 const RELEASE_NOTES_URL: &str = "https://github.com/openai/codex/releases/latest";
 
+#[cfg(not(debug_assertions))]
 pub(crate) enum UpdatePromptOutcome {
     Continue,
     RunUpdate(UpdateAction),
 }
 
+#[cfg(not(debug_assertions))]
 pub(crate) async fn run_update_prompt_if_needed(
     tui: &mut Tui,
     config: &Config,
@@ -161,6 +169,7 @@ impl UpdatePromptScreen {
         self.selection
     }
 
+    #[cfg(not(debug_assertions))]
     fn latest_version(&self) -> &str {
         self.latest_version.as_str()
     }
@@ -189,50 +198,64 @@ impl WidgetRef for &UpdatePromptScreen {
         Clear.render(area, buf);
         let mut column = ColumnRenderable::new();
 
-        let update_command = self.update_action.command_str();
+        let update_detail = match self.update_action {
+            UpdateAction::NpmGlobalLatest => "Runs npm to install the latest release.",
+            UpdateAction::BunGlobalLatest => "Runs bun to install the latest release.",
+            UpdateAction::PnpmGlobalLatest => "Runs pnpm to install the latest release.",
+            UpdateAction::BrewUpgrade => "Runs Homebrew to upgrade Codex.",
+            UpdateAction::StandaloneUnix | UpdateAction::StandaloneWindows => {
+                "Runs the official Codex installer."
+            }
+        };
 
-        column.push("");
+        // Six rows carry the title, release-notes link, three choices, and controls. Restore the
+        // update detail and decorative spacing progressively as more height becomes available.
+        if area.height >= 11 {
+            column.push("");
+        }
         column.push(Line::from(vec![
-            "  ✨\u{200A}".bold().cyan(),
-            "Update available!".bold(),
+            "  ".into(),
+            "Update available".bold(),
             " ".into(),
-            format!(
-                "{current} -> {latest}",
-                current = self.current_version,
-                latest = self.latest_version
-            )
-            .dim(),
+            format!("v{} -> v{}", self.current_version, self.latest_version).dim(),
         ]));
-        column.push("");
-        column.push(
-            Line::from(vec![
-                "Release notes: ".dim(),
-                RELEASE_NOTES_URL.dim().underlined(),
-            ])
-            .inset(Insets::tlbr(0, 2, 0, 0)),
-        );
-        column.push("");
+        if area.height >= 10 {
+            column.push("");
+        }
+        column.push(Line::from(vec![
+            "  ".into(),
+            "View release notes".cyan().underlined(),
+        ]));
+        if area.height >= 8 {
+            column.push("");
+        }
         column.push(selection_option_row(
             0,
-            format!("Update now (runs `{update_command}`)"),
+            "Update now".to_string(),
             self.highlighted == UpdateSelection::UpdateNow,
         ));
+        if area.height >= 7 {
+            column.push(Line::from(format!("     {update_detail}").dim()));
+        }
         column.push(selection_option_row(
             1,
-            "Skip".to_string(),
+            "Not now".to_string(),
             self.highlighted == UpdateSelection::NotNow,
         ));
         column.push(selection_option_row(
             2,
-            "Skip until next version".to_string(),
+            "Don't remind me about this version".to_string(),
             self.highlighted == UpdateSelection::DontRemind,
         ));
-        column.push("");
+        if area.height >= 9 {
+            column.push("");
+        }
         column.push(
             Line::from(vec![
-                "Press ".dim(),
                 key_hint::plain(KeyCode::Enter).into(),
-                " to continue".dim(),
+                " select · ".dim(),
+                key_hint::plain(KeyCode::Esc).into(),
+                " skip".dim(),
             ])
             .inset(Insets::tlbr(0, 2, 0, 0)),
         );
@@ -260,14 +283,43 @@ mod tests {
         )
     }
 
+    fn render_prompt(screen: &UpdatePromptScreen, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(VT100Backend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| frame.render_widget_ref(screen, frame.area()))
+            .expect("render update prompt");
+        terminal.backend().to_string()
+    }
+
     #[test]
     fn update_prompt_snapshot() {
         let screen = new_prompt();
-        let mut terminal = Terminal::new(VT100Backend::new(80, 12)).expect("terminal");
-        terminal
-            .draw(|frame| frame.render_widget_ref(&screen, frame.area()))
-            .expect("render update prompt");
-        insta::assert_snapshot!("update_prompt_modal", terminal.backend());
+        insta::assert_snapshot!("update_prompt_modal", render_prompt(&screen, 80, 12));
+    }
+
+    #[test]
+    fn update_prompt_narrow_snapshot() {
+        let screen = new_prompt();
+        insta::assert_snapshot!(
+            "update_prompt_modal_narrow",
+            render_prompt(&screen, /*width*/ 47, /*height*/ 33)
+        );
+    }
+
+    #[test]
+    fn update_prompt_compact_heights_keep_selected_choice_and_controls_visible() {
+        let mut screen = new_prompt();
+        screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        let eight_rows = render_prompt(&screen, /*width*/ 80, /*height*/ 8);
+        let ten_rows = render_prompt(&screen, /*width*/ 80, /*height*/ 10);
+
+        for rendered in [&eight_rows, &ten_rows] {
+            assert!(rendered.contains("› 3. Don't remind me about this version"));
+            assert!(rendered.contains("enter select · esc skip"));
+        }
+        insta::assert_snapshot!("update_prompt_modal_compact_height", eight_rows);
     }
 
     #[test]

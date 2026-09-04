@@ -117,9 +117,14 @@ impl WidgetRef for &FileSearchPopup {
         } else {
             self.matches
                 .iter()
-                .map(|m| GenericDisplayRow {
+                .enumerate()
+                .map(|(index, m)| GenericDisplayRow {
                     name: m.path.to_string_lossy().to_string(),
-                    name_prefix_spans: Vec::new(),
+                    name_prefix_spans: if self.state.selected_idx == Some(index) {
+                        vec!["› ".into()]
+                    } else {
+                        vec!["  ".into()]
+                    },
                     match_indices: m
                         .indices
                         .as_ref()
@@ -135,9 +140,11 @@ impl WidgetRef for &FileSearchPopup {
         };
 
         let empty_message = if self.waiting {
-            "loading..."
+            "Searching files…"
+        } else if self.pending_query.is_empty() {
+            "Type to search files"
         } else {
-            "no matches"
+            "No matching files"
         };
 
         render_rows(
@@ -158,15 +165,34 @@ mod tests {
     use super::*;
     use codex_file_search::MatchType;
     use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::WidgetRef;
 
     fn file_match(index: usize) -> FileMatch {
         FileMatch {
             score: index as u32,
-            path: PathBuf::from(format!("src/file_{index:02}.rs")),
+            path: PathBuf::from(format!("file_{index:02}.rs")),
             match_type: MatchType::File,
             root: PathBuf::from("/tmp/repo"),
             indices: None,
         }
+    }
+
+    fn render_popup(popup: &FileSearchPopup, width: u16) -> String {
+        let area = Rect::new(0, 0, width, popup.calculate_required_height());
+        let mut buf = Buffer::empty(area);
+        popup.render_ref(area, &mut buf);
+        (0..area.height)
+            .map(|row| {
+                (0..area.width)
+                    .map(|column| buf[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -180,5 +206,35 @@ mod tests {
             (0..MAX_POPUP_ROWS).map(file_match).collect::<Vec<_>>()
         );
         assert_eq!(popup.calculate_required_height(), MAX_POPUP_ROWS as u16);
+    }
+
+    #[test]
+    fn file_search_popup_states_snapshot() {
+        let mut searching = FileSearchPopup::new();
+        searching.set_query("src");
+
+        let mut empty = FileSearchPopup::new();
+        empty.set_empty_prompt();
+
+        let mut no_matches = FileSearchPopup::new();
+        no_matches.set_query("src");
+        no_matches.set_matches("src", Vec::new());
+
+        let mut matches = FileSearchPopup::new();
+        matches.set_query("file");
+        matches.set_matches("file", vec![file_match(1), file_match(2)]);
+        matches.move_down();
+
+        insta::assert_snapshot!(
+            "file_search_popup_states",
+            format!(
+                "searching:\n{}\n\nempty:\n{}\n\nno matches:\n{}\n\nselected:\n{}\n\nnarrow:\n{}",
+                render_popup(&searching, /*width*/ 64),
+                render_popup(&empty, /*width*/ 64),
+                render_popup(&no_matches, /*width*/ 64),
+                render_popup(&matches, /*width*/ 64),
+                render_popup(&matches, /*width*/ 28),
+            )
+        );
     }
 }

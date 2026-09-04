@@ -756,7 +756,7 @@ impl PlanStreamController {
         let mut out_lines: Vec<HyperlinkLine> = Vec::with_capacity(/*capacity*/ 4);
         if !self.header_emitted {
             out_lines.push(HyperlinkLine::new(
-                vec!["• ".dim(), "Proposed Plan".bold()].into(),
+                vec!["• ".dim(), "Proposed plan".bold()].into(),
             ));
             out_lines.push(HyperlinkLine::new(Line::from(" ")));
         }

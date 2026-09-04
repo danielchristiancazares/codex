@@ -1,6 +1,5 @@
 ---
 source: tui/src/unarchive_prompt_tests.rs
-assertion_line: 108
 expression: render_inline(80)
 ---
 $ codex fork saved-session
@@ -12,4 +11,4 @@ This conversation is archived
 › 1. Unarchive and fork
   2. Cancel
 
-Press enter to continue or esc to cancel
+  enter confirm · esc cancel

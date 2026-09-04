@@ -1,6 +1,6 @@
 ---
 source: tui/src/status_indicator_widget.rs
-expression: terminal.backend()
+expression: "format!(\"viewport 120x36:\\n{rendered}\")"
 ---
-"✦ Working · 0s · Esc interrupt                                                  "
-"                                                                                "
+viewport 120x36:
+✦ Working                                                                                             0s · Esc interrupt

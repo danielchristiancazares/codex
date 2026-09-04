@@ -2204,9 +2204,13 @@ fn filter_control_spans(state: &PickerState, compact: bool) -> Vec<Span<'static>
 
 fn toolbar_value(label: &'static str, active: bool, focused: bool) -> Span<'static> {
     if active {
-        let value = format!("[{label}]");
+        let value = if focused {
+            format!("{{{label}}}")
+        } else {
+            format!("[{label}]")
+        };
         if focused {
-            value.magenta()
+            value.set_style(crate::style::accent_style().underlined())
         } else {
             value.into()
         }
@@ -2955,17 +2959,13 @@ fn dense_column_text(text: &str, width: usize) -> String {
 fn selection_marker(is_selected: bool, is_expanded: bool) -> Span<'static> {
     match (is_selected, is_expanded) {
         (true, true) => "⌄ ".set_style(selected_session_style().bold()),
-        (true, false) => "❯ ".set_style(selected_session_style().bold()),
+        (true, false) => "› ".set_style(selected_session_style().bold()),
         (false, _) => "  ".into(),
     }
 }
 
 fn selected_session_style() -> Style {
-    if default_bg().is_some_and(is_light) {
-        Style::default().fg(Color::Magenta)
-    } else {
-        Style::default().fg(Color::Yellow)
-    }
+    crate::style::accent_style().underlined()
 }
 
 fn selected_session_title_span(title: String) -> Span<'static> {
@@ -5166,10 +5166,10 @@ session_picker_view = "dense"
 
         let line = search_line(&state, /*width*/ 40).to_string();
 
-        assert!(line.contains("Filter:[Cwd]"));
+        assert!(line.contains("Filter:{Cwd}"));
         assert!(line.contains("[Active]"));
         assert!(line.contains("Sort:[Updated]"));
-        assert!(line.find("Filter:[Cwd]") < line.find("Sort:[Updated]"));
+        assert!(line.find("Filter:{Cwd}") < line.find("Sort:[Updated]"));
     }
 
     fn dense_snapshot_row() -> Row {
@@ -5327,7 +5327,7 @@ session_picker_view = "dense"
 
         assert_eq!(line.width(), 80);
         assert_eq!(line.style.fg, selected_session_style().fg);
-        assert_eq!(line.spans[0].content, "❯ ");
+        assert_eq!(line.spans[0].content, "› ");
     }
 
     #[test]
@@ -6360,7 +6360,7 @@ session_picker_view = "dense"
 
         assert!(rendered.contains("hello from user"));
         assert!(rendered.contains("hello from assistant"));
-        assert!(rendered.contains("Proposed Plan"));
+        assert!(rendered.contains("Proposed plan"));
         assert!(rendered.contains("Do the thing"));
     }
 

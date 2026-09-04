@@ -5,16 +5,12 @@ expression: "render(&widget, Rect::new(0, 0, 40, 1))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 40, height: 1 },
     content: [
-        " LM Studio   Ollama                     ",
+        " › 1. LM Studio     2. Ollama           ",
     ],
     styles: [
-        x: 0, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: NONE,
-        x: 1, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: UNDERLINED,
-        x: 2, y: 0, fg: Black, bg: Cyan, underline: Reset, modifier: NONE,
-        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 12, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 13, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: UNDERLINED,
-        x: 14, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 20, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 16, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 23, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
+        x: 24, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

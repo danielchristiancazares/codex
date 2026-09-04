@@ -136,7 +136,7 @@ impl ChatWidget {
         );
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Update Model Permissions".to_string()),
+            title: Some("Update model permissions".to_string()),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             header: Box::new(()),

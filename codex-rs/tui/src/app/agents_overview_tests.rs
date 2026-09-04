@@ -280,6 +280,23 @@ async fn shared_overview_shows_only_root_sessions() {
                 .replace(&format!("{project}  2"), &normalized_project_group)
                 .replace(&project, "/tmp/project")
         );
+        insta::assert_snapshot!(
+            "agents_overview_narrow",
+            render_bottom_popup(&app.chat_widget, /*width*/ 54)
+                .replace(&format!("{project}  2"), &normalized_project_group)
+                .replace(&project, "/tmp/project")
+        );
+    });
+
+    app.chat_widget
+        .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let empty_view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
+    app.chat_widget.show_bottom_pane_view(Box::new(empty_view));
+    insta::with_settings!({snapshot_path => "../snapshots"}, {
+        insta::assert_snapshot!(
+            "agents_overview_empty",
+            render_bottom_popup(&app.chat_widget, /*width*/ 72)
+        );
     });
 
     let threads = (0..20)
@@ -323,7 +340,7 @@ async fn shared_overview_shows_only_root_sessions() {
     assert!(
         rendered
             .lines()
-            .any(|line| line.contains("› ● Inspect unnamed task  current")
+            .any(|line| line.contains("› ! Inspect unnamed task · current")
                 && line.contains("Needs input"))
     );
 

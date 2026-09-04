@@ -519,6 +519,9 @@ async fn executor_orchestrator_and_host_share_catalog_world_state_flow() -> Test
             thread_store: &thread_store,
         })
         .await;
+    let mut model_info = model_info_from_slug("test-model");
+    model_info.include_skills_usage_instructions = true;
+    thread_store.insert(model_info);
 
     let selected_roots = [SelectedCapabilityRoot {
         id: "skills".to_string(),
@@ -1663,21 +1666,21 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
         (truncation_limit, byte_budget, expected_indices, expected_warnings, cursor_offset),
     ) in [
         // The escaped entry fits alone, but not alongside even one provider warning.
-        (6_458, 7_750, vec![], vec![PROVIDER_WARNING], Some("0")),
-        (6_458, 7_750, vec![0], vec![], Some("1")),
-        (266, 320, vec![1], vec![], Some("2")),
+        (7_750, 7_750, vec![], vec![PROVIDER_WARNING], Some("0")),
+        (7_750, 7_750, vec![0], vec![], Some("1")),
+        (320, 320, vec![1], vec![], Some("2")),
         // A smaller budget omits the middle entry and must report the new omission.
-        (183, 220, vec![], vec![OVERSIZED_WARNING], Some("2")),
-        (183, 220, vec![3], vec![], None),
+        (220, 220, vec![], vec![OVERSIZED_WARNING], Some("2")),
+        (220, 220, vec![3], vec![], None),
         // Neither report may hide the other when they need separate pages.
-        (183, 220, vec![], vec![PROVIDER_WARNING], Some("0")),
-        (183, 220, vec![], vec![OVERSIZED_WARNING], Some("0")),
+        (220, 220, vec![], vec![PROVIDER_WARNING], Some("0")),
+        (220, 220, vec![], vec![OVERSIZED_WARNING], Some("0")),
         // The last retained entry fits without a cursor, despite an oversized suffix.
-        (151, 182, vec![], vec![OVERSIZED_WARNING], Some("0")),
-        (151, 182, vec![1], vec![], None),
+        (182, 182, vec![], vec![OVERSIZED_WARNING], Some("0")),
+        (182, 182, vec![1], vec![], None),
         // An omission notice must not displace an affordable provider warning.
         (
-            2_000,
+            2_400,
             2_400,
             vec![1, 2, 3],
             vec![
@@ -1719,7 +1722,8 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
             next_cursor
                 .as_deref()
                 .and_then(|value| value.split(':').nth(1)),
-            cursor_offset
+            cursor_offset,
+            "unexpected skills.list cursor for response: {response:#}"
         );
         let expected_skills = expected_indices
             .into_iter()

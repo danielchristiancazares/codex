@@ -255,19 +255,14 @@ impl ApprovalOverlay {
             ApprovalRequest::Exec(request) => {
                 let title = if request.kind == CommandExecutionApprovalKind::WriteStdin {
                     request.command.get(2).map_or_else(
-                        || "Would you like to send input to the existing terminal?".to_string(),
-                        |process_id| {
-                            format!("Would you like to send input to terminal {process_id}?")
-                        },
+                        || "Send input to the terminal?".to_string(),
+                        |process_id| format!("Send input to terminal {process_id}?"),
                     )
                 } else {
                     request.network_approval_context.as_ref().map_or_else(
-                        || "Would you like to run the following command?".to_string(),
+                        || "Approve this command?".to_string(),
                         |network_approval_context| {
-                            format!(
-                                "Do you want to approve network access to \"{}\"?",
-                                network_approval_context.host
-                            )
+                            format!("Allow network access to {}?", network_approval_context.host)
                         },
                     )
                 };
@@ -283,15 +278,15 @@ impl ApprovalOverlay {
             }
             ApprovalRequest::Permissions(_) => (
                 permissions_options(approval_keymap),
-                "Would you like to grant these permissions?".to_string(),
+                "Grant additional permissions?".to_string(),
             ),
             ApprovalRequest::ApplyPatch(_) => (
                 patch_options(approval_keymap),
-                "Would you like to make the following edits?".to_string(),
+                "Apply proposed changes?".to_string(),
             ),
             ApprovalRequest::McpElicitation(request) => (
                 elicitation_options(approval_keymap),
-                format!("{} needs your approval.", request.server_name),
+                format!("{} requests information", request.server_name),
             ),
         };
 
@@ -305,6 +300,7 @@ impl ApprovalOverlay {
             .iter()
             .map(|opt| SelectionItem {
                 name: opt.label.clone(),
+                description: Some(approval_option_description(&opt.decision).to_string()),
                 display_shortcut: approval_keymap.hint_for_bindings(&opt.shortcuts),
                 dismiss_on_select: false,
                 ..Default::default()
@@ -639,9 +635,9 @@ fn approval_footer_hint(
 ) -> Line<'static> {
     let mut spans = accept_cancel_hint_line(
         list_keymap.primary_hint(ListAction::Accept),
-        "to confirm",
+        "select",
         list_keymap.primary_hint(ListAction::Cancel),
-        "to cancel",
+        "cancel",
     )
     .spans;
     if request.thread_label().is_some()
@@ -805,6 +801,67 @@ struct ApprovalOption {
     shortcuts: Vec<KeyBinding>,
 }
 
+fn approval_option_description(decision: &ApprovalDecision) -> &'static str {
+    match decision {
+        ApprovalDecision::Command(CommandExecutionApprovalDecision::Accept) => {
+            "Runs this action once."
+        }
+        ApprovalDecision::Command(
+            CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment { .. },
+        ) => "Saves an allow rule for matching commands.",
+        ApprovalDecision::Command(CommandExecutionApprovalDecision::AcceptForSession) => {
+            "Allows matching actions for this session."
+        }
+        ApprovalDecision::Command(
+            CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
+                network_policy_amendment,
+            },
+        ) => match network_policy_amendment.action {
+            NetworkPolicyRuleAction::Allow => "Saves an allow rule for this host.",
+            NetworkPolicyRuleAction::Deny => "Saves a block rule for this host.",
+        },
+        ApprovalDecision::Command(CommandExecutionApprovalDecision::Decline) => {
+            "The action will not run."
+        }
+        ApprovalDecision::Command(CommandExecutionApprovalDecision::Cancel) => {
+            "Stops this request and returns to Codex."
+        }
+        ApprovalDecision::FileChange(FileChangeApprovalDecision::Accept) => {
+            "Applies only these proposed changes."
+        }
+        ApprovalDecision::FileChange(FileChangeApprovalDecision::AcceptForSession) => {
+            "Allows changes to these paths for this session."
+        }
+        ApprovalDecision::FileChange(FileChangeApprovalDecision::Decline) => {
+            "The proposed changes will not be applied."
+        }
+        ApprovalDecision::FileChange(FileChangeApprovalDecision::Cancel) => {
+            "Keeps these proposed changes from being applied."
+        }
+        ApprovalDecision::Permissions(PermissionsDecision::GrantForTurn) => {
+            "Applies only to the current turn."
+        }
+        ApprovalDecision::Permissions(PermissionsDecision::GrantForTurnWithStrictAutoReview) => {
+            "Applies this turn and keeps strict review enabled."
+        }
+        ApprovalDecision::Permissions(PermissionsDecision::GrantForSession) => {
+            "Applies through the current session."
+        }
+        ApprovalDecision::Permissions(PermissionsDecision::Deny) => {
+            "Continues without granting access."
+        }
+        ApprovalDecision::McpElicitation(McpServerElicitationAction::Accept) => {
+            "Opens the requested information form."
+        }
+        ApprovalDecision::McpElicitation(McpServerElicitationAction::Decline) => {
+            "Continues without providing information."
+        }
+        ApprovalDecision::McpElicitation(McpServerElicitationAction::Cancel) => {
+            "Stops this request."
+        }
+    }
+}
+
 fn command_decision_to_review_decision(
     decision: &CommandExecutionApprovalDecision,
 ) -> ReviewDecision {
@@ -837,9 +894,9 @@ fn exec_options(
         .filter_map(|decision| match decision {
             CommandExecutionApprovalDecision::Accept => Some(ApprovalOption {
                 label: if network_approval_context.is_some() {
-                    "Yes, just this once".to_string()
+                    "Allow once".to_string()
                 } else {
-                    "Yes, proceed".to_string()
+                    "Allow this command".to_string()
                 },
                 decision: ApprovalDecision::Command(CommandExecutionApprovalDecision::Accept),
                 shortcuts: keymap.approve.clone(),
@@ -853,9 +910,7 @@ fn exec_options(
                 }
 
                 Some(ApprovalOption {
-                    label: format!(
-                        "Yes, and don't ask again for commands that start with `{rendered_prefix}`"
-                    ),
+                    label: format!("Always allow `{rendered_prefix}`"),
                     decision: ApprovalDecision::Command(
                         CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
                             execpolicy_amendment: execpolicy_amendment.clone(),
@@ -866,11 +921,11 @@ fn exec_options(
             }
             CommandExecutionApprovalDecision::AcceptForSession => Some(ApprovalOption {
                 label: if network_approval_context.is_some() {
-                    "Yes, and allow this host for this conversation".to_string()
+                    "Allow this host for this session".to_string()
                 } else if additional_permissions.is_some() {
-                    "Yes, and allow these permissions for this session".to_string()
+                    "Allow these permissions for this session".to_string()
                 } else {
-                    "Yes, and don't ask again for this command in this session".to_string()
+                    "Allow this command for this session".to_string()
                 },
                 decision: ApprovalDecision::Command(
                     CommandExecutionApprovalDecision::AcceptForSession,
@@ -882,13 +937,12 @@ fn exec_options(
             } => {
                 let (label, shortcuts) = match network_policy_amendment.action {
                     NetworkPolicyRuleAction::Allow => (
-                        "Yes, and allow this host in the future".to_string(),
+                        "Always allow this host".to_string(),
                         keymap.approve_for_prefix.clone(),
                     ),
-                    NetworkPolicyRuleAction::Deny => (
-                        "No, and block this host in the future".to_string(),
-                        keymap.deny.clone(),
-                    ),
+                    NetworkPolicyRuleAction::Deny => {
+                        ("Always block this host".to_string(), keymap.deny.clone())
+                    }
                 };
                 Some(ApprovalOption {
                     label,
@@ -901,12 +955,12 @@ fn exec_options(
                 })
             }
             CommandExecutionApprovalDecision::Decline => Some(ApprovalOption {
-                label: "No, continue without running it".to_string(),
+                label: "Don't allow".to_string(),
                 decision: ApprovalDecision::Command(CommandExecutionApprovalDecision::Decline),
                 shortcuts: keymap.deny.clone(),
             }),
             CommandExecutionApprovalDecision::Cancel => Some(ApprovalOption {
-                label: "No, and tell Codex what to do differently".to_string(),
+                label: "Tell Codex what to do instead".to_string(),
                 decision: ApprovalDecision::Command(CommandExecutionApprovalDecision::Cancel),
                 shortcuts: keymap.decline.clone(),
             }),
@@ -1012,17 +1066,17 @@ fn path_label(base: &str, subpath: &Option<LegacyAppPathString>) -> String {
 fn patch_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
     vec![
         ApprovalOption {
-            label: "Yes, proceed".to_string(),
+            label: "Apply changes".to_string(),
             decision: ApprovalDecision::FileChange(FileChangeApprovalDecision::Accept),
             shortcuts: keymap.approve.clone(),
         },
         ApprovalOption {
-            label: "Yes, and don't ask again for these files".to_string(),
+            label: "Allow these paths for this session".to_string(),
             decision: ApprovalDecision::FileChange(FileChangeApprovalDecision::AcceptForSession),
             shortcuts: keymap.approve_for_session.clone(),
         },
         ApprovalOption {
-            label: "No, and tell Codex what to do differently".to_string(),
+            label: "Tell Codex what to do instead".to_string(),
             decision: ApprovalDecision::FileChange(FileChangeApprovalDecision::Cancel),
             shortcuts: keymap.decline.clone(),
         },
@@ -1039,24 +1093,24 @@ fn permissions_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
 
     vec![
         ApprovalOption {
-            label: "Yes, grant these permissions for this turn".to_string(),
+            label: "Allow for this turn".to_string(),
             decision: ApprovalDecision::Permissions(PermissionsDecision::GrantForTurn),
             shortcuts: keymap.approve.clone(),
         },
         ApprovalOption {
-            label: "Yes, grant for this turn with strict auto review".to_string(),
+            label: "Allow this turn with strict review".to_string(),
             decision: ApprovalDecision::Permissions(
                 PermissionsDecision::GrantForTurnWithStrictAutoReview,
             ),
             shortcuts: vec![key_hint::plain(KeyCode::Char('r'))],
         },
         ApprovalOption {
-            label: "Yes, grant these permissions for this session".to_string(),
+            label: "Allow for this session".to_string(),
             decision: ApprovalDecision::Permissions(PermissionsDecision::GrantForSession),
             shortcuts: keymap.approve_for_session.clone(),
         },
         ApprovalOption {
-            label: "No, continue without permissions".to_string(),
+            label: "Don't allow".to_string(),
             decision: ApprovalDecision::Permissions(PermissionsDecision::Deny),
             shortcuts: deny_shortcuts,
         },
@@ -1087,12 +1141,12 @@ fn elicitation_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
 
     vec![
         ApprovalOption {
-            label: "Yes, provide the requested info".to_string(),
+            label: "Provide requested info".to_string(),
             decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Accept),
             shortcuts: keymap.approve.clone(),
         },
         ApprovalOption {
-            label: "No, but continue without it".to_string(),
+            label: "Continue without it".to_string(),
             decision: ApprovalDecision::McpElicitation(McpServerElicitationAction::Decline),
             shortcuts: decline_shortcuts,
         },
@@ -1284,7 +1338,7 @@ mod tests {
             let approval = params
                 .items
                 .iter()
-                .find(|item| item.name == "Yes, proceed")
+                .find(|item| item.name == "Allow this command")
                 .expect("approval selection");
 
             assert_eq!(approval.display_shortcut, Some(expected_shortcut));
@@ -1797,10 +1851,10 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "Yes, just this once".to_string(),
-                "Yes, and allow this host for this conversation".to_string(),
-                "Yes, and allow this host in the future".to_string(),
-                "No, and tell Codex what to do differently".to_string(),
+                "Allow once".to_string(),
+                "Allow this host for this session".to_string(),
+                "Always allow this host".to_string(),
+                "Tell Codex what to do instead".to_string(),
             ]
         );
     }
@@ -1823,9 +1877,9 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "Yes, proceed".to_string(),
-                "Yes, and don't ask again for this command in this session".to_string(),
-                "No, and tell Codex what to do differently".to_string(),
+                "Allow this command".to_string(),
+                "Allow this command for this session".to_string(),
+                "Tell Codex what to do instead".to_string(),
             ]
         );
     }
@@ -1857,8 +1911,8 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "Yes, proceed".to_string(),
-                "No, and tell Codex what to do differently".to_string(),
+                "Allow this command".to_string(),
+                "Tell Codex what to do instead".to_string(),
             ]
         );
     }
@@ -1873,10 +1927,10 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "Yes, grant these permissions for this turn".to_string(),
-                "Yes, grant for this turn with strict auto review".to_string(),
-                "Yes, grant these permissions for this session".to_string(),
-                "No, continue without permissions".to_string(),
+                "Allow for this turn".to_string(),
+                "Allow this turn with strict review".to_string(),
+                "Allow for this session".to_string(),
+                "Don't allow".to_string(),
             ]
         );
     }
@@ -2137,6 +2191,17 @@ mod tests {
     }
 
     #[test]
+    fn permissions_prompt_narrow_snapshot() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx);
+        let view = make_overlay(make_permissions_request(), tx, Features::with_defaults());
+        assert_snapshot!(
+            "approval_overlay_permissions_prompt_narrow",
+            normalize_snapshot_paths(render_overlay_lines(&view, /*width*/ 47))
+        );
+    }
+
+    #[test]
     fn apply_patch_prompt_with_thread_label_omits_command_line() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx);
@@ -2260,9 +2325,9 @@ mod tests {
             .collect();
 
         assert!(
-            rendered.iter().any(|line| {
-                line.contains("Do you want to approve network access to \"example.com\"?")
-            }),
+            rendered
+                .iter()
+                .any(|line| line.contains("Allow network access to example.com?")),
             "expected network title to include host, got {rendered:?}"
         );
         assert!(

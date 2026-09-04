@@ -4,21 +4,17 @@ expression: sanitized
 ---
 /status
 
-╭────────────────────────────────────────╮
-│  >_ OpenAI Codex (v0.0.0)              │
-│                                        │
-│ Visit                                  │
-│ https://chatgpt.com/codex/settings/usa │
-│ for up-to-date                         │
-│ information on rate limits and credits │
-│                                        │
-│  Model:                ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞ  │
-│  Directory: [[workspace]]              │
-│  Permissions:          Custom (workspa │
-│  Agents.md:            <none>          │
-│  Account:              ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ@ex │
-│  Thread name:          ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞ  │
-│  Collaboration mode:   ｶﾞﾊﾟ collaborat │
-│                                        │
-│  Limits:               data not availa │
-╰────────────────────────────────────────╯
+ >_ OpenAI Codex v0.0.0
+
+ Model:            ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-model…
+ Directory:        C:\workspace\tests
+ Permissions:      Custom (workspace with…
+ Agents.md:        <none>
+ Account:          ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ@example.c…
+ Thread name:      ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ thread
+ Collaborati…:     ｶﾞﾊﾟ collaboration mode
+
+ Limits:           data not available yet
+
+ Live usage:
+ https://chatgpt.com/codex/settings/usage

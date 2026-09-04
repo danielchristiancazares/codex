@@ -1209,7 +1209,7 @@ fn config_toml_deserializes_model_availability_nux() {
             raw_output_mode: false,
             alternate_screen: AltScreenMode::default(),
             status_line: None,
-            status_line_use_colors: true,
+            status_line_use_colors: false,
             terminal_title: None,
             theme: None,
             pet: None,
@@ -1229,7 +1229,7 @@ fn config_toml_deserializes_model_availability_nux() {
 }
 
 #[test]
-fn config_toml_status_line_use_colors_defaults_to_enabled() {
+fn config_toml_status_line_use_colors_defaults_to_disabled() {
     let toml = r#"
 [tui]
 "#;
@@ -1237,7 +1237,7 @@ fn config_toml_status_line_use_colors_defaults_to_enabled() {
         toml::from_str(toml).expect("TOML deserialization should succeed for TUI config");
 
     assert!(
-        cfg.tui
+        !cfg.tui
             .expect("tui config should deserialize")
             .status_line_use_colors
     );
@@ -4288,7 +4288,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             raw_output_mode: false,
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
-            status_line_use_colors: true,
+            status_line_use_colors: false,
             terminal_title: None,
             theme: None,
             pet: None,

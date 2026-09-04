@@ -137,6 +137,29 @@ pub(crate) enum SelectionRowDisplay {
     SingleLine,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SelectionVerticalPlacement {
+    #[default]
+    Bottom,
+    LiftedWhenWide {
+        min_width: u16,
+        trailing_rows: u16,
+    },
+}
+
+impl SelectionVerticalPlacement {
+    fn trailing_rows(self, width: u16) -> u16 {
+        match self {
+            Self::Bottom => 0,
+            Self::LiftedWhenWide {
+                min_width,
+                trailing_rows,
+            } if width >= min_width => trailing_rows,
+            Self::LiftedWhenWide { .. } => 0,
+        }
+    }
+}
+
 /// One selectable item in the generic selection list.
 pub(crate) type SelectionAction = Box<dyn Fn(&AppEventSender) + Send + Sync>;
 pub(crate) type SelectionToggleAction = dyn Fn(bool, &AppEventSender) + Send + Sync;
@@ -212,6 +235,7 @@ pub(crate) struct SelectionViewParams {
     pub search_placeholder: Option<String>,
     pub col_width_mode: ColumnWidthMode,
     pub row_display: SelectionRowDisplay,
+    pub vertical_placement: SelectionVerticalPlacement,
     pub description_layout: SelectionDescriptionLayout,
     /// Rendered left-column width to use for auto-sized rows.
     pub name_column_width: Option<usize>,
@@ -219,7 +243,7 @@ pub(crate) struct SelectionViewParams {
     pub initial_selected_idx: Option<usize>,
 
     /// Rich content rendered beside (wide terminals) or below (narrow terminals)
-    /// the list items, inside the bordered menu surface. Used by the theme picker
+    /// the list items, inside the shared menu spacing. Used by the theme picker
     /// to show a syntax-highlighted preview.
     pub side_content: Box<dyn Renderable>,
 
@@ -264,6 +288,7 @@ impl Default for SelectionViewParams {
             search_placeholder: None,
             col_width_mode: ColumnWidthMode::AutoVisible,
             row_display: SelectionRowDisplay::Wrapped,
+            vertical_placement: SelectionVerticalPlacement::Bottom,
             description_layout: SelectionDescriptionLayout::Columns,
             name_column_width: None,
             header: Box::new(()),
@@ -302,6 +327,7 @@ pub(crate) struct ListSelectionView {
     search_placeholder: Option<String>,
     col_width_mode: ColumnWidthMode,
     row_display: SelectionRowDisplay,
+    vertical_placement: SelectionVerticalPlacement,
     description_layout: SelectionDescriptionLayout,
     name_column_width: Option<usize>,
     filtered_indices: Vec<usize>,
@@ -441,6 +467,7 @@ impl ListSelectionView {
             },
             col_width_mode: params.col_width_mode,
             row_display: params.row_display,
+            vertical_placement: params.vertical_placement,
             description_layout: params.description_layout,
             name_column_width: params.name_column_width,
             filtered_indices: Vec::new(),
@@ -518,7 +545,7 @@ impl ListSelectionView {
                 .active_footer_hint()
                 .filter(|hint| line_width(hint) <= width)
         {
-            return Some(hint.clone());
+            return Some(self.footer_hint_with_position(hint.clone(), width, actionable_selection));
         }
 
         let accept = has_selection
@@ -567,6 +594,54 @@ impl ListSelectionView {
         candidates
             .into_iter()
             .find(|line| line_width(line) <= width)
+            .map(|hint| self.footer_hint_with_position(hint, width, actionable_selection))
+    }
+
+    fn footer_hint_with_position(
+        &self,
+        mut hint: Line<'static>,
+        width: usize,
+        actionable_selection: Option<usize>,
+    ) -> Line<'static> {
+        if self.visible_len() <= MAX_POPUP_ROWS {
+            return hint;
+        }
+        if actionable_selection.is_none() {
+            return hint;
+        }
+        let Some(selected_idx) = self.state.selected_idx else {
+            return hint;
+        };
+
+        let visible_len = self.visible_len();
+        let position = format!("{}/{}", selected_idx + 1, visible_len);
+        let visible_rows = Self::max_visible_rows(visible_len);
+        let hidden_above = self.state.scroll_top.min(visible_len);
+        let hidden_below = visible_len.saturating_sub(hidden_above.saturating_add(visible_rows));
+        let detailed_overflow = match (hidden_above, hidden_below) {
+            (0, 0) => String::new(),
+            (0, below) => format!(" · +{below} more ↓"),
+            (above, 0) => format!(" · ↑ {above} more"),
+            (above, below) => format!(" · ↑{above} · {below}↓"),
+        };
+        let compact_overflow = match (hidden_above > 0, hidden_below > 0) {
+            (false, false) => "",
+            (false, true) => " ↓",
+            (true, false) => " ↑",
+            (true, true) => " ↕",
+        };
+        let suffixes = [
+            format!(" · {position}{detailed_overflow}"),
+            format!(" · {position}{compact_overflow}"),
+            format!(" · {position}"),
+        ];
+        if let Some(suffix) = suffixes
+            .into_iter()
+            .find(|suffix| line_width(&hint).saturating_add(display_width(suffix)) <= width)
+        {
+            hint.spans.push(suffix.dim());
+        }
+        hint
     }
 
     fn search_line(&self, width: u16) -> Line<'static> {
@@ -711,7 +786,7 @@ impl ListSelectionView {
                     let prefix = if is_selected { '›' } else { ' ' };
                     let name = item.name.as_str();
                     let marker = if item.is_current {
-                        " (current)"
+                        " ✓"
                     } else if item.is_default {
                         " (default)"
                     } else {
@@ -1032,7 +1107,7 @@ impl ListSelectionView {
     }
 
     fn description_layout_for_width(&self, width: u16) -> SelectionDescriptionLayout {
-        if self.description_layout == SelectionDescriptionLayout::Columns && width <= 40 {
+        if self.description_layout == SelectionDescriptionLayout::Columns && width <= 48 {
             SelectionDescriptionLayout::StackBelowWhenNarrow {
                 min_description_width: u16::MAX,
             }
@@ -1343,7 +1418,7 @@ impl Renderable for ListSelectionView {
             self.footer_hint_for_render(width.saturating_sub(2), self.selected_actual_idx())
                 .is_some(),
         ));
-        height
+        height.saturating_add(self.vertical_placement.trailing_rows(width))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -1351,7 +1426,16 @@ impl Renderable for ListSelectionView {
             return;
         }
 
-        let note_width = area.width.saturating_sub(2);
+        let requested_trailing_rows = self.vertical_placement.trailing_rows(area.width);
+        let base_desired_height = self
+            .desired_height(area.width)
+            .saturating_sub(requested_trailing_rows);
+        let trailing_rows =
+            requested_trailing_rows.min(area.height.saturating_sub(base_desired_height));
+        let [main_area, _] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(trailing_rows)]).areas(area);
+
+        let note_width = main_area.width.saturating_sub(2);
         let note_lines = self
             .footer_note
             .as_ref()
@@ -1360,7 +1444,8 @@ impl Renderable for ListSelectionView {
         let mut footer_hint = self.footer_hint_for_render(note_width, self.selected_actual_idx());
         let footer_rows = note_height + u16::from(footer_hint.is_some());
         let [content_area, footer_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_rows)]).areas(area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_rows)])
+                .areas(main_area);
 
         let outer_content_area = content_area;
         // Paint the shared menu surface and then layout inside the returned inset.
@@ -1495,9 +1580,9 @@ impl Renderable for ListSelectionView {
                     &self.state,
                     render_area.height as usize,
                     if self.search_query.is_empty() {
-                        "no options available"
+                        "No options available"
                     } else {
-                        "no matches"
+                        "No matching options"
                     },
                     column_width,
                 ),
@@ -1508,9 +1593,9 @@ impl Renderable for ListSelectionView {
                     &self.state,
                     render_area.height as usize,
                     if self.search_query.is_empty() {
-                        "no options available"
+                        "No options available"
                     } else {
-                        "no matches"
+                        "No matching options"
                     },
                     column_width,
                 ),
@@ -1752,9 +1837,9 @@ mod tests {
                 let accepts = compact.contains("enter") || compact.contains("↵ ok");
                 assert!(!accepts || compact.contains('›'));
                 let state = if view.search_query.is_empty() {
-                    "no options available"
+                    "No options available"
                 } else {
-                    "no matches"
+                    "No matching options"
                 };
                 assert!(!view.filtered_indices.is_empty() || compact.contains(state));
                 [Some(4), Some(6), None].into_iter().map(move |height| {
@@ -1884,6 +1969,32 @@ mod tests {
         let after_scroll = render_lines_with_width(&view, width);
 
         format!("before scroll:\n{before_scroll}\n\nafter scroll:\n{after_scroll}")
+    }
+
+    #[test]
+    fn snapshot_scroll_position_when_rows_overflow() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut view = new_view(
+            SelectionViewParams {
+                title: Some("Choose a session".to_string()),
+                items: make_scrolling_width_items(),
+                ..Default::default()
+            },
+            tx,
+        );
+
+        let first = render_lines_with_width(&view, /*width*/ 48);
+        for _ in 0..4 {
+            view.move_down();
+        }
+        let middle = render_lines_with_width(&view, /*width*/ 48);
+        let narrow = render_lines_with_width(&view, /*width*/ 24);
+
+        assert_snapshot!(
+            "list_selection_scroll_position",
+            format!("first:\n{first}\n\nmiddle:\n{middle}\n\nnarrow:\n{narrow}")
+        );
     }
 
     #[test]
@@ -2877,7 +2988,7 @@ mod tests {
         ];
         let view = new_view(
             SelectionViewParams {
-                title: Some("Select Model and Effort".to_string()),
+                title: Some("Select model and effort".to_string()),
                 items,
                 ..Default::default()
             },
@@ -2959,7 +3070,7 @@ mod tests {
         ];
         let view = new_view(
             SelectionViewParams {
-                title: Some("Select Model and Effort".to_string()),
+                title: Some("Select model and effort".to_string()),
                 items,
                 ..Default::default()
             },

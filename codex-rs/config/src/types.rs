@@ -735,8 +735,8 @@ pub struct Tui {
     pub status_line: Option<Vec<String>>,
 
     /// Color status line items with colors derived from the active syntax theme.
-    /// Defaults to `true`.
-    #[serde(default = "default_true")]
+    /// Defaults to `false` for a quieter terminal-native footer.
+    #[serde(default)]
     pub status_line_use_colors: bool,
 
     /// Ordered list of terminal title item identifiers.

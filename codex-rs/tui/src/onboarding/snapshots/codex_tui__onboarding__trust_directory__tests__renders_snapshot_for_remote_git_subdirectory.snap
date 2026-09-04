@@ -12,7 +12,7 @@ expression: "terminal.backend().to_string().lines().map(str::trim_end).collect::
   directory allows project-local config, hooks, and exec policies to
   load.
 
-› 1. Yes, continue
-  2. No, quit
+› 1. Trust this directory
+  2. Quit Codex
 
-  Press enter to continue
+  enter select

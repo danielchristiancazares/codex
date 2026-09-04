@@ -1,6 +1,6 @@
 //! A live task status row rendered above the composer while the agent is busy.
 //!
-//! The row owns spinner timing, the optional interrupt hint, and short inline
+//! The row owns motion timing, the optional interrupt hint, and short inline
 //! context (for example, the unified-exec background-process summary). Short
 //! details join the primary row when space allows; narrower layouts disclose
 //! controls and details on bounded continuation rows.
@@ -26,12 +26,18 @@ use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
 use crate::motion::shimmer_text;
 use crate::render::renderable::Renderable;
+use crate::style::brand_style;
+use crate::style::key_hint_style;
+use crate::style::secondary_style;
 use crate::text_formatting::capitalize_first;
 use crate::tui::FrameRequester;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
 pub(crate) const STATUS_DETAILS_DEFAULT_MAX_LINES: usize = 3;
+const STATUS_MARKER: &str = "✦";
+const SEGMENT_SEPARATOR: &str = " · ";
+const METADATA_GAP: &str = "  ";
 const DETAILS_PREFIX: &str = "  └ ";
 const DETAILS_BRANCH_PREFIX: &str = "  ├ ";
 
@@ -44,7 +50,22 @@ pub(crate) enum StatusDetailsCapitalization {
 struct StatusLayout<'a> {
     header: &'a str,
     inline_details: Option<&'a str>,
-    interrupt_on_continuation: bool,
+    metadata: StatusMetadataLayout,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InterruptHintFormat {
+    Full,
+    Compact,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StatusMetadataLayout {
+    Full,
+    Elapsed,
+    CompactInterrupt,
+    InterruptContinuation,
+    PrimaryOnly,
 }
 
 /// Displays a single-line in-progress status with optional wrapped details.
@@ -110,7 +131,7 @@ impl StatusIndicatorWidget {
         self.app_event_tx.interrupt();
     }
 
-    /// Update the animated header label (left of the brackets).
+    /// Update the animated primary status label.
     pub(crate) fn update_header(&mut self, header: String) {
         self.header = header;
     }
@@ -124,13 +145,11 @@ impl StatusIndicatorWidget {
     ) {
         self.details_max_lines = max_lines.max(1);
         self.details = details
+            .map(|details| details.trim().to_string())
             .filter(|details| !details.is_empty())
-            .map(|details| {
-                let trimmed = details.trim_start();
-                match capitalization {
-                    StatusDetailsCapitalization::CapitalizeFirst => capitalize_first(trimmed),
-                    StatusDetailsCapitalization::Preserve => trimmed.to_string(),
-                }
+            .map(|details| match capitalization {
+                StatusDetailsCapitalization::CapitalizeFirst => capitalize_first(&details),
+                StatusDetailsCapitalization::Preserve => details,
             });
     }
 
@@ -203,65 +222,105 @@ impl StatusIndicatorWidget {
         self.elapsed_seconds_at(Instant::now())
     }
 
-    fn interrupt_hint_spans(&self) -> Option<Vec<Span<'static>>> {
+    fn interrupt_hint_spans(&self, format: InterruptHintFormat) -> Option<Vec<Span<'static>>> {
         if !self.show_interrupt_hint {
             return None;
         }
         let interrupt_binding = self.interrupt_binding?;
         let binding = if interrupt_binding == ShortcutHint::from(key_hint::plain(KeyCode::Esc)) {
-            "Esc".dim()
+            Span::styled("Esc", key_hint_style())
         } else {
             interrupt_binding.into()
         };
-        Some(vec![binding, " interrupt".dim()])
+        let label = match format {
+            InterruptHintFormat::Full => " interrupt",
+            InterruptHintFormat::Compact => " stop",
+        };
+        Some(vec![binding, Span::styled(label, secondary_style())])
     }
 
     fn status_layout<'a>(&'a self, width: u16, pretty_elapsed: &str) -> StatusLayout<'a> {
         let width = usize::from(width);
-        let interrupt_width = self
-            .interrupt_hint_spans()
+        let full_interrupt_width = self
+            .interrupt_hint_spans(InterruptHintFormat::Full)
             .map(|spans| Line::from(spans).width())
-            .unwrap_or(0);
-        let prefix_width = UnicodeWidthStr::width("✦ ");
-        let separator_width = UnicodeWidthStr::width(" · ");
-        let elapsed_width = separator_width + UnicodeWidthStr::width(pretty_elapsed);
-        let interrupt_segment_width =
-            (interrupt_width > 0).then_some(separator_width + interrupt_width);
+            .filter(|interrupt_width| *interrupt_width > 0);
+        let compact_interrupt_width = self
+            .interrupt_hint_spans(InterruptHintFormat::Compact)
+            .map(|spans| Line::from(spans).width())
+            .filter(|interrupt_width| *interrupt_width > 0);
+        let prefix_width = UnicodeWidthStr::width(STATUS_MARKER) + 1;
+        let separator_width = UnicodeWidthStr::width(SEGMENT_SEPARATOR);
+        let metadata_gap_width = UnicodeWidthStr::width(METADATA_GAP);
+        let elapsed_width = UnicodeWidthStr::width(pretty_elapsed);
+        let essential_metadata_width = compact_interrupt_width.unwrap_or(elapsed_width);
 
-        let header = if prefix_width
-            + UnicodeWidthStr::width(self.header.as_str())
-            + elapsed_width
-            + interrupt_segment_width.unwrap_or(0)
-            > width
-            && self.header.starts_with("Waiting for ")
+        let full_header = self.header.as_str();
+        let header = if full_header.starts_with("Waiting for ")
+            && prefix_width
+                + UnicodeWidthStr::width(full_header)
+                + metadata_gap_width
+                + essential_metadata_width
+                > width
         {
             "Waiting"
         } else {
-            self.header.as_str()
+            full_header
         };
-
+        let primary_width = prefix_width + UnicodeWidthStr::width(header);
+        let metadata = match full_interrupt_width {
+            Some(interrupt_width)
+                if primary_width
+                    + metadata_gap_width
+                    + elapsed_width
+                    + separator_width
+                    + interrupt_width
+                    <= width =>
+            {
+                StatusMetadataLayout::Full
+            }
+            Some(_)
+                if compact_interrupt_width.is_some_and(|interrupt_width| {
+                    primary_width + metadata_gap_width + interrupt_width <= width
+                }) =>
+            {
+                StatusMetadataLayout::CompactInterrupt
+            }
+            Some(_) => StatusMetadataLayout::InterruptContinuation,
+            None if primary_width + metadata_gap_width + elapsed_width <= width => {
+                StatusMetadataLayout::Elapsed
+            }
+            None => StatusMetadataLayout::PrimaryOnly,
+        };
+        let reserved_metadata_width = match metadata {
+            StatusMetadataLayout::Full => {
+                metadata_gap_width
+                    + elapsed_width
+                    + separator_width
+                    + full_interrupt_width.unwrap_or(0)
+            }
+            StatusMetadataLayout::Elapsed => metadata_gap_width + elapsed_width,
+            StatusMetadataLayout::CompactInterrupt => {
+                metadata_gap_width + compact_interrupt_width.unwrap_or(0)
+            }
+            StatusMetadataLayout::InterruptContinuation | StatusMetadataLayout::PrimaryOnly => 0,
+        };
         let inline_details = self.details.as_deref().filter(|details| {
-            !details.contains('\n')
-                && prefix_width
-                    + UnicodeWidthStr::width(header)
+            matches!(
+                metadata,
+                StatusMetadataLayout::Full | StatusMetadataLayout::Elapsed
+            ) && !details.contains('\n')
+                && primary_width
                     + separator_width
                     + UnicodeWidthStr::width(*details)
-                    + elapsed_width
-                    + interrupt_segment_width.unwrap_or(0)
+                    + reserved_metadata_width
                     <= width
         });
-        let action_width = prefix_width
-            + UnicodeWidthStr::width(header)
-            + inline_details.map_or(0, |details| {
-                separator_width + UnicodeWidthStr::width(details)
-            });
-        let interrupt_on_continuation = interrupt_segment_width
-            .is_some_and(|interrupt_width| action_width + elapsed_width + interrupt_width > width);
 
         StatusLayout {
             header,
             inline_details,
-            interrupt_on_continuation,
+            metadata,
         }
     }
 
@@ -367,12 +426,10 @@ impl StatusIndicatorWidget {
 
         if out.len() > self.details_max_lines {
             out.truncate(self.details_max_lines);
-            let max_base_len = content_width.saturating_sub(1);
-            if let Some(last) = out.last_mut()
-                && let Some(span) = last.spans.last_mut()
-            {
-                let trimmed: String = span.content.as_ref().chars().take(max_base_len).collect();
-                *span = format!("{trimmed}…").dim();
+            if let Some(last) = out.last_mut() {
+                let mut ellipsized = last.clone();
+                ellipsized.spans.push(Span::styled("…", secondary_style()));
+                *last = truncate_line_with_ellipsis_if_overflow(ellipsized, usize::from(width));
             }
         }
 
@@ -392,7 +449,9 @@ impl Renderable for StatusIndicatorWidget {
         };
         let inline_message_height =
             u16::try_from(self.inline_message_lines(width, details_height > 0).len()).unwrap_or(0);
-        1 + u16::from(layout.interrupt_on_continuation) + inline_message_height + details_height
+        1 + u16::from(layout.metadata == StatusMetadataLayout::InterruptContinuation)
+            + inline_message_height
+            + details_height
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -411,25 +470,50 @@ impl Renderable for StatusIndicatorWidget {
         let layout_elapsed = fmt_elapsed_compact(elapsed_seconds.saturating_add(1));
         let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
         let layout = self.status_layout(area.width, &layout_elapsed);
-        let interrupt_hint_spans = self.interrupt_hint_spans();
-        let mut action_spans = vec!["✦".magenta().bold(), " ".into()];
+        let full_interrupt_hint_spans = self.interrupt_hint_spans(InterruptHintFormat::Full);
+        let compact_interrupt_hint_spans = self.interrupt_hint_spans(InterruptHintFormat::Compact);
+        let mut action_spans = vec![Span::styled(STATUS_MARKER, brand_style()), " ".into()];
         action_spans.extend(shimmer_text(layout.header, motion_mode));
         if let Some(details) = layout.inline_details {
-            action_spans.push(" · ".dim());
-            action_spans.push(details.to_string().dim());
+            action_spans.push(Span::styled(SEGMENT_SEPARATOR, secondary_style()));
+            action_spans.push(Span::styled(details.to_string(), secondary_style()));
         }
-        let mut metadata_spans = vec![" · ".dim(), pretty_elapsed.dim()];
-        if !layout.interrupt_on_continuation
-            && let Some(interrupt_hint_spans) = interrupt_hint_spans.as_ref()
-        {
-            metadata_spans.push(" · ".dim());
-            metadata_spans.extend(interrupt_hint_spans.clone());
+        let mut metadata_spans = Vec::new();
+        match layout.metadata {
+            StatusMetadataLayout::Full => {
+                metadata_spans.push(Span::styled(pretty_elapsed, secondary_style()));
+                if let Some(interrupt_hint_spans) = full_interrupt_hint_spans.as_ref() {
+                    metadata_spans.push(Span::styled(SEGMENT_SEPARATOR, secondary_style()));
+                    metadata_spans.extend(interrupt_hint_spans.clone());
+                }
+            }
+            StatusMetadataLayout::Elapsed => {
+                metadata_spans.push(Span::styled(pretty_elapsed, secondary_style()));
+            }
+            StatusMetadataLayout::CompactInterrupt => {
+                if let Some(interrupt_hint_spans) = compact_interrupt_hint_spans.as_ref() {
+                    metadata_spans.extend(interrupt_hint_spans.clone());
+                }
+            }
+            StatusMetadataLayout::InterruptContinuation | StatusMetadataLayout::PrimaryOnly => {}
         }
         let metadata_width = Line::from(metadata_spans.clone()).width();
-        let action_width = usize::from(area.width).saturating_sub(metadata_width);
+        let area_width = usize::from(area.width);
+        let metadata_gap_width = if metadata_width > 0 {
+            UnicodeWidthStr::width(METADATA_GAP)
+        } else {
+            0
+        };
+        let action_width =
+            area_width.saturating_sub(metadata_width.saturating_add(metadata_gap_width));
         let mut status_line =
             truncate_line_with_ellipsis_if_overflow(Line::from(action_spans), action_width);
-        status_line.spans.extend(metadata_spans);
+        if metadata_width > 0 {
+            let padding_width =
+                area_width.saturating_sub(status_line.width().saturating_add(metadata_width));
+            status_line.spans.push(Span::raw(" ".repeat(padding_width)));
+            status_line.spans.extend(metadata_spans);
+        }
         let mut lines = Vec::new();
         lines.push(truncate_line_with_ellipsis_if_overflow(
             status_line,
@@ -442,8 +526,8 @@ impl Renderable for StatusIndicatorWidget {
         };
         let inline_message_lines = self.inline_message_lines(area.width, !details.is_empty());
         if area.height > 1 {
-            if layout.interrupt_on_continuation
-                && let Some(interrupt_hint_spans) = interrupt_hint_spans.as_ref()
+            if layout.metadata == StatusMetadataLayout::InterruptContinuation
+                && let Some(interrupt_hint_spans) = full_interrupt_hint_spans.as_ref()
             {
                 let prefix = if !inline_message_lines.is_empty() || !details.is_empty() {
                     DETAILS_BRANCH_PREFIX
@@ -497,18 +581,43 @@ mod tests {
     fn renders_with_working_header() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
-        let w = StatusIndicatorWidget::new(
+        let mut w = StatusIndicatorWidget::new(
             tx,
             crate::tui::FrameRequester::test_dummy(),
-            /*animations_enabled*/ true,
+            /*animations_enabled*/ false,
         );
+        w.is_paused = true;
+        w.elapsed_running = Duration::ZERO;
 
-        // Render into a fixed-size test terminal and snapshot the backend.
-        let mut terminal = Terminal::new(TestBackend::new(80, 2)).expect("terminal");
+        let viewport_width = 120;
+        let viewport_height = 36;
+        let status_height = w.desired_height(viewport_width);
+        let mut terminal =
+            Terminal::new(TestBackend::new(viewport_width, viewport_height)).expect("terminal");
         terminal
-            .draw(|f| w.render(f.area(), f.buffer_mut()))
+            .draw(|f| {
+                w.render(
+                    Rect::new(/*x*/ 0, /*y*/ 0, viewport_width, status_height),
+                    f.buffer_mut(),
+                )
+            })
             .expect("draw");
-        insta::assert_snapshot!(terminal.backend());
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(viewport_width))
+            .take(usize::from(status_height))
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        insta::assert_snapshot!(format!("viewport 120x36:\n{rendered}"));
     }
 
     #[test]
@@ -551,14 +660,20 @@ mod tests {
     fn renders_truncated() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
-        let w = StatusIndicatorWidget::new(
+        let mut w = StatusIndicatorWidget::new(
             tx,
             crate::tui::FrameRequester::test_dummy(),
-            /*animations_enabled*/ true,
+            /*animations_enabled*/ false,
         );
+        w.is_paused = true;
+        w.elapsed_running = Duration::ZERO;
 
-        // Render into a fixed-size test terminal and snapshot the backend.
-        let mut terminal = Terminal::new(TestBackend::new(20, 2)).expect("terminal");
+        assert_eq!(
+            w.status_layout(/*width*/ 20, "0s").metadata,
+            StatusMetadataLayout::CompactInterrupt
+        );
+        assert_eq!(w.desired_height(/*width*/ 20), 1);
+        let mut terminal = Terminal::new(TestBackend::new(20, 1)).expect("terminal");
         terminal
             .draw(|f| w.render(f.area(), f.buffer_mut()))
             .expect("draw");
@@ -607,7 +722,7 @@ mod tests {
         assert_eq!(
             rendered,
             vec![
-                "✦ Working · 0s".to_string(),
+                format!("✦ Working{}0s", " ".repeat(19)),
                 "  └ A man a plan a".to_string(),
                 "    canal panama".to_string(),
             ]
@@ -664,8 +779,8 @@ mod tests {
         w.is_paused = true;
         w.elapsed_running = Duration::ZERO;
 
-        assert_eq!(w.desired_height(/*width*/ 48), 2);
-        let mut terminal = Terminal::new(TestBackend::new(48, 2)).expect("terminal");
+        assert_eq!(w.desired_height(/*width*/ 47), 3);
+        let mut terminal = Terminal::new(TestBackend::new(47, 3)).expect("terminal");
         terminal
             .draw(|f| w.render(f.area(), f.buffer_mut()))
             .expect("draw");
@@ -673,7 +788,7 @@ mod tests {
             .backend()
             .buffer()
             .content()
-            .chunks(48)
+            .chunks(47)
             .map(|row| {
                 row.iter()
                     .map(ratatui::buffer::Cell::symbol)
@@ -685,8 +800,9 @@ mod tests {
         assert_eq!(
             rendered,
             vec![
-                "✦ Waiting · cargo test · 0s · Esc interrupt".to_string(),
-                "  └ Terminal · /ps inspect · /stop terminate".to_string(),
+                "✦ Waiting for background terminal      Esc stop".to_string(),
+                "  ├ Terminal · /ps inspect · /stop terminate".to_string(),
+                "  └ cargo test".to_string(),
             ]
         );
     }
@@ -713,7 +829,7 @@ mod tests {
         w.elapsed_running = Duration::ZERO;
 
         let mut snapshots = Vec::new();
-        for width in [20, 80, 120] {
+        for width in [20, 47, 80, 120] {
             let height = w.desired_height(width);
             let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
             terminal
@@ -762,7 +878,9 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
 
-        assert!(line.starts_with("✦ Working · 0s · Esc interrupt"));
+        let line = line.trim_end();
+        assert!(line.starts_with("✦ Working"));
+        assert!(line.ends_with("0s · Esc interrupt"));
     }
 
     #[test]
@@ -829,7 +947,9 @@ mod tests {
         assert_eq!(lines.len(), STATUS_DETAILS_DEFAULT_MAX_LINES);
         let last = lines.last().expect("expected last details line");
         assert!(
-            last.spans[1].content.as_ref().ends_with("…"),
+            last.spans
+                .last()
+                .is_some_and(|span| span.content.as_ref().ends_with('…')),
             "expected ellipsis in last line: {last:?}"
         );
     }
@@ -844,7 +964,7 @@ mod tests {
             /*animations_enabled*/ true,
         );
         w.update_details(
-            Some("cargo test -p codex-core and then cargo test -p codex-tui".to_string()),
+            Some("  cargo test -p codex-core and then cargo test -p codex-tui  ".to_string()),
             StatusDetailsCapitalization::Preserve,
             /*max_lines*/ 1,
         );

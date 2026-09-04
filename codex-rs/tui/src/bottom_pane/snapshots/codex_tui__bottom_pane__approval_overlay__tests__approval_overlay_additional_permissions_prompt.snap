@@ -3,7 +3,7 @@ source: tui/src/bottom_pane/approval_overlay.rs
 expression: "normalize_snapshot_paths(render_overlay_lines(&view, 120))"
 ---
 
-  Would you like to run the following command?
+  Approve this command?
 
   Reason: need filesystem access
 
@@ -11,7 +11,7 @@ expression: "normalize_snapshot_paths(render_overlay_lines(&view, 120))"
 
   $ cat /tmp/readme.txt
 
-› 1. Yes, proceed (y)
-  2. No, and tell Codex what to do differently (esc)
+› 1. Allow this command (y)             Runs this action once.
+  2. Tell Codex what to do instead (esc)  Stops this request and returns to Codex.
 
-  Press enter to confirm or esc to cancel
+  enter select · esc cancel

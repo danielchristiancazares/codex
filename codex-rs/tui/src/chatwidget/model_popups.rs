@@ -6,6 +6,7 @@
 use super::*;
 use crate::app_event::ModelSelectionScope;
 use crate::bottom_pane::SelectionRowDisplay;
+use crate::bottom_pane::SelectionVerticalPlacement;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;
 
@@ -166,7 +167,7 @@ impl ChatWidget {
         }
 
         let header = self.model_menu_header(
-            "Select Model",
+            "Select model",
             "Pick a quick auto mode or browse all models.",
         );
         self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -174,6 +175,10 @@ impl ChatWidget {
             items,
             header,
             row_display: SelectionRowDisplay::SingleLine,
+            vertical_placement: SelectionVerticalPlacement::LiftedWhenWide {
+                min_width: 90,
+                trailing_rows: 10,
+            },
             ..Default::default()
         });
     }
@@ -202,8 +207,16 @@ impl ChatWidget {
 
         let mut items: Vec<SelectionItem> = Vec::new();
         for preset in presets.into_iter() {
-            let description =
-                (!preset.description.is_empty()).then_some(preset.description.to_string());
+            let description = if !preset.description.trim().is_empty() {
+                Some(preset.description.to_string())
+            } else {
+                preset
+                    .model_specialty
+                    .as_deref()
+                    .filter(|specialty| !specialty.trim().is_empty())
+                    .map(str::to_string)
+                    .or_else(|| Some("General-purpose coding model.".to_string()))
+            };
             let is_current = preset.model.as_str() == self.current_model();
             let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
             let supports_context_window =
@@ -227,15 +240,16 @@ impl ChatWidget {
             });
         }
 
-        let header = self.model_menu_header(
-            "Select Model and Effort",
-            "Access legacy models by running codex -m <model_name> or in your config.toml",
-        );
+        let header = self.model_menu_header("Select model", "Choose a model; effort follows.");
         self.bottom_pane.show_selection_view(SelectionViewParams {
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,
             header,
             row_display: SelectionRowDisplay::SingleLine,
+            vertical_placement: SelectionVerticalPlacement::LiftedWhenWide {
+                min_width: 90,
+                trailing_rows: 10,
+            },
             ..Default::default()
         });
     }

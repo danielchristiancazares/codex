@@ -1,0 +1,72 @@
+---
+source: tui/src/bottom_pane/list_selection_view.rs
+expression: "format!(\"first:\\n{first}\\n\\nmiddle:\\n{middle}\\n\\nnarrow:\\n{narrow}\")"
+---
+first:
+                                                
+  Choose a session                              
+                                                
+› 1. Item 1                                     
+     desc 1                                     
+  2. Item 2                                     
+     desc 2                                     
+  3. Item 3                                     
+     desc 3                                     
+  4. Item 4                                     
+     desc 4                                     
+  5. Item 5                                     
+     desc 5                                     
+  6. Item 6                                     
+     desc 6                                     
+  7. Item 7                                     
+     desc 7                                     
+  8. Item 8                                     
+     desc 8                                     
+                                                
+  ↵ ok · esc back · 1/9 · +1 more ↓             
+
+middle:
+                                                
+  Choose a session                              
+                                                
+  1. Item 1                                     
+     desc 1                                     
+  2. Item 2                                     
+     desc 2                                     
+  3. Item 3                                     
+     desc 3                                     
+  4. Item 4                                     
+     desc 4                                     
+› 5. Item 5                                     
+     desc 5                                     
+  6. Item 6                                     
+     desc 6                                     
+  7. Item 7                                     
+     desc 7                                     
+  8. Item 8                                     
+     desc 8                                     
+                                                
+  ↵ ok · esc back · 5/9 · +1 more ↓             
+
+narrow:
+                        
+  Choose a session      
+                        
+  1. Item 1             
+     desc 1             
+  2. Item 2             
+     desc 2             
+  3. Item 3             
+     desc 3             
+  4. Item 4             
+     desc 4             
+› 5. Item 5             
+     desc 5             
+  6. Item 6             
+     desc 6             
+  7. Item 7             
+     desc 7             
+  8. Item 8             
+     desc 8             
+                        
+  ↵ ok · esc back · 5/9

@@ -1,19 +1,16 @@
 ---
 source: tui/src/status/tests.rs
-assertion_line: 902
 expression: sanitized
 ---
 /status
 
-╭──────────────────────────────────────────────────────────────────────────────╮
-│  >_ OpenAI Codex (v0.0.0)                                                    │
-│                                                                              │
-│  Model:                   gpt-5.6-sol (reasoning none, summaries auto)       │
-│  Model provider:          GitHub Copilot                                     │
-│  Directory: [[workspace]]                                                    │
-│  Permissions:             Custom (workspace with network access, Ask for app │
-│  Agents.md:               <none>                                             │
-│                                                                              │
-│  Token usage:             0 total  (0 input + 0 output)                      │
-│  Copilot Monthly limit:   [█████████████░░░░░░░] 67% left                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
+ >_ OpenAI Codex v0.0.0
+
+ Model:                   gpt-5.6-sol (reasoning none, summaries auto)
+ Model provider:          GitHub Copilot
+ Directory:               C:\workspace\tests
+ Permissions:             Custom (workspace with network access, Ask for approv…
+ Agents.md:               <none>
+
+ Token usage:             0 total  (0 input + 0 output)
+ Copilot monthly limit:   [█████████████░░░░░░░] 67% left

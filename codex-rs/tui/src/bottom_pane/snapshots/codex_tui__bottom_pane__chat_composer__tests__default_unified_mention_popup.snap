@@ -2,7 +2,7 @@
 source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
-"> Sample Plugin   Plugin with skills and an MCP server                                        Plugin"
+"› Sample Plugin   Plugin with skills and an MCP server                                      Plugin  "
 "  other (sample)  Example skill used in tests.                                                Skill "
 "  notes (sample)  Example skill used in tests.                                                Skill "
 "                                                                                                    "

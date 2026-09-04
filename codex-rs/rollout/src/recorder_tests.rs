@@ -1787,6 +1787,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             realtime_active: None,
             cyber_access_program: None,
             effort: None,
+            reasoning_mode: codex_protocol::config_types::ReasoningMode::Standard,
             summary: codex_protocol::config_types::ReasoningSummary::Auto,
         }),
     };

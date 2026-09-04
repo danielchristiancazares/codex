@@ -52,6 +52,10 @@ use unicode_width::UnicodeWidthChar;
 mod preview;
 mod update_parse;
 
+#[cfg(test)]
+#[path = "diff_render_light_palette_tests.rs"]
+mod light_palette_tests;
+
 /// Replacement for a tab character in rendered diff content.
 const TAB_REPLACEMENT: &str = "    ";
 /// Display width of a tab character in columns.

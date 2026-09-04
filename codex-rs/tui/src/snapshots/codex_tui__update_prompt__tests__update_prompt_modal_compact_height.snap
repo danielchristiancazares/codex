@@ -1,0 +1,12 @@
+---
+source: tui/src/update_prompt.rs
+expression: rendered
+---
+  Update available v0.153.0 -> v9.9.9
+  View release notes
+
+  1. Update now
+     Runs npm to install the latest release.
+  2. Not now
+› 3. Don't remind me about this version                                         
+  enter select · esc skip

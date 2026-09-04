@@ -55,7 +55,7 @@ impl StatusSurfacePreviewItem {
             StatusSurfacePreviewItem::BranchChanges => "+12 -3",
             StatusSurfacePreviewItem::Permissions => "Workspace",
             StatusSurfacePreviewItem::ApprovalMode => "on-request",
-            StatusSurfacePreviewItem::ContextRemaining => "Context 0% left",
+            StatusSurfacePreviewItem::ContextRemaining => "0% context left",
             StatusSurfacePreviewItem::ContextUsed => "Context used 0%",
             StatusSurfacePreviewItem::FiveHourLimit => "5h 0% left",
             StatusSurfacePreviewItem::WeeklyLimit => "Weekly 0% left",

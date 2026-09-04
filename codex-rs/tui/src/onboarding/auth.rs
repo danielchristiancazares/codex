@@ -32,6 +32,7 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
@@ -46,6 +47,7 @@ use std::sync::RwLock;
 use uuid::Uuid;
 
 use crate::LoginStatus;
+use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::motion::MotionMode;
@@ -54,6 +56,7 @@ use crate::onboarding::bedrock::BedrockState;
 use crate::onboarding::keys;
 use crate::onboarding::onboarding_screen::KeyboardHandler;
 use crate::onboarding::onboarding_screen::StepStateProvider;
+use crate::style::accent_style;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::terminal_hyperlinks::mark_buffer_hyperlinks;
 use crate::terminal_hyperlinks::visible_lines;
@@ -458,12 +461,15 @@ impl AuthModeWidget {
                                 description: &str|
          -> Vec<Line<'static>> {
             let is_selected = self.highlighted_mode == selected_mode;
-            let caret = if is_selected { ">" } else { " " };
+            let caret = if is_selected { "›" } else { " " };
 
             let line1 = if is_selected {
                 Line::from(vec![
-                    format!("{caret} {index}. ", index = idx + 1).cyan().dim(),
-                    text.to_string().cyan(),
+                    Span::styled(
+                        format!("{caret} {index}. ", index = idx + 1),
+                        accent_style(),
+                    ),
+                    Span::styled(text.to_string(), accent_style().underlined()),
                 ])
             } else {
                 format!("  {index}. {text}", index = idx + 1).into()
@@ -471,8 +477,7 @@ impl AuthModeWidget {
 
             let line2 = if is_selected {
                 Line::from(format!("     {description}"))
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::DIM)
+                    .style(accent_style().add_modifier(Modifier::DIM))
             } else {
                 Line::from(format!("     {description}"))
                     .style(Style::default().add_modifier(Modifier::DIM))
@@ -502,7 +507,7 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Sign in with Device Code",
+                        "Sign in with device code",
                         device_code_description,
                     ));
                 }
@@ -538,11 +543,10 @@ impl AuthModeWidget {
             );
             lines.push("".into());
         }
-        lines.push(Line::from(vec![
-            "  Press ".dim(),
-            self.confirm_binding().into(),
-            " to continue".dim(),
-        ]));
+        lines.push(key_hint::action_hint_line(
+            "  ",
+            [(self.confirm_binding(), "continue")],
+        ));
         if let Some(err) = self.error_message() {
             lines.push("".into());
             lines.push(err.red().into());
@@ -583,7 +587,7 @@ impl AuthModeWidget {
                 "  On a remote or headless machine? Press ".into(),
                 self.cancel_binding().into(),
                 " and choose ".into(),
-                "Sign in with Device Code".cyan(),
+                Span::styled("Sign in with device code", accent_style()),
                 ".".into(),
             ]));
             lines.push("".into());
@@ -592,11 +596,10 @@ impl AuthModeWidget {
             None
         };
 
-        lines.push(Line::from(vec![
-            "  Press ".dim(),
-            self.cancel_binding().into(),
-            " to cancel".dim(),
-        ]));
+        lines.push(key_hint::action_hint_line(
+            "  ",
+            [(self.cancel_binding(), "cancel")],
+        ));
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(area, buf);
@@ -643,11 +646,10 @@ impl AuthModeWidget {
             "  Powered by your ChatGPT account".into(),
             preferences_line,
             "".into(),
-            HyperlinkLine::new(Line::from(vec![
-                "  Press ".fg(Color::Cyan),
-                self.confirm_binding().into(),
-                " to continue".fg(Color::Cyan),
-            ])),
+            HyperlinkLine::new(key_hint::action_hint_line(
+                "  ",
+                [(self.confirm_binding(), "continue")],
+            )),
         ];
 
         Paragraph::new(visible_lines(lines.clone()))
@@ -690,7 +692,7 @@ impl AuthModeWidget {
 
         let mut intro_lines: Vec<Line> = vec![
             Line::from(vec![
-                "> ".into(),
+                Span::styled("› ", accent_style()),
                 "Use your own OpenAI API key for usage-based billing".bold(),
             ]),
             "".into(),
@@ -722,22 +724,17 @@ impl AuthModeWidget {
                     .title("API key")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .border_style(accent_style()),
             )
             .render(input_area, buf);
 
-        let mut footer_lines: Vec<Line> = vec![
-            Line::from(vec![
-                "  Press ".dim(),
-                self.confirm_binding().into(),
-                " to save".dim(),
-            ]),
-            Line::from(vec![
-                "  Press ".dim(),
-                self.cancel_binding().into(),
-                " to go back".dim(),
-            ]),
-        ];
+        let mut footer_lines: Vec<Line> = vec![key_hint::action_hint_line(
+            "  ",
+            [
+                (self.confirm_binding(), "save"),
+                (self.cancel_binding(), "back"),
+            ],
+        )];
         if let Some(error) = self.error_message() {
             footer_lines.push("".into());
             footer_lines.push(error.red().into());
@@ -1233,13 +1230,13 @@ mod tests {
         while rows.last().is_some_and(String::is_empty) {
             rows.pop();
         }
-        insta::assert_snapshot!(rows.join("\n"), @r###"
+        insta::assert_snapshot!(rows.join("\n"), @"
           Choose how you want to use Codex.
 
-        > 1. Sign in with ChatGPT
+        › 1. Sign in with ChatGPT
              Usage included with Plus, Pro, Business, and Enterprise plans
 
-          2. Sign in with Device Code
+          2. Sign in with device code
              Sign in from another device with a one-time code
 
           3. Use an OpenAI API key
@@ -1248,8 +1245,8 @@ mod tests {
           4. Use Amazon Bedrock
              Connect using your AWS credentials
 
-          Press enter to continue
-        "###);
+          enter continue
+        ");
 
         widget.auth_config.forced_login_method = Some(ForcedLoginMethod::Chatgpt);
         assert_eq!(
@@ -1386,7 +1383,30 @@ mod tests {
         let contents = terminal.backend().to_string();
         insta::assert_snapshot!("continue_in_browser_narrow_long_url", contents);
         assert!(contents.contains("On a remote or headless machine?"));
-        assert!(contents.contains("Press esc to cancel"));
+        assert!(contents.contains("esc cancel"));
+    }
+
+    #[test]
+    fn pick_mode_narrow_snapshot() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut widget, _tmp) = runtime.block_on(widget_forced_chatgpt());
+        widget.auth_config.forced_login_method = None;
+        let area = Rect::new(0, 0, /*width*/ 47, /*height*/ 14);
+        let mut buffer = Buffer::empty(area);
+
+        widget.render_pick_mode(area, &mut buffer);
+
+        let rendered = (area.top()..area.bottom())
+            .map(|row| {
+                (area.left()..area.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        insta::assert_snapshot!("onboarding_sign_in_options_narrow", rendered);
     }
 
     #[test]
@@ -1434,7 +1454,7 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        insta::assert_snapshot!(visible, @r###"
+        insta::assert_snapshot!(visible, @"
         ✓ Signed in with your ChatGPT account
 
           Before you start:
@@ -1448,8 +1468,8 @@ mod tests {
           Powered by your ChatGPT account
           Uses your plan's rate limits and training data preferences
 
-          Press enter to continue
-        "###);
+          enter continue
+        ");
     }
 
     #[test]

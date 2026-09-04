@@ -16,14 +16,14 @@ expression: "states.join(\"\\n---\\n\")"
   2. Full reset (Weekly + 5 hr)  Expires 08:59 on 27 Jun 2026.
   3. Cancel
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   You don't have any usage limit resets available.
 
 › 1. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   Couldn't load usage limit resets. Please try again.
@@ -31,7 +31,7 @@ expression: "states.join(\"\\n---\\n\")"
 › 1. Try again
   2. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   Resetting your usage...
@@ -44,21 +44,21 @@ expression: "states.join(\"\\n---\\n\")"
 › 1. Try again
   2. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   Your usage does not need a reset right now.
 
 › 1. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   No usage limit resets are available.
 
 › 1. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back
 ---
   Usage limit resets
   Usage reset. Checking your remaining resets...
@@ -70,4 +70,4 @@ expression: "states.join(\"\\n---\\n\")"
 
 › 1. Close
 
-  Press enter to confirm or esc to go back
+  enter confirm · esc back

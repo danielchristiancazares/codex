@@ -2,7 +2,7 @@
 source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
-"> Review database migration  /workspace/project                                               Task  "
+"› Review database migration  /workspace/project                                             Task    "
 "  migration                  /another/project                                                 Task  "
 "                                                                                                    "
 "  enter insert · esc close · ←/→ switch search modes     [All Results]   Filesystem Only    Plugins "

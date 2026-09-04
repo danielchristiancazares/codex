@@ -4309,7 +4309,7 @@ impl Config {
                 .tui
                 .as_ref()
                 .map(|t| t.status_line_use_colors)
-                .unwrap_or(true),
+                .unwrap_or(false),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),

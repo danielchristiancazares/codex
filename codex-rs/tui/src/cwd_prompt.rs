@@ -333,14 +333,11 @@ impl WidgetRef for &CwdPromptScreen {
         }
         column.push("");
         column.push(
-            Line::from(vec![
-                "Press ".dim(),
-                key_hint::plain(KeyCode::Enter).into(),
-                " to continue".dim(),
-            ])
-            .inset(Insets::tlbr(
-                /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
-            )),
+            key_hint::action_hint_line("", [(key_hint::plain(KeyCode::Enter), "continue")]).inset(
+                Insets::tlbr(
+                    /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
+                ),
+            ),
         );
         column.render(area, buf);
     }
