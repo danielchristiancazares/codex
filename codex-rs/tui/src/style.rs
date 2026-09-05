@@ -12,6 +12,10 @@ use ratatui::style::Style;
 
 const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (132, 0, 120);
 
+#[cfg(test)]
+#[path = "style_contrast_tests.rs"]
+mod contrast_tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StatusTone {
     Success,
@@ -35,7 +39,16 @@ fn status_style_for(tone: StatusTone, color_level: StdoutColorLevel) -> Style {
 
 /// Returns the low-emphasis style for supporting copy and metadata.
 pub(crate) fn secondary_style() -> Style {
-    Style::default().dim()
+    let level = effective_stdout_color_level();
+    if matches!(
+        level,
+        StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256
+    ) && let (Some(fg), Some(bg)) = (default_fg(), default_bg())
+    {
+        Style::default().fg(best_color_for_level(blend(fg, bg, /*alpha*/ 0.70), level))
+    } else {
+        Style::default()
+    }
 }
 
 /// Returns the high-contrast, non-color-dependent style for shortcut tokens.

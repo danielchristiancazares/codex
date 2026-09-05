@@ -1,0 +1,28 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: "crate::test_support::sanitize_codex_version(&normalize_snapshot_paths(text))"
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Review the retry logic, fix the missing error handling, and verify the patch.
+
+
+■ Connection interrupted after 3 retries. Your draft is preserved. Check the
+  connection and try again.
+
+╭ Message ───────────────────────────────────────────────────────── enter send ╮
+│ › Continue with the retry fix.                                               │
+╰ / commands · @ files ────────────────────────────────────── ctrl + j newline ╯
+  GPT 5.6 Sol · Default reasoning · C:\work\atlas

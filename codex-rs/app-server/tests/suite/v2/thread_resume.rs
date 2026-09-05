@@ -3127,8 +3127,11 @@ async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Resu
         ])),
     ])
     .await;
+    let bridge =
+        super::responses_websocket_bridge::ResponsesWebSocketForwarder::start(server.uri()).await?;
     let codex_home = TempDir::new()?;
-    mock_responses_config(server.uri())
+    mock_responses_config(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .enable_feature(Feature::Goals)
         .write(codex_home.path())?;
     let mut mcp = TestAppServer::builder()
@@ -3299,19 +3302,25 @@ fn ungated_goal_response(body: String) -> Vec<StreamingSseChunk> {
 
 #[tokio::test]
 async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Result<()> {
-    let server = create_mock_responses_server_sequence_unchecked(vec![
-        responses::sse(vec![
-            responses::ev_response_created("materialize-thread"),
-            responses::ev_completed("materialize-thread"),
-        ]),
-        responses::sse(vec![
-            responses::ev_response_created("goal-continuation"),
-            responses::ev_completed_with_tokens("goal-continuation", /*total_tokens*/ 200),
-        ]),
-    ])
+    let bridge = super::responses_websocket_bridge::ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
+    let _responses = responses::mount_sse_sequence(
+        server,
+        vec![
+            responses::sse(vec![
+                responses::ev_response_created("materialize-thread"),
+                responses::ev_completed("materialize-thread"),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("goal-continuation"),
+                responses::ev_completed_with_tokens("goal-continuation", /*total_tokens*/ 200),
+            ]),
+        ],
+    )
     .await;
     let codex_home = TempDir::new()?;
-    mock_responses_config(&server.uri())
+    mock_responses_config(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .with_root_config(&format!(r#"chatgpt_base_url = "{}""#, server.uri()))
         .write(codex_home.path())?;
     let config_path = codex_home.path().join("config.toml");
@@ -3320,7 +3329,7 @@ async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Resul
         &config_path,
         config.replace("personality = true\n", "personality = true\ngoals = true\n"),
     )?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_analytics_capture(server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -3377,7 +3386,7 @@ async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Resul
     )
     .await??;
 
-    let created = wait_for_goal_event(&server, DEFAULT_READ_TIMEOUT, "created", "active").await?;
+    let created = wait_for_goal_event(server, DEFAULT_READ_TIMEOUT, "created", "active").await?;
     let persisted_goal_id = created["event_params"]["goal_id"]
         .as_str()
         .expect("created goal id");
@@ -3391,7 +3400,7 @@ async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Resul
     assert!(created["event_params"].get("token_budget").is_none());
 
     let usage = wait_for_goal_event(
-        &server,
+        server,
         DEFAULT_READ_TIMEOUT,
         "usage_accounted",
         "budget_limited",
@@ -3417,16 +3426,15 @@ async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Resul
         .filter(|request| request.url.path().ends_with("/responses"))
         .collect::<Vec<_>>();
     assert_eq!(response_requests.len(), 2);
-    let metadata_header = response_requests[1]
-        .headers
-        .get("x-codex-turn-metadata")
-        .expect("goal continuation should include turn metadata")
-        .to_str()?;
+    let request_body = response_requests[1].body_json::<serde_json::Value>()?;
+    let metadata_header = request_body["client_metadata"]["x-codex-turn-metadata"]
+        .as_str()
+        .expect("goal continuation should include per-request turn metadata");
     let metadata: serde_json::Value = serde_json::from_str(metadata_header)?;
     assert_eq!(metadata["turn_trigger"].as_str(), Some("goal"));
 
     let status = wait_for_goal_event(
-        &server,
+        server,
         DEFAULT_READ_TIMEOUT,
         "status_changed",
         "budget_limited",
@@ -3476,7 +3484,7 @@ async fn thread_goal_lifecycle_emits_analytics_and_clear_deletes_goal() -> Resul
     .await??;
 
     let cleared =
-        wait_for_goal_event(&server, DEFAULT_READ_TIMEOUT, "cleared", "budget_limited").await?;
+        wait_for_goal_event(server, DEFAULT_READ_TIMEOUT, "cleared", "budget_limited").await?;
     assert_eq!(cleared["event_params"]["goal_id"], persisted_goal_id);
     assert_eq!(cleared["event_params"]["turn_id"], serde_json::Value::Null);
 

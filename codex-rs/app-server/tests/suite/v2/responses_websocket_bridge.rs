@@ -18,16 +18,35 @@ use tokio_tungstenite::tungstenite::extensions::ExtensionsConfig;
 use tokio_tungstenite::tungstenite::extensions::compression::deflate::DeflateConfig;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
+/// Owns the HTTP response script and the WebSocket endpoint used by app-server.
 pub(super) struct ResponsesWebSocketBridge {
+    // Cancel forwarding before dropping the HTTP response script.
+    forwarder: ResponsesWebSocketForwarder,
     pub(super) http: wiremock::MockServer,
-    uri: String,
-    bridge: JoinHandle<()>,
 }
 
 impl ResponsesWebSocketBridge {
     pub(super) async fn start() -> Result<Self> {
         let http = responses::start_mock_server().await;
-        let upstream = format!("{}/v1/responses", http.uri());
+        let forwarder = ResponsesWebSocketForwarder::start(&http.uri()).await?;
+        Ok(Self { http, forwarder })
+    }
+
+    pub(super) fn uri(&self) -> &str {
+        self.forwarder.uri()
+    }
+}
+
+/// Adapts a loopback SSE fixture, including gated streams, to production WebSocket requests.
+/// Request bodies retain their actual per-request client metadata for assertions.
+pub(super) struct ResponsesWebSocketForwarder {
+    uri: String,
+    bridge: JoinHandle<()>,
+}
+
+impl ResponsesWebSocketForwarder {
+    pub(super) async fn start(upstream_base: &str) -> Result<Self> {
+        let upstream = format!("{upstream_base}/v1/responses");
         // Both endpoints belong to this loopback-only fixture.
         let client = HttpClientBuilder::new()
             .without_redirects()
@@ -111,7 +130,7 @@ impl ResponsesWebSocketBridge {
                 }
             }
         });
-        Ok(Self { http, uri, bridge })
+        Ok(Self { uri, bridge })
     }
 
     pub(super) fn uri(&self) -> &str {
@@ -119,7 +138,7 @@ impl ResponsesWebSocketBridge {
     }
 }
 
-impl Drop for ResponsesWebSocketBridge {
+impl Drop for ResponsesWebSocketForwarder {
     fn drop(&mut self) {
         // Dropping the bridge's JoinSet also cancels its outstanding connections.
         self.bridge.abort();

@@ -42,8 +42,8 @@ pub fn best_color_for_level(target: (u8, u8, u8), color_level: StdoutColorLevel)
 
 pub(crate) fn effective_stdout_color_level() -> StdoutColorLevel {
     #[cfg(test)]
-    if TEST_DEFAULT_COLORS.with(|colors| colors.get().is_some()) {
-        return StdoutColorLevel::TrueColor;
+    if let Some(level) = TEST_COLOR_LEVEL.with(std::cell::Cell::get) {
+        return level;
     }
 
     stdout_color_level_for_terminal(
@@ -96,6 +96,9 @@ pub struct DefaultColors {
 
 #[cfg(test)]
 thread_local! {
+    static TEST_COLOR_LEVEL: std::cell::Cell<Option<StdoutColorLevel>> = const {
+        std::cell::Cell::new(None)
+    };
     static TEST_DEFAULT_COLORS: std::cell::Cell<Option<DefaultColors>> = const {
         std::cell::Cell::new(None)
     };
@@ -116,14 +119,32 @@ pub(crate) fn with_test_default_colors<T>(
     colors: crate::terminal_probe::DefaultColors,
     render: impl FnOnce() -> T,
 ) -> T {
+    with_test_terminal_palette(colors, StdoutColorLevel::TrueColor, render)
+}
+
+/// Scope detected colors and color capability without mutating the process environment.
+#[cfg(test)]
+pub(crate) fn with_test_terminal_palette<T>(
+    colors: crate::terminal_probe::DefaultColors,
+    level: StdoutColorLevel,
+    render: impl FnOnce() -> T,
+) -> T {
+    struct RestorePalette(Option<DefaultColors>, Option<StdoutColorLevel>);
+    impl Drop for RestorePalette {
+        fn drop(&mut self) {
+            TEST_DEFAULT_COLORS.with(|colors| colors.set(self.0));
+            TEST_COLOR_LEVEL.with(|level| level.set(self.1));
+        }
+    }
     TEST_DEFAULT_COLORS.with(|override_colors| {
         let previous = override_colors.replace(Some(DefaultColors {
             fg: colors.fg,
             bg: colors.bg,
         }));
-        let result = render();
-        override_colors.set(previous);
-        result
+        let previous_level =
+            TEST_COLOR_LEVEL.with(|override_level| override_level.replace(Some(level)));
+        let _restore = RestorePalette(previous, previous_level);
+        render()
     })
 }
 

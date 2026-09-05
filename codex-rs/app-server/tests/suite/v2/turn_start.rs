@@ -332,13 +332,16 @@ async fn turn_start_omits_notification_media_without_changing_model_input() -> R
 #[tokio::test]
 async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
     let responses = vec![create_final_assistant_message_sse_response("Done")?];
-    let server = create_mock_responses_server_sequence_unchecked(responses).await;
+    let bridge = super::responses_websocket_bridge::ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
+    let _responses = responses::mount_sse_sequence(server, responses).await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_analytics_capture(server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -387,7 +390,7 @@ async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
         [ThreadItem::AgentMessage { text, .. }] if text == "Done"
     ));
 
-    let event = wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
+    let event = wait_for_analytics_event(server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
     assert_eq!(
         (
             event["event_params"]["turn_id"].as_str(),
@@ -450,12 +453,14 @@ async fn turn_start_steers_active_turn_and_returns_active_turn_id() -> Result<()
         }],
     ])
     .await;
+    let bridge =
+        super::responses_websocket_bridge::ResponsesWebSocketForwarder::start(server.uri()).await?;
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join("config.toml"),
         format!(
             "model = \"gpt-5.5\"\napproval_policy = \"never\"\nopenai_base_url = \"{}/v1\"\ncli_auth_credentials_store = \"file\"\n[features]\nenable_request_compression = false\n",
-            server.uri()
+            bridge.uri()
         ),
     )?;
     write_chatgpt_auth(

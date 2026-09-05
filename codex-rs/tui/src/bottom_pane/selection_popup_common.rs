@@ -340,6 +340,12 @@ fn apply_row_state_style(lines: &mut [Line<'static>], selected: bool, is_disable
 }
 
 fn apply_selected_span_style(span: &mut Span<'static>) {
+    // Row builders mark explanatory copy and category metadata as secondary. Selection
+    // emphasizes the action label while preserving that distinction, including wrapped rows.
+    if span.style.add_modifier.contains(ratatui::style::Modifier::DIM) {
+        span.style = crate::style::secondary_style().not_dim();
+        return;
+    }
     let style = accent_style();
     span.style = if span.content.trim().is_empty() {
         style

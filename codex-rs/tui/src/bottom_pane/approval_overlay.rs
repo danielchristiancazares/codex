@@ -35,7 +35,6 @@ use crate::key_hint::KeyBindingListExt;
 use crate::keymap::ApprovalKeymap;
 use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
-use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use codex_app_server_protocol::AdditionalPermissionProfile;
@@ -719,7 +718,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 header.push(vec!["Input: ".into(), format!("{input:?}").into()].into());
             } else {
                 let full_cmd = strip_bash_lc_and_escape(&request.command);
-                let mut full_cmd_lines = highlight_bash_to_lines(&full_cmd);
+                // The action being authorized must stay legible even when a user-selected
+                // syntax theme has low contrast against the terminal background.
+                let mut full_cmd_lines: Vec<Line<'static>> = full_cmd
+                    .split('\n')
+                    .map(|line| Line::from(line.to_string().bold()))
+                    .collect();
                 if let Some(first) = full_cmd_lines.first_mut() {
                     first.spans.insert(0, Span::from("$ "));
                 }

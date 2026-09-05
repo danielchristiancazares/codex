@@ -136,7 +136,7 @@ async fn mcp_startup_header_booting_snapshot() {
     notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
 
     assert!(chat.bottom_pane.is_task_running());
-    assert!(!chat.bottom_pane.status_indicator_visible());
+    assert!(chat.bottom_pane.status_indicator_visible());
     let height = chat.desired_height(/*width*/ 80);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, height))
         .expect("create terminal");

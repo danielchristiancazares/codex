@@ -19,8 +19,7 @@ Buffer {
         " Local LM Studio server (default port 1234)                                     ",
     ],
     styles: [
-        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 17, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 4, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 3, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
@@ -31,7 +30,7 @@ Buffer {
         x: 0, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 37, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 0, y: 10, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 16, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 23, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
         x: 24, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

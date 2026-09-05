@@ -1,0 +1,40 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: "crate::test_support::sanitize_codex_version(&normalize_snapshot_paths(text))"
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  >_ Codex v0.0.0
+  GPT 5.6 Sol  /model to change
+  C:\work\atlas
+  Guarded access  /permissions to review
+
+╭ Message ───────────────────────────────────────────────────────────────────────────────────────────────── enter send ╮
+│ › Ask Codex to do anything                                                                                           │
+╰ / commands · @ files ────────────────────────────────────────────────────────────────────────────── ctrl + j newline ╯
+  GPT 5.6 Sol · Default reasoning · C:\work\atlas

@@ -233,7 +233,6 @@ use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
-use ratatui::layout::Margin;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -320,6 +319,7 @@ use codex_protocol::user_input::TextElement;
 
 mod agents_navigation;
 mod attachment_state;
+mod chrome;
 mod completion_target;
 mod draft_state;
 mod footer_state;
@@ -1095,9 +1095,9 @@ impl ChatComposer {
             self.config.compact_two_row_layout && composer_rect.height == 2;
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1,
-            LIVE_PREFIX_COLS.saturating_add(/*rhs*/ 1),
+            LIVE_PREFIX_COLS.saturating_add(/*rhs*/ 2),
             /*bottom*/ u16::from(!compact_two_row_composer),
-            /*right*/ 1u16.saturating_add(textarea_right_reserve),
+            /*right*/ 2u16.saturating_add(textarea_right_reserve),
         ));
         let remote_images_height = self
             .attachments
@@ -4685,7 +4685,7 @@ impl ChatComposer {
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
-        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 2;
+        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 4;
         let inner_width =
             width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
         let remote_images_height: u16 = self
@@ -4993,30 +4993,11 @@ impl ChatComposer {
                 }
             }
         }
-        let style = user_message_style();
-        let compact_two_row_composer =
-            self.config.compact_two_row_layout && composer_rect.height == 2;
-        let borders = if compact_two_row_composer {
-            Borders::TOP
-        } else {
-            Borders::TOP | Borders::BOTTOM
+        let frame_rect = Rect {
+            width: composer_rect.width.saturating_sub(textarea_right_reserve),
+            ..composer_rect
         };
-        Block::default()
-            .borders(borders)
-            .border_style(table_separator_style())
-            .style(style)
-            .render(composer_rect, buf);
-        let rail_style = table_separator_style();
-        if !composer_rect.is_empty() {
-            let rail_bottom = composer_rect
-                .bottom()
-                .saturating_sub(u16::from(!compact_two_row_composer));
-            for y in composer_rect.y.saturating_add(1)..rail_bottom {
-                buf[(composer_rect.x, y)]
-                    .set_symbol("│")
-                    .set_style(rail_style);
-            }
-        }
+        let style = self.render_composer_frame(frame_rect, buf);
         let prompt_gutter = PromptGutterState {
             input_enabled: self.draft.input_enabled,
             is_bash_mode: self.draft.is_bash_mode,
@@ -5119,8 +5100,12 @@ impl ChatComposer {
                     .to_string()
             };
             if !textarea_rect.is_empty() {
-                let placeholder = Span::from(text).dim();
-                Line::from(vec![placeholder]).render(textarea_rect.inner(Margin::new(0, 0)), buf);
+                let placeholder = Span::styled(text, crate::style::secondary_style());
+                crate::line_truncation::truncate_line_with_ellipsis_if_overflow(
+                    Line::from(placeholder),
+                    usize::from(textarea_rect.width),
+                )
+                .render(textarea_rect, buf);
             }
         }
         if matches!(self.popups.active, ActivePopup::None)
@@ -5358,12 +5343,12 @@ mod tests {
 
         let lower_separator = row_to_string(hint_row_idx - 1);
         assert!(
-            lower_separator.chars().all(|ch| ch == '─'),
+            lower_separator.starts_with('╰') && lower_separator.ends_with('╯'),
             "expected a lower input separator immediately above hints: {lower_separator:?}",
         );
         let prompt_row = row_to_string(hint_row_idx - 2);
         assert!(
-            prompt_row.starts_with("│› "),
+            prompt_row.starts_with("│ › "),
             "expected the prompt above the lower separator: {prompt_row:?}",
         );
         insta::assert_snapshot!(
@@ -5683,11 +5668,11 @@ mod tests {
 
         composer.set_text_content("!git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((6, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((7, 1)));
 
         composer.set_text_content("! git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((7, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((8, 1)));
     }
 
     #[test]
@@ -5711,7 +5696,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
-        let prompt_cell = &buf[(1, 1)];
+        let prompt_cell = &buf[(2, 1)];
         assert_eq!(prompt_cell.symbol(), "!");
         assert_eq!(prompt_cell.style().fg, Some(Color::LightRed));
 
@@ -9629,7 +9614,7 @@ mod tests {
         let area = Rect::new(0, 0, 40, 9);
         let caret_column = |buf: &Buffer| {
             (area.y..area.bottom())
-                .filter(|y| buf[(1, *y)].symbol() == "›")
+                .filter(|y| buf[(2, *y)].symbol() == "›")
                 .collect::<Vec<_>>()
         };
 

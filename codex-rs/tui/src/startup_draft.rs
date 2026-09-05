@@ -35,12 +35,11 @@ use crate::key_hint;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use crate::render::Insets;
 use crate::render::renderable::FlexRenderable;
 use crate::render::renderable::Renderable;
-use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::resume_picker::SessionSelection;
+use crate::start_screen::StartScreen;
 use crate::style::StatusTone;
 use crate::style::status_style;
 use crate::tui;
@@ -53,6 +52,10 @@ use crate::version::CODEX_CLI_VERSION;
 
 const STARTUP_EVENT_BATCH_SIZE: usize = 64;
 const STARTUP_PASTE_NEWLINE_TIMEOUT: Duration = Duration::from_millis(120);
+
+#[cfg(test)]
+#[path = "startup_draft_visual_tests.rs"]
+mod visual_tests;
 
 /// Identifies the first interactive surface expected for the current invocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -387,12 +390,11 @@ impl StartupDraftPump {
         self.bottom_pane.pre_draw_tick();
         let renderable =
             startup_draft_renderable(&self.header, &self.bottom_pane, self.session_action);
-        let desired_height = renderable.desired_height(screen_size.width);
         tui.draw_with_resize_reflow(
-            desired_height,
+            screen_size.height,
             screen_size,
             InlineViewportPlacement::BottomDocked,
-            InlineViewportRole::Persistent,
+            InlineViewportRole::Transient,
             |frame| {
                 let area = frame.area();
                 renderable.render(area, frame.buffer);
@@ -482,9 +484,18 @@ impl HistoryCell for StartupSessionHeader {
         }
 
         let title = Line::from(vec![
-            "  >_ ".magenta().bold(),
-            "OpenAI Codex".bold(),
-            format!(" v{CODEX_CLI_VERSION}").dim(),
+            Span::styled(">_ ", crate::style::accent_style()),
+            "Codex".bold(),
+            if width <= 18 {
+                Span::styled(" · loading", crate::style::secondary_style())
+            } else if width >= 32 {
+                Span::styled(
+                    format!(" v{CODEX_CLI_VERSION}"),
+                    crate::style::secondary_style(),
+                )
+            } else {
+                Span::raw("")
+            },
         ]);
         let lines = if width <= 18 {
             let directory = self.directory.as_ref().map_or_else(
@@ -498,13 +509,17 @@ impl HistoryCell for StartupSessionHeader {
             );
             vec![
                 title,
+                Line::from("Getting ready…"),
                 Line::from(vec![
-                    "  ".into(),
-                    "/model".cyan(),
-                    " · loading".dim().italic(),
+                    "cwd".into(),
+                    " · ".dim(),
+                    Span::styled(directory, crate::style::secondary_style()),
                 ]),
-                Line::from(vec!["  cwd".into(), " · ".dim(), directory.dim().italic()]),
-                Line::from(vec!["  ".into(), "/permissions".cyan()]),
+                Line::from(if self.yolo_mode {
+                    "[!] Unrestricted".bold()
+                } else {
+                    "Guarded access".into()
+                }),
             ]
         } else {
             let workspace = self.directory.as_ref().map_or_else(
@@ -517,35 +532,19 @@ impl HistoryCell for StartupSessionHeader {
                 },
             );
             let access = if self.yolo_mode {
-                vec![
-                    Span::styled(
-                        "  [!] Unrestricted access",
-                        status_style(StatusTone::Attention),
-                    ),
-                    "  ".into(),
-                    "/permissions".cyan(),
-                    " to change".dim(),
-                ]
+                vec![Span::styled(
+                    "[!] Unrestricted access",
+                    status_style(StatusTone::Attention),
+                )]
             } else {
-                vec![
-                    "  guarded access".into(),
-                    "  ".into(),
-                    "/permissions".cyan(),
-                    " to review".dim(),
-                ]
+                vec!["Guarded access".into()]
             };
             vec![
                 title,
+                Line::from("Preparing your workspace…"),
                 Line::from(vec![
-                    "  Model ".into(),
-                    "loading…".dim().italic(),
-                    "  ".into(),
-                    "/model".cyan(),
-                    " to change".dim(),
-                ]),
-                Line::from(vec![
-                    "  Workspace ".into(),
-                    Span::from(workspace).dim().italic(),
+                    "Workspace ".into(),
+                    Span::styled(workspace, crate::style::secondary_style()),
                 ]),
                 Line::from(access),
             ]
@@ -583,31 +582,25 @@ fn startup_draft_renderable<'a>(
     bottom_pane: &'a BottomPane,
     session_action: StartupDraftSessionAction,
 ) -> RenderableItem<'a> {
-    let mut renderable = FlexRenderable::new();
-    renderable.push(/*flex*/ 1, RenderableItem::Borrowed(header));
     let loading_message = match session_action {
         StartupDraftSessionAction::New => None,
-        StartupDraftSessionAction::Resume => Some("  Resuming session…"),
-        StartupDraftSessionAction::Fork => Some("  Forking session…"),
+        StartupDraftSessionAction::Resume => Some("Resuming session…"),
+        StartupDraftSessionAction::Fork => Some("Forking session…"),
     };
-    if let Some(loading_message) = loading_message {
-        renderable.push(
-            /*flex*/ 0,
-            RenderableItem::Owned(Box::new(loading_message.dim())),
-        );
-    }
-    renderable.push(
-        /*flex*/ 0,
-        bottom_pane
-            .as_renderable_with_composer_right_reserve(/*composer_right_reserve*/ 0)
-            .inset(Insets::tlbr(
-                /*top*/ u16::from(loading_message.is_none()),
-                /*left*/ 0,
-                /*bottom*/ 0,
-                /*right*/ 0,
-            )),
-    );
-    RenderableItem::Owned(Box::new(renderable))
+    let header = if let Some(message) = loading_message {
+        let mut renderable = FlexRenderable::new();
+        renderable.push(/*flex*/ 0, RenderableItem::Owned(Box::new(message.bold())));
+        renderable.push(/*flex*/ 1, RenderableItem::Borrowed(header));
+        RenderableItem::Owned(Box::new(renderable))
+    } else {
+        RenderableItem::Borrowed(header)
+    };
+    RenderableItem::Owned(Box::new(StartScreen {
+        header,
+        composer: bottom_pane
+            .as_renderable_with_composer_right_reserve(/*composer_right_reserve*/ 0),
+        actions: RenderableItem::Owned(Box::new(())),
+    }))
 }
 
 fn startup_draft_bottom_pane(
@@ -621,7 +614,7 @@ fn startup_draft_bottom_pane(
             frame_requester,
             has_input_focus: true,
             enhanced_keys_supported,
-            placeholder_text: String::new(),
+            placeholder_text: "Type a draft while Codex gets ready…".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: None,

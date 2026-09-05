@@ -1,0 +1,24 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: normalize_snapshot_paths(text)
+---
+
+
+
+  >_ Codex
+
+  What would you like to build?
+  A question, an idea, a task. Start anywhere.
+
+  Guarded access · /permissions
+
+  ╭ Message ───────────────────────────────────────────────────── enter send ╮
+  │ › Make this workspace feel beautifully considered.                       │
+  │   Keep the interface calm and the next action clear.                     │
+  ╰ / commands · @ files ────────────────────────────────── ctrl + j newline ╯
+    GPT 5.6 Sol · Default reasoning · C:\work\atlas
+
+
+    /plan    Shape an idea
+    /review  Review changes
+    /resume  Pick up a thread

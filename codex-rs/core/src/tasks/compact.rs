@@ -39,7 +39,9 @@ impl SessionTask for CompactTask {
         }
 
         let history = session.clone_history().await;
-        if history.history_version() == 0 {
+        // The history version counts rewrites, so a fresh conversation can still
+        // contain turns to compact before its first rewrite.
+        if history.raw_items().next().is_none() {
             return Ok(None);
         }
 

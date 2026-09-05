@@ -1,0 +1,40 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: normalize_snapshot_paths(text)
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Review the retry logic, fix the missing error handling, and verify the patch.
+
+
+• I'll refine the composer and check every terminal width.
+
+✦ Working                                                                                             0s · Esc interrupt
+
+• 4 queued · ⌥ + ↑ edit latest queued
+  Latest: Include the light theme.
+          Keep the workspace portable.
+          Review the keyboard controls.
+          Check the narrow layout.
+╭ Message ───────────────────────────────────────────────────────────────────────────────────── enter send · tab queue ╮
+│ › Ask Codex to do anything                                                                                           │
+╰ / commands · @ files ────────────────────────────────────────────────────────────────────────────── ctrl + j newline ╯
+  GPT 5.6 Sol · Default reasoning · C:\work\atlas

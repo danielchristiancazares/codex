@@ -33,6 +33,7 @@ use tokio::time::timeout;
 use super::analytics::captured_analytics_events;
 use super::analytics::mount_analytics_capture;
 use super::analytics::wait_for_analytics_event;
+use super::responses_websocket_bridge::ResponsesWebSocketBridge;
 
 // Bazel CI can spend tens of seconds starting app-server subprocesses or
 // processing turn RPCs under load.
@@ -42,9 +43,10 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = responses::start_mock_server().await;
+    let bridge = ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
     let response_mock = responses::mount_sse_once(
-        &server,
+        server,
         responses::sse(vec![
             responses::ev_response_created("resp-1"),
             responses::ev_assistant_message("msg-1", "Done"),
@@ -54,8 +56,8 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
     .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
-        .with_provider_config("supports_websockets = false")
+    MockResponsesConfig::new(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .write(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
@@ -104,8 +106,7 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
     .await??;
 
     let request = response_mock.single_request();
-    let metadata = request
-        .header("x-codex-turn-metadata")
+    let metadata = client_metadata_header(&request, "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("x-codex-turn-metadata header should be present");
@@ -118,7 +119,7 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
     assert!(metadata.get("session_id").is_some());
     assert_eq!(
         metadata["window_id"].as_str(),
-        request.header("x-codex-window-id").as_deref()
+        client_metadata_header(&request, "x-codex-window-id").as_deref()
     );
     assert_eq!(metadata["window_number"].as_u64(), Some(0));
     assert!(
@@ -134,9 +135,10 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
 async fn turn_start_sends_fork_lineage_in_turn_metadata_for_thread_fork_v2() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = responses::start_mock_server().await;
+    let bridge = ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
     let response_mock = responses::mount_sse_once(
-        &server,
+        server,
         responses::sse(vec![
             responses::ev_response_created("resp-1"),
             responses::ev_assistant_message("msg-1", "Done"),
@@ -146,8 +148,8 @@ async fn turn_start_sends_fork_lineage_in_turn_metadata_for_thread_fork_v2() -> 
     .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
-        .with_provider_config("supports_websockets = false")
+    MockResponsesConfig::new(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .write(codex_home.path())?;
 
     let source_thread_id = create_fake_rollout(
@@ -189,8 +191,7 @@ async fn turn_start_sends_fork_lineage_in_turn_metadata_for_thread_fork_v2() -> 
     .await??;
 
     let request = response_mock.single_request();
-    let metadata = request
-        .header("x-codex-turn-metadata")
+    let metadata = client_metadata_header(&request, "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("x-codex-turn-metadata header should be present");
@@ -216,9 +217,10 @@ async fn review_start_sends_parent_lineage_in_turn_metadata_for_thread_fork_v2()
         "overall_confidence_score": 0.5
     })
     .to_string();
-    let server = responses::start_mock_server().await;
+    let bridge = ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
     let response_mock = responses::mount_sse_once(
-        &server,
+        server,
         responses::sse(vec![
             responses::ev_response_created("resp-1"),
             responses::ev_assistant_message("msg-1", &review_payload),
@@ -228,8 +230,8 @@ async fn review_start_sends_parent_lineage_in_turn_metadata_for_thread_fork_v2()
     .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
-        .with_provider_config("supports_websockets = false")
+    MockResponsesConfig::new(bridge.uri())
+        .with_provider_config("supports_websockets = true")
         .write(codex_home.path())?;
 
     let source_thread_id = create_fake_rollout(
@@ -271,13 +273,12 @@ async fn review_start_sends_parent_lineage_in_turn_metadata_for_thread_fork_v2()
     .await??;
 
     let request = response_mock.single_request();
-    let metadata = request
-        .header("x-codex-turn-metadata")
+    let metadata = client_metadata_header(&request, "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("x-codex-turn-metadata header should be present");
     assert_eq!(
-        request.header("x-openai-subagent").as_deref(),
+        client_metadata_header(&request, "x-openai-subagent").as_deref(),
         Some("review")
     );
     assert!(metadata.get("forked_from_thread_id").is_none());
@@ -290,8 +291,7 @@ async fn review_start_sends_parent_lineage_in_turn_metadata_for_thread_fork_v2()
         .expect("review request thread_id should be present");
     assert!(review_request_thread_id != review_thread_id.as_str());
     assert_eq!(
-        request
-            .header("x-codex-window-id")
+        client_metadata_header(&request, "x-codex-window-id")
             .as_deref()
             .and_then(|window_id| window_id.split_once(':').map(|(thread_id, _)| thread_id)),
         Some(review_request_thread_id)
@@ -305,9 +305,10 @@ async fn review_start_sends_parent_lineage_in_turn_metadata_for_thread_fork_v2()
 async fn turn_start_sends_nested_subagent_lineage_after_cold_thread_resume_v2() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = responses::start_mock_server().await;
+    let bridge = ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
     let response_mock = responses::mount_sse_once(
-        &server,
+        server,
         responses::sse(vec![
             responses::ev_response_created("resp-1"),
             responses::ev_web_search_call_added_partial("resumed-search", "in_progress"),
@@ -319,11 +320,11 @@ async fn turn_start_sends_nested_subagent_lineage_after_cold_thread_resume_v2() 
     .await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new(bridge.uri())
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
-        .with_provider_config("supports_websockets = false")
+        .with_provider_config("supports_websockets = true")
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_analytics_capture(server, codex_home.path()).await?;
 
     let root_thread_id = CoreThreadId::new();
     let root_thread_id_str = root_thread_id.to_string();
@@ -383,8 +384,7 @@ async fn turn_start_sends_nested_subagent_lineage_after_cold_thread_resume_v2() 
     .await??;
 
     let request = response_mock.single_request();
-    let metadata = request
-        .header("x-codex-turn-metadata")
+    let metadata = client_metadata_header(&request, "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("x-codex-turn-metadata header should be present");
@@ -402,7 +402,7 @@ async fn turn_start_sends_nested_subagent_lineage_after_cold_thread_resume_v2() 
     assert!(metadata.get("forked_from_thread_id").is_none());
 
     let turn_event =
-        wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
+        wait_for_analytics_event(server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
     let params = &turn_event["event_params"];
     assert_eq!(
         (
@@ -412,7 +412,7 @@ async fn turn_start_sends_nested_subagent_lineage_after_cold_thread_resume_v2() 
         (Some(1), Some(1))
     );
     timeout(DEFAULT_READ_TIMEOUT, mcp.shutdown_gracefully()).await??;
-    let events = captured_analytics_events(&server).await;
+    let events = captured_analytics_events(server).await;
     let count = |event_type: &str| {
         events
             .iter()
@@ -437,7 +437,8 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
 
     let codex_home = TempDir::new()?;
 
-    let server = responses::start_mock_server().await;
+    let bridge = ResponsesWebSocketBridge::start().await?;
+    let server = &bridge.http;
     let first_response = responses::sse_response(responses::sse(vec![
         responses::ev_response_created("resp-1"),
         responses::ev_assistant_message("msg-1", "Working"),
@@ -450,13 +451,13 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
         responses::ev_completed("resp-2"),
     ]));
     let request_log =
-        responses::mount_response_sequence(&server, vec![first_response, second_response]).await;
+        responses::mount_response_sequence(server, vec![first_response, second_response]).await;
 
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new(bridge.uri())
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
-        .with_provider_config("supports_websockets = false")
+        .with_provider_config("supports_websockets = true")
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_analytics_capture(server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -526,8 +527,7 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
 
     let requests = request_log.requests();
     assert_eq!(requests.len(), 2);
-    let first_metadata = requests[0]
-        .header("x-codex-turn-metadata")
+    let first_metadata = client_metadata_header(&requests[0], "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("first x-codex-turn-metadata header should be present");
@@ -539,8 +539,7 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
     assert_eq!(first_metadata["turn_trigger"].as_str(), Some("user"));
     assert_eq!(first_metadata["source"].as_str(), Some("initial-source"));
 
-    let second_metadata = requests[1]
-        .header("x-codex-turn-metadata")
+    let second_metadata = client_metadata_header(&requests[1], "x-codex-turn-metadata")
         .as_deref()
         .map(parse_json_header)
         .expect("second x-codex-turn-metadata header should be present");
@@ -553,7 +552,7 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
     assert_eq!(second_metadata["turn_trigger"].as_str(), Some("user"));
     assert_eq!(second_metadata["source"].as_str(), Some("steer-source"));
 
-    let event = wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
+    let event = wait_for_analytics_event(server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
     assert_eq!(
         (
             event["event_params"]["turn_trigger"].as_str(),
@@ -678,6 +677,13 @@ async fn fork_fake_rollout_thread(
         })
         .await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(fork_req)).await?
+}
+
+/// WebSocket creates carry these compatibility fields inside client_metadata.
+fn client_metadata_header(request: &responses::ResponsesRequest, name: &str) -> Option<String> {
+    request.body_json()["client_metadata"][name]
+        .as_str()
+        .map(str::to_owned)
 }
 
 fn parse_json_header(value: &str) -> serde_json::Value {

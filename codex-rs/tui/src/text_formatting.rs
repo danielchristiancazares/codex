@@ -14,6 +14,15 @@ pub(crate) fn capitalize_first(input: &str) -> String {
     }
 }
 
+/// Keep recognized GPT slugs readable and consistent across session and current-model labels.
+pub(crate) fn format_model_status_label(model: &str) -> String {
+    let Some(suffix) = model.strip_prefix("gpt-").or_else(|| model.strip_prefix("GPT-")) else {
+        return model.to_string();
+    };
+    let suffix = suffix.split('-').map(capitalize_first).collect::<Vec<_>>().join(" ");
+    format!("GPT {suffix}")
+}
+
 /// Truncate a tool result to fit within the given height and width. If the text is valid JSON, we format it in a compact way before truncating.
 /// This is a best-effort approach that may not work perfectly for text where 1 grapheme is rendered as multiple terminal cells.
 pub(crate) fn format_and_truncate_tool_result(

@@ -1,0 +1,22 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: "crate::test_support::sanitize_codex_version(&normalize_snapshot_paths(text))"
+---
+
+  >_ Codex
+  › /model
+    /fast
+    /pro
+    /provider
+    /ide
+    /permissions
+    /keymap
+    /vim
+
+    choose what model and reasoning effort
+    to use
+
+
+  ╭ Message ─────────────────── enter select ╮
+  │ › /                                      │
+  ╰ ↑↓ navigate · esc close ─────────────────╯

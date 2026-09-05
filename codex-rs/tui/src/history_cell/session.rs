@@ -246,9 +246,12 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
         let title_spans: Vec<Span<'static>> = vec![
-            "  >_ ".magenta().bold(),
-            Span::from("OpenAI Codex").bold(),
-            Span::from(format!(" v{}", self.version)).dim(),
+            Span::styled("  >_ ", crate::style::accent_style()),
+            Span::from("Codex").bold(),
+            Span::styled(
+                format!(" v{}", self.version),
+                crate::style::secondary_style(),
+            ),
         ];
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
@@ -257,7 +260,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let model_spans: Vec<Span<'static>> = {
             let mut spans = vec![
                 "  ".into(),
-                Span::styled(self.model.clone(), self.model_style),
+                Span::styled(crate::text_formatting::format_model_status_label(&self.model), self.model_style),
             ];
             if let Some(reasoning) = reasoning_label {
                 spans.push(Span::from(" "));
@@ -268,8 +271,14 @@ impl HistoryCell for SessionHeaderHistoryCell {
                 spans.push(Span::styled("fast", self.model_style.magenta()));
             }
             spans.push("  ".into());
-            spans.push(CHANGE_MODEL_HINT_COMMAND.cyan());
-            spans.push(CHANGE_MODEL_HINT_EXPLANATION.dim());
+            spans.push(Span::styled(
+                CHANGE_MODEL_HINT_COMMAND,
+                crate::style::key_hint_style(),
+            ));
+            spans.push(Span::styled(
+                CHANGE_MODEL_HINT_EXPLANATION,
+                crate::style::secondary_style(),
+            ));
             spans
         };
 
@@ -285,15 +294,15 @@ impl HistoryCell for SessionHeaderHistoryCell {
                     status_style(StatusTone::Attention),
                 ),
                 "  ".into(),
-                "/permissions".cyan(),
-                " to change".dim(),
+                Span::styled("/permissions", crate::style::key_hint_style()),
+                Span::styled(" to change", crate::style::secondary_style()),
             ]
         } else {
             vec![
-                "  guarded access".into(),
+                "  Guarded access".into(),
                 "  ".into(),
-                "/permissions".cyan(),
-                " to review".dim(),
+                Span::styled("/permissions", crate::style::key_hint_style()),
+                Span::styled(" to review", crate::style::secondary_style()),
             ]
         };
 

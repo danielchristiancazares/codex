@@ -2,7 +2,10 @@
 
 - **Headers:** Use `bold`. For markdown with various header levels, leave in the `#` signs.
 - **Primary text:** Default.
-- **Secondary text:** Use `dim`.
+- **Secondary text:** Use `secondary_style()` for essential supporting copy such as input
+  hints, placeholders, and status metadata. It derives a readable neutral from the detected
+  foreground and background and retains the default foreground on low-color terminals.
+  Use `dim` for decorative or intentionally recessed content.
 
 # Foreground colors
 

@@ -12,13 +12,19 @@ use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_lines;
 
 mod questions;
+#[cfg(test)]
+#[path = "pending_input_preview/compact_tests.rs"]
+mod compact_tests;
 pub(super) use questions::PendingInputPreviewContent;
 use questions::QuestionPresence;
 
 /// Widget that displays pending steers plus follow-up inputs held while a turn is in progress.
 ///
 /// Rejected steers get first claim on its fixed row budget, followed by active
-/// steers and queued messages; counts and configured hints disclose the rest.
+/// steers and queued messages; counts and configured hints disclose the rest. Queued
+/// messages are previewed newest first so the edit-latest shortcut has a visible target;
+/// their execution order is unchanged. Queue-only previews use at most five rows,
+/// reduced to three below 60 columns so supporting context leaves room for work.
 /// Hint rows never wrap: narrow widths shorten hint labels and then drop the
 /// least urgent hint, so counts and item text keep their rows.
 pub(crate) struct PendingInputPreview {
@@ -40,6 +46,7 @@ const ITEM_ROW_CAP: usize = 2;
 enum PreviewKind {
     Rejected,
     Pending,
+    QueuedLatest,
     Queued,
 }
 
@@ -225,7 +232,7 @@ impl PendingInputPreview {
                 });
             }
             (1, 0, 0, queued) => {
-                spans.push(format!("{queued} queued").into());
+                spans.push(format!("{queued} queued").bold());
                 hint = self
                     .edit_binding
                     .filter(|_| questions == QuestionPresence::Absent)
@@ -333,10 +340,15 @@ impl PendingInputPreview {
             hints.push(Hint::new(vec![binding.into(), " edit queue".dim()]));
         }
 
+        let hidden_label = if self.pending_steers.is_empty() && self.rejected_steers.is_empty() {
+            format!("… {hidden_items} older queued")
+        } else {
+            format!("… {hidden_items} hidden")
+        };
         HintRow {
             indent: "",
             continuation_indent: "    ",
-            lead: vec![format!("… {hidden_items} hidden").dim()],
+            lead: vec![hidden_label.dim()],
             hints,
         }
         .fit(width)
@@ -352,15 +364,16 @@ impl PendingInputPreview {
                 Line::from(vec!["  ↳ ".cyan(), "Steer: ".cyan()]),
                 Line::from("           "),
             ),
-            PreviewKind::Queued => (
-                Line::from(vec!["  + ".dim(), "Queued: ".dim()]),
-                Line::from("            "),
+            PreviewKind::QueuedLatest => (
+                Line::from(vec!["  ".into(), "Latest: ".dim()]),
+                Line::from("          "),
             ),
+            PreviewKind::Queued => (Line::from("          "), Line::from("          ")),
         };
         let styled_lines = text.split('\n').map(|line| {
             let line = if line.is_empty() { "blank line" } else { line };
             match kind {
-                PreviewKind::Queued => Line::from(line.to_string().dim().italic()),
+                PreviewKind::QueuedLatest | PreviewKind::Queued => Line::from(line.to_string()),
                 PreviewKind::Rejected | PreviewKind::Pending => Line::from(line.to_string().dim()),
             }
         });
@@ -408,7 +421,12 @@ impl PendingInputPreview {
             return Vec::new();
         }
 
-        let row_limit = row_limit.min(VISIBLE_ROW_CAP);
+        let row_cap = if self.pending_steers.is_empty() && self.rejected_steers.is_empty() {
+            if width < 60 { 3 } else { 5 }
+        } else {
+            VISIBLE_ROW_CAP
+        };
+        let row_limit = row_limit.min(row_cap);
         let mut lines = self.title_lines(width, questions);
         lines.truncate(row_limit);
         if lines.len() == row_limit {
@@ -429,7 +447,18 @@ impl PendingInputPreview {
             .chain(
                 self.queued_messages
                     .iter()
-                    .map(|text| (PreviewKind::Queued, text.as_str())),
+                    .rev()
+                    .enumerate()
+                    .map(|(index, text)| {
+                        (
+                            if index == 0 {
+                                PreviewKind::QueuedLatest
+                            } else {
+                                PreviewKind::Queued
+                            },
+                            text.as_str(),
+                        )
+                    }),
             );
         if row_limit <= 4
             && total_items > 1

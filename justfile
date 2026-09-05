@@ -64,22 +64,22 @@ fix *args:
 clippy *args:
     cargo clippy --message-format short --tests {args}
 
+# Build and install Codex using the local platform script.
 [unix]
 install:
-    rustup show active-toolchain
-    cargo fetch
+    bash "$CODEX_REPO_ROOT/build.sh"
 
+# Build and install Codex using the local platform script.
 [windows]
 install:
     #!powershell.exe -File
+    $ErrorActionPreference = "Stop"
     $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
     if (-not $pwsh) {
         winget install --exact --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
-    rustup show active-toolchain
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    cargo fetch
+    & "$env:CODEX_REPO_ROOT/build-and-install-local.ps1"
     exit $LASTEXITCODE
 
 # Run nextest with --no-fail-fast so all tests are run.

@@ -213,6 +213,7 @@ mod agents_overview;
 mod agents_overview_details;
 mod agents_overview_threads;
 mod agents_overview_view;
+mod landing;
 pub(crate) use agents_overview::AGENTS_OVERVIEW_VIEW_ID;
 mod app_server_event_targets;
 mod app_server_events;
@@ -1007,6 +1008,9 @@ impl App {
 
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
         self.sync_thread_title_progress();
+        if let Some(area) = self.render_landing_frame(tui, screen_size)? {
+            return Ok(area);
+        }
         let dashboard_visible = self
             .chat_widget
             .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)

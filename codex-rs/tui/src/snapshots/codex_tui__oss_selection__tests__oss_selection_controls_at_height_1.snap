@@ -8,7 +8,7 @@ Buffer {
         " › 1. LM Studio     2. Ollama           ",
     ],
     styles: [
-        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 16, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 23, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
         x: 24, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

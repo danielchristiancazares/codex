@@ -83,7 +83,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
                 StartupDraftSessionAction::New,
             )
             .desired_height(width),
-            "loading status should reuse the existing gap above the composer"
+            "loading status should reuse its reserved row above the composer gap"
         );
         let area = Rect::new(
             /*x*/ 0,
@@ -111,21 +111,21 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         .replace("0.0.0", "<VERSION>");
 
         if width > 18 {
-            assert_eq!(frame.matches("Model loading…  /model to change").count(), 1);
+            assert_eq!(frame.matches("Preparing your workspace…").count(), 1);
             assert_eq!(frame.matches("Workspace loading…").count(), 1);
         } else {
             let rows = frame.lines().map(str::trim).collect::<Vec<_>>();
             assert!(
-                rows.contains(&"/model · loading"),
-                "missing model action: {frame}"
+                rows.contains(&"Getting ready…"),
+                "missing startup state: {frame}"
             );
             assert!(
                 rows.contains(&"cwd · loading"),
                 "missing workspace state: {frame}"
             );
             assert!(
-                rows.contains(&"/permissions"),
-                "missing permissions action: {frame}"
+                rows.contains(&"Guarded access"),
+                "missing permissions state: {frame}"
             );
             assert!(
                 pump.header

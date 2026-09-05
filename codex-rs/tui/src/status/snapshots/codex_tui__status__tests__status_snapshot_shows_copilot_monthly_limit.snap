@@ -6,9 +6,9 @@ expression: sanitized
 
  >_ OpenAI Codex v0.0.0
 
- Model:                   gpt-5.6-sol (reasoning none, summaries auto)
+ Model:                   gpt-6-astra (reasoning none, summaries auto)
  Model provider:          GitHub Copilot
- Directory:               C:\workspace\tests
+ Directory:               [[workspace]]
  Permissions:             Custom (workspace with network access, Ask for approv…
  Agents.md:               <none>
 

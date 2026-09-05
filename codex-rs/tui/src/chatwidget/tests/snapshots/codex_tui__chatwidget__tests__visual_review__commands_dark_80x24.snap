@@ -1,0 +1,26 @@
+---
+source: tui/src/chatwidget/tests/visual_review.rs
+expression: "crate::test_support::sanitize_codex_version(&normalize_snapshot_paths(text))"
+---
+
+  >_ Codex
+
+  What would you like to build?
+  A question, an idea, a task. Start anywhere.
+
+  Guarded access · /permissions
+
+  › /model                 choose what model and reasoning effort to use
+    /fast                  1.5x speed, increased usage
+    /pro                   toggle Pro reasoning mode
+    /provider              choose which model provider to use
+    /ide                   include current selection, open files, and other c…
+    /permissions           choose what Codex is allowed to do
+    /keymap                remap TUI shortcuts
+    /vim                   toggle Vim mode for the composer
+
+    choose what model and reasoning effort to use
+
+  ╭ Message ─────────────────────────────────────────────────── enter select ╮
+  │ › /                                                                      │
+  ╰ ↑↓ navigate · esc close ─────────────────────────────────────────────────╯

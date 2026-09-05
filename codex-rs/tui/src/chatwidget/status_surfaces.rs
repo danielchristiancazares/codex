@@ -4,6 +4,7 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use crate::text_formatting::format_model_status_label;
 use crate::bottom_pane::status_line_from_segments;
 use crate::branch_summary;
 use crate::chatwidget::limit_label_for_window;
@@ -974,7 +975,7 @@ impl ChatWidget {
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();
         format!(
-            "{} {label}{service_tier_label}",
+            "{} · {label} reasoning{service_tier_label}",
             format_model_status_label(self.model_display_name())
         )
     }
@@ -1091,21 +1092,6 @@ impl ChatWidget {
         truncated.push_str("...");
         truncated
     }
-}
-
-fn format_model_status_label(model: &str) -> String {
-    let Some(suffix) = model
-        .strip_prefix("gpt-")
-        .or_else(|| model.strip_prefix("GPT-"))
-    else {
-        return model.to_string();
-    };
-    let suffix = suffix
-        .split('-')
-        .map(crate::text_formatting::capitalize_first)
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("GPT {suffix}")
 }
 
 fn five_hour_status_window(

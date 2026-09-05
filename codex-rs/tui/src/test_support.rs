@@ -10,6 +10,9 @@ pub(crate) use codex_utils_absolute_path::test_support::test_path_buf;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+mod visual_review;
+pub(crate) use visual_review::export_visual_review_buffer;
+
 pub(crate) static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new(|| {
     let mut response = bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));

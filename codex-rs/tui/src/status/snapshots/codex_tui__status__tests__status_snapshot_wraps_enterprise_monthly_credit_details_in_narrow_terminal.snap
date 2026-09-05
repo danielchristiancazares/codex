@@ -7,7 +7,7 @@ expression: sanitized
  >_ OpenAI Codex v0.0.0
 
  Model:             gpt-5.1-codex-max (reason…
- Directory:         C:/workspace/tests
+ Directory:         [[workspace]]
  Permissions:       Custom (workspace with ne…
  Agents.md:         <none>
 

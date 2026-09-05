@@ -104,6 +104,7 @@ const RAW_TOOL_OUTPUT_WIDTH: usize = 10_000;
 
 mod approvals;
 mod base;
+mod errors;
 mod exec;
 mod hook_cell;
 mod inline_correction;

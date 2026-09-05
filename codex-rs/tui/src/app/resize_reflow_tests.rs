@@ -4,6 +4,7 @@ use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::transcript_reflow::TranscriptReplayPolicy;
+use crate::tui::test_support::TestScrollback;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -318,68 +319,74 @@ async fn scrollback_refill_only_loads_older_pages_for_an_underfilled_row_cap() {
 
 #[tokio::test]
 async fn model_selection_stages_keep_inline_viewport_bottom_docked() -> Result<()> {
-    let mut app = make_test_app().await;
-    let presets = app
-        .model_catalog
-        .try_list_models()
-        .expect("test model catalog");
-    let reasoning_model = presets
-        .iter()
-        .find(|preset| preset.model == "gpt-5.6-sol")
-        .cloned()
-        .expect("reasoning model");
-    app.chat_widget.open_model_popup_with_presets(presets);
+    for scrollback in [TestScrollback::Standard, TestScrollback::FullScreen] {
+        let mut app = make_test_app().await;
+        let presets = app
+            .model_catalog
+            .try_list_models()
+            .expect("test model catalog");
+        let reasoning_model = presets
+            .iter()
+            .find(|preset| preset.model == "gpt-5.6-sol")
+            .cloned()
+            .expect("reasoning model");
+        app.chat_widget.open_model_popup_with_presets(presets);
 
-    let screen_size = Size::new(/*width*/ 80, /*height*/ 10);
-    let mut tui = crate::tui::test_support::make_test_tui()?;
-    tui.terminal.last_known_screen_size = screen_size;
-    tui.terminal.set_viewport_area(Rect::new(
-        /*x*/ 0,
-        /*y*/ 6,
-        screen_size.width,
-        /*height*/ 4,
-    ));
-    tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+        let screen_size = Size::new(/*width*/ 80, /*height*/ 10);
+        let mut tui = crate::tui::test_support::make_test_tui_with_scrollback(scrollback)?;
+        tui.terminal.last_known_screen_size = screen_size;
+        tui.terminal.set_viewport_area(Rect::new(
+            /*x*/ 0,
+            /*y*/ 6,
+            screen_size.width,
+            /*height*/ 4,
+        ));
+        tui.terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
 
-    let model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
-    app.chat_widget.open_reasoning_popup(reasoning_model);
-    let reasoning_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
-    app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    let restored_model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
-    app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    let composer_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+        let model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+        app.chat_widget.open_reasoning_popup(reasoning_model);
+        let reasoning_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+        app.chat_widget
+            .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let restored_model_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
+        app.chat_widget
+            .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let composer_area = app.render_chat_widget_frame(&mut tui, screen_size)?;
 
-    assert_eq!(
-        [
-            model_area.bottom(),
-            reasoning_area.bottom(),
-            restored_model_area.bottom(),
-            composer_area.bottom(),
-        ],
-        [screen_size.height; 4]
-    );
-    assert!(
-        model_area.top() > 0,
-        "model picker must preserve its bottom-docked viewport provenance: {model_area:?}"
-    );
-    assert_eq!(
-        tui.terminal.docked_history_gap_rows(),
-        composer_area
-            .top()
-            .saturating_sub(restored_model_area.top()),
-        "restoring the composer must track the vacated full-screen history band"
-    );
-    insta::assert_debug_snapshot!(
-        "model_selection_stages_keep_inline_viewport_bottom_docked",
-        [
-            model_area,
-            reasoning_area,
-            restored_model_area,
-            composer_area,
-        ]
-    );
+        assert_eq!(
+            [
+                model_area.bottom(),
+                reasoning_area.bottom(),
+                restored_model_area.bottom(),
+                composer_area.bottom(),
+            ],
+            [screen_size.height; 4]
+        );
+        assert!(
+            model_area.top() > 0,
+            "model picker must preserve its bottom-docked viewport provenance: {model_area:?}"
+        );
+        assert_eq!(
+            tui.terminal.docked_history_gap_rows(),
+            match scrollback {
+                TestScrollback::FullScreen => composer_area
+                    .top()
+                    .saturating_sub(restored_model_area.top()),
+                TestScrollback::Standard => 0,
+                TestScrollback::Host => unreachable!("this fixture selects its terminal strategy"),
+            },
+            "restoring the composer must track gaps according to the selected terminal strategy"
+        );
+        insta::assert_debug_snapshot!(
+            "model_selection_stages_keep_inline_viewport_bottom_docked",
+            [
+                model_area,
+                reasoning_area,
+                restored_model_area,
+                composer_area,
+            ]
+        );
+    }
     Ok(())
 }
 

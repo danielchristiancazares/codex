@@ -5,7 +5,6 @@ use super::*;
 use crate::terminal_palette::with_test_default_colors;
 use crate::terminal_probe::DefaultColors;
 use pretty_assertions::assert_eq;
-use ratatui::style::Color;
 use serde_json::json;
 
 fn reserve_snapshot(primary_used: i32, weekly_used: i32) -> RateLimitSnapshot {
@@ -120,7 +119,7 @@ async fn luna_reserve_status_tracks_the_active_model() {
 
     chat.set_model("gpt-reserve");
     let rendered = normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 80));
-    assert!(rendered.contains("Luna Reserve Default"));
+    assert!(rendered.contains("Luna Reserve · Default reasoning"));
     insta::assert_snapshot!("luna_reserve_usage_wide", rendered);
     insta::assert_snapshot!(
         "luna_reserve_usage_narrow",
@@ -237,23 +236,24 @@ async fn luna_reserve_prompt_preserves_the_composer_palette_on_exit() {
             let mut active = Buffer::empty(area);
             chat.bottom_pane.render(area, &mut active);
             let cursor = chat.bottom_pane.cursor_pos(area).expect("composer cursor");
-            let ordinary_style = crate::style::user_message_style();
-            let ordinary_bg = ordinary_style.bg.unwrap_or(Color::Reset);
-            assert_eq!(active[(cursor.0, cursor.1)].bg, ordinary_bg);
-            assert_eq!(
-                active[(cursor.0, cursor.1)].bg,
-                active[(cursor.0, cursor.1 - 1)].bg
-            );
             chat.set_model("gpt-5.6-sol");
             let area = Rect::new(0, 0, 80, chat.bottom_pane.desired_height(/*width*/ 80));
             let mut inactive = Buffer::empty(area);
             chat.bottom_pane.render(area, &mut inactive);
             let restored_cursor = chat.bottom_pane.cursor_pos(area).expect("composer cursor");
             assert_eq!(
-                inactive[(restored_cursor.0, restored_cursor.1)].bg,
-                ordinary_bg
+                inactive
+                    .content
+                    .iter()
+                    .map(|cell| cell.bg)
+                    .collect::<Vec<_>>(),
+                active
+                    .content
+                    .iter()
+                    .map(|cell| cell.bg)
+                    .collect::<Vec<_>>()
             );
-            assert_eq!(restored_cursor.1, cursor.1);
+            assert_eq!(restored_cursor, cursor);
         });
     }
 }

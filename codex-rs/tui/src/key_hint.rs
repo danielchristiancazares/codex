@@ -33,6 +33,25 @@ const ALT_PREFIX: &str = "alt + ";
 const CTRL_PREFIX: &str = "ctrl + ";
 const SHIFT_PREFIX: &str = "shift + ";
 
+#[cfg(test)]
+thread_local! {
+    static NATIVE_REVIEW_LABELS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Use host-native labels for rendered review artifacts while keeping portable snapshots stable.
+#[cfg(test)]
+pub(crate) fn with_test_native_key_labels<T>(render: impl FnOnce() -> T) -> T {
+    struct RestoreLabels(bool);
+    impl Drop for RestoreLabels {
+        fn drop(&mut self) {
+            NATIVE_REVIEW_LABELS.with(|labels| labels.set(self.0));
+        }
+    }
+    let previous = NATIVE_REVIEW_LABELS.with(|labels| labels.replace(true));
+    let _restore = RestoreLabels(previous);
+    render()
+}
+
 /// One concrete key event that can trigger a TUI action.
 ///
 /// Matching via `is_press` handles exact equality plus compatibility fallbacks
@@ -239,7 +258,15 @@ fn modifiers_to_string(modifiers: KeyModifiers) -> String {
         result.push_str(SHIFT_PREFIX);
     }
     if modifiers.contains(KeyModifiers::ALT) {
-        result.push_str(ALT_PREFIX);
+        #[cfg(test)]
+        let prefix = if NATIVE_REVIEW_LABELS.with(std::cell::Cell::get) && !cfg!(target_os = "macos") {
+            "alt + "
+        } else {
+            ALT_PREFIX
+        };
+        #[cfg(not(test))]
+        let prefix = ALT_PREFIX;
+        result.push_str(prefix);
     }
     result
 }

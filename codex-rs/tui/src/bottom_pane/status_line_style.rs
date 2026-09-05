@@ -120,7 +120,7 @@ where
                 )
             }
         } else {
-            Style::default().dim()
+            crate::style::secondary_style()
         };
         let style = if matches!(
             item,
@@ -298,11 +298,9 @@ mod tests {
         .expect("status line");
 
         assert_eq!(line_text(&line), "gpt-5 · Context used 12%");
-        assert_eq!(line.spans[0].style.fg, None);
-        assert!(line.spans[0].style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(line.spans[0].style, crate::style::secondary_style());
         assert!(line.spans[1].style.add_modifier.contains(Modifier::DIM));
-        assert_eq!(line.spans[2].style.fg, None);
-        assert!(line.spans[2].style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(line.spans[2].style, crate::style::secondary_style());
     }
 
     #[test]
@@ -314,14 +312,7 @@ mod tests {
         )
         .expect("status line");
 
-        assert_eq!(line.spans[0].style.fg, None);
-        assert!(line.spans[0].style.add_modifier.contains(Modifier::DIM));
-        assert!(
-            line.spans[0]
-                .style
-                .add_modifier
-                .contains(Modifier::UNDERLINED)
-        );
+        assert_eq!(line.spans[0].style, crate::style::secondary_style().underlined());
     }
 
     #[test]

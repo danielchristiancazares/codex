@@ -2851,7 +2851,7 @@ mod tests {
             for x in 0..area.width {
                 row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
             }
-            if row.contains("│›") {
+            if row.contains("│ ›") {
                 found_composer = true;
                 break;
             }

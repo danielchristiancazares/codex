@@ -1,30 +1,20 @@
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Stylize;
-use ratatui::widgets::WidgetRef;
 
 use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
-use super::selection_popup_common::ColumnWidthConfig;
-use super::selection_popup_common::ColumnWidthMode;
 use super::selection_popup_common::GenericDisplayRow;
-use super::selection_popup_common::render_rows_single_line_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use super::slash_commands::commands_for_input;
-use crate::render::Insets;
-use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
+
+mod presentation;
 
 // Hide alias commands in the default popup list so each unique action appears once.
 // `quit` is an alias of `exit`, and `btw` is an alias of `side`, so we skip
 // those aliases here.
 const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Btw];
-const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
-    ColumnWidthMode::AutoAllRows,
-    /*name_column_width*/ None,
-);
 
 /// A selectable item in the popup.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,12 +114,6 @@ impl CommandPopup {
         self.state.clamp_selection(matches_len);
         self.state
             .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
-    }
-
-    /// Determine the preferred height of the popup for a given width.
-    /// Command rows stay single-line so moving the selection never changes the menu rhythm.
-    pub(crate) fn calculate_required_height(&self, _width: u16) -> u16 {
-        u16::try_from(self.filtered_items().len().clamp(1, MAX_POPUP_ROWS)).unwrap_or(u16::MAX)
     }
 
     /// Compute exact/prefix matches over built-in commands and user prompts,
@@ -258,28 +242,14 @@ impl CommandItem {
     }
 }
 
-impl WidgetRef for CommandPopup {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let rows = self.rows_from_matches(self.filtered());
-        render_rows_single_line_with_col_width_mode(
-            area.inset(Insets::tlbr(
-                /*top*/ 0, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-            )),
-            buf,
-            &rows,
-            &self.state,
-            MAX_POPUP_ROWS,
-            "No matching commands",
-            COMMAND_COLUMN_WIDTH,
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use codex_protocol::config_types::ServiceTier;
     use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::WidgetRef;
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {

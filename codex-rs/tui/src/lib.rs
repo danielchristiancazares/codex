@@ -188,6 +188,7 @@ mod session_start;
 mod session_state;
 mod skills_helpers;
 mod slash_command;
+mod start_screen;
 mod startup_draft;
 mod startup_error;
 mod startup_hooks_review;

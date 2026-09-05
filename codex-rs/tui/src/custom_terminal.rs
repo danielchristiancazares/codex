@@ -970,6 +970,8 @@ mod tests {
 
     impl CaptureBackend {
         fn new(width: u16, height: u16) -> Self {
+            // Like VT100Backend, this records ANSI styles regardless of the host's NO_COLOR.
+            crossterm::style::force_color_output(/*enabled*/ true);
             Self {
                 output: Vec::new(),
                 size: Size { width, height },

@@ -37,10 +37,11 @@ impl StreamingSseServer {
 
     pub async fn wait_for_request_count(&self, count: usize) {
         loop {
+            let notified = self.request_notify.notified();
             if self.requests.lock().await.len() >= count {
                 return;
             }
-            self.request_notify.notified().await;
+            notified.await;
         }
     }
 

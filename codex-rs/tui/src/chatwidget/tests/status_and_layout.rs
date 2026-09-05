@@ -4265,7 +4265,9 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
 
     assert_eq!(
         status_line_text(&chat),
-        Some(format!("GPT 5.4 XHigh Fast · Context used 0% · {test_cwd}"))
+        Some(format!(
+            "GPT 5.4 · XHigh reasoning Fast · Context used 0% · {test_cwd}"
+        ))
     );
 
     chat.set_model("gpt-5.2");
@@ -4273,7 +4275,9 @@ async fn status_line_model_with_reasoning_includes_fast_for_fast_capable_models(
 
     assert_eq!(
         status_line_text(&chat),
-        Some(format!("GPT 5.2 XHigh · Context used 0% · {test_cwd}"))
+        Some(format!(
+            "GPT 5.2 · XHigh reasoning · Context used 0% · {test_cwd}"
+        ))
     );
 
     chat.set_model("gpt-5.6-sol");
@@ -4337,7 +4341,10 @@ async fn status_line_model_with_reasoning_updates_on_mode_switch_without_manual_
     chat.local_settings.tui.status_line = Some(vec!["model-with-reasoning".to_string()]);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
 
-    assert_eq!(status_line_text(&chat), Some("GPT 5.2 High".to_string()));
+    assert_eq!(
+        status_line_text(&chat),
+        Some("GPT 5.2 · High reasoning".to_string())
+    );
 
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
@@ -4349,7 +4356,10 @@ async fn status_line_model_with_reasoning_updates_on_mode_switch_without_manual_
         .expect("expected default collaboration mode");
     chat.set_collaboration_mask(default_mask);
 
-    assert_eq!(status_line_text(&chat), Some("GPT 5.2 High".to_string()));
+    assert_eq!(
+        status_line_text(&chat),
+        Some("GPT 5.2 · High reasoning".to_string())
+    );
 }
 
 #[tokio::test]
@@ -5615,7 +5625,7 @@ async fn running_hooks_fit_around_background_activity_and_finish_without_history
             );
         }
         let rendered = hook_status_frame(&chat, /*width*/ 120);
-        assert!(rendered.contains("1 background terminal running"));
+        assert!(rendered.contains("Terminal running · /ps inspect · /stop terminate"));
         assert!(!rendered.contains("Running hooks"));
         assert!(!rendered.contains("checking command policy"));
         assert!(drain_insert_history(&mut rx).is_empty());
