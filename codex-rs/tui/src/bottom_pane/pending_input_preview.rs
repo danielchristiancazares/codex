@@ -11,6 +11,10 @@ use crate::render::renderable::Renderable;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_lines;
 
+mod questions;
+pub(super) use questions::PendingInputPreviewContent;
+use questions::QuestionPresence;
+
 /// Widget that displays pending steers plus follow-up inputs held while a turn is in progress.
 ///
 /// Rejected steers get first claim on its fixed row budget, followed by active
@@ -185,7 +189,7 @@ impl PendingInputPreview {
         self.interrupt_binding = binding;
     }
 
-    fn title_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn title_lines(&self, width: u16, questions: QuestionPresence) -> Vec<Line<'static>> {
         let rejected = self.rejected_steers.len();
         let pending = self.pending_steers.len();
         let queued = self.queued_messages.len();
@@ -197,6 +201,9 @@ impl PendingInputPreview {
         let mut hint: Option<Hint> = None;
 
         match (populated_categories, rejected, pending, queued) {
+            (0, 0, 0, 0) if questions == QuestionPresence::Present => {
+                spans.push("Queued follow-up inputs".dim());
+            }
             (1, rejected, 0, 0) => spans.extend(vec![
                 format!(
                     "{rejected} {}",
@@ -219,12 +226,15 @@ impl PendingInputPreview {
             }
             (1, 0, 0, queued) => {
                 spans.push(format!("{queued} queued").into());
-                hint = self.edit_binding.map(|binding| {
-                    Hint::with_compact(
-                        vec![binding.into(), " edit latest queued".dim()],
-                        vec![binding.into(), " edit queue".dim()],
-                    )
-                });
+                hint = self
+                    .edit_binding
+                    .filter(|_| questions == QuestionPresence::Absent)
+                    .map(|binding| {
+                        Hint::with_compact(
+                            vec![binding.into(), " edit latest queued".dim()],
+                            vec![binding.into(), " edit queue".dim()],
+                        )
+                    });
             }
             _ if width >= 48 => {
                 if rejected > 0 {
@@ -264,7 +274,7 @@ impl PendingInputPreview {
         .fit(width)
     }
 
-    fn action_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn action_lines(&self, width: u16, questions: QuestionPresence) -> Vec<Line<'static>> {
         let categories = [
             !self.rejected_steers.is_empty(),
             !self.pending_steers.is_empty(),
@@ -286,7 +296,7 @@ impl PendingInputPreview {
         }
         if let Some(binding) = self
             .edit_binding
-            .filter(|_| !self.queued_messages.is_empty())
+            .filter(|_| questions == QuestionPresence::Absent && !self.queued_messages.is_empty())
         {
             hints.push(Hint::with_compact(
                 vec![binding.into(), " edit latest queued".dim()],
@@ -303,7 +313,12 @@ impl PendingInputPreview {
         .fit(width)
     }
 
-    fn hidden_lines(&self, width: u16, hidden_items: usize) -> Vec<Line<'static>> {
+    fn hidden_lines(
+        &self,
+        width: u16,
+        hidden_items: usize,
+        questions: QuestionPresence,
+    ) -> Vec<Line<'static>> {
         let mut hints: Vec<Hint> = Vec::new();
         if let Some(binding) = self
             .interrupt_binding
@@ -313,7 +328,7 @@ impl PendingInputPreview {
         }
         if let Some(binding) = self
             .edit_binding
-            .filter(|_| !self.queued_messages.is_empty())
+            .filter(|_| questions == QuestionPresence::Absent && !self.queued_messages.is_empty())
         {
             hints.push(Hint::new(vec![binding.into(), " edit queue".dim()]));
         }
@@ -377,10 +392,16 @@ impl PendingInputPreview {
         lines
     }
 
-    fn preview_lines(&self, width: u16, row_limit: usize) -> Vec<Line<'static>> {
+    fn preview_lines(
+        &self,
+        width: u16,
+        row_limit: usize,
+        questions: QuestionPresence,
+    ) -> Vec<Line<'static>> {
         if (self.pending_steers.is_empty()
             && self.rejected_steers.is_empty()
-            && self.queued_messages.is_empty())
+            && self.queued_messages.is_empty()
+            && questions == QuestionPresence::Absent)
             || width < 4
             || row_limit == 0
         {
@@ -388,7 +409,7 @@ impl PendingInputPreview {
         }
 
         let row_limit = row_limit.min(VISIBLE_ROW_CAP);
-        let mut lines = self.title_lines(width);
+        let mut lines = self.title_lines(width, questions);
         lines.truncate(row_limit);
         if lines.len() == row_limit {
             return lines;
@@ -415,7 +436,7 @@ impl PendingInputPreview {
             && let Some((kind, text)) = all_items.clone().next()
         {
             let item_lines = Self::item_lines(kind, text, width);
-            let hidden_lines = self.hidden_lines(width, total_items - 1);
+            let hidden_lines = self.hidden_lines(width, total_items - 1, questions);
             let tail_rows = hidden_lines
                 .len()
                 .min(row_limit.saturating_sub(ITEM_ROW_CAP).max(1));
@@ -434,7 +455,7 @@ impl PendingInputPreview {
             lines.extend(hidden_lines.into_iter().take(tail_rows));
             return lines;
         }
-        let action_lines = self.action_lines(width);
+        let action_lines = self.action_lines(width, questions);
         let rows_after_title = row_limit - lines.len();
         let reserved_action_rows = if action_lines.len() <= rows_after_title.saturating_sub(1) {
             action_lines.len()
@@ -460,7 +481,7 @@ impl PendingInputPreview {
         let hidden_items = total_items - shown_items;
         if hidden_items > 0 && lines.len() < row_limit - reserved_action_rows {
             lines.extend(
-                self.hidden_lines(width, hidden_items)
+                self.hidden_lines(width, hidden_items, questions)
                     .into_iter()
                     .take(1 + reserved_action_rows),
             );
@@ -470,28 +491,36 @@ impl PendingInputPreview {
         lines.truncate(row_limit);
         lines
     }
-}
 
-impl Renderable for PendingInputPreview {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
+    fn render_with_questions(&self, area: Rect, buf: &mut Buffer, questions: QuestionPresence) {
         if area.is_empty() {
             return;
         }
 
-        let natural_lines = self.preview_lines(area.width, VISIBLE_ROW_CAP);
+        let natural_lines = self.preview_lines(area.width, VISIBLE_ROW_CAP, questions);
         let lines = if area.height as usize >= natural_lines.len() {
             natural_lines
         } else {
-            self.preview_lines(area.width, area.height as usize)
+            self.preview_lines(area.width, area.height as usize, questions)
         };
         for (row, line) in lines.iter().enumerate() {
             let row_area = Rect::new(area.x, area.y + row as u16, area.width, /*height*/ 1);
             line.render(row_area, buf);
         }
     }
+}
+
+impl Renderable for PendingInputPreview {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.render_with_questions(area, buf, QuestionPresence::Absent);
+    }
 
     fn desired_height(&self, width: u16) -> u16 {
-        u16::try_from(self.preview_lines(width, VISIBLE_ROW_CAP).len()).unwrap_or(u16::MAX)
+        u16::try_from(
+            self.preview_lines(width, VISIBLE_ROW_CAP, QuestionPresence::Absent)
+                .len(),
+        )
+        .unwrap_or(u16::MAX)
     }
 }
 
@@ -792,7 +821,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
-        let lines = queue.preview_lines(/*width*/ 40, VISIBLE_ROW_CAP);
+        let lines = queue.preview_lines(/*width*/ 40, VISIBLE_ROW_CAP, QuestionPresence::Absent);
         let disclosure = lines[2]
             .spans
             .iter()
