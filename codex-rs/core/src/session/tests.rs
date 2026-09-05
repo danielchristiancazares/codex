@@ -11827,66 +11827,6 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
 }
 
 #[tokio::test]
-async fn active_turn_keeps_first_root_when_mail_coalesces() {
-    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
-    tc.turn_metadata_state
-        .set_root_turn_id("root-a".to_string());
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: true,
-        },
-    )
-    .await;
-    let first = InterAgentCommunication::new(
-        AgentPath::try_from("/root/worker_a").expect("worker path should parse"),
-        AgentPath::root(),
-        Vec::new(),
-        "first".to_string(),
-        /*trigger_turn*/ true,
-    );
-    let second = InterAgentCommunication::new(
-        AgentPath::try_from("/root/worker_b").expect("worker path should parse"),
-        AgentPath::root(),
-        Vec::new(),
-        "second".to_string(),
-        /*trigger_turn*/ true,
-    );
-    for (communication, parent_turn_id, root_turn_id) in [
-        (first.clone(), "parent-a", "root-a"),
-        (second.clone(), "parent-b", "root-b"),
-    ] {
-        sess.input_queue
-            .enqueue_mailbox_communication(
-                communication,
-                codex_protocol::turn_input::TurnStartOptions {
-                    parent_turn_id: Some(parent_turn_id.to_string()),
-                    root_turn_id: Some(root_turn_id.to_string()),
-                    ..Default::default()
-                },
-            )
-            .await;
-    }
-
-    assert_eq!(
-        (sess.input_queue.get_pending_input(&sess.active_turn).await).0,
-        vec![
-            TurnInput::InterAgentCommunication(first),
-            TurnInput::InterAgentCommunication(second),
-        ]
-    );
-    assert_eq!(
-        tc.turn_metadata_state.root_turn_id().as_deref(),
-        Some("root-a")
-    );
-    assert!(!sess.input_queue.has_pending_mailbox_items().await);
-
-    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
-}
-
-#[tokio::test]
 async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(

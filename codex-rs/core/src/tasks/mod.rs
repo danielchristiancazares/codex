@@ -285,6 +285,12 @@ impl Session {
         input: Vec<TurnInput>,
         task: T,
     ) {
+        // Inherited or recovered roots are applied before task start. Otherwise this
+        // task owns its turn, including background work. Later mail can suppress
+        // ambiguous attribution, but cannot replace this identity.
+        turn_context
+            .turn_metadata_state
+            .set_root_turn_id(turn_context.sub_id.clone());
         let task: Arc<dyn AnySessionTask> = Arc::new(task);
         let task_kind = task.kind();
         let span_name = task.span_name();
