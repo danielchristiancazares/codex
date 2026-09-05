@@ -1219,7 +1219,9 @@ async fn code_mode_tool_call_completeness_is_private_and_opt_in(
     let code = if oversized {
         r#"
 const args = { barrier: { id: "", participants: 1 } };
-args.barrier.id = "x".repeat(8192 - JSON.stringify(args).length);
+// Exceed the per-call argument bound so metadata remains sendable under the
+// fork's complete-item envelope cap while retaining incomplete-call evidence.
+args.barrier.id = "x".repeat(8193 - JSON.stringify(args).length);
 for (let index = 0; index < 4; index++) await tools.test_sync_tool(args);
 text("done");
 yield_control();

@@ -45,6 +45,9 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
+#[path = "history_token_projection.rs"]
+mod token_projection;
+
 /// Transcript of thread history
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContextManager {
@@ -305,27 +308,6 @@ impl ContextManager {
         self.estimate_token_count_with_base_instructions(&base_instructions)
     }
 
-    pub(crate) fn model_visible_token_delta(
-        &self,
-        input_modalities: &[InputModality],
-        truncation_policy: TruncationPolicy,
-    ) -> i64 {
-        let raw_estimate = self
-            .items
-            .iter()
-            .map(|envelope| estimate_item_token_count(&envelope.item))
-            .fold(0i64, i64::saturating_add);
-        let mut history = self.clone();
-        history.normalize_history(input_modalities);
-        history.finalize_function_outputs(truncation_policy);
-        let model_visible_estimate = history
-            .items
-            .iter()
-            .map(|envelope| estimate_item_token_count(&envelope.item))
-            .fold(0i64, i64::saturating_add);
-        model_visible_estimate.saturating_sub(raw_estimate)
-    }
-
     pub(crate) fn estimate_token_count_with_base_instructions(
         &self,
         base_instructions: &BaseInstructions,
@@ -524,13 +506,7 @@ impl ContextManager {
         // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);
 
-        super::citation_projection::strip_hidden_citations(items);
-
-        // strip images when model does not support them
-        normalize::strip_images_when_unsupported(input_modalities, items);
-
-        // strip audio when model does not support it
-        normalize::strip_audio_when_unsupported(input_modalities, items);
+        self.project_model_visible_content(input_modalities);
     }
 
     fn finalize_function_outputs(&mut self, truncation_policy: TruncationPolicy) {

@@ -180,6 +180,23 @@ identify their local source with `Adapted-from`. Generated artifacts are refresh
   `rules_rust//util/process_wrapper` bootstrap with `rust-lld.exe` before benchmark
   compilation. Both benchmark targets remain unverified on this host. Attempt:
   `bazel build --lockfile_mode=error --jobs=4 --host_platform=@rules_rs//rs/platforms:x86_64-pc-windows-msvc --platforms=@rules_rs//rs/platforms:x86_64-pc-windows-msvc //codex-rs/code-mode-host:stdio-throughput-bench-bin //codex-rs/code-mode-host:websocket-throughput-bench-bin`.
+- Follow-up correction separates live token-size projection from completed-prompt pair
+  validation. A running custom tool can query remaining context before its outer output
+  exists; its pending call stays untouched. Shared citation/media projection and saved
+  output-limit finalization remain active, and actual model requests still enforce pairing.
+  The estimator and its regression live in focused sibling modules; annotated source
+  history remains unchanged through copy-on-write projection.
+- The oversized Code Mode fixture now supplies 8,193 argument bytes, crossing the
+  existing per-call 8,192-byte bound and producing trusted small truncation markers.
+  It retains four nested calls, incomplete-cell, yield, and compaction assertions while
+  respecting the conservative envelope cap. Aggregate metadata bounds retain their
+  existing recorder/protocol coverage; production warehouse metadata policy is unchanged.
+- All **15/15** corrective/adjacent cases passed, including all four initial failures
+  and recorder overflow/completeness coverage. Follow-up history/output projection checks
+  passed **86/86**, including the new pending-call/annotation regression, existing strict
+  prompt-normalization cases, and saved-limit/model-visible-delta agreement. The HTTP
+  image-fixture enum variant used only by Unix tests has a Windows dead-code expectation;
+  the live WebSocket discovery case passed again without that warning.
 
 ## Source ledger
 
