@@ -95,9 +95,7 @@ impl HistoryCell for WebSearchCell {
             activity_indicator(
                 Some(self.start_time),
                 MotionMode::from_animations_enabled(self.animations_enabled),
-                ReducedMotionIndicator::StaticBullet,
             )
-            .unwrap_or_else(|| "•".dim())
         };
         let header = web_search_header(self.completed);
         let detail = web_search_detail(self.action.as_ref(), &self.query);

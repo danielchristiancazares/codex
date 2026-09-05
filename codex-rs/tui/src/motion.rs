@@ -1,7 +1,7 @@
 //! Centralized motion primitives for the TUI.
 //!
-//! Callers choose an explicit reduced-motion fallback here instead of reaching
-//! directly for time-varying spinner or shimmer helpers.
+//! Reduced motion keeps a static activity bullet and plain text instead of
+//! time-varying spinner or shimmer effects.
 
 use std::time::Duration;
 use std::time::Instant;
@@ -30,23 +30,13 @@ impl MotionMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReducedMotionIndicator {
-    Hidden,
-    StaticBullet,
-}
-
 pub(crate) fn activity_indicator(
     start_time: Option<Instant>,
     motion_mode: MotionMode,
-    reduced_motion_indicator: ReducedMotionIndicator,
-) -> Option<Span<'static>> {
+) -> Span<'static> {
     match motion_mode {
-        MotionMode::Animated => Some(animated_activity_indicator(start_time)),
-        MotionMode::Reduced => match reduced_motion_indicator {
-            ReducedMotionIndicator::Hidden => None,
-            ReducedMotionIndicator::StaticBullet => Some("•".into()),
-        },
+        MotionMode::Animated => animated_activity_indicator(start_time),
+        MotionMode::Reduced => "•".into(),
     }
 }
 
@@ -83,22 +73,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reduced_motion_activity_indicator_uses_explicit_fallback() {
+    fn reduced_motion_activity_indicator_uses_static_bullet() {
         assert_eq!(
-            activity_indicator(
-                /*start_time*/ None,
-                MotionMode::Reduced,
-                ReducedMotionIndicator::Hidden,
-            ),
-            None
-        );
-        assert_eq!(
-            activity_indicator(
-                /*start_time*/ None,
-                MotionMode::Reduced,
-                ReducedMotionIndicator::StaticBullet,
-            ),
-            Some("•".into())
+            activity_indicator(/*start_time*/ None, MotionMode::Reduced),
+            Span::from("•")
         );
     }
 
@@ -119,27 +97,15 @@ mod tests {
         let states = [
             (
                 "animated emphasized",
-                Some(activity_indicator_for_elapsed(Duration::ZERO)),
+                activity_indicator_for_elapsed(Duration::ZERO),
             ),
             (
                 "animated resting",
-                Some(activity_indicator_for_elapsed(Duration::from_millis(700))),
+                activity_indicator_for_elapsed(Duration::from_millis(700)),
             ),
             (
                 "reduced static",
-                activity_indicator(
-                    /*start_time*/ None,
-                    MotionMode::Reduced,
-                    ReducedMotionIndicator::StaticBullet,
-                ),
-            ),
-            (
-                "reduced hidden",
-                activity_indicator(
-                    /*start_time*/ None,
-                    MotionMode::Reduced,
-                    ReducedMotionIndicator::Hidden,
-                ),
+                activity_indicator(/*start_time*/ None, MotionMode::Reduced),
             ),
         ];
 

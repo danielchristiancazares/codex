@@ -171,13 +171,6 @@ impl ExecCell {
         self.calls.iter().any(|c| c.duration.is_none())
     }
 
-    pub(crate) fn active_start_time(&self) -> Option<Instant> {
-        self.calls
-            .iter()
-            .find(|call| call.duration.is_none())
-            .and_then(|call| call.start_time)
-    }
-
     pub(crate) fn animations_enabled(&self) -> bool {
         self.animations_enabled
     }

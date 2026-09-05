@@ -143,9 +143,7 @@ impl McpToolCallCell {
             None => activity_indicator(
                 Some(self.start_time),
                 MotionMode::from_animations_enabled(self.animations_enabled),
-                ReducedMotionIndicator::StaticBullet,
-            )
-            .unwrap_or_else(|| "•".dim()),
+            ),
         };
         let header_text = if status.is_some() {
             "Called"
@@ -697,9 +695,7 @@ impl HistoryCell for McpInventoryLoadingCell {
                 activity_indicator(
                     Some(self.start_time),
                     MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
+                ),
                 " ".into(),
                 "Loading MCP inventory".bold(),
                 "…".dim(),

@@ -5,8 +5,6 @@ use std::collections::hash_map::Entry;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
 
 use codex_protocol::RolloutId;
 use codex_protocol::ThreadId;
@@ -34,22 +32,13 @@ struct IndexedRollout {
 }
 
 impl RolloutReferenceIndex {
-    /// Scans active and archived local rollout metadata without a deadline.
+    /// Scans active and archived local rollout metadata.
     pub async fn scan(codex_home: &Path) -> io::Result<Self> {
-        let Some(index) = Self::scan_paths(
-            vec![
-                codex_home.join(ARCHIVED_SESSIONS_SUBDIR),
-                codex_home.join(SESSIONS_SUBDIR),
-            ],
-            ScanDeadline::Unlimited,
-        )
-        .await?
-        else {
-            return Err(io::Error::other(
-                "unlimited rollout reference scan exceeded a deadline",
-            ));
-        };
-        Ok(index)
+        Self::scan_paths(vec![
+            codex_home.join(ARCHIVED_SESSIONS_SUBDIR),
+            codex_home.join(SESSIONS_SUBDIR),
+        ])
+        .await
     }
 
     /// Scans only unarchived rollouts to locate files that still need to be archived.
@@ -57,58 +46,18 @@ impl RolloutReferenceIndex {
     /// Reference counts exclude archived history and must not be used to decide whether a
     /// rollout can be deleted or compressed.
     pub async fn scan_unarchived(codex_home: &Path) -> io::Result<Self> {
-        let Some(index) = Self::scan_paths(
-            vec![codex_home.join(SESSIONS_SUBDIR)],
-            ScanDeadline::Unlimited,
-        )
-        .await?
-        else {
-            return Err(io::Error::other(
-                "unlimited unarchived rollout scan exceeded a deadline",
-            ));
-        };
-        Ok(index)
+        Self::scan_paths(vec![codex_home.join(SESSIONS_SUBDIR)]).await
     }
 
-    /// Scans active and archived local rollout metadata until the worker deadline expires.
-    ///
-    /// Returns `None` instead of a partial index when the deadline expires.
-    pub(crate) async fn scan_until(
-        codex_home: &Path,
-        started_at: Instant,
-        max_runtime: Duration,
-    ) -> io::Result<Option<Self>> {
-        Self::scan_paths(
-            vec![
-                codex_home.join(ARCHIVED_SESSIONS_SUBDIR),
-                codex_home.join(SESSIONS_SUBDIR),
-            ],
-            ScanDeadline::Until {
-                started_at,
-                max_runtime,
-            },
-        )
-        .await
-    }
-
-    async fn scan_paths(
-        mut stack: Vec<PathBuf>,
-        deadline: ScanDeadline,
-    ) -> io::Result<Option<Self>> {
+    async fn scan_paths(mut stack: Vec<PathBuf>) -> io::Result<Self> {
         let mut rollouts_by_id = HashMap::new();
         while let Some(directory) = stack.pop() {
-            if deadline.expired() {
-                return Ok(None);
-            }
             let mut entries = match tokio::fs::read_dir(directory.as_path()).await {
                 Ok(entries) => entries,
                 Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
                 Err(err) => return Err(err),
             };
             loop {
-                if deadline.expired() {
-                    return Ok(None);
-                }
                 let Some(entry) = entries.next_entry().await? else {
                     break;
                 };
@@ -152,10 +101,10 @@ impl RolloutReferenceIndex {
                 .entry(history_base.thread_id)
                 .or_default() += 1;
         }
-        Ok(Some(Self {
+        Ok(Self {
             rollouts_by_id,
             reference_counts_by_rollout,
-        }))
+        })
     }
 
     /// Returns how many other discovered rollouts directly reference `rollout_id`.
@@ -182,27 +131,6 @@ impl RolloutReferenceIndex {
             .iter()
             .filter(move |(_, rollout)| rollout.thread_id == thread_id)
             .map(|(rollout_id, rollout)| (*rollout_id, rollout.path.as_path()))
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ScanDeadline {
-    Unlimited,
-    Until {
-        started_at: Instant,
-        max_runtime: Duration,
-    },
-}
-
-impl ScanDeadline {
-    fn expired(self) -> bool {
-        match self {
-            Self::Unlimited => false,
-            Self::Until {
-                started_at,
-                max_runtime,
-            } => started_at.elapsed() >= max_runtime,
-        }
     }
 }
 

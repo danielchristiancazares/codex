@@ -8,7 +8,6 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::plain_lines;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::line_utils::prefix_lines;
@@ -178,9 +177,7 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
     activity_indicator(
         start_time,
         MotionMode::from_animations_enabled(animations_enabled),
-        ReducedMotionIndicator::StaticBullet,
     )
-    .unwrap_or_else(|| "•".dim())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -273,9 +273,7 @@ impl HistoryCell for ThreadRecapLoadingCell {
                 activity_indicator(
                     Some(self.start_time),
                     MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
+                ),
                 " ".into(),
                 "Generating conversation recap".bold(),
                 "…".dim(),

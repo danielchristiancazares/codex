@@ -5,24 +5,14 @@ expression: states
 [
     (
         "animated emphasized",
-        Some(
-            Span::from("•").bold(),
-        ),
+        Span::from("•").bold(),
     ),
     (
         "animated resting",
-        Some(
-            Span::from("•"),
-        ),
+        Span::from("•"),
     ),
     (
         "reduced static",
-        Some(
-            Span::from("•"),
-        ),
-    ),
-    (
-        "reduced hidden",
-        None,
+        Span::from("•"),
     ),
 ]
