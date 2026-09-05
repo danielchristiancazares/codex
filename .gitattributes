@@ -8,3 +8,4 @@ codex-rs/state/*_migrations/*.sql text eol=lf
 # These checksummed rusty_v8 release artifacts must retain their exact bytes.
 rusty_v8_ptrcomp_sandbox_release_*.lib.gz binary
 src_binding_ptrcomp_sandbox_release_*.rs binary
+third_party/voice/sources.json text eol=lf

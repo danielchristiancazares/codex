@@ -201,6 +201,7 @@ fn rate_limits_from_response(response: CopilotUserResponse) -> CoreResult<Vec<Ra
     Ok(vec![RateLimitSnapshot {
         limit_id: Some("copilot".to_string()),
         limit_name: Some("Copilot".to_string()),
+        normal_model_slug: None,
         primary,
         secondary: None,
         credits: None,

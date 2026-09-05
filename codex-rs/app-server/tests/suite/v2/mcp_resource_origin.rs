@@ -29,15 +29,8 @@ use tokio::time::timeout;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn widget_reads_survive_history_modes_compaction_restarts_and_app_only_visibility()
 -> Result<()> {
-    let responses_server = responses::start_mock_server().await;
     let (apps_server_url, calls, apps_server_handle) = start_resource_apps_mcp_server().await?;
     calls.tools_enabled.store(true, Ordering::Relaxed);
-    let (codex_home, mut app_server) = start_resource_test_app_server(
-        &apps_server_url,
-        &responses_server.uri(),
-        ResourceTestEnvironment::Auto,
-    )
-    .await?;
 
     let mut tool_events = vec![responses::ev_response_created("widget-tools")];
     tool_events.extend(
@@ -84,7 +77,22 @@ async fn widget_reads_survive_history_modes_compaction_restarts_and_app_only_vis
     model_responses.push(responses::sse(vec![responses::ev_completed(
         "app-only-visibility",
     )]));
-    let response_mock = responses::mount_sse_sequence(&responses_server, model_responses).await;
+    let responses_server =
+        app_test_support::create_mock_responses_websocket_server_connections(vec![
+            model_responses[0..2].to_vec(),
+            model_responses[2..6].to_vec(),
+            model_responses[6..8].to_vec(),
+            model_responses[8..10].to_vec(),
+            model_responses[10..11].to_vec(),
+            Vec::new(),
+        ])
+        .await?;
+    let (codex_home, mut app_server) = start_resource_test_app_server(
+        &apps_server_url,
+        responses_server.uri(),
+        ResourceTestEnvironment::Auto,
+    )
+    .await?;
 
     let mut persistent_thread_ids = Vec::new();
     for (history_mode, ephemeral) in [
@@ -259,17 +267,23 @@ async fn widget_reads_survive_history_modes_compaction_restarts_and_app_only_vis
         restarted.read_stream_until_notification_message("turn/completed"),
     )
     .await??;
-    let requests = response_mock.requests();
+    let requests = app_test_support::websocket_model_request_bodies(&responses_server);
     let model_request = requests.last().expect("post-resume model request");
     assert!(
-        model_request
-            .tool_by_name("mcp__codex_apps__best_buy", "_product_search")
-            .is_none()
+        responses::namespace_child_tool(
+            model_request,
+            "mcp__codex_apps__best_buy",
+            "_product_search",
+        )
+        .is_none()
     );
     assert!(
-        model_request
-            .tool_by_name("mcp__codex_apps__walmart", "_product_search")
-            .is_some()
+        responses::namespace_child_tool(
+            model_request,
+            "mcp__codex_apps__walmart",
+            "_product_search",
+        )
+        .is_some()
     );
 
     apps_server_handle.abort();

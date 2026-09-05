@@ -12,6 +12,7 @@ pub(crate) use function_output::truncate_function_output_payload;
 pub(crate) use function_output::truncate_function_output_payload_with_token_limit;
 pub(crate) use function_output_envelope::function_output_item_token_budget;
 pub(crate) use history::ContextManager;
+pub(crate) use history::HistoryReplacement;
 pub(crate) use history::estimate_function_output_content_item_tokens;
 pub(crate) use history::estimate_image_bytes;
 pub(crate) use history::estimate_item_token_count;

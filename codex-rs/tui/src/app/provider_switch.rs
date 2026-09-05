@@ -377,10 +377,12 @@ impl App {
         config.model_reasoning_effort = Some(selected_effort);
         config.plan_mode_reasoning_effort = Some(selected_plan_effort);
         config.service_tier = ServiceTier::Default;
+        config.notices.fast_default_opt_out = Some(true);
 
         let transitioned = if has_rollout {
             app_server
                 .fork_thread_at(
+                    &self.local_settings,
                     config.clone(),
                     thread_id,
                     /*last_turn_id*/ None,
@@ -391,7 +393,10 @@ impl App {
         } else {
             app_server
                 .start_thread_with_session_start_source(
-                    &config, /*session_start_source*/ None, /*remote_cwd_override*/ None,
+                    &self.local_settings,
+                    &config,
+                    /*session_start_source*/ None,
+                    /*remote_cwd_override*/ None,
                 )
                 .await
         };
@@ -442,7 +447,11 @@ impl App {
         let runtime_base_url =
             super::startup::resolve_runtime_model_provider_base_url(&provider).await;
         self.config = config;
-        self.model_catalog = Arc::new(ModelCatalog::new(available_models.clone()));
+        self.local_settings.notices.fast_default_opt_out = Some(true);
+        self.model_catalog = Arc::new(
+            ModelCatalog::new(available_models.clone())
+                .with_collaboration_modes(self.model_catalog.collaboration_modes.clone()),
+        );
         app_server.set_active_model_catalog(actual_model.clone(), available_models);
         self.chat_widget
             .set_runtime_model_provider_base_url(runtime_base_url);
@@ -489,6 +498,10 @@ impl App {
         );
         persistence_edits.push(crate::config_update::service_tier_selection_edit(
             self.config.service_tier,
+        ));
+        persistence_edits.push(crate::config_update::replace_config_value(
+            "notice.fast_default_opt_out",
+            serde_json::json!(true),
         ));
         let plan_effort_edit = self.config.plan_mode_reasoning_effort.as_ref().map_or_else(
             || crate::config_update::clear_config_value("plan_mode_reasoning_effort"),

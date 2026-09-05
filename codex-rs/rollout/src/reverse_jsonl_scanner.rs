@@ -3,6 +3,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
+use crate::RolloutLine;
 use serde::de::DeserializeOwned;
 
 const READ_CHUNK_SIZE: usize = 64 * 1024;
@@ -134,6 +135,11 @@ where
                 self.chunk_position = 0;
             }
         }
+    }
+
+    /// Scans the next rollout record through the canonical persisted JSON decoder.
+    pub fn scan_next_rollout_line(&mut self) -> io::Result<Option<ScanOutcome<RolloutLine>>> {
+        self.scan_next_with(crate::parse_rollout_line_bytes)
     }
 
     fn finish_record_with<T>(

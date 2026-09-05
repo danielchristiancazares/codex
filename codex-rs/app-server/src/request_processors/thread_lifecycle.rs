@@ -1,15 +1,9 @@
-use super::delta_thread_state::RealtimeDeltaTracking;
+use super::delta_thread_state::DeltaThreadStateTracking;
 use super::*;
 use crate::extensions::send_thread_warning;
-use crate::realtime_event_handling::apply_realtime_event_effects;
-use crate::realtime_event_handling::persist_realtime_items;
-use crate::realtime_history::RealtimeEventEffects;
 use codex_app_server_protocol::ThreadQueueChangedNotification;
 use codex_extension_api::ThreadIdleCause;
 use codex_protocol::config_types::MultiAgentMode;
-use codex_protocol::protocol::ThreadHistoryMode;
-
-pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
@@ -21,6 +15,7 @@ pub(super) struct ListenerTaskContext {
     pub(super) thread_list_state_permit: Arc<Semaphore>,
     pub(super) fallback_model_provider: String,
     pub(super) codex_home: PathBuf,
+    pub(super) thread_unload_delay: Duration,
     pub(super) skills_watcher: Arc<SkillsWatcher>,
     pub(super) turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
 }
@@ -68,7 +63,7 @@ impl UnloadingState {
     fn unloading_target(&self) -> Option<Instant> {
         match (self.has_subscribers, self.is_active) {
             ((false, has_no_subscribers_since), (false, is_inactive_since)) => {
-                Some(std::cmp::max(has_no_subscribers_since, is_inactive_since) + self.delay)
+                std::cmp::max(has_no_subscribers_since, is_inactive_since).checked_add(self.delay)
             }
             _ => None,
         }
@@ -255,7 +250,7 @@ pub(super) async fn ensure_listener_task_running(
     let Some(mut unloading_state) = UnloadingState::new(
         &listener_task_context,
         conversation_id,
-        THREAD_UNLOADING_DELAY,
+        listener_task_context.thread_unload_delay,
     )
     .await
     else {
@@ -274,10 +269,8 @@ pub(super) async fn ensure_listener_task_running(
         )
         .await;
     let config_snapshot = conversation.config_snapshot().await;
-    let realtime_history_enabled =
-        matches!(config_snapshot.history_mode, ThreadHistoryMode::Paginated);
     let thread_settings_baseline = thread_settings_from_config_snapshot(&config_snapshot);
-    let (mut listener_command_rx, listener_generation, mut realtime_delta_tracking) = {
+    let (mut listener_command_rx, listener_generation) = {
         let mut thread_state = thread_state.lock().await;
         if thread_state.listener_matches(&conversation) {
             return Ok(());
@@ -297,14 +290,9 @@ pub(super) async fn ensure_listener_task_running(
         listener_task_context
             .thread_state_manager
             .register_listener_command_tx(conversation_id, listener_command_tx);
-        let realtime_delta_tracking =
-            RealtimeDeltaTracking::for_listener(config_snapshot.history_mode, &thread_state);
-        (
-            listener_command_rx,
-            listener_generation,
-            realtime_delta_tracking,
-        )
+        (listener_command_rx, listener_generation)
     };
+    let delta_thread_state_tracking = DeltaThreadStateTracking;
     let ListenerTaskContext {
         outgoing,
         thread_manager,
@@ -362,25 +350,15 @@ pub(super) async fn ensure_listener_task_running(
                     }
 
                     // Keep state-bearing events ordered before typed translations. Streaming
-                    // deltas bypass the mutex while neither turn nor realtime history consumes them.
-                    let (raw_events_enabled, realtime_effects) = if realtime_delta_tracking
+                    // deltas bypass the mutex when current turn tracking does not consume them.
+                    let raw_events_enabled = if delta_thread_state_tracking
                         .requires_thread_state(&event.msg)
                     {
                         let mut thread_state = thread_state.lock().await;
                         thread_state.track_current_turn_event(&event.id, &event.msg);
-                        let realtime_effects = if realtime_history_enabled
-                            && thread_state.realtime_history.should_observe(&event.msg)
-                        {
-                            let active_turn_id = thread_state.active_turn_snapshot().map(|turn| turn.id);
-                            thread_state
-                                .realtime_history
-                                .observe(&event.msg, active_turn_id.as_deref())
-                        } else {
-                            RealtimeEventEffects::default()
-                        };
-                        (thread_state.experimental_raw_events, realtime_effects)
+                        thread_state.experimental_raw_events
                     } else {
-                        (false, RealtimeEventEffects::default())
+                        false
                     };
                     if matches!(
                         &event.msg,
@@ -395,18 +373,6 @@ pub(super) async fn ensure_listener_task_running(
                         subscribed_connection_ids,
                         conversation_id,
                     );
-
-                    if realtime_effects.transcript_stream.is_some()
-                        || !realtime_effects.items.is_empty()
-                    {
-                        apply_realtime_event_effects(
-                            conversation.as_ref(),
-                            &thread_outgoing,
-                            conversation_id,
-                            realtime_effects,
-                        )
-                        .await;
-                    }
 
                     let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
                     apply_bespoke_event_handling(
@@ -620,32 +586,6 @@ pub(super) async fn handle_thread_listener_command(
             )
             .await;
             let _ = completion_tx.send(());
-        }
-        ThreadListenerCommand::SealRealtimeUserInput {
-            input,
-            completion_tx,
-        } => {
-            let items = thread_state
-                .lock()
-                .await
-                .realtime_history
-                .seal_user_input(&input);
-            let subscribed_connection_ids = thread_state_manager
-                .subscribed_connection_ids(conversation_id)
-                .await;
-            let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
-                outgoing.clone(),
-                subscribed_connection_ids,
-                conversation_id,
-            );
-            let result = persist_realtime_items(
-                conversation.as_ref(),
-                &thread_outgoing,
-                &conversation_id.to_string(),
-                items,
-            )
-            .await;
-            let _ = completion_tx.send(result);
         }
     }
 }

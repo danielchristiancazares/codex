@@ -1,0 +1,24 @@
+---
+source: tui/src/status_indicator_widget.rs
+expression: "frames.join(\"\\n\")"
+---
+120 columns:
+"✦ Working · existing details · checking 日本語 ｶﾞﾊﾟ policy                                              0s · Esc interr…" Hidden by multi-width symbols: [(41, " "), (43, " "), (45, " "), (48, " "), (50, " ")]
+"  └ 1 background terminal running · /ps to view · /stop to close                                                        "
+
+60 columns:
+"✦ Working · existing details              0s · Esc interrupt"
+"  ├ 1 background terminal · /ps to view · /stop to close    "
+"  └ checking 日本語 ｶﾞﾊﾟ policy                             " Hidden by multi-width symbols: [(14, " "), (16, " "), (18, " "), (21, " "), (23, " ")]
+
+24 columns:
+"✦ Working       Esc stop"
+"  ├ Terminals           "
+"  ├ /ps to view         "
+"  ├ /stop to close      "
+"  ├ checking 日本語 ｶﾞ… " Hidden by multi-width symbols: [(14, " "), (16, " "), (18, " "), (21, " ")]
+"  └ existing details    "
+
+120 columns:
+"✦ Working · existing details · checking 日本語 ｶﾞﾊﾟ policy                                              0s · Esc interr…" Hidden by multi-width symbols: [(41, " "), (43, " "), (45, " "), (48, " "), (50, " ")]
+"  └ 1 background terminal running · /ps to view · /stop to close                                                        "

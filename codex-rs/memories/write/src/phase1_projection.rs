@@ -37,8 +37,10 @@ pub(crate) fn serialize_filtered_rollout_response_items(
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::Compacted(_)
             | RolloutItem::TurnContext(_)
+            | RolloutItem::TokenUsageRecord(_)
             | RolloutItem::RealtimeItem(_)
             | RolloutItem::WorldState(_)
+            | RolloutItem::RetainedContext(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::EventMsg(_) => None,
         }))
@@ -92,6 +94,7 @@ fn sanitize_response_item(item: &ResponseItem) -> Option<ResponseItem> {
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::ImageGenerationCall { .. }
+        | ResponseItem::ConfigurationUpdate { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::CompactionTrigger {}
         | ResponseItem::ContextCompaction { .. }

@@ -68,6 +68,7 @@ const fn context_bit(context: KeymapContext) -> u16 {
         KeymapContext::List => 8,
         KeymapContext::Approval => 9,
         KeymapContext::Agents => 10,
+        KeymapContext::VimSearch => 11,
     }
 }
 
@@ -230,7 +231,7 @@ struct PendingChord {
 }
 
 /// Tracks one pending two-stroke chord without buffering ordinary input.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct KeyChordMatcher {
     pending: Option<PendingChord>,
 }
@@ -514,6 +515,7 @@ Choose a different chord and retry.",
         | KeymapContext::Editor
         | KeymapContext::VimNormal
         | KeymapContext::VimOperator
+        | KeymapContext::VimSearch
         | KeymapContext::VimTextObject => MAIN_RESERVED_BINDINGS,
         KeymapContext::List => LIST_RESERVED_BINDINGS,
         KeymapContext::Agents | KeymapContext::Approval => &LIST_RESERVED_BINDINGS[..1],

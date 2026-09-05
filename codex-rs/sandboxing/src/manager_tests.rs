@@ -490,11 +490,12 @@ fn transform_linux_seccomp_uses_helper_alias_when_launcher_is_not_helper_path() 
 
 #[cfg(target_os = "windows")]
 #[test]
-fn transform_for_direct_spawn_windows_preserves_only_wrapper_setup_identity() {
+fn transform_for_direct_spawn_windows_preserves_only_wrapper_setup_environment() {
     let mut env = HashMap::from([
         ("Path".to_string(), r"C:\Windows\System32".to_string()),
         ("username".to_string(), "wrong-user".to_string()),
         ("UserProfile".to_string(), r"C:\wrong".to_string()),
+        ("SYSTEMROOT".to_string(), r"C:\wrong".to_string()),
     ]);
 
     super::add_windows_sandbox_wrapper_setup_env_from_vars(
@@ -502,7 +503,9 @@ fn transform_for_direct_spawn_windows_preserves_only_wrapper_setup_identity() {
         [
             ("USERNAME", "alice"),
             ("USERPROFILE", r"C:\Users\alice"),
+            ("SystemRoot", r"C:\Windows"),
             ("OPENAI_API_KEY", "secret"),
+            ("HTTP_PROXY", "http://127.0.0.1:7890"),
         ]
         .map(|(key, value)| {
             (
@@ -518,6 +521,7 @@ fn transform_for_direct_spawn_windows_preserves_only_wrapper_setup_identity() {
             ("Path".to_string(), r"C:\Windows\System32".to_string()),
             ("USERNAME".to_string(), "alice".to_string()),
             ("USERPROFILE".to_string(), r"C:\Users\alice".to_string()),
+            ("SystemRoot".to_string(), r"C:\Windows".to_string()),
         ])
     );
 }
@@ -607,6 +611,11 @@ fn transform_for_direct_spawn_windows_materializes_inner_helper() {
     let inner_command: Vec<String> =
         serde_json::from_value(wrapper_request["command"].clone()).expect("inner wrapper command");
     let materialized_helper = std::path::PathBuf::from(&inner_command[0]);
+    assert_eq!(
+        serde_json::from_value::<HashMap<String, String>>(wrapper_request["env_map"].clone())
+            .expect("decode inner command environment"),
+        HashMap::from([("Path".to_string(), r"C:\Windows\System32".to_string())])
+    );
     assert_eq!(exec_request.sandbox, SandboxType::None);
     assert_eq!(
         exec_request.command,

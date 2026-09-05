@@ -381,6 +381,7 @@ async fn replayed_nested_review_prompts_do_not_render_or_seed_composer_history()
                         phase: Some(MessagePhase::FinalAnswer),
                         memory_citation: None,
                         delivery: None,
+                        questions: None,
                     },
                 ],
                 ..app_server_turn(
@@ -1572,7 +1573,7 @@ async fn web_search_lifecycle_waits_for_active_mcp_group() {
 async fn partial_mcp_completion_refreshes_transcript_when_animations_are_disabled() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let _ = drain_insert_history(&mut rx);
-    chat.config.animations = false;
+    chat.local_settings.tui.animations = false;
 
     chat.on_mcp_tool_call_started(mcp_call_started("mcp-a", "A"));
     chat.on_mcp_tool_call_started(mcp_call_started("mcp-b", "B"));

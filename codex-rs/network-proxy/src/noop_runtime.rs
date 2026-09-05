@@ -71,6 +71,10 @@ impl NetworkProxyState {
 
     pub fn set_policy_audit_observer(&mut self, _observer: NetworkPolicyAuditObserver) {}
 
+    pub fn set_launch_span_context(&mut self, _span_context: SpanContext) {}
+
+    pub fn set_process_log_metadata(&mut self, _metadata: NetworkProxyProcessLogMetadata) {}
+
     pub fn audit_metadata(&self) -> &NetworkProxyAuditMetadata {
         &self.audit_metadata
     }

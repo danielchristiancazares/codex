@@ -275,6 +275,14 @@ fn thread_resume_params_accept_turns_page_bootstrap() {
 fn thread_resume_response_round_trips_initial_turns_page() {
     let response = ThreadResumeResponse {
         thread: Thread {
+            originator: Some("future_client".to_string()),
+            environments: Some(vec![ThreadEnvironment {
+                environment_id: "remote".to_string(),
+                cwd: LegacyAppPathString::from_string(r"C:\workspace"),
+                runtime_workspace_roots: vec![LegacyAppPathString::from_string(
+                    r"C:\workspace\src",
+                )],
+            }]),
             id: "thr_123".to_string(),
             extra: None,
             session_id: "thr_123".to_string(),
@@ -291,6 +299,8 @@ fn thread_resume_response_round_trips_initial_turns_page() {
             project_id: None,
             history_mode: Default::default(),
             model_provider: "openai".to_string(),
+            model: None,
+            reasoning_effort: None,
             created_at: 1,
             updated_at: 1,
             recency_at: Some(1),
@@ -305,6 +315,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
             agent_role: None,
             git_info: None,
             name: None,
+            daybreak_enabled: None,
             turns: Vec::new(),
         },
         model: "gpt-5".to_string(),
@@ -330,6 +341,13 @@ fn thread_resume_response_round_trips_initial_turns_page() {
     };
 
     let value = serde_json::to_value(&response).expect("serialize thread resume response");
+    assert_eq!(value["thread"]["originator"], json!("future_client"));
+    assert_eq!(
+        value["thread"]["environments"],
+        json!([{
+            "environmentId": "remote", "cwd": r"C:\workspace", "runtimeWorkspaceRoots": [r"C:\workspace\src"]
+        }])
+    );
     assert_eq!(
         value["thread"]["section"],
         json!({
@@ -347,11 +365,15 @@ fn thread_resume_response_round_trips_initial_turns_page() {
     legacy_thread_fields.remove("section");
     legacy_thread_fields.remove("sectionEnteredAt");
     legacy_thread_fields.remove("projectId");
+    legacy_thread_fields.remove("environments");
+    legacy_thread_fields.remove("originator");
     let legacy_thread =
         serde_json::from_value::<Thread>(legacy_thread).expect("deserialize legacy thread");
     assert_eq!(legacy_thread.section, None);
     assert_eq!(legacy_thread.section_entered_at, None);
     assert_eq!(legacy_thread.project_id, None);
+    assert_eq!(legacy_thread.environments, None);
+    assert_eq!(legacy_thread.originator, None);
 
     assert_eq!(
         value.get("initialTurnsPage"),
@@ -745,7 +767,10 @@ fn permissions_request_approval_uses_request_permission_profile() {
     }))
     .expect("permissions request should deserialize");
 
-    assert_eq!(params.cwd, absolute_path("repo"));
+    assert_eq!(
+        params.cwd,
+        LegacyAppPathString::from_abs_path(&absolute_path("repo"))
+    );
     assert_eq!(params.environment_id.as_deref(), Some("remote"));
     assert_eq!(
         params.permissions,
@@ -2103,6 +2128,7 @@ fn config_approvals_reviewer_is_marked_experimental() {
 fn config_requirements_granular_allowed_approval_policy_is_marked_experimental() {
     let reason =
         crate::experimental_api::ExperimentalApi::experimental_reason(&ConfigRequirements {
+            application: None,
             cli_auth_credentials_store: None,
             chatgpt_base_url: None,
             additional_developer_instructions: None,
@@ -2564,6 +2590,7 @@ fn mcp_server_elicitation_response_serializes_nullable_content() {
 fn mcp_server_status_serializes_absent_server_info_as_null() {
     let response = ListMcpServerStatusResponse {
         data: vec![McpServerStatus {
+            tools_error: None,
             name: "not-ready".to_string(),
             runtime_status: None,
             plugin_id: None,
@@ -2585,6 +2612,7 @@ fn mcp_server_status_serializes_absent_server_info_as_null() {
                 "pluginId": null,
                 "serverInfo": null,
                 "tools": {},
+                "toolsError": null,
                 "resources": [],
                 "resourceTemplates": [],
                 "authStatus": "unknown",
@@ -2609,6 +2637,7 @@ fn mcp_server_status_accepts_older_inventory_without_runtime_status() {
     assert_eq!(
         status,
         McpServerStatus {
+            tools_error: None,
             name: "older-server".to_string(),
             runtime_status: None,
             plugin_id: None,
@@ -2680,6 +2709,7 @@ fn mcp_server_status_updated_serializes_failure_reason() {
 fn mcp_server_status_serializes_absent_server_info_metadata_as_null() {
     let response = ListMcpServerStatusResponse {
         data: vec![McpServerStatus {
+            tools_error: None,
             name: "initialized".to_string(),
             runtime_status: None,
             plugin_id: Some("lookup@test".to_string()),
@@ -2715,6 +2745,7 @@ fn mcp_server_status_serializes_absent_server_info_metadata_as_null() {
                     "websiteUrl": null,
                 },
                 "tools": {},
+                "toolsError": null,
                 "resources": [],
                 "resourceTemplates": [],
                 "authStatus": "unsupported",
@@ -2844,12 +2875,12 @@ fn automatic_approval_review_deserializes_aborted_status() {
 }
 
 #[test]
-fn guardian_approval_review_action_round_trips_command_shape() {
+fn guardian_approval_review_action_round_trips_foreign_command_path() {
     let value = json!({
         "type": "command",
         "source": "shell",
-        "command": "rm -rf /tmp/example.sqlite",
-        "cwd": absolute_path_string("tmp"),
+        "command": r"Remove-Item C:\workspace\example.sqlite",
+        "cwd": r"C:\workspace",
     });
     let action: GuardianApprovalReviewAction =
         serde_json::from_value(value.clone()).expect("guardian review action");
@@ -2858,8 +2889,8 @@ fn guardian_approval_review_action_round_trips_command_shape() {
         action,
         GuardianApprovalReviewAction::Command {
             source: GuardianCommandSource::Shell,
-            command: "rm -rf /tmp/example.sqlite".to_string(),
-            cwd: absolute_path("tmp"),
+            command: r"Remove-Item C:\workspace\example.sqlite".to_string(),
+            cwd: LegacyAppPathString::from_string(r"C:\workspace"),
         }
     );
     assert_eq!(
@@ -3080,6 +3111,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         phase: None,
         memory_citation: None,
         delivery: None,
+        questions: None,
     });
 
     assert_eq!(
@@ -3090,6 +3122,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             phase: None,
             memory_citation: None,
             delivery: None,
+            questions: None,
         }
     );
 
@@ -3109,6 +3142,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             rollout_ids: vec!["rollout-1".to_string()],
         }),
         delivery: None,
+        questions: None,
     });
 
     assert_eq!(
@@ -3127,8 +3161,41 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                 thread_ids: vec!["rollout-1".to_string()],
             }),
             delivery: None,
+            questions: None,
         }
     );
+
+    let async_item = ThreadItem::from(TurnItem::AgentMessage(AgentMessageItem {
+        id: "async-1".to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: "Which?".to_string(),
+        }],
+        phase: Some(MessagePhase::FinalAnswer),
+        memory_citation: None,
+        delivery: Some(AgentMessageDelivery::Async),
+        questions: Some(vec![AsyncUserInputQuestion {
+            title: "Which?".to_string(),
+            options: None,
+        }]),
+    }));
+    assert_eq!(
+        serde_json::to_value(&async_item).unwrap(),
+        json!({
+            "type": "agentMessage", "id": "async-1", "text": "Which?", "phase": "final_answer",
+            "memoryCitation": null, "delivery": "async", "questions": [{"title": "Which?", "options": null}]
+        })
+    );
+    let old_item: ThreadItem = serde_json::from_value(json!({
+        "type": "agentMessage", "id": "old-1", "text": "An old message"
+    }))
+    .unwrap();
+    assert!(matches!(
+        old_item,
+        ThreadItem::AgentMessage {
+            questions: None,
+            ..
+        }
+    ));
 
     let reasoning_item = TurnItem::Reasoning(ReasoningItem {
         id: "reasoning-1".to_string(),

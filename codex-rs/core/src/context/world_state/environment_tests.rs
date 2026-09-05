@@ -206,7 +206,7 @@ fn changing_primary_environment_updates_model_context_and_persisted_state() -> R
 }
 
 #[test]
-fn cf_054_changing_only_cwd_renders_only_the_cwd_field() -> Result<()> {
+fn cf_054_changing_only_cwd_restates_date_and_timezone() -> Result<()> {
     let before = EnvironmentsState {
         environments: [(
             LOCAL_ENVIRONMENT_ID.to_string(),
@@ -236,7 +236,7 @@ fn cf_054_changing_only_cwd_renders_only_the_cwd_field() -> Result<()> {
             .expect("cwd change should render")
             .render(),
         format!(
-            "<environment_context>\n  <cwd>{}</cwd>\n</environment_context>",
+            "<environment_context>\n  <cwd>{}</cwd>\n  <current_date>2026-08-30</current_date>\n  <timezone>America/Los_Angeles</timezone>\n</environment_context>",
             PathUri::parse("file:///repo/new")?.inferred_native_path_string(),
         )
     );

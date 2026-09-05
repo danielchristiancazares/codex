@@ -1,0 +1,14 @@
+---
+source: tui/src/app/tests/backend_banner_fallback_tests.rs
+assertion_line: 114
+expression: normalize_snapshot_paths(rendered)
+---
+  Selected model usage exhausted
+  Add credits to use this model again.
+› 1. View usage
+
+  Press a number to choose · esc to dismiss · type to continue
+────────────────────────────────────────────────────────────────────────
+│›
+────────────────────────────────────────────────────────────────────────
+  GPT 5.2 Medium · /tmp/project

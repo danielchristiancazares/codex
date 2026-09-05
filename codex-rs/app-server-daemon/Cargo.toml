@@ -38,3 +38,14 @@ tokio-tungstenite = { workspace = true, features = ["handshake"] }
 [dev-dependencies]
 pretty_assertions = { workspace = true, features = ["std"] }
 tempfile = { workspace = true, features = ["getrandom"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

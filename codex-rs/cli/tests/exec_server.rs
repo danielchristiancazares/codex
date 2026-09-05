@@ -19,6 +19,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use anyhow::Result;
+use codex_exec_server::EnvironmentInfo;
 use codex_exec_server::ExecParams;
 use codex_exec_server::ExecServerClient;
 use codex_exec_server::NoiseChannelIdentity;
@@ -32,6 +33,7 @@ use futures::SinkExt;
 use futures::StreamExt;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
@@ -129,6 +131,12 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
     const EXECUTOR_REGISTRATION_ID: &str = "registration-parent-lifetime";
     const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+    let collector = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/metrics"))
+        .respond_with(ResponseTemplate::new(202))
+        .mount(&collector)
+        .await;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let rendezvous_url = format!("ws://{}", listener.local_addr()?);
     let registry = MockServer::start().await;
@@ -155,7 +163,28 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
         .await;
 
     let codex_home = TempDir::new()?;
-    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let collector_url = collector.uri();
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+[analytics]
+enabled = true
+
+[otel]
+environment = "test"
+metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", protocol = "json" }} }}
+"#
+        ),
+    )?;
+    let package = TempDir::new()?;
+    let bin_dir = package.path().join("bin");
+    std::fs::create_dir(&bin_dir)?;
+    let executable = bin_dir.join(format!("codex{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(codex_utils_cargo_bin::cargo_bin("codex")?, &executable)?;
+    let manifest = package.path().join("codex-package.json");
+    std::fs::write(&manifest, r#"{"version":"1.2.3-alpha.4"}"#)?;
+    let mut command = tokio::process::Command::new(executable);
     command
         .env("CODEX_HOME", codex_home.path())
         .env("CODEX_API_KEY", "test-api-key")
@@ -185,6 +214,8 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
         .ok_or_else(|| anyhow::anyhow!("remote exec-server stdin was not piped"))?;
 
     let environment_websocket = accept_parent_lifetime_websocket(&listener, TEST_TIMEOUT).await?;
+    // Remote startup must capture the version before registration, not on the first initialize.
+    std::fs::write(&manifest, r#"{"version":"9.9.9"}"#)?;
     let executor_public_key = registered_parent_lifetime_executor_public_key(&registry).await?;
     let harness_args = NoiseRendezvousConnectArgs {
         bundle: NoiseRendezvousConnectBundle {
@@ -212,6 +243,14 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
         .await
         .context("remote harness did not connect")???;
 
+    let expected_info = EnvironmentInfo {
+        executor_version: "1.2.3-alpha.4".to_string(),
+        ..EnvironmentInfo::local()
+    };
+    assert_eq!(client.environment_info().await?, expected_info);
+    std::fs::remove_file(&manifest)?;
+    assert_eq!(client.force_environment_info().await?, expected_info);
+
     #[cfg(windows)]
     let argv = vec![
         "cmd.exe",
@@ -228,6 +267,7 @@ async fn remote_exec_server_gracefully_stops_when_parent_stdin_closes() -> Resul
         .map_err(|()| anyhow::anyhow!("could not convert cwd to file URL"))?;
     client
         .exec(ExecParams {
+            metadata: Default::default(),
             process_id: ProcessId::from("parent-lifetime-process"),
             argv: argv.into_iter().map(str::to_string).collect(),
             cwd: cwd.as_str().parse()?,

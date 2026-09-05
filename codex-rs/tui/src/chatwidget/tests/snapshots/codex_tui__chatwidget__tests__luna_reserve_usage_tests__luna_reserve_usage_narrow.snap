@@ -1,0 +1,9 @@
+---
+source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
+assertion_line: 124
+expression: "render_bottom_popup(&chat, 34)"
+---
+──────────────────────────────────
+│›
+──────────────────────────────────
+  Luna Reserve Default · /tmp/pro…

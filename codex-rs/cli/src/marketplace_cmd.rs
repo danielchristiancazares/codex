@@ -3,6 +3,7 @@ use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
 use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_core::config::LoaderOverrides;
 use codex_core::plugins_manager_for_config;
 use codex_core_plugins::PluginMarketplaceUpgradeOutcome;
@@ -30,7 +31,10 @@ use crate::plugin_cmd::configured_marketplace_sources;
 use crate::plugin_cmd::load_cli_auth_manager;
 
 #[derive(Debug, Parser)]
-#[command(bin_name = "codex plugin marketplace")]
+#[command(
+    bin_name = "codex plugin marketplace",
+    override_usage = "codex plugin marketplace [OPTIONS] <COMMAND>"
+)]
 pub struct MarketplaceCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
@@ -59,6 +63,7 @@ enum MarketplaceSubcommand {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "codex plugin marketplace add",
+    override_usage = "codex plugin marketplace add [OPTIONS] <SOURCE>",
     after_help = "Examples:\n  codex plugin marketplace add ./path/to/marketplace\n  codex plugin marketplace add owner/repo --ref main\n  codex plugin marketplace add https://github.com/owner/repo --sparse plugins/foo"
 )]
 struct AddMarketplaceArgs {
@@ -84,7 +89,10 @@ struct AddMarketplaceArgs {
 }
 
 #[derive(Debug, Parser)]
-#[command(bin_name = "codex plugin marketplace list")]
+#[command(
+    bin_name = "codex plugin marketplace list",
+    override_usage = "codex plugin marketplace list [OPTIONS]"
+)]
 struct ListMarketplaceArgs {
     /// Output marketplace list as JSON.
     #[arg(long = "json")]
@@ -94,6 +102,7 @@ struct ListMarketplaceArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "codex plugin marketplace upgrade",
+    override_usage = "codex plugin marketplace upgrade [OPTIONS] [MARKETPLACE_NAME]",
     after_help = "Examples:\n  codex plugin marketplace upgrade\n  codex plugin marketplace upgrade debug"
 )]
 struct UpgradeMarketplaceArgs {
@@ -109,6 +118,7 @@ struct UpgradeMarketplaceArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "codex plugin marketplace remove",
+    override_usage = "codex plugin marketplace remove [OPTIONS] <MARKETPLACE_NAME>",
     after_help = "Example:\n  codex plugin marketplace remove debug"
 )]
 struct RemoveMarketplaceArgs {
@@ -128,13 +138,18 @@ impl MarketplaceCli {
             subcommand,
         } = self;
 
-        let config =
-            cloud_config::load_config(&config_overrides, LoaderOverrides::default()).await?;
+        let builder = cloud_config::config_builder(
+            &config_overrides,
+            LoaderOverrides::default(),
+            ConfigOverrides::default(),
+        )
+        .await?;
+        let config = builder.clone().build().await?;
 
         match subcommand {
             MarketplaceSubcommand::Add(args) => run_add(config, args).await?,
             MarketplaceSubcommand::List(args) => run_list(config, args).await?,
-            MarketplaceSubcommand::Upgrade(args) => run_upgrade(config, args).await?,
+            MarketplaceSubcommand::Upgrade(args) => run_upgrade(config, args, builder).await?,
             MarketplaceSubcommand::Remove(args) => run_remove(config, args).await?,
         }
 
@@ -358,16 +373,33 @@ fn configured_marketplace_sources_by_root(
         .collect()
 }
 
-async fn run_upgrade(config: Config, args: UpgradeMarketplaceArgs) -> Result<()> {
+async fn run_upgrade(
+    config: Config,
+    args: UpgradeMarketplaceArgs,
+    builder: codex_core::config::ConfigBuilder,
+) -> Result<()> {
     let UpgradeMarketplaceArgs {
         marketplace_name,
         json,
     } = args;
     let manager = plugins_manager_for_config(&config, load_cli_auth_manager(&config).await?);
     let plugins_input = config.plugins_config_input();
-    let outcome = manager
-        .upgrade_configured_marketplaces_for_config(&plugins_input, marketplace_name.as_deref())
-        .map_err(anyhow::Error::msg)?;
+    let runtime = tokio::runtime::Handle::current();
+    let reload_config: codex_core_plugins::ConfigLayerReload = std::sync::Arc::new(move || {
+        runtime
+            .block_on(builder.clone().build())
+            .map(|config| config.config_layer_stack)
+    });
+    let requested_name = marketplace_name.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        manager.upgrade_configured_marketplaces_for_config(
+            &plugins_input,
+            requested_name.as_deref(),
+            &reload_config,
+        )
+    })
+    .await?
+    .map_err(anyhow::Error::msg)?;
     if json {
         print_upgrade_outcome_json(&outcome)
     } else {

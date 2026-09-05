@@ -9,5 +9,6 @@ codex_rust_crate(
     integration_compile_data_extra = [
         "src/accounting.rs",
         "src/execution_failure.rs",
-    ],
+        "src/steering.rs",
+    ] + glob(["templates/**"]),
 )

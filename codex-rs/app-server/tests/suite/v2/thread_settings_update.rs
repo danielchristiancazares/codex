@@ -8,6 +8,7 @@ use app_test_support::write_models_cache;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy;
+use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadSettingsUpdateParams;
@@ -15,15 +16,23 @@ use codex_app_server_protocol::ThreadSettingsUpdateResponse;
 use codex_app_server_protocol::ThreadSettingsUpdatedNotification;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadUnsubscribeParams;
+use codex_app_server_protocol::ThreadUnsubscribeResponse;
+use codex_app_server_protocol::ThreadUnsubscribeStatus;
+use codex_app_server_protocol::TurnInterruptParams;
+use codex_app_server_protocol::TurnInterruptResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_config::types::Personality;
 use codex_core::test_support::all_model_presets;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::openai_models::ReasoningEffort;
+use core_test_support::PathExt;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use serde_json::json;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -32,12 +41,14 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::test]
 async fn thread_settings_update_emits_notification_and_updates_future_turns() -> Result<()> {
-    let server = create_mock_responses_server_sequence_unchecked(vec![
+    let server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
         create_final_assistant_message_sse_response("done")?,
     ])
-    .await;
+    .await?;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
+    MockResponsesConfig::new_websocket(server.uri())
+        .with_root_config("compact_prompt = \"compact\"\nmodel_auto_compact_token_limit = 200000")
+        .write(codex_home.path())?;
     write_models_cache(codex_home.path())?;
     let (model_id, service_tier) = service_tier_model_and_tier()?;
 
@@ -58,7 +69,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     )
     .await?;
     assert!(
-        received_response_bodies(&server).await?.is_empty(),
+        app_test_support::websocket_model_request_bodies(&server).is_empty(),
         "settings-only update should not start a model request"
     );
 
@@ -88,10 +99,67 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
     )
     .await??;
 
-    let read = read_thread_with_turns(&mut mcp, &thread.id).await?;
-    assert_eq!(read.thread.turns.len(), 1);
+    // Loaded metadata must come from live settings, even if stored metadata is stale.
+    let state_db = codex_state::StateRuntime::init(
+        codex_state::SqliteConfig::new_for_testing(codex_home.path().abs()),
+        "mock_provider".to_string(),
+    )
+    .await?;
+    let mut stored = state_db
+        .get_thread(codex_protocol::ThreadId::from_string(&thread.id)?)
+        .await?
+        .expect("completed thread should be persisted");
+    stored.model = Some("stored-model".to_string());
+    stored.reasoning_effort = Some(ReasoningEffort::Low);
+    state_db.upsert_thread(&stored).await?;
 
-    let request_bodies = received_response_bodies(&server).await?;
+    let unsubscribe_id = mcp
+        .send_thread_unsubscribe_request(ThreadUnsubscribeParams {
+            thread_id: thread.id.clone(),
+        })
+        .await?;
+    let unsubscribed: ThreadUnsubscribeResponse =
+        timeout(DEFAULT_TIMEOUT, mcp.read_response(unsubscribe_id)).await??;
+    assert_eq!(unsubscribed.status, ThreadUnsubscribeStatus::Unsubscribed);
+
+    for include_turns in [false, true] {
+        let read_id = mcp
+            .send_thread_read_request(ThreadReadParams {
+                thread_id: thread.id.clone(),
+                include_turns,
+            })
+            .await?;
+        let read: ThreadReadResponse =
+            timeout(DEFAULT_TIMEOUT, mcp.read_response(read_id)).await??;
+        assert_eq!(read.thread.turns.len(), usize::from(include_turns));
+        assert_eq!(
+            (read.thread.model.as_deref(), read.thread.reasoning_effort),
+            (Some(model_id.as_str()), None)
+        );
+    }
+    let list_id = mcp
+        .send_raw_request("thread/list", Some(json!({ "useStateDbOnly": true })))
+        .await?;
+    let listed: ThreadListResponse = timeout(DEFAULT_TIMEOUT, mcp.read_response(list_id)).await??;
+    let listed = listed
+        .data
+        .iter()
+        .find(|listed| listed.id == thread.id)
+        .expect("loaded thread should be listed");
+    assert_eq!(
+        (listed.model.as_deref(), listed.reasoning_effort.clone()),
+        (Some(model_id.as_str()), None)
+    );
+    let unsubscribe_id = mcp
+        .send_thread_unsubscribe_request(ThreadUnsubscribeParams {
+            thread_id: thread.id.clone(),
+        })
+        .await?;
+    let unsubscribed: ThreadUnsubscribeResponse =
+        timeout(DEFAULT_TIMEOUT, mcp.read_response(unsubscribe_id)).await??;
+    assert_eq!(unsubscribed.status, ThreadUnsubscribeStatus::NotSubscribed);
+
+    let request_bodies = app_test_support::websocket_model_request_bodies(&server);
     assert!(
         request_bodies.iter().any(|body| {
             body.get("model").and_then(Value::as_str) == Some(model_id.as_str())
@@ -104,17 +172,21 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
 
 #[tokio::test]
 async fn thread_settings_update_cwd_retargets_default_environment() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let body = responses::sse(vec![
-        responses::ev_response_created("resp-1"),
-        responses::ev_assistant_message("msg-1", "done"),
-        responses::ev_completed("resp-1"),
-    ]);
-    let response_mock = responses::mount_sse_once(&server, body).await;
+    let server =
+        app_test_support::create_mock_responses_websocket_server_sequence(vec![responses::sse(
+            vec![
+                responses::ev_response_created("resp-1"),
+                responses::ev_assistant_message("msg-1", "done"),
+                responses::ev_completed("resp-1"),
+            ],
+        )])
+        .await?;
     let codex_home = TempDir::new()?;
     let initial_workspace = TempDir::new()?;
     let workspace = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
+    MockResponsesConfig::new_websocket(server.uri())
+        .with_root_config("compact_prompt = \"compact\"\nmodel_auto_compact_token_limit = 200000")
+        .write(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -149,10 +221,17 @@ async fn thread_settings_update_cwd_retargets_default_environment() -> Result<()
     )
     .await??;
 
-    let environment_context = response_mock
-        .single_request()
-        .message_input_texts("user")
+    let requests = app_test_support::websocket_model_request_bodies(&server);
+    let environment_context = requests
+        .first()
+        .and_then(|request| request.get("input"))
+        .and_then(Value::as_array)
         .into_iter()
+        .flatten()
+        .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|content| content.get("text").and_then(Value::as_str))
         .find(|text| text.starts_with("<environment_context>"))
         .context("environment context should be model visible")?;
     assert!(
@@ -175,20 +254,32 @@ async fn thread_settings_update_cwd_retargets_default_environment() -> Result<()
 
 #[tokio::test]
 async fn thread_settings_update_while_turn_is_active_emits_notification() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let first_response =
-        responses::sse_response(create_final_assistant_message_sse_response("first done")?)
-            .set_delay(Duration::from_secs(2));
-    let _requests = responses::mount_response_sequence(&server, vec![first_response]).await;
+    let server = responses::start_websocket_server_with_headers(vec![
+        responses::WebSocketConnectionConfig {
+            requests: vec![
+                vec![
+                    responses::ev_response_created("prewarm"),
+                    responses::ev_completed("prewarm"),
+                ],
+                vec![responses::ev_response_created("active-turn")],
+            ],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: false,
+        },
+    ])
+    .await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
+    MockResponsesConfig::new_websocket(server.uri())
+        .with_root_config("compact_prompt = \"compact\"\nmodel_auto_compact_token_limit = 200000")
+        .write(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;
     let thread = start_thread(&mut mcp).await?.thread;
-    start_text_turn(&mut mcp, thread.id.clone(), ServiceTier::Default).await?;
+    let turn_id = start_text_turn(&mut mcp, thread.id.clone(), ServiceTier::Default).await?;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/started"),
@@ -209,6 +300,14 @@ async fn thread_settings_update_while_turn_is_active_emits_notification() -> Res
     assert_eq!(updated.thread_id, thread.id);
     assert_eq!(updated.thread_settings.model, "mock-model-4");
 
+    let interrupt_id = mcp
+        .send_turn_interrupt_request(TurnInterruptParams {
+            thread_id: thread.id,
+            turn_id,
+        })
+        .await?;
+    let _: TurnInterruptResponse =
+        timeout(DEFAULT_TIMEOUT, mcp.read_response(interrupt_id)).await??;
     timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -389,7 +488,7 @@ async fn start_text_turn(
     mcp: &mut TestAppServer,
     thread_id: String,
     service_tier: ServiceTier,
-) -> Result<()> {
+) -> Result<String> {
     let turn_request_id = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id,
@@ -404,7 +503,7 @@ async fn start_text_turn(
     let TurnStartResponse { turn } =
         timeout(DEFAULT_TIMEOUT, mcp.read_response(turn_request_id)).await??;
     assert!(!turn.id.is_empty());
-    Ok(())
+    Ok(turn.id)
 }
 
 async fn start_thread(mcp: &mut TestAppServer) -> Result<ThreadStartResponse> {
@@ -412,19 +511,6 @@ async fn start_thread(mcp: &mut TestAppServer) -> Result<ThreadStartResponse> {
         .send_thread_start_request_with_auto_env(ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
-        })
-        .await?;
-    timeout(DEFAULT_TIMEOUT, mcp.read_response(request_id)).await?
-}
-
-async fn read_thread_with_turns(
-    mcp: &mut TestAppServer,
-    thread_id: &str,
-) -> Result<ThreadReadResponse> {
-    let request_id = mcp
-        .send_thread_read_request(ThreadReadParams {
-            thread_id: thread_id.to_string(),
-            include_turns: true,
         })
         .await?;
     timeout(DEFAULT_TIMEOUT, mcp.read_response(request_id)).await?

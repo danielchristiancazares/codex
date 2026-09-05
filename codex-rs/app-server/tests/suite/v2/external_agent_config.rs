@@ -606,6 +606,7 @@ source = {:?}
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -1818,9 +1819,12 @@ async fn external_agent_config_import_sends_completion_notification_after_pendin
 
 #[tokio::test]
 async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
-    let server = create_mock_responses_server_repeating_assistant("follow-up answer").await;
+    let server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
+        app_test_support::create_final_assistant_message_sse_response("follow-up answer")?,
+    ])
+    .await?;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+    MockResponsesConfig::new_websocket(server.uri()).write(codex_home.path())?;
     let project_root = codex_home.path().join("repo");
     let source_created_at_text = "2024-01-02T03:04:05Z";
     let source_updated_at_text = "2024-03-01T04:05:06Z";
@@ -1970,6 +1974,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2045,6 +2050,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
             phase: None,
             memory_citation: None,
             delivery: None,
+            questions: None,
         })
     );
 
@@ -2159,6 +2165,7 @@ required = true
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2244,6 +2251,7 @@ async fn external_agent_config_import_accepts_detected_session_payload_after_res
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2326,6 +2334,7 @@ async fn external_agent_config_import_skips_already_imported_session_versions() 
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2454,6 +2463,7 @@ async fn external_agent_config_import_returns_before_background_session_import_f
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2479,28 +2489,23 @@ async fn external_agent_config_import_returns_before_background_session_import_f
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn external_agent_config_import_compacts_huge_session_before_first_follow_up() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let response_log = responses::mount_sse_sequence(
-        &server,
-        vec![
-            responses::sse(vec![
-                responses::ev_assistant_message("m1", "LOCAL_SUMMARY"),
-                responses::ev_completed_with_tokens("r1", /*total_tokens*/ 120),
-            ]),
-            responses::sse(vec![
-                responses::ev_assistant_message("m2", "follow-up answer"),
-                responses::ev_completed_with_tokens("r2", /*total_tokens*/ 80),
-            ]),
-        ],
-    )
-    .await;
+    let server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
+        responses::sse(vec![
+            responses::ev_assistant_message("m1", "LOCAL_SUMMARY"),
+            responses::ev_completed_with_tokens("r1", /*total_tokens*/ 120),
+        ]),
+        responses::sse(vec![
+            responses::ev_assistant_message("m2", "follow-up answer"),
+            responses::ev_completed_with_tokens("r2", /*total_tokens*/ 80),
+        ]),
+    ])
+    .await?;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new_websocket(server.uri())
         .with_root_config(
             "compact_prompt = \"Summarize the conversation.\"\nmodel_auto_compact_token_limit = 200",
         )
-        .with_provider_config("supports_websockets = false")
         .write(codex_home.path())?;
 
     let project_root = codex_home.path().join("repo");
@@ -2570,6 +2575,7 @@ async fn external_agent_config_import_compacts_huge_session_before_first_follow_
 
     let request_id = mcp
         .send_thread_list_request(ThreadListParams {
+            originators: None,
             cursor: None,
             limit: None,
             sort_key: None,
@@ -2620,10 +2626,10 @@ async fn external_agent_config_import_compacts_huge_session_before_first_follow_
     )
     .await??;
 
-    let requests = response_log.requests();
+    let requests = app_test_support::websocket_model_request_bodies(&server);
     assert_eq!(requests.len(), 2);
-    let first = requests[0].body_json().to_string();
-    let second = requests[1].body_json().to_string();
+    let first = requests[0].to_string();
+    let second = requests[1].to_string();
     assert!(first.contains("Summarize the conversation."));
     assert!(!first.contains("follow up"));
     assert!(second.contains("follow up"));

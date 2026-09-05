@@ -137,7 +137,7 @@ impl ChatWidget {
         self.transcript.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
             call_id,
             String::new(),
-            self.config.animations,
+            self.local_settings.tui.animations,
         )));
         self.bump_active_cell_revision();
         self.request_redraw();
@@ -269,7 +269,7 @@ impl ChatWidget {
             tool,
             arguments: Some(arguments),
         };
-        let animations_enabled = self.config.animations;
+        let animations_enabled = self.local_settings.tui.animations;
         if let Some(group) = self.active_mcp_group_mut() {
             if group.add_started_call(id, invocation, animations_enabled) {
                 self.bump_active_cell_revision();
@@ -342,7 +342,7 @@ impl ChatWidget {
             let mut group = history_cell::McpToolCallGroupCell::new(
                 id.clone(),
                 invocation,
-                self.config.animations,
+                self.local_settings.tui.animations,
             );
             let completed = group.complete_call(&id, duration, result);
             debug_assert!(completed, "new MCP group should contain {id}");

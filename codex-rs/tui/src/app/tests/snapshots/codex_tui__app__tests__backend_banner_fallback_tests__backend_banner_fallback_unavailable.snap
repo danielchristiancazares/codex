@@ -1,0 +1,9 @@
+---
+source: tui/src/app/tests/backend_banner_fallback_tests.rs
+assertion_line: 246
+expression: normalize_snapshot_paths(rendered)
+---
+────────────────────────────────────────────────────────────────────────
+│›
+────────────────────────────────────────────────────────────────────────
+  GPT 5.4 Default · /tmp/project

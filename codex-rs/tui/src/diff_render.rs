@@ -41,7 +41,6 @@ use ratatui::style::Stylize;
 use ratatui::text::Line as RtLine;
 use ratatui::text::Span as RtSpan;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Wrap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -328,7 +327,7 @@ impl Renderable for FileChange {
             &mut lines,
             area.width as usize,
             /*lang*/ None,
-            usize::MAX,
+            /*max_rows*/ usize::MAX,
         );
         Paragraph::new(lines).render(area, buf);
     }
@@ -340,7 +339,7 @@ impl Renderable for FileChange {
             &mut lines,
             width as usize,
             /*lang*/ None,
-            usize::MAX,
+            /*max_rows*/ usize::MAX,
         );
         lines.len() as u16
     }
@@ -601,7 +600,7 @@ fn render_changes_block(
         for line in prefix_lines(lines, prefix.into(), prefix.into()) {
             if remaining_rows != usize::MAX {
                 let rows = Paragraph::new(line.clone())
-                    .wrap(Wrap { trim: false })
+                    .wrap(ratatui::widgets::Wrap { trim: false })
                     .line_count(wrap_cols as u16);
                 if rows > remaining_rows {
                     out.extend(preview::rendered_prefix(

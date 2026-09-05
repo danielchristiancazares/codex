@@ -1,0 +1,11 @@
+---
+source: tui/src/app/tests/buffered_replay.rs
+assertion_line: 179
+expression: "normalize_snapshot_paths(render_bottom_popup(&app.chat_widget, 80))"
+---
+• 1 queued · ⌥ + ↑ edit latest queued
+  + Queued: keep queued
+────────────────────────────────────────────────────────────────────────────────
+│› keep draft
+────────────────────────────────────────────────────────────────────────────────
+  GPT 5.6 Sol Default · /tmp/project

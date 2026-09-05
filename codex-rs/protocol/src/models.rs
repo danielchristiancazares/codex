@@ -32,6 +32,7 @@ use crate::ResponseItemId;
 use crate::mcp::CallToolResult;
 use codex_utils_path_uri::PathUri;
 
+mod configuration_update;
 mod executed_tool_calls;
 mod item_metadata;
 mod mcp_content;
@@ -39,9 +40,13 @@ mod mcp_content;
 pub use crate::local_media::MAX_PROMPT_AUDIO_INPUT_BYTES;
 pub use crate::local_media::snapshot_local_user_input;
 pub use crate::permission_profile_snapshot::PermissionProfileSnapshot;
+pub use configuration_update::ConfigurationReasoning;
 pub use executed_tool_calls::ExecutedToolCall;
 pub use executed_tool_calls::ExecutedToolCallArguments;
 pub use executed_tool_calls::ExecutedToolCallTruncation;
+pub use executed_tool_calls::MAX_TOOL_RESULT_SOURCE_FIELD_BYTES;
+pub use executed_tool_calls::ToolResultSource;
+pub use executed_tool_calls::ToolResultSources;
 pub use executed_tool_calls::bound_executed_tool_calls_for_prompt;
 pub use executed_tool_calls::bound_executed_tool_calls_for_prompt_prioritizing_recent;
 pub use executed_tool_calls::executed_tool_call_metadata_bytes;
@@ -1199,6 +1204,10 @@ pub enum ResponseItem {
         #[ts(optional)]
         internal_chat_message_metadata_passthrough: Option<InternalChatMessageMetadataPassthrough>,
     },
+    /// A durable input control interpreted by the backend at its position in history.
+    ConfigurationUpdate {
+        reasoning: ConfigurationReasoning,
+    },
     // Compaction triggers are request controls, not durable response items.
     CompactionTrigger {},
     ContextCompaction {
@@ -1240,7 +1249,7 @@ impl ResponseItem {
             | Self::ImageGenerationCall { id, .. }
             | Self::Compaction { id, .. }
             | Self::ContextCompaction { id, .. } => id.as_ref(),
-            Self::CompactionTrigger { .. } | Self::Other => None,
+            Self::ConfigurationUpdate { .. } | Self::CompactionTrigger { .. } | Self::Other => None,
         }
     }
 
@@ -1262,7 +1271,7 @@ impl ResponseItem {
             | Self::ImageGenerationCall { id, .. }
             | Self::Compaction { id, .. }
             | Self::ContextCompaction { id, .. } => *id = new_id,
-            Self::CompactionTrigger { .. } | Self::Other => {}
+            Self::ConfigurationUpdate { .. } | Self::CompactionTrigger { .. } | Self::Other => {}
         }
     }
 
@@ -1283,7 +1292,7 @@ impl ResponseItem {
             Self::WebSearchCall { .. } => Some("ws"),
             Self::ImageGenerationCall { .. } => Some("ig"),
             Self::Compaction { .. } | Self::ContextCompaction { .. } => Some("cmp"),
-            Self::CompactionTrigger { .. } | Self::Other => None,
+            Self::ConfigurationUpdate { .. } | Self::CompactionTrigger { .. } | Self::Other => None,
         }
     }
 
@@ -1418,7 +1427,10 @@ impl ResponseItem {
                 internal_chat_message_metadata_passthrough: metadata,
                 ..
             } => metadata.as_ref(),
-            Self::CompactionTrigger { .. } | Self::AdditionalTools { .. } | Self::Other => None,
+            Self::ConfigurationUpdate { .. }
+            | Self::CompactionTrigger { .. }
+            | Self::AdditionalTools { .. }
+            | Self::Other => None,
         }
     }
 
@@ -1482,7 +1494,10 @@ impl ResponseItem {
                 internal_chat_message_metadata_passthrough: metadata,
                 ..
             } => Some(metadata),
-            Self::CompactionTrigger { .. } | Self::AdditionalTools { .. } | Self::Other => None,
+            Self::ConfigurationUpdate { .. }
+            | Self::CompactionTrigger { .. }
+            | Self::AdditionalTools { .. }
+            | Self::Other => None,
         }
     }
 }

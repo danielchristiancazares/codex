@@ -427,7 +427,10 @@ async fn compaction_budget_exhaustion_fails_without_retry(
             completed,
         ])
     };
-    let responses = mount_sse_sequence(&server, vec![compact_response]).await;
+    let initial_response = sse(vec![ev_completed_with_tokens(
+        "initial", /*total_tokens*/ 0,
+    )]);
+    let responses = mount_sse_sequence(&server, vec![initial_response, compact_response]).await;
     let test = test_codex()
         .with_config(move |config| {
             config.rollout_budget = Some(RolloutBudgetConfig {
@@ -447,6 +450,7 @@ async fn compaction_budget_exhaustion_fails_without_retry(
         .build(&server)
         .await?;
 
+    test.submit_turn("seed compaction history").await?;
     test.codex.submit(Op::Compact).await?;
     wait_for_event(&test.codex, |event| {
         matches!(
@@ -460,7 +464,11 @@ async fn compaction_budget_exhaustion_fails_without_retry(
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
-    assert_eq!(responses.requests().len(), 1, "compaction should not retry");
+    assert_eq!(
+        responses.requests().len(),
+        2,
+        "compaction should issue one request after the seed turn and must not retry"
+    );
 
     Ok(())
 }

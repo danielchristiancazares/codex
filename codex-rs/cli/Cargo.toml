@@ -31,7 +31,9 @@ codex-app-server = { workspace = true }
 codex-app-server-daemon = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-arg0 = { workspace = true }
+codex-build-info = { workspace = true }
 codex-api = { workspace = true }
+codex-aws-auth = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-cloud-config = { workspace = true }
 codex-cloud-tasks = { path = "../cloud-tasks", default-features = false }
@@ -102,6 +104,9 @@ unicode-segmentation = { workspace = true }
 url = { workspace = true }
 which = { workspace = true, features = ["real-sys"] }
 
+[target.'cfg(all(target_os = "linux", target_env = "musl", any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tikv-jemallocator = { workspace = true, features = ["background_threads_runtime_support"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 codex_windows_sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }
 windows-sys = { default-features = false, version = "0.52", features = [
@@ -120,11 +125,14 @@ app_test_support = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
+codex-utils-pty = { workspace = true }
+flate2 = { workspace = true }
 futures = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true, features = ["regex"] }
 pretty_assertions = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite-bundled"] }
+tar = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["handshake"] }
 wiremock = { workspace = true }
 zstd = { workspace = true }

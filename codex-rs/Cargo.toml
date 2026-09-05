@@ -9,6 +9,7 @@ members = [
     "bwrap",
     "build-info",
     "ansi-escape",
+    "attachment-store",
     "async-utils",
     "app-server",
     "app-server-transport",
@@ -36,6 +37,7 @@ members = [
     "collaboration-mode-templates",
     "connectors",
     "config",
+    "config-schema",
     "context-fragments",
     "shell-command",
     "shell-escalation",
@@ -82,10 +84,13 @@ members = [
     "memories/read",
     "memories/write",
     "model-provider-info",
+    "mxc-sandbox",
     "models-manager",
     "network-proxy",
     "ollama",
     "process-hardening",
+    "realtime-webrtc",
+    "voice-host",
     "protocol",
     "prompts",
     "rollout",
@@ -96,10 +101,12 @@ members = [
     "sandboxing",
     "stdio-to-uds",
     "otel",
+    "otel-trace-websocket",
     "tui",
     "tools",
     "v8-poc",
     "websocket-client",
+    "windows-sandbox-service",
     "worktree",
     "workload-identity",
     "utils/absolute-path",
@@ -108,6 +115,7 @@ members = [
     "utils/cargo-bin",
     "git-utils",
     "utils/cache",
+    "utils/git-discovery",
     "utils/image",
     "utils/json-to-toml",
     "utils/home-dir",
@@ -160,6 +168,7 @@ codex-agent-identity = { path = "agent-identity", default-features = false }
 codex-agent-roles = { path = "agent-roles", default-features = false }
 codex-ansi-escape = { path = "ansi-escape", default-features = false }
 codex-api = { path = "codex-api", default-features = false }
+codex-attachment-store = { path = "attachment-store", default-features = false }
 codex-aws-auth = { path = "aws-auth", default-features = false }
 codex-app-server = { path = "app-server", default-features = false }
 codex-app-server-transport = { path = "app-server-transport", default-features = false }
@@ -167,10 +176,12 @@ codex-app-server-daemon = { path = "app-server-daemon", default-features = false
 codex-app-server-client = { path = "app-server-client", default-features = false }
 codex-app-server-protocol = { path = "app-server-protocol", default-features = false }
 codex-app-server-protocol-noop-macros = { path = "app-server-protocol-noop-macros", default-features = false }
+codex-app-server-test-client = { path = "app-server-test-client", default-features = false }
 codex-apply-patch = { path = "apply-patch", default-features = false }
 codex-arg0 = { path = "arg0", default-features = false }
 codex-async-utils = { path = "async-utils", default-features = false }
 codex-backend-client = { path = "backend-client", default-features = false }
+codex-build-info = { path = "build-info", default-features = false }
 codex-chatgpt = { path = "chatgpt", default-features = false }
 codex-client = { path = "codex-client", default-features = false }
 codex-collaboration-mode-templates = { path = "collaboration-mode-templates", default-features = false }
@@ -214,10 +225,12 @@ codex-install-context = { path = "install-context", default-features = false }
 codex-file-search = { path = "file-search", default-features = false }
 codex-file-watcher = { path = "file-watcher", default-features = false }
 codex-git-utils = { path = "git-utils", default-features = false }
+codex-guardian-context = { path = "guardian-context", default-features = false }
 codex-hooks = { path = "hooks", default-features = false }
 codex-history = { path = "history", default-features = false }
 codex-keyring-store = { path = "keyring-store", default-features = false }
 codex-linux-sandbox = { path = "linux-sandbox", default-features = false }
+codex-lmstudio = { path = "lmstudio", default-features = false }
 codex-login = { path = "login", default-features = false }
 codex-message-history = { path = "message-history", default-features = false }
 codex-memories-extension = { path = "ext/memories", default-features = false }
@@ -229,14 +242,18 @@ codex-mcp-extension = { path = "ext/mcp", default-features = false }
 codex-mcp-server = { path = "mcp-server", default-features = false }
 codex-model-provider-info = { path = "model-provider-info", default-features = false }
 codex-models-manager = { path = "models-manager", default-features = false }
+codex-mxc-sandbox = { path = "mxc-sandbox", default-features = false }
 codex-network-proxy = { path = "network-proxy", default-features = false }
+codex-ollama = { path = "ollama", default-features = false }
 codex-otel = { path = "otel", default-features = false }
+codex-otel-trace-websocket = { path = "otel-trace-websocket", default-features = false }
 codex-plugin = { path = "plugin", default-features = false }
 codex-model-provider = { path = "model-provider", default-features = false }
 codex-process-hardening = { path = "process-hardening", default-features = false }
 codex-protocol = { path = "protocol", default-features = false }
 codex-prompts = { path = "prompts", default-features = false }
 codex-queue-extension = { path = "ext/queue", default-features = false }
+codex-realtime-webrtc = { path = "realtime-webrtc", default-features = false }
 codex-responses-api-proxy = { path = "responses-api-proxy", default-features = false }
 codex-response-debug-context = { path = "response-debug-context", default-features = false }
 codex-rmcp-client = { path = "rmcp-client", default-features = false }
@@ -264,6 +281,7 @@ codex-utils-cargo-bin = { path = "utils/cargo-bin", default-features = false }
 codex-utils-cli = { path = "utils/cli", default-features = false }
 codex-utils-elapsed = { path = "utils/elapsed", default-features = false }
 codex-utils-fuzzy-match = { path = "utils/fuzzy-match", default-features = false }
+codex-utils-git-discovery = { path = "utils/git-discovery", default-features = false }
 codex-utils-home-dir = { path = "utils/home-dir", default-features = false }
 codex-utils-image = { path = "utils/image", default-features = false }
 codex-utils-json-to-toml = { path = "utils/json-to-toml", default-features = false }
@@ -280,12 +298,15 @@ codex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor", default-features
 codex-utils-stream-parser = { path = "utils/stream-parser", default-features = false }
 codex-utils-string = { path = "utils/string", default-features = false }
 codex-utils-template = { path = "utils/template", default-features = false }
+codex-v8-poc = { path = "v8-poc", default-features = false }
+codex-worktree = { path = "worktree", default-features = false }
 codex-workload-identity = { path = "workload-identity", default-features = false }
 codex-windows-sandbox = { path = "windows-sandbox-rs", default-features = false }
 core_test_support = { path = "core/tests/common", default-features = false }
 mcp_test_support = { path = "mcp-server/tests/common", default-features = false }
 
 # External
+appcontainer_common = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4", default-features = false }
 age = { version = "0.11.1", default-features = false }
 ansi-to-tui = { version = "8.0.1", default-features = false }
 anyhow = { version = "1", default-features = false }
@@ -354,6 +375,7 @@ jsonwebtoken = { version = "9.3.1", default-features = false }
 keyring = { version = "3.6", default-features = false }
 landlock = { version = "0.4.4", default-features = false }
 lazy_static = { version = "1", default-features = false }
+learning_mode_windows = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4", default-features = false }
 libc = { version = "0.2.182", default-features = false }
 # Keep SQLx's bundled SQLite on a version containing the WAL-reset corruption fix:
 # https://www.sqlite.org/wal.html#the_wal_reset_bug
@@ -388,7 +410,7 @@ rcgen = { version = "0.14.7", default-features = false }
 regex = { version = "1.12.3", default-features = false }
 regex-lite = { version = "0.1.8", default-features = false }
 reqwest = { default-features = false, version = "0.12" }
-rmcp = { version = "=3.1.3", default-features = false }
+rmcp = { version = "=3.2.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81", default-features = false }
 rustix = { version = "1.1.4", default-features = false }
 rustls = { version = "0.23", default-features = false }
@@ -426,6 +448,7 @@ tempfile = { version = "3.23.0", default-features = false }
 test-log = { version = "0.2.19", default-features = false }
 textwrap = { version = "0.16.2", default-features = false }
 thiserror = { version = "2.0.17", default-features = false }
+tikv-jemallocator = { version = "=0.7.0", default-features = false }
 tiktoken-rs = { version = "0.12.0", default-features = false }
 time = { version = "0.3.47", default-features = false }
 tiny_http = { version = "0.12", default-features = false }
@@ -467,6 +490,7 @@ zip = { version = "2.4.2", default-features = false }
 zstd = { version = "0.13", default-features = false }
 
 wiremock = { version = "0.6", default-features = false }
+wxc_common = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4", default-features = false }
 zeroize = { version = "1.8.2", default-features = false }
 
 [workspace.lints]

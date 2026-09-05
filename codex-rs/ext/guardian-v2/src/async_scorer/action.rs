@@ -3,6 +3,7 @@
 
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolPayload;
+use codex_protocol::models::ContentItem;
 use codex_protocol::protocol::TruncationPolicy;
 use serde_json::json;
 
@@ -18,8 +19,30 @@ pub(super) struct RenderedAction {
     pub(super) original_bytes: usize,
 }
 
+struct ActionRenderBudget {
+    max_raw_bytes: usize,
+    max_serialized_text_bytes: Option<usize>,
+}
+
 impl GuardianAction {
+    #[cfg(test)]
     pub(super) fn render(self, max_action_tokens: usize) -> serde_json::Result<RenderedAction> {
+        self.render_with_budget(max_action_tokens, /*max_serialized_text_bytes*/ None)
+    }
+
+    pub(super) fn render_for_context(
+        self,
+        max_action_tokens: usize,
+        max_serialized_text_bytes: usize,
+    ) -> serde_json::Result<RenderedAction> {
+        self.render_with_budget(max_action_tokens, Some(max_serialized_text_bytes))
+    }
+
+    fn render_with_budget(
+        self,
+        max_action_tokens: usize,
+        max_serialized_text_bytes: Option<usize>,
+    ) -> serde_json::Result<RenderedAction> {
         let arguments = match self.payload {
             ToolPayload::Function { arguments } => {
                 serde_json::from_str(&arguments).unwrap_or(serde_json::Value::String(arguments))
@@ -40,18 +63,20 @@ impl GuardianAction {
         action
             .values_mut()
             .for_each(serde_json::Value::sort_all_objects);
-        let max_action_bytes = TruncationPolicy::Tokens(max_action_tokens).byte_budget();
+        let budget = ActionRenderBudget {
+            max_raw_bytes: TruncationPolicy::Tokens(max_action_tokens).byte_budget(),
+            max_serialized_text_bytes,
+        };
         let rendered = serde_json::to_string_pretty(&action)?;
         let original_bytes = rendered.len();
-        if rendered.len().saturating_add(1) <= max_action_bytes {
+        if budget.fits(&rendered)? {
             return Ok(RenderedAction {
                 text: rendered,
                 original_bytes,
             });
         }
 
-        if let Some(rendered) = fit_action_to_budget(&action, max_action_bytes, max_action_tokens)?
-        {
+        if let Some(rendered) = fit_action_to_budget(&action, &budget, max_action_tokens)? {
             return Ok(RenderedAction {
                 text: rendered,
                 original_bytes,
@@ -87,17 +112,18 @@ impl GuardianAction {
             candidate.insert(omission_key.clone(), json!(omitted.saturating_sub(1)));
             candidate.sort_keys();
             let minimized = render_action_with_limit(&candidate, /*max_tokens*/ 0)?;
-            if minimized.len().saturating_add(1) <= max_action_bytes {
+            if budget.fits(&minimized)? {
                 retained = candidate;
                 omitted = omitted.saturating_sub(1);
             }
         }
 
         retained.sort_keys();
-        let rendered = fit_action_to_budget(&retained, max_action_bytes, max_action_tokens)?
-            .ok_or_else(|| {
+        let rendered =
+            fit_action_to_budget(&retained, &budget, max_action_tokens)?.ok_or_else(|| {
                 serde_json::Error::io(std::io::Error::other(format!(
-                    "Guardian action identity exceeds the {max_action_tokens}-token limit"
+                    "Guardian action identity exceeds the configured or complete-context \
+                     {max_action_tokens}-token safety limit"
                 )))
             })?;
         Ok(RenderedAction {
@@ -107,9 +133,22 @@ impl GuardianAction {
     }
 }
 
+impl ActionRenderBudget {
+    fn fits(&self, rendered: &str) -> serde_json::Result<bool> {
+        if rendered.len().saturating_add(1) > self.max_raw_bytes {
+            return Ok(false);
+        }
+        let Some(max_serialized_text_bytes) = self.max_serialized_text_bytes else {
+            return Ok(true);
+        };
+        serialized_action_text_bytes(rendered)
+            .map(|serialized_bytes| serialized_bytes <= max_serialized_text_bytes)
+    }
+}
+
 fn fit_action_to_budget(
     action: &serde_json::Map<String, serde_json::Value>,
-    max_action_bytes: usize,
+    budget: &ActionRenderBudget,
     max_action_tokens: usize,
 ) -> serde_json::Result<Option<String>> {
     let mut low = 0usize;
@@ -119,7 +158,7 @@ fn fit_action_to_budget(
     while low < high {
         let max_tokens = low + (high - low) / 2;
         let rendered = render_action_with_limit(action, max_tokens)?;
-        if rendered.len().saturating_add(1) <= max_action_bytes {
+        if budget.fits(&rendered)? {
             best = Some(rendered);
             low = max_tokens.saturating_add(1);
         } else {
@@ -141,6 +180,13 @@ fn render_action_with_limit(
         }
     }
     serde_json::to_string_pretty(&truncated)
+}
+
+fn serialized_action_text_bytes(rendered: &str) -> serde_json::Result<usize> {
+    serde_json::to_vec(&ContentItem::InputText {
+        text: format!("{rendered}\n"),
+    })
+    .map(|encoded| encoded.len())
 }
 
 fn truncate_action_value(value: &mut serde_json::Value, max_tokens: usize) {

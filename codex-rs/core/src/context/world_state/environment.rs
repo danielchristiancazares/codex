@@ -202,10 +202,8 @@ impl WorldStateSection for EnvironmentsState {
                 } else {
                     ShellVersionUpdate::Unchanged
                 },
-                current_date: current_date_changed
-                    .then(|| self.current_date.clone())
-                    .flatten(),
-                timezone: timezone_changed.then(|| self.timezone.clone()).flatten(),
+                current_date: self.current_date.clone(),
+                timezone: self.timezone.clone(),
                 network: network_changed.then(|| self.network.clone()).flatten(),
                 filesystem: filesystem_changed
                     .then(|| self.filesystem.clone())

@@ -28,6 +28,7 @@ use codex_extension_api::ToolPayload;
 use codex_extension_api::TurnErrorInput;
 use codex_extension_api::TurnStartInput;
 use codex_extension_api::TurnStopInput;
+use codex_extension_api::UpdatePlanState;
 use codex_extension_api::WorldStateContributionInput;
 use codex_extension_api::WorldStateSectionContribution;
 use codex_goal_extension::GoalExtensionConfig;
@@ -267,8 +268,27 @@ async fn goal_context_revision_is_stable_and_rehydrates_after_compaction() -> an
     assert_eq!(first_fragment.role(), "user");
     assert!(first_text.contains("finish &lt;file &amp; notes&gt;"));
     assert!(!first_text.contains("<file & notes>"));
+    assert!(first_text.contains("If update_plan is available"));
     assert!(first_section.matches_retained_fragment(first_fragment.role(), first_text.as_str()));
     let first_snapshot = first_section.snapshot().clone();
+
+    let disabled_section = only_goal_context_section(
+        harness
+            .world_state_sections_with_update_plan_state("turn-disabled", UpdatePlanState::Disabled)
+            .await,
+    );
+    let disabled_fragment = disabled_section
+        .render_diff(PreviousWorldStateSection::Known(&first_snapshot))
+        .expect("changing the admitted update_plan setting should rerender goal context");
+    assert!(!disabled_fragment.body().contains("update_plan"));
+    assert!(!disabled_section.matches_retained_fragment(first_fragment.role(), &first_text));
+    let disabled_text = format!(
+        "{}{}{}",
+        disabled_fragment.markers().0,
+        disabled_fragment.body(),
+        disabled_fragment.markers().1
+    );
+    assert!(disabled_section.matches_retained_fragment(disabled_fragment.role(), &disabled_text));
 
     for continuation in 2..=10 {
         let section = only_goal_context_section(
@@ -1987,6 +2007,26 @@ impl GoalExtensionHarness {
 
     async fn world_state_sections(&self, turn_id: &str) -> Vec<WorldStateSectionContribution> {
         let turn_store = ExtensionData::new(turn_id);
+        self.world_state_sections_from_store(turn_id, &turn_store)
+            .await
+    }
+
+    async fn world_state_sections_with_update_plan_state(
+        &self,
+        turn_id: &str,
+        state: UpdatePlanState,
+    ) -> Vec<WorldStateSectionContribution> {
+        let turn_store = ExtensionData::new(turn_id);
+        turn_store.insert(state);
+        self.world_state_sections_from_store(turn_id, &turn_store)
+            .await
+    }
+
+    async fn world_state_sections_from_store(
+        &self,
+        turn_id: &str,
+        turn_store: &ExtensionData,
+    ) -> Vec<WorldStateSectionContribution> {
         let mut sections = Vec::new();
         for contributor in self.registry.context_contributors() {
             sections.extend(
@@ -2000,7 +2040,7 @@ impl GoalExtensionHarness {
                         extension_metrics: None,
                         session_store: &self.session_store,
                         thread_store: &self.thread_store,
-                        turn_store: &turn_store,
+                        turn_store,
                     })
                     .await,
             );

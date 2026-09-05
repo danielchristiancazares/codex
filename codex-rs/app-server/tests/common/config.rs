@@ -33,6 +33,19 @@ impl MockResponsesConfig {
         }
     }
 
+    pub fn new_websocket(server_uri: &str) -> Self {
+        let server_uri = server_uri
+            .strip_prefix("ws://")
+            .map(|authority| format!("http://{authority}"))
+            .or_else(|| {
+                server_uri
+                    .strip_prefix("wss://")
+                    .map(|authority| format!("https://{authority}"))
+            })
+            .unwrap_or_else(|| server_uri.to_string());
+        Self::new(&server_uri).with_provider_config("supports_websockets = true")
+    }
+
     pub fn with_model_provider(mut self, provider_id: &str) -> Self {
         self.provider_id = provider_id.to_string();
         self

@@ -1,8 +1,9 @@
 ---
 source: tui/src/update_prompt.rs
-expression: rendered
+assertion_line: 325
+expression: eight_rows
 ---
-  Update available v0.153.0 -> v9.9.9
+  Update available v0.153.4 -> v9.9.9
   View release notes
 
   1. Update now

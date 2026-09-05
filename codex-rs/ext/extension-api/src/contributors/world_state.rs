@@ -9,6 +9,18 @@ use serde_json::Value;
 use crate::ExtensionData;
 use crate::ExtensionMetrics;
 
+/// Admitted turn setting controlling whether Codex may publish `update_plan` guidance.
+///
+/// Hosts store this in the turn-scoped extension data immediately before World State
+/// contributors run. Contributors must not substitute mutable thread configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpdatePlanState {
+    /// The admitted turn may receive Codex-owned `update_plan` guidance.
+    Enabled,
+    /// Codex-owned `update_plan` guidance must be omitted for the admitted turn.
+    Disabled,
+}
+
 /// Host state available while an extension contributes one sampling step's World State.
 pub struct WorldStateContributionInput<'a> {
     pub thread_id: ThreadId,

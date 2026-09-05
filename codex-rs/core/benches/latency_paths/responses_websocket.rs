@@ -264,7 +264,7 @@ impl ResponsesWebsocketBenchmark {
                         summary.completion_seen = response_id == RESPONSE_ID;
                     }
                     Ok(
-                        ResponseEvent::Created
+                        ResponseEvent::Created { .. }
                         | ResponseEvent::SafetyBuffering(_)
                         | ResponseEvent::OutputItemDone(_)
                         | ResponseEvent::OutputItemAdded(_)

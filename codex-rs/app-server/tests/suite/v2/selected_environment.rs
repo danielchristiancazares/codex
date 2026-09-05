@@ -149,18 +149,19 @@ async fn thread_start_reports_selected_environment_instruction_source() -> Resul
 
 #[tokio::test]
 async fn turn_model_context_uses_selected_environment() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let response_mock = responses::mount_sse_once(
-        &server,
-        responses::sse(vec![
-            responses::ev_response_created("resp-1"),
-            responses::ev_assistant_message("msg-1", "done"),
-            responses::ev_completed("resp-1"),
-        ]),
-    )
-    .await;
+    let server =
+        app_test_support::create_mock_responses_websocket_server_sequence(vec![responses::sse(
+            vec![
+                responses::ev_response_created("resp-1"),
+                responses::ev_assistant_message("msg-1", "done"),
+                responses::ev_completed("resp-1"),
+            ],
+        )])
+        .await?;
     let codex_home = TempDir::new()?;
-    write_mock_config(codex_home.path(), &server.uri())?;
+    MockResponsesConfig::new_websocket(server.uri())
+        .with_root_config("compact_prompt = \"compact\"\nmodel_auto_compact_token_limit = 100000")
+        .write(codex_home.path())?;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .build_initialized()
@@ -186,9 +187,17 @@ async fn turn_model_context_uses_selected_environment() -> Result<()> {
     )
     .await??;
 
-    let user_context = response_mock.single_request().message_input_texts("user");
-    let environment_context = user_context
-        .iter()
+    let requests = app_test_support::websocket_model_request_bodies(&server);
+    let request = requests.first().context("expected model request")?;
+    let environment_context = request
+        .get("input")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("role").and_then(serde_json::Value::as_str) == Some("user"))
+        .filter_map(|item| item.get("content").and_then(serde_json::Value::as_array))
+        .flatten()
+        .filter_map(|content| content.get("text").and_then(serde_json::Value::as_str))
         .find(|text| text.starts_with("<environment_context>"))
         .context("selected environment context should be model visible")?;
     let shell = environment_context

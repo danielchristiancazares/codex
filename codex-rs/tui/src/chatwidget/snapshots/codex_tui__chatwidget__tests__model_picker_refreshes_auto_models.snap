@@ -1,0 +1,12 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 3356
+expression: "render_bottom_popup(&chat, 80)"
+---
+  Select model
+  Pick a quick auto mode or browse all models.
+
+  1. codex-auto-test  Auto model
+› 2. All models ✓     Choose a specific model and reasoning level (current: g…
+
+  enter confirm · esc back

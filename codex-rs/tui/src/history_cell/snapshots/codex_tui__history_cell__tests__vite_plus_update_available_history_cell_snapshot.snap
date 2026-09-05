@@ -1,0 +1,8 @@
+---
+source: tui/src/history_cell/tests.rs
+assertion_line: 1331
+expression: rendered
+---
+  Update available  v0.153.4 -> v9.9.9
+  Restart Codex and choose Update now to install it.
+  Release notes  https://github.com/openai/codex/releases/latest

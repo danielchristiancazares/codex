@@ -52,7 +52,13 @@ url = { workspace = true }
 assert_matches = { workspace = true }
 codex-exec-server-test-support = { workspace = true }
 codex-plugin = { workspace = true }
+insta = { workspace = true }
 pretty_assertions = { workspace = true, features = ["std"] }
-rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "server"] }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
 tempfile = { workspace = true, features = ["getrandom"] }
 tokio = { workspace = true, features = ["test-util"] }

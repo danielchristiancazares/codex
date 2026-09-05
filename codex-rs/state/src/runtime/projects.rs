@@ -21,9 +21,9 @@ const PROJECT_SELECT: &str = "SELECT projects.*,
      WHERE project_id = projects.id AND archived = 0) AS recency_at_ms
     FROM projects";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ThreadProjectAssignmentOutcome {
-    Updated,
+    Updated { previous_project_id: Option<String> },
     ThreadMissing,
 }
 
@@ -61,7 +61,9 @@ impl StateRuntime {
                 .await?;
         }
         tx.commit().await?;
-        Ok(ThreadProjectAssignmentOutcome::Updated)
+        Ok(ThreadProjectAssignmentOutcome::Updated {
+            previous_project_id: previous,
+        })
     }
 
     pub async fn list_projects(

@@ -560,7 +560,10 @@ fn reasoning_effort_for_requests_preserves_non_ultra_and_persistent_behavior() {
                 ReasoningEffort::Persistent,
             ),
         ),
-        (ReasoningEffort::High, ReasoningEffort::Max,)
+        (
+            ReasoningEffort::High,
+            ReasoningEffort::Custom("disabled".to_string()),
+        )
     );
 }
 
@@ -1076,7 +1079,9 @@ async fn response_stream_records_last_model_feedback_ids() {
         .set_default();
 
     let api_stream = futures::stream::iter([
-        Ok(ResponseEvent::Created),
+        Ok(ResponseEvent::Created {
+            guardian_ticket: None,
+        }),
         Ok(ResponseEvent::Completed {
             response_id: "resp-123".to_string(),
             token_usage: None,
@@ -1146,6 +1151,43 @@ async fn response_stream_assigns_one_id_to_provider_idless_output() {
 
     assert!(streamed_item.id().is_some());
     assert_eq!(last_response.items_added, vec![streamed_item]);
+}
+
+#[tokio::test]
+async fn bedrock_unauthorized_error_uses_provider_mapping() {
+    let provider = create_model_provider(
+        ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
+        /*auth_manager*/ None,
+    );
+    let mut auth_recovery = None;
+    let mut provider_auth_recovery_attempted = false;
+    let url = "https://bedrock-mantle.us-east-2.api.aws/openai/v1/responses";
+    let error = super::handle_unauthorized(
+        TransportError::Http {
+            status: http::StatusCode::UNAUTHORIZED,
+            url: Some(url.to_string()),
+            headers: None,
+            body: Some(
+                "Signature expired: 20260609T133205Z is now earlier than 20260614T062525Z"
+                    .to_string(),
+            ),
+        },
+        &mut auth_recovery,
+        &mut provider_auth_recovery_attempted,
+        &test_session_telemetry(),
+        &provider,
+        /*event_sender*/ None,
+        /*turn_id*/ None,
+    )
+    .await
+    .expect_err("expired Bedrock signature should fail");
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Amazon Bedrock rejected the request because its AWS signature has expired. Refresh your AWS credentials and retry. If `AWS_BEARER_TOKEN_BEDROCK` is set, update or unset it, then restart Codex, url: {url}"
+        )
+    );
 }
 
 #[derive(Debug)]
@@ -1298,7 +1340,9 @@ async fn dropped_backpressured_response_stream_traces_cancelled_partial_output()
     let backpressured_item_yielded = Arc::new(Notify::new());
     let mut events = VecDeque::new();
     for _ in 0..super::RESPONSE_STREAM_CHANNEL_CAPACITY {
-        events.push_back(ResponseEvent::Created);
+        events.push_back(ResponseEvent::Created {
+            guardian_ticket: None,
+        });
     }
     events.push_back(ResponseEvent::OutputItemDone(output_message(
         "1",

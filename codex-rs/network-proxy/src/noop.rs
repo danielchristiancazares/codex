@@ -9,6 +9,7 @@ use crate::RemoteNetworkProxyConfig;
 use crate::RemoteNetworkProxyLaunchConfig;
 use anyhow::Result;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use opentelemetry::trace::SpanContext;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -17,6 +18,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -119,6 +121,21 @@ pub struct NetworkProxyAuditMetadata {
     pub terminal_type: Option<String>,
     pub model: Option<String>,
     pub slug: Option<String>,
+}
+
+/// Registry-issued identity of the executor that launched a process.
+#[derive(Clone)]
+pub struct ExecutorLogIdentity {
+    pub environment_id: String,
+    pub registration_id: String,
+}
+
+/// Correlation metadata only; these values do not authorize network requests.
+#[derive(Clone, Default)]
+pub struct NetworkProxyProcessLogMetadata {
+    pub thread_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub executor_identity: Option<ExecutorLogIdentity>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -309,6 +326,34 @@ impl NetworkRequestDisconnect {
     }
 }
 
+/// The controller's first known reason for withdrawing a policy request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkRequestCancellationReason {
+    /// The process exited and its output streams closed normally.
+    ProcessFinished,
+    /// The process was explicitly terminated or its handle was abandoned.
+    ProcessCancelled,
+    /// The connection to the executor was lost.
+    ConnectionClosed,
+    /// The policy decision deadline expired.
+    TimedOut,
+}
+
+/// Shared, in-process metadata; recording a reason does not authorize network access.
+#[derive(Clone, Debug, Default)]
+pub struct NetworkRequestCancellation(Arc<OnceLock<NetworkRequestCancellationReason>>);
+
+impl NetworkRequestCancellation {
+    pub fn reason(&self) -> Option<NetworkRequestCancellationReason> {
+        self.0.get().copied()
+    }
+
+    /// Publish before dropping the decision future. Cleanup cannot replace an earlier cause.
+    pub fn record(&self, reason: NetworkRequestCancellationReason) {
+        let _ = self.0.set(reason);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NetworkPolicyRequest {
     pub protocol: NetworkProtocol,
@@ -322,6 +367,8 @@ pub struct NetworkPolicyRequest {
     pub execution_id: Option<String>,
     /// Present only when the local HTTP transport can identify an abandoned request.
     pub disconnect: Option<NetworkRequestDisconnect>,
+    /// Controller-owned cause, published before an abandoned decision future is dropped.
+    pub cancellation: Option<NetworkRequestCancellation>,
 }
 
 pub struct NetworkPolicyRequestArgs {
@@ -348,6 +395,7 @@ impl NetworkPolicyRequest {
             exec_policy_hint: args.exec_policy_hint,
             execution_id: None,
             disconnect: None,
+            cancellation: None,
         }
     }
 }

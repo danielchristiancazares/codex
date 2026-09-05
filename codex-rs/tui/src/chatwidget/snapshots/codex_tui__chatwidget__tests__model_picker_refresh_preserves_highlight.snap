@@ -1,0 +1,12 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 3424
+expression: "render_bottom_popup(&chat, 80)"
+---
+  Select model
+  Choose a model; effort follows.
+
+› 1. gpt-5.5    Frontier model for complex coding, research, and real-world w…
+  2. gpt-5.2 ✓  Optimized for professional work and long-running agents.
+
+  enter confirm · esc back

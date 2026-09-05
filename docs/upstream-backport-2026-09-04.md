@@ -22,6 +22,114 @@
 
 ## Integration policy
 
+### Consolidated final-state integration
+
+The maintainer switched the remaining reconciliation to an isolated consolidated
+merge rather than continuing the source-by-source replay:
+
+- Integration worktree: `D:\codex-consolidated-20260904`.
+- Integration branch: `integrate/consolidated-upstream-20260904`.
+- Fork parent: `9c992b1f37c68f6459695b4e7c3df13d62681da5`.
+- Source parent remains the pinned
+  `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`, not the newer tracking tip.
+- Recovery refs:
+  `backup/main-before-consolidated-20260904-2106` and
+  `backup/origin-main-before-consolidated-20260904-2106`.
+- The original `D:\codex` worktree, its unmerged index, and entry 74's partial
+  application are left untouched. An additional session-local recovery copy
+  retains all ten working files and the original index.
+
+The source ledger below records the completed chronological backports and their
+evidence. Its remaining `pending` rows are preservation/reconciliation checklist
+items, not instructions to replay intermediate source states. This merge starts
+with all 73 completed backports and their follow-up fixes in its first-parent
+history. No pending row becomes complete merely because Git resolves its text.
+
+Source ownership is partitioned across core session/history, core tools/transport,
+Guardian/extensions, TUI lifecycle, TUI chat widget, TUI composer/rendering,
+MCP/plugins/hooks, server/protocol, and storage/platforms. Cargo metadata and
+build/packaging reconciliation have separate owners. Shared builds, schema
+generation, staging, and final validation wait for source edits to finish.
+
+The final-state review must preserve:
+
+- Shared provider/auth runtimes, WebSocket-only inference, prepared retry
+  representation, and exact rejected-credential invalidation.
+- Incremental context, complete-item bounds, pending-call token estimation,
+  ownership-aware rollback/reconstruction, and selected-step attribution.
+- Explicit reasoning/service-tier/permission/goal state, current-goal fences,
+  idempotent execution-failure accounting, and persistence-error suspension.
+- Fork TUI rendering, geometry, input bounds, navigation, status controls,
+  provider selection, and regression snapshots.
+- MCP cache generation and refresh ownership, cleanup hook attribution, account
+  approvals, and bounded tool publication.
+- Canonical package layout, platform-native helpers and permission checks,
+  explicit Cargo dependency features, Rust 1.98.1, and fork version 0.153.4.
+
+Consolidated merge status: source and merge-index reconciliation completed on the
+isolated integration branch. All 250 conflicted paths have explicit resolutions.
+The maintainer directed immediate final reconciliation on September 4 and stopped
+further test expansion. This is an integration checkpoint, not a release-ready
+claim. `main` has not moved. Pushes and releases remain separate.
+
+The interrupted corrective run recovered outcomes for the original 221-case
+failure index: 108 passed, 8 passed with process-leak reports, 50 failed, 5 timed
+out, and 50 had no completed rerun result. The latter group includes one obsolete
+test deliberately removed by pinned upstream. Later source and snapshot repairs
+have not all been rerun. Detailed failure logs and the per-case progress index
+remain in the session recovery artifacts. The final one-case Windows sandbox run
+was stopped at the maintainer's direction.
+
+Remaining limitations are recorded rather than hidden: Guardian/server fixture
+sequencing, core compaction and skill fixtures, Windows process lifecycle cases,
+and some rendering expectations still lack passing final evidence. No further
+Clippy fix/build cycle is being launched during this checkpoint. `just fmt`
+completed; the merge checkpoint includes the reviewed final-state snapshots and
+excludes generated test workspaces. The original partial-backport worktree and
+its recovery copy remain separate.
+
+Consolidated validation evidence so far (not a readiness claim):
+
+- Locked offline Cargo metadata resolves 153 workspace packages at 0.153.4.
+- `just bazel-lock-update`, `just write-config-schema`,
+  `just write-app-server-schema`, and
+  `just write-app-server-schema --experimental` completed successfully.
+- With `CODEX_REPO_ROOT` set to the isolated worktree, the Windows-compatible
+  packaging subset passed 12 tests:
+  `python -m unittest scripts.codex_package.test_archive scripts.codex_package.test_cargo scripts.codex_package.test_cli scripts.codex_package.test_zsh.ResolveZshBinTest.test_uses_manifest_override`.
+  The full packaging suite has six pre-existing Windows-host errors from POSIX
+  executable-mode fixtures. The affected implementation and test files match
+  both merge parents; permission checks were not weakened.
+- After initializing the installed MSVC environment with `vcvars64.bat`,
+  `python -m unittest discover -s third_party\voice -p "test_*.py"` passed
+  (54 tests, including 23 platform skips).
+- Full final-state Rust behavior coverage and Linux/macOS validation remain
+  outstanding. The initial fixed Cargo selection was
+  27 packages spanning core, TUI, server/protocol, providers, MCP/hooks,
+  Guardian/goals/history, rollout/storage, and native execution. Compilation
+  succeeded before the latest corrective edits. The first combined run completed 11,815 cases: 11,594 passed,
+  202 failed, and 19 timed out; 1,958 were skipped. The failures are undergoing
+  subsystem-owned repair and are not a final behavioral pass.
+- Compiler and preservation follow-up restored the bounded diff-preview module,
+  read-only Guardian history-tool initialization, all three root-lineage
+  ambiguity producers (mailbox injection, steering, and reserved task start),
+  and the history-notes result cap. New lineage coverage distinguishes matching,
+  conflicting, missing, queue-only, and rejected input. Model-picker refreshes
+  now carry the active thread's provider through the existing discovery API.
+- The pinned upstream deliberately removes the obsolete featured-plugin
+  API-key gate test; that deletion is retained. Public featured-catalog access
+  and its authentication-header filtering are unchanged from both parents.
+- `just bazel-lock-check` also completed, with the existing platforms/rules_cc
+  direct-dependency warnings.
+- Argument-comment lint is unavailable on this host: its main recipe is
+  Unix-only, and `just argument-comment-lint-from-source -p codex-core` reports
+  missing `cargo-dylint`/`dylint-link`. The wrapper's six Python cases have three
+  pre-existing Windows path-separator assertion failures; the merged diff in
+  those files is formatting-only. `just test-github-scripts` finds no tests in
+  the fork's retained `.github/scripts` layout and is not counted as a pass.
+
+### Historical chronological policy
+
 Carry source behavior and regression coverage in source order, retaining fork-owned provider support,
 exhaustive state types, context bounds, UI work, build configuration, and packaging.
 Commits retain source authorship and a `Backport-of` trailer. Reused prepared changes additionally

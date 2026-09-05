@@ -11,10 +11,14 @@ use crate::session::step_settings::ResolvedStepSettings;
 use crate::session::turn_context::TurnContext;
 use crate::state::TurnState;
 use crate::turn_metadata::McpTurnMetadataContext;
+use codex_connectors::AppToolPolicyEvaluator;
+use codex_connectors::AppToolPolicyInput;
 use codex_core_plugins::executor_plugin_hook_sources;
 use codex_hooks::InterruptRequest;
 use codex_hooks::StopHookTarget;
 use codex_hooks::StopOutcome;
+use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_plugin::ExecutorPluginHookSource;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -41,6 +45,40 @@ fn build_request_metadata(
                 crate::X_CODEX_TURN_METADATA_HEADER.to_string(),
                 turn_metadata,
             )])
+        })
+        .unwrap_or_default()
+}
+
+fn executor_hook_sources_for_step(step_context: &StepContext) -> Vec<ExecutorPluginHookSource> {
+    step_context
+        .executor_capability_discovery
+        .as_deref()
+        .map(|snapshot| {
+            let app_tool_policy =
+                AppToolPolicyEvaluator::new(&step_context.mcp.config().config_layer_stack);
+            executor_plugin_hook_sources(snapshot, |server, tool| {
+                step_context
+                    .mcp
+                    .tool_info(server, tool)
+                    .filter(|tool_info| {
+                        if server != CODEX_APPS_MCP_SERVER_NAME {
+                            return true;
+                        }
+                        let annotations = tool_info.tool.annotations.as_ref();
+                        app_tool_policy
+                            .policy(AppToolPolicyInput {
+                                connector_id: tool_info.connector_id.as_deref(),
+                                link_id: None,
+                                tool_name: &tool_info.tool.name,
+                                tool_title: tool_info.tool.title.as_deref(),
+                                destructive_hint: annotations
+                                    .and_then(|annotations| annotations.destructive_hint),
+                                open_world_hint: annotations
+                                    .and_then(|annotations| annotations.open_world_hint),
+                            })
+                            .enabled
+                    })
+            })
         })
         .unwrap_or_default()
 }
@@ -116,11 +154,7 @@ pub(crate) async fn run_turn_stop_hooks(
         last_assistant_message,
         target,
     };
-    let executor_hook_sources = step_context
-        .executor_capability_discovery
-        .as_deref()
-        .map(executor_plugin_hook_sources)
-        .unwrap_or_default();
+    let executor_hook_sources = executor_hook_sources_for_step(step_context);
     let hooks = sess.hooks().with_executor_hooks(executor_hook_sources);
     emit_hook_started_events(sess, turn_context, hooks.preview_stop(&request)).await;
 
@@ -142,8 +176,7 @@ pub(crate) async fn run_turn_interrupt_hooks(
     let last_known_step_context = turn_state.lock().await.last_known_step_context.clone();
     let executor_hook_sources = last_known_step_context
         .as_ref()
-        .and_then(|step_context| step_context.executor_capability_discovery.as_deref())
-        .map(executor_plugin_hook_sources)
+        .map(|step_context| executor_hook_sources_for_step(step_context))
         .unwrap_or_default();
     let has_executor_hooks = !executor_hook_sources.is_empty();
     let hooks = sess.hooks().with_executor_hooks(executor_hook_sources);

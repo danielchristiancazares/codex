@@ -178,6 +178,7 @@ async fn next_exec_approval(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
+    crate::client::enable_responses_sse_for_tests();
     let server = start_mock_server().await;
     let guardian_request_log = mount_sse_sequence(
         &server,
@@ -218,6 +219,7 @@ async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
         .expect("test setup should allow enabling guardian approvals");
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+    config.model_provider.supports_websockets = false;
     let config = Arc::new(config);
     let models_manager = models_manager_with_provider(
         config.codex_home.to_path_buf(),
@@ -314,6 +316,7 @@ async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
 
 #[tokio::test]
 async fn request_permissions_uses_issuing_step_policy_and_reviewer() {
+    crate::client::enable_responses_sse_for_tests();
     let server = start_mock_server().await;
     let guardian_requests = mount_sse_once(
         &server,
@@ -330,6 +333,7 @@ async fn request_permissions_uses_issuing_step_policy_and_reviewer() {
             config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
             config.approvals_reviewer = ApprovalsReviewer::User;
             config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+            config.model_provider.supports_websockets = false;
             config
                 .features
                 .enable(Feature::GuardianApproval)
@@ -600,6 +604,7 @@ async fn guardian_allows_exec_command_additional_permissions_requests_past_polic
 
 #[tokio::test]
 async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_skip() {
+    crate::client::enable_responses_sse_for_tests();
     let server = start_mock_server().await;
     let guardian_request_log = mount_sse_once(
         &server,
@@ -647,10 +652,13 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_s
         .set(AskForApproval::Never)
         .expect("test setup should allow updating approval policy");
     let mut config = (*turn_context_raw.config).clone();
+    // Keep Never outside Full Access without requiring an OS sandbox for this routing test.
     config
         .permissions
-        .set_permission_profile(codex_protocol::models::PermissionProfile::Disabled)
-        .expect("test setup should allow disabling the permission profile");
+        .set_permission_profile(codex_protocol::models::PermissionProfile::External {
+            network: NetworkSandboxPolicy::Restricted,
+        })
+        .expect("test setup should allow external sandbox permissions");
     let TurnEnvironmentState::Ready(environment) =
         &mut turn_context_raw.environments.environments[0]
     else {
@@ -660,6 +668,7 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_s
         config.permissions.permission_profile_state().snapshot();
     config.approvals_reviewer = ApprovalsReviewer::User;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+    config.model_provider.supports_websockets = false;
     let config = Arc::new(config);
     let models_manager = models_manager_with_provider(
         config.codex_home.to_path_buf(),
@@ -783,6 +792,7 @@ async fn network_approval_uses_published_task_authority_within_same_turn(
                 exec_policy_hint: None,
                 execution_id: None,
                 disconnect: None,
+                cancellation: None,
             },
         );
     tokio::pin!(decision);
@@ -1287,6 +1297,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
         auth_manager,
         models_manager,
+        git_root_discovery: Arc::default(),
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         skills_service,
         plugins_manager,

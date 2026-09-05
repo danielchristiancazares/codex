@@ -125,6 +125,8 @@ async fn thread_start_keeps_unknown_field_compatibility_with_named_permissions()
             "thread/start",
             Some(json!({
                 "permissions": ":read-only",
+                "serviceTier": "default",
+                "reasoningMode": "standard",
                 "futureField": { "ignored": true }
             })),
         )

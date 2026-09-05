@@ -1,16 +1,17 @@
 ---
 source: tui/src/keymap_setup.rs
+assertion_line: 911
 expression: "render_picker(params, 120)"
 ---
 
   Keymap
   All configurable shortcuts.
-  132 actions, 0 customized, 5 unbound.
+  140 actions, 0 customized, 6 unbound.
 
-  [All]  Common  Customized (0)  Unbound (5)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
+  [All]  Common  Customized (0)  Unbound (6)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
   / ▏ Type to search shortcuts
-› Global         Open Agents                alt-a
+› Global       - Open Agents                unbound
   Global         Open Transcript            ctrl-t
   Global         Open External Editor       ctrl-g
   Global         Copy                       ctrl-o
@@ -19,4 +20,4 @@ expression: "render_picker(params, 120)"
   Global       - Toggle Fast Mode           unbound
   Global         Toggle Raw Output          alt-r
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/132 · +124 more ↓
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/140 · +132 more ↓

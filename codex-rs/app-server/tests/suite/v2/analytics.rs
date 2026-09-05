@@ -58,16 +58,8 @@ async fn guardian_review_turns_and_tools_reach_analytics() -> Result<()> {
     const PRIVATE: &str = "guardian-private-content";
     const READ_TIMEOUT: Duration = Duration::from_secs(60);
     let server = responses::start_mock_server().await;
-    let codex_home = TempDir::new()?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
-    MockResponsesConfig::new(&server.uri())
-        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
-        .with_provider_config("supports_websockets = false")
-        .enable_feature(Feature::GuardianApproval)
-        .disable_feature(Feature::Apps)
-        .write(codex_home.path())?;
     let parent_tool = |id: &str| {
-        responses::sse_response(responses::sse(vec![
+        vec![
             responses::ev_response_created(id),
             responses::ev_function_call(
                 id,
@@ -80,13 +72,34 @@ async fn guardian_review_turns_and_tools_reach_analytics() -> Result<()> {
                 .to_string(),
             ),
             responses::ev_completed(id),
-        ]))
+        ]
     };
-    let requests = responses::mount_response_sequence(
-        &server,
-        vec![
-            parent_tool("parent-first"),
-            responses::sse_response(responses::sse(vec![
+    let connection = |mut requests: Vec<Vec<Value>>, close_after_requests| {
+        requests.insert(
+            0,
+            vec![
+                responses::ev_response_created("prewarm"),
+                responses::ev_completed("prewarm"),
+            ],
+        );
+        responses::WebSocketConnectionConfig {
+            requests,
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests,
+        }
+    };
+    let model_server = responses::start_websocket_server_with_headers(vec![
+        connection(
+            vec![
+                parent_tool("parent-first"),
+                parent_tool("parent-second"),
+                parent_tool("parent-third"),
+            ],
+            /*close_after_requests*/ false,
+        ),
+        connection(
+            vec![vec![
                 responses::ev_response_created("guardian-first"),
                 responses::ev_web_search_call_added_partial("guardian-search", "in_progress"),
                 responses::ev_web_search_call_done("guardian-search", "completed", PRIVATE),
@@ -96,21 +109,28 @@ async fn guardian_review_turns_and_tools_reach_analytics() -> Result<()> {
                     &json!({"outcome": "deny", "rationale": PRIVATE}).to_string(),
                 ),
                 responses::ev_completed("guardian-first"),
-            ])),
-            parent_tool("parent-second"),
-            responses::sse_response(responses::sse_failed(
-                "guardian-failed",
-                "invalid_prompt",
-                PRIVATE,
-            )),
-            parent_tool("parent-third"),
-            responses::sse_response(responses::sse(vec![responses::ev_response_created(
-                "guardian-pending",
-            )]))
-            .set_delay(READ_TIMEOUT),
-        ],
-    )
+            ]],
+            /*close_after_requests*/ true,
+        ),
+        connection(
+            vec![app_test_support::sse_response_events(
+                &responses::sse_failed("guardian-failed", "invalid_prompt", PRIVATE),
+            )?],
+            /*close_after_requests*/ true,
+        ),
+        connection(
+            vec![vec![responses::ev_response_created("guardian-pending")]],
+            /*close_after_requests*/ false,
+        ),
+    ])
     .await;
+    let codex_home = TempDir::new()?;
+    mount_analytics_capture(&server, codex_home.path()).await?;
+    MockResponsesConfig::new_websocket(model_server.uri())
+        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
+        .enable_feature(Feature::GuardianApproval)
+        .disable_feature(Feature::Apps)
+        .write(codex_home.path())?;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_managed_config()
@@ -142,10 +162,9 @@ async fn guardian_review_turns_and_tools_reach_analytics() -> Result<()> {
         timeout(READ_TIMEOUT, app_server.read_response(request_id)).await??;
     let reviews = timeout(READ_TIMEOUT, async {
         loop {
-            let reviews = requests
-                .requests()
+            let reviews = app_test_support::websocket_model_request_bodies(&model_server)
                 .into_iter()
-                .map(|request| request.body_json()["client_metadata"].clone())
+                .map(|request| request["client_metadata"].clone())
                 .filter(|metadata| metadata["x-openai-subagent"] == "guardian")
                 .collect::<Vec<_>>();
             if reviews.len() == 3 {
@@ -198,6 +217,7 @@ async fn guardian_review_turns_and_tools_reach_analytics() -> Result<()> {
                 .expect("turn completion time");
             assert!(started_at > 0 && completed_at >= started_at);
             assert!(params["duration_ms"].is_u64());
+            assert_eq!(params["guardian_v2_enabled"], false);
             json!([
                 params["turn_id"],
                 params["status"],
@@ -786,6 +806,7 @@ enabled = true
     let thread_request = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            service_name: Some("codex_work_desktop".to_string()),
             ..Default::default()
         })
         .await?;
@@ -951,6 +972,7 @@ enabled = true
                 "measurement_name",
                 "number_value",
                 "operation",
+                "originator",
                 "plugin_id",
                 "thread_id",
                 "turn_id",
@@ -958,6 +980,7 @@ enabled = true
         );
         assert_eq!(event_params["thread_id"], thread_id);
         assert_eq!(event_params["turn_id"], turn_id);
+        assert_eq!(event_params["originator"], "codex_work_desktop");
     }
 
     Ok(())

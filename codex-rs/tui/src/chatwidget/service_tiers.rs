@@ -11,11 +11,12 @@ use codex_protocol::openai_models::SPEED_TIER_FAST;
 impl ChatWidget {
     pub(crate) fn set_service_tier(&mut self, service_tier: ServiceTier) {
         self.config.service_tier = service_tier;
+        self.effective_service_tier = service_tier;
         self.refresh_model_dependent_surfaces();
     }
 
     pub(crate) fn current_service_tier(&self) -> ServiceTier {
-        self.config.service_tier
+        self.effective_service_tier
     }
 
     pub(crate) fn configured_service_tier(&self) -> ServiceTier {
@@ -31,6 +32,10 @@ impl ChatWidget {
                 .and_then(|models| models.into_iter().find(|preset| preset.model == model))
                 .is_some_and(|preset| preset.supports_service_tier(service_tier))
             && self.has_chatgpt_account
+    }
+
+    pub(crate) fn service_tier_update_for_core(&self) -> ServiceTier {
+        self.current_service_tier()
     }
 
     pub(super) fn fast_mode_enabled(&self) -> bool {
@@ -98,6 +103,7 @@ impl ChatWidget {
     }
 
     fn set_service_tier_selection(&mut self, service_tier: ServiceTier) {
+        self.local_settings.notices.fast_default_opt_out = Some(service_tier.is_default());
         self.set_service_tier(service_tier);
         self.app_event_tx
             .send(AppEvent::CodexOp(AppCommand::override_turn_context(
@@ -122,5 +128,14 @@ impl ChatWidget {
         self.current_model_service_tier_commands()
             .into_iter()
             .find(|tier| tier.name.eq_ignore_ascii_case(SPEED_TIER_FAST))
+    }
+
+    pub(super) fn refresh_effective_service_tier(&mut self) {
+        self.effective_service_tier = crate::service_tier_resolution::effective_service_tier(
+            &self.config,
+            &self.local_settings.notices,
+            self.current_model(),
+            &self.model_catalog.try_list_models().unwrap_or_default(),
+        );
     }
 }

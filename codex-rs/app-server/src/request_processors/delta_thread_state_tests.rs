@@ -1,4 +1,5 @@
 use super::*;
+use crate::thread_state::ThreadState;
 use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
 use codex_protocol::protocol::PlanDeltaEvent;
@@ -73,38 +74,21 @@ fn delta_tracking_bypasses_only_events_unused_by_thread_state() {
     }
     assert_eq!(thread_state.active_turn_snapshot(), active_turn);
 
-    let mut legacy = RealtimeDeltaTracking::for_listener(ThreadHistoryMode::Legacy, &thread_state);
-    let mut paginated =
-        RealtimeDeltaTracking::for_listener(ThreadHistoryMode::Paginated, &thread_state);
-
-    assert_eq!(legacy, RealtimeDeltaTracking::Disabled);
-    assert_eq!(paginated, RealtimeDeltaTracking::AwaitingStart);
-    assert!(!legacy.requires_thread_state(&agent_delta()));
-    assert!(!paginated.requires_thread_state(&agent_delta()));
-    assert!(paginated.requires_thread_state(&realtime_started()));
-    assert_eq!(paginated, RealtimeDeltaTracking::Started);
-    assert!(paginated.requires_thread_state(&agent_delta()));
-    assert!(paginated.requires_thread_state(&EventMsg::ShutdownComplete));
+    let tracking = DeltaThreadStateTracking;
+    assert!(!tracking.requires_thread_state(&agent_delta()));
+    assert!(tracking.requires_thread_state(&realtime_started()));
+    assert!(tracking.requires_thread_state(&EventMsg::ShutdownComplete));
 
     let requirements = permanently_stateless_deltas()
         .iter()
-        .map(|event| paginated.requires_thread_state(event))
+        .map(|event| tracking.requires_thread_state(event))
         .collect::<Vec<_>>();
     assert_eq!(requirements, vec![false; 4]);
 }
 
 #[test]
-fn realtime_start_tracking_survives_listener_replacement() {
-    let mut thread_state = ThreadState::default();
-    thread_state.track_current_turn_event("turn-1", &realtime_started());
-    thread_state.clear_listener();
-
-    assert_eq!(
-        RealtimeDeltaTracking::for_listener(ThreadHistoryMode::Paginated, &thread_state),
-        RealtimeDeltaTracking::Started
-    );
-    assert_eq!(
-        RealtimeDeltaTracking::for_listener(ThreadHistoryMode::Legacy, &thread_state),
-        RealtimeDeltaTracking::Disabled
-    );
+fn realtime_start_does_not_disable_agent_delta_bypass() {
+    let tracking = DeltaThreadStateTracking;
+    assert!(tracking.requires_thread_state(&realtime_started()));
+    assert!(!tracking.requires_thread_state(&agent_delta()));
 }

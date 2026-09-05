@@ -109,7 +109,12 @@ async fn project_lifecycle_preserves_order_and_clears_assignments() -> anyhow::R
     let previous_project = runtime
         .set_thread_project(&active_thread_id.to_string(), Some(&project.id))
         .await?;
-    assert_eq!(previous_project, ThreadProjectAssignmentOutcome::Updated);
+    assert_eq!(
+        previous_project,
+        ThreadProjectAssignmentOutcome::Updated {
+            previous_project_id: None,
+        }
+    );
     let active_recency = runtime
         .get_thread(active_thread_id)
         .await?
@@ -127,9 +132,15 @@ async fn project_lifecycle_preserves_order_and_clears_assignments() -> anyhow::R
         runtime.get_project(&project.id).await?,
         Some(active_project)
     );
-    runtime
+    let previous_project = runtime
         .set_thread_project(&active_thread_id.to_string(), /*project_id*/ None)
         .await?;
+    assert_eq!(
+        previous_project,
+        ThreadProjectAssignmentOutcome::Updated {
+            previous_project_id: Some(project.id.clone()),
+        }
+    );
     assert_eq!(
         runtime.get_project(&project.id).await?,
         Some(project.clone())

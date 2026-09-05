@@ -1,9 +1,10 @@
 ---
 source: tui/src/update_prompt.rs
+assertion_line: 300
 expression: "render_prompt(&screen, 80, 12)"
 ---
 
-  Update available v0.153.0 -> v9.9.9
+  Update available v0.153.4 -> v9.9.9
 
   View release notes
 

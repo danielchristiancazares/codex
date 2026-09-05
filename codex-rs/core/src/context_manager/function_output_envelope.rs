@@ -41,7 +41,8 @@ pub(crate) fn function_output_item_token_budget(item: &ResponseItem) -> Option<u
             internal_chat_message_metadata_passthrough: internal_chat_message_metadata_passthrough
                 .clone(),
         },
-        ResponseItem::AdditionalTools { .. }
+        ResponseItem::ConfigurationUpdate { .. }
+        | ResponseItem::AdditionalTools { .. }
         | ResponseItem::Message { .. }
         | ResponseItem::AgentMessage { .. }
         | ResponseItem::Reasoning { .. }

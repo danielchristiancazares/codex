@@ -50,6 +50,7 @@ impl AppServerSession {
 
     pub(crate) async fn resume_thread(
         &mut self,
+        local_settings: &crate::local_settings::LocalSettings,
         config: Config,
         thread_id: ThreadId,
         model_settings: ResumeModelSettings,
@@ -133,12 +134,14 @@ impl AppServerSession {
                 ));
             }
         };
-        self.complete_resume_thread(response, &config).await
+        self.complete_resume_thread(response, local_settings, &config)
+            .await
     }
 
     pub(crate) async fn complete_resume_thread(
         &mut self,
         mut response: ThreadResumeResponse,
+        local_settings: &crate::local_settings::LocalSettings,
         config: &Config,
     ) -> Result<AppServerStartedThread> {
         self.hydrate_initial_thread_history(
@@ -146,15 +149,20 @@ impl AppServerSession {
             response.turns_backwards_cursor.clone(),
             response.items_backwards_cursor.clone(),
             Some(config),
+            Some(local_settings),
             HistoryHydrationScope::Initial,
         )
         .await?;
         let fork_parent_title = self
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
-        let mut started =
-            started_thread_from_resume_response(response, config, self.thread_params_mode())
-                .await?;
+        let mut started = started_thread_from_resume_response(
+            response,
+            local_settings,
+            config,
+            self.thread_params_mode(),
+        )
+        .await?;
         started.session.fork_parent_title = fork_parent_title;
         let thread_id = started.session.thread_id;
         if self.task_tools_available(thread_id) {

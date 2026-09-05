@@ -12,6 +12,7 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -68,6 +69,7 @@ impl Session {
             turn_context,
             cancellation_token,
             /*required_servers*/ &[],
+            /*required_plugins*/ &HashSet::new(),
         )
         .await
     }
@@ -77,9 +79,15 @@ impl Session {
         turn_context: Arc<TurnContext>,
         cancellation_token: &CancellationToken,
         required_servers: &[String],
+        required_plugins: &HashSet<String>,
     ) -> CodexResult<Arc<StepContext>> {
         let step_context = self
-            .capture_step_context_inner(turn_context, cancellation_token, required_servers)
+            .capture_step_context_inner(
+                turn_context,
+                cancellation_token,
+                required_servers,
+                required_plugins,
+            )
             .await?;
         self.set_last_known_step_context(&step_context).await;
         Ok(step_context)
@@ -96,6 +104,7 @@ impl Session {
             turn_context,
             cancellation_token,
             /*required_servers*/ &[],
+            /*required_plugins*/ &HashSet::new(),
         )
         .await
     }
@@ -106,6 +115,7 @@ impl Session {
         turn_context: Arc<TurnContext>,
         cancellation_token: &CancellationToken,
         required_servers: &[String],
+        required_plugins: &HashSet<String>,
     ) -> CodexResult<Arc<StepContext>> {
         // Capture once before asynchronous planning; all request consumers
         // retain this immutable settings version even if the turn is updated.
@@ -118,11 +128,14 @@ impl Session {
             if settings.selected().service_tier != root_service_tier {
                 let mut selected = settings.selected().clone();
                 selected.service_tier = root_service_tier;
-                settings = Arc::new(ResolvedStepSettings::new(
+                let mut inherited_settings = ResolvedStepSettings::new(
                     Arc::new(selected),
                     Arc::clone(&settings.model_info),
                     self.features.enabled(Feature::FastMode),
-                ));
+                );
+                inherited_settings.mcp_approvals_reviewer_override =
+                    settings.mcp_approvals_reviewer_override;
+                settings = Arc::new(inherited_settings);
             }
         }
         let token_budget = token_budget::resolve_token_budget(
@@ -180,6 +193,7 @@ impl Session {
                     turn_context.as_ref(),
                     &selected_capability_roots,
                     required_servers,
+                    required_plugins,
                 ),
                 turn::prepare_tool_recommendations(self.as_ref(), turn_context.as_ref()),
             )
@@ -205,6 +219,7 @@ impl Session {
             turn_context.as_ref(),
             // TODO(CDXENT-441): use the step scoped model
             turn_context.model_info(),
+            settings.model_info.model_messages.as_ref(),
             &environments,
             &mcp,
             &extension_data,

@@ -7,6 +7,7 @@ use crate::auth_mode::auth_mode_to_api;
 use crate::external_auth::ExternalAuthBridge;
 use chrono::DateTime;
 use codex_app_server_protocol::DesktopOnboardingEntrypoint;
+use codex_app_server_protocol::GetAccountRateLimitsParams;
 use codex_login::LoginOnboardingEntrypoint;
 use codex_login::login_with_bedrock_access_keys;
 use codex_model_provider::is_supported_amazon_bedrock_region;
@@ -20,9 +21,9 @@ const ACCOUNT_TOKEN_USAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(/*secs*/
 const THREAD_USAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 60);
 const ACCOUNT_WORKSPACE_MESSAGES_FETCH_TIMEOUT: Duration =
     Duration::from_millis(/*millis*/ 1000);
-// Login overrides are intentionally available only in debug builds.
-#[cfg(debug_assertions)]
+// Packaged clients use this together with the OAuth client ID override for staging login.
 const LOGIN_ISSUER_OVERRIDE_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
+// The development success-page redirect remains debug-only.
 #[cfg(debug_assertions)]
 const LOGIN_OPEN_APP_URL_OVERRIDE_ENV_VAR: &str = "CODEX_APP_SERVER_DEV_OPEN_APP_URL";
 
@@ -154,8 +155,9 @@ impl AccountRequestProcessor {
 
     pub(crate) async fn get_account_rate_limits(
         &self,
+        params: Option<GetAccountRateLimitsParams>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.get_account_rate_limits_response()
+        self.get_account_rate_limits_response(params.unwrap_or_default())
             .await
             .map(|response| Some(response.into()))
     }
@@ -559,7 +561,7 @@ impl AccountRequestProcessor {
             ));
         }
 
-        let opts = LoginServerOptions {
+        let mut opts = LoginServerOptions {
             open_browser: false,
             codex_streamlined_login,
             login_success_page,
@@ -572,24 +574,20 @@ impl AccountRequestProcessor {
                 config.auth_route_config(),
             )
         };
+        if let Ok(issuer) = std::env::var(LOGIN_ISSUER_OVERRIDE_ENV_VAR)
+            && !issuer.trim().is_empty()
+        {
+            opts.issuer = issuer;
+        }
         #[cfg(debug_assertions)]
-        let opts = {
-            let mut opts = opts;
-            if let Ok(issuer) = std::env::var(LOGIN_ISSUER_OVERRIDE_ENV_VAR)
-                && !issuer.trim().is_empty()
-            {
-                opts.issuer = issuer;
-            }
-            if let LoginSuccessPage::Hosted { url, .. } = &mut opts.login_success_page
-                && let Ok(open_app_url) = std::env::var(LOGIN_OPEN_APP_URL_OVERRIDE_ENV_VAR)
-                && !open_app_url.trim().is_empty()
-            {
-                *url = open_app_url
-                    .parse()
-                    .map_err(|err| internal_error(format!("invalid Codex open app URL: {err}")))?;
-            }
-            opts
-        };
+        if let LoginSuccessPage::Hosted { url, .. } = &mut opts.login_success_page
+            && let Ok(open_app_url) = std::env::var(LOGIN_OPEN_APP_URL_OVERRIDE_ENV_VAR)
+            && !open_app_url.trim().is_empty()
+        {
+            *url = open_app_url
+                .parse()
+                .map_err(|err| internal_error(format!("invalid Codex open app URL: {err}")))?;
+        }
 
         Ok(opts)
     }
@@ -1130,13 +1128,20 @@ impl AccountRequestProcessor {
 
     async fn get_account_rate_limits_response(
         &self,
+        params: GetAccountRateLimitsParams,
     ) -> Result<GetAccountRateLimitsResponse, JSONRPCErrorError> {
         let config = self.load_latest_config().await;
         let http_client_factory = config.http_client_factory();
         let provider =
             create_model_provider(config.model_provider, Some(Arc::clone(&self.auth_manager)));
         let is_copilot = provider.info().is_copilot();
-        let (rate_limits, rate_limit_reset_credits) = if is_copilot {
+        let (
+            rate_limits,
+            rate_limit_reset_credits,
+            account_id,
+            ordinary_usage_allowed,
+            rate_limit_upsell,
+        ) = if is_copilot {
             let rate_limits = provider
                 .read_rate_limits(http_client_factory)
                 .await
@@ -1146,7 +1151,7 @@ impl AccountRequestProcessor {
                 .ok_or_else(|| {
                     internal_error("GitHub Copilot provider did not expose account rate limits")
                 })?;
-            (rate_limits, None)
+            (rate_limits, None, None, None, None)
         } else {
             let Some(auth) = self.auth_manager.auth().await else {
                 return Err(invalid_request(
@@ -1165,10 +1170,24 @@ impl AccountRequestProcessor {
                 &auth,
                 self.config.http_client_factory(),
             );
-            let (response, detailed_rate_limit_reset_credits) = tokio::join!(
-                client.get_rate_limits_with_reset_credits(),
-                Self::detailed_rate_limit_reset_credits(&client),
-            );
+            let usage_request = async {
+                if params.supports_luna_reserve
+                    && auth.auth_mode() == codex_protocol::auth::AuthMode::Chatgpt
+                    && !auth.is_fedramp_account()
+                {
+                    client.get_rate_limits_with_luna_reserve().await
+                } else {
+                    client.get_rate_limits_with_reset_credits().await
+                }
+            };
+            let (response, detailed_rate_limit_reset_credits) =
+                tokio::join!(usage_request, async {
+                    if params.exclude_reset_credit_details {
+                        None
+                    } else {
+                        Self::detailed_rate_limit_reset_credits(&client).await
+                    }
+                });
             let response = response.map_err(|err| {
                 internal_error(format!("failed to fetch codex rate limits: {err}"))
             })?;
@@ -1180,7 +1199,26 @@ impl AccountRequestProcessor {
                         credits: None,
                     })
             });
-            (response.rate_limits, rate_limit_reset_credits)
+            // Match desktop's account readiness check before exposing account-bound CTA content.
+            // Normal rate limits remain available when older backends omit identity or banner data.
+            let matches_active_account = !auth.is_fedramp_account()
+                && response.account_id.is_some()
+                && response.account_id == auth.get_account_id()
+                && response.user_id.is_some()
+                && response.user_id == auth.get_chatgpt_user_id();
+            let ordinary_usage_allowed = response
+                .ordinary_usage_allowed
+                .filter(|_| matches_active_account);
+            let rate_limit_upsell = response
+                .rate_limit_upsell
+                .filter(|_| matches_active_account);
+            (
+                response.rate_limits,
+                rate_limit_reset_credits,
+                response.account_id,
+                ordinary_usage_allowed,
+                rate_limit_upsell,
+            )
         };
         if rate_limits.is_empty() {
             let provider_name = if is_copilot {
@@ -1211,6 +1249,7 @@ impl AccountRequestProcessor {
             .unwrap_or_else(|| rate_limits[0].clone());
 
         Ok(GetAccountRateLimitsResponse {
+            ordinary_usage_allowed,
             rate_limits: rate_limits.into(),
             rate_limits_by_limit_id: Some(
                 rate_limits_by_limit_id
@@ -1219,6 +1258,8 @@ impl AccountRequestProcessor {
                     .collect(),
             ),
             rate_limit_reset_credits,
+            account_id,
+            rate_limit_upsell,
         })
     }
 

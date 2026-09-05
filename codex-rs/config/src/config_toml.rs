@@ -32,6 +32,7 @@ use crate::types::UriBasedFileOpener;
 use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
+use codex_model_provider_info::AMAZON_BEDROCK_RUNTIME_PROVIDER_ID;
 use codex_model_provider_info::COPILOT_PROVIDER_ID;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
@@ -64,8 +65,9 @@ use serde::Serialize;
 use serde::de::Error as SerdeError;
 use serde_json::Value as JsonValue;
 
-const RESERVED_MODEL_PROVIDER_IDS: [&str; 5] = [
+const RESERVED_MODEL_PROVIDER_IDS: [&str; 6] = [
     AMAZON_BEDROCK_PROVIDER_ID,
+    AMAZON_BEDROCK_RUNTIME_PROVIDER_ID,
     COPILOT_PROVIDER_ID,
     OPENAI_PROVIDER_ID,
     OLLAMA_OSS_PROVIDER_ID,
@@ -206,6 +208,13 @@ pub struct ConfigToml {
     /// Sandbox mode to use.
     pub sandbox_mode: Option<SandboxMode>,
 
+    /// Allow macOS sandbox writable roots at or beneath CODEX_HOME to traverse
+    /// symlinks. Read only from the host's user config at startup; defaults to false.
+    /// This grants no write access by itself, but trusts symlink targets even if
+    /// they change between commands or lie outside CODEX_HOME.
+    /// This setting has no effect on Linux or Windows.
+    pub allow_symlinked_codex_home: Option<bool>,
+
     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
 
@@ -314,6 +323,10 @@ pub struct ConfigToml {
     /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
     /// Default: `300000` (5 minutes).
     pub background_terminal_max_timeout: Option<u64>,
+
+    /// Seconds a thread must have no subscribers and no activity before app-server
+    /// unloads it. Defaults to 60; zero unloads immediately. Changes require a server restart.
+    pub thread_unload_delay_secs: Option<u64>,
 
     /// Deprecated: ignored.
     #[schemars(skip)]
@@ -491,9 +504,7 @@ pub struct ConfigToml {
     /// Defaults to `true`.
     pub check_for_update_on_startup: Option<bool>,
 
-    /// When true, disables burst-paste detection for typed input entirely.
-    /// All characters are inserted as they are received, and no buffering
-    /// or placeholder replacement will occur for fast keypress bursts.
+    /// Legacy fallback for `tui.disable_paste_burst`. Prefer the setting under `[tui]`.
     pub disable_paste_burst: Option<bool>,
 
     /// When `false`, disables analytics across Codex product surfaces in this machine.
@@ -636,7 +647,7 @@ pub struct ExperimentalRequestUserInput {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct UpdatePlanToolConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
 }
 
@@ -898,8 +909,10 @@ pub fn validate_reserved_model_provider_ids(
     let mut conflicts = model_providers
         .keys()
         .filter(|key| {
-            key.as_str() != AMAZON_BEDROCK_PROVIDER_ID
-                && RESERVED_MODEL_PROVIDER_IDS.contains(&key.as_str())
+            !matches!(
+                key.as_str(),
+                AMAZON_BEDROCK_PROVIDER_ID | AMAZON_BEDROCK_RUNTIME_PROVIDER_ID
+            ) && RESERVED_MODEL_PROVIDER_IDS.contains(&key.as_str())
         })
         .map(|key| format!("`{key}`"))
         .collect::<Vec<_>>();
@@ -920,11 +933,14 @@ pub fn validate_model_providers(
 ) -> Result<(), String> {
     validate_reserved_model_provider_ids(model_providers)?;
     for (key, provider) in model_providers {
-        if key != AMAZON_BEDROCK_PROVIDER_ID {
+        if !matches!(
+            key.as_str(),
+            AMAZON_BEDROCK_PROVIDER_ID | AMAZON_BEDROCK_RUNTIME_PROVIDER_ID
+        ) {
             if provider.aws.is_some() {
                 return Err(format!(
                     "model_providers.{key}: provider aws is only supported for \
-`{AMAZON_BEDROCK_PROVIDER_ID}`"
+`{AMAZON_BEDROCK_PROVIDER_ID}` or `{AMAZON_BEDROCK_RUNTIME_PROVIDER_ID}`"
                 ));
             }
             if provider.name.trim().is_empty() {
@@ -951,6 +967,10 @@ where
     Ok(model_providers)
 }
 
+#[cfg(test)]
+#[path = "bedrock_runtime_tests.rs"]
+mod bedrock_runtime_tests;
+
 pub fn validate_oss_provider(provider: &str) -> std::io::Result<()> {
     match provider {
         LMSTUDIO_OSS_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID => Ok(()),
@@ -974,6 +994,16 @@ mod tests {
 
     const WORKSPACE_ID_A: &str = "123e4567-e89b-42d3-a456-426614174000";
     const WORKSPACE_ID_B: &str = "123e4567-e89b-42d3-a456-426614174001";
+
+    #[test]
+    fn thread_unload_delay_requires_nonnegative_seconds() {
+        for value in ["-1", "1.5", "\"60\""] {
+            let error =
+                toml::from_str::<ConfigToml>(&format!("thread_unload_delay_secs = {value}"))
+                    .expect_err("idle timeout must be a nonnegative integer");
+            assert!(error.to_string().contains("thread_unload_delay_secs"));
+        }
+    }
 
     #[test]
     fn forced_chatgpt_workspace_id_accepts_single_string() {

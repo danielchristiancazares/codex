@@ -32,6 +32,7 @@ fn maps_premium_interactions_to_a_monthly_rate_limit() {
         vec![RateLimitSnapshot {
             limit_id: Some("copilot".to_string()),
             limit_name: Some("Copilot".to_string()),
+            normal_model_slug: None,
             primary: Some(RateLimitWindow {
                 used_percent: 32.5,
                 window_minutes: Some(43_200),
@@ -66,6 +67,7 @@ fn falls_back_to_the_chat_quota_and_derives_remaining_percentage() {
         vec![RateLimitSnapshot {
             limit_id: Some("copilot".to_string()),
             limit_name: Some("Copilot".to_string()),
+            normal_model_slug: None,
             primary: Some(RateLimitWindow {
                 used_percent: 60.0,
                 window_minutes: Some(43_200),
@@ -99,6 +101,7 @@ fn preserves_unlimited_quota_without_inventing_a_finite_window() {
         vec![RateLimitSnapshot {
             limit_id: Some("copilot".to_string()),
             limit_name: Some("Copilot".to_string()),
+            normal_model_slug: None,
             primary: None,
             secondary: None,
             credits: None,

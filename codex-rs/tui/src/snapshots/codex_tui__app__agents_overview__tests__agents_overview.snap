@@ -1,28 +1,29 @@
 ---
 source: tui/src/app/agents_overview_tests.rs
-expression: "render_bottom_popup(&app.chat_widget,\n96).replace(&format!(\"{project}  2\"),\n&normalized_project_group).replace(&project, \"/tmp/project\")"
+assertion_line: 1013
+expression: "render_bottom_popup(&app.chat_widget,\n96).replace(&format!(\"{project}  3\"),\n&normalized_project_group).replace(&project, \"/tmp/project\")"
 ---
-  Agents
-  1 awaiting input · 1 working · 0 ready
-
-  /tmp/project  2                                     │ Build the dashboard
-  › ! Build the dashboard · current · Needs input     │ ! Needs input · current session
-    ● Repair authentication · Working                 │ Project  /tmp/project
+  Agent command center
+  1 need input   1 working   0 ready
+  ────────────────────────────────────────────────────────────────────────────────────────────
+  /tmp/project  3                                     │ Task details
+  › ! Build the dashboard · current · Needs input     │
+    ● Repair authentication · Working                 │ Build the dashboard
+    ✓ Review yesterday's changes · Finished           │ ! Needs input · current session
                                                       │
+                                                      │ Agent: Inspect keyboard shortcuts
+                                                      │ Open task to review.
+                                                      │ Waiting for approval.
                                                       │
+                                                      │ Project
+                                                      │ /tmp/project
                                                       │
+                                                      │ Prompt
+                                                      │ Build the dashboard
                                                       │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-                                                      │
-  New task › Describe a task and press enter to dispatch it
-  enter open · esc back · ↑↓ navigate · ctrl+f search · ctrl+s group · ctrl+r rename
+  New task
+────────────────────────────────────────────────────────────────────────────────────────────────
+│› First line
+│  Second line
+────────────────────────────────────────────────────────────────────────────────────────────────
+   enter create task    ctrl+j newline    esc tasks

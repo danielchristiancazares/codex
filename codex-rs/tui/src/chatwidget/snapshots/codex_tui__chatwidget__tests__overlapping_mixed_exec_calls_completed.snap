@@ -1,6 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-expression: active_blob(&chat)
+expression: lines_to_single_string(&cells[0])
 ---
 • Ran 3 commands
   ├ rg needle src

@@ -7,6 +7,11 @@ license.workspace = true
 [lib]
 doctest = false
 
+# Compiled through #[path] in src/client.rs; cargo-shear 1.11.2 does not normalize
+# the ../tests path and incorrectly reports this linked unit-test module as unlinked.
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/unit/client_provisioning_tests.rs"]
+
 [lints]
 workspace = true
 
@@ -24,6 +29,7 @@ clatter = { workspace = true, features = [
     "use-sha",
 ] }
 codex-api = { workspace = true }
+codex-build-info = { workspace = true }
 codex-config = { workspace = true }
 codex-http-client = { workspace = true }
 codex-exec-server-protocol = { workspace = true }
@@ -42,6 +48,7 @@ codex-websocket-client = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 http = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace"] }
 prost = { version = "0.14.3", default-features = false, features = ["derive", "std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["alloc"] }

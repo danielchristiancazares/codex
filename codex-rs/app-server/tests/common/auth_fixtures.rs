@@ -93,6 +93,7 @@ pub struct ChatGptIdTokenClaims {
     pub plan_type: Option<String>,
     pub chatgpt_user_id: Option<String>,
     pub chatgpt_account_id: Option<String>,
+    pub chatgpt_account_is_fedramp: bool,
 }
 
 impl ChatGptIdTokenClaims {
@@ -136,6 +137,9 @@ pub fn encode_id_token(claims: &ChatGptIdTokenClaims) -> Result<String> {
     }
     if let Some(chatgpt_account_id) = &claims.chatgpt_account_id {
         auth_payload.insert("chatgpt_account_id".to_string(), json!(chatgpt_account_id));
+    }
+    if claims.chatgpt_account_is_fedramp {
+        auth_payload.insert("chatgpt_account_is_fedramp".to_string(), json!(true));
     }
     if !auth_payload.is_empty() {
         payload.insert(

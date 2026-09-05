@@ -36,10 +36,10 @@ use windows_sys::Win32::System::Threading::INFINITE;
 use windows_sys::Win32::System::Threading::ReleaseMutex;
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
+use codex_windows_sandbox::MACHINE_SANDBOX_CREDENTIALS_SECRET_NAME;
 use codex_windows_sandbox::to_wide;
 
 const MACHINE_CREDENTIALS_VERSION: u32 = 1;
-const MACHINE_CREDENTIALS_SECRET_NAME: &str = "L$OpenAI.Codex.WindowsSandbox.Users.v1";
 const PROVISIONING_MUTEX_NAME: &str = "Global\\OpenAI.Codex.WindowsSandbox.Users";
 const PROVISIONING_MUTEX_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
@@ -173,7 +173,7 @@ impl MachineCredentialStoreLsa {
 
 impl MachineCredentialStore for MachineCredentialStoreLsa {
     fn load(&mut self) -> Result<Option<MachineSandboxCredentials>> {
-        let (_key_buffer, key) = lsa_unicode_string(MACHINE_CREDENTIALS_SECRET_NAME)?;
+        let (_key_buffer, key) = lsa_unicode_string(MACHINE_SANDBOX_CREDENTIALS_SECRET_NAME)?;
         let mut private_data: *mut LSA_UNICODE_STRING = ptr::null_mut();
         let status = unsafe { LsaRetrievePrivateData(self.policy.handle, &key, &mut private_data) };
         if status == STATUS_OBJECT_NAME_NOT_FOUND {
@@ -218,7 +218,7 @@ impl MachineCredentialStore for MachineCredentialStoreLsa {
     fn save(&mut self, credentials: &MachineSandboxCredentials) -> Result<()> {
         let json =
             serde_json::to_string(credentials).context("serialize machine sandbox credentials")?;
-        let (_key_buffer, key) = lsa_unicode_string(MACHINE_CREDENTIALS_SECRET_NAME)?;
+        let (_key_buffer, key) = lsa_unicode_string(MACHINE_SANDBOX_CREDENTIALS_SECRET_NAME)?;
         let (_value_buffer, value) = lsa_unicode_string(&json)?;
         let status = unsafe { LsaStorePrivateData(self.policy.handle, &key, &value) };
         if status == 0 {

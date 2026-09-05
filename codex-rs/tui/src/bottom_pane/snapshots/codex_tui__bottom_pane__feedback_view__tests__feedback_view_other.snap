@@ -1,9 +1,0 @@
----
-source: tui/src/bottom_pane/feedback_view.rs
-expression: rendered
----
-▌ Tell us more (other)
-▌
-▌ (optional) Write a short description to help us further
-
-enter confirm · esc back

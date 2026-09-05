@@ -890,11 +890,15 @@ mod tests {
                 }
                 .into(),
             ]),
+            retained_context: None,
+            guardian_history: None,
             mcp_resource_origins: None,
             window_number: None,
             first_window_id: None,
             previous_window_id: None,
             window_id: None,
+            compaction_response_id: None,
+            latest_token_usage_record: None,
         });
 
         let serialized = crate::phase1_projection::serialize_filtered_rollout_response_items(&[
@@ -1057,11 +1061,15 @@ mod tests {
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
                 replacement_history: Some(vec![surviving_call.clone().into()]),
+                retained_context: None,
+                guardian_history: None,
                 mcp_resource_origins: None,
                 window_number: Some(1),
                 first_window_id: None,
                 previous_window_id: None,
                 window_id: None,
+                compaction_response_id: None,
+                latest_token_usage_record: None,
             }),
             RolloutItem::ResponseItem(surviving_output.clone().into()),
         ])

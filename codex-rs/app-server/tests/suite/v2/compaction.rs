@@ -10,6 +10,15 @@ use app_test_support::ChatGptAuthFixture;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::write_chatgpt_auth;
+use axum::Json;
+use axum::Router;
+use axum::extract::State;
+use axum::extract::ws::Message;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::HeaderMap;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::routing::post;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
@@ -18,7 +27,10 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ResponseUsageMetadata;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
+use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadResumeParams;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TokenUsageBreakdown;
@@ -33,7 +45,12 @@ use codex_protocol::models::ResponseItem;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
+use serde_json::Value;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::Mutex;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
 use tokio::time::timeout;
 
 // macOS and Windows Bazel CI can spend tens of seconds starting app-server
@@ -46,11 +63,73 @@ const AUTO_COMPACT_LIMIT: i64 = 1_000;
 const COMPACT_PROMPT: &str = "Summarize the conversation.";
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
+#[derive(Clone)]
+struct HybridResponsesState {
+    streamed_responses: Arc<Mutex<VecDeque<Vec<Value>>>>,
+    response_requests: Arc<Mutex<Vec<Value>>>,
+    compact_requests: Arc<Mutex<Vec<(HeaderMap, Value)>>>,
+    compact_output: Value,
+}
+
+async fn hybrid_responses_websocket(
+    State(state): State<HybridResponsesState>,
+    websocket: WebSocketUpgrade,
+) -> impl IntoResponse {
+    websocket.on_upgrade(move |mut socket| async move {
+        while let Some(Ok(message)) = socket.recv().await {
+            let Message::Text(text) = message else {
+                continue;
+            };
+            let request: Value =
+                serde_json::from_str(&text).expect("valid Responses WebSocket request");
+            let events = if request["generate"] == false {
+                vec![
+                    responses::ev_response_created("prewarm"),
+                    responses::ev_completed("prewarm"),
+                ]
+            } else {
+                state
+                    .response_requests
+                    .lock()
+                    .expect("response request lock")
+                    .push(request);
+                state
+                    .streamed_responses
+                    .lock()
+                    .expect("streamed response lock")
+                    .pop_front()
+                    .expect("scripted streamed response")
+            };
+            for event in events {
+                if socket
+                    .send(Message::Text(event.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    })
+}
+
+async fn hybrid_compact_response(
+    State(state): State<HybridResponsesState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Json<Value> {
+    state
+        .compact_requests
+        .lock()
+        .expect("compact request lock")
+        .push((headers, request));
+    Json(serde_json::json!({ "output": state.compact_output.clone() }))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = responses::start_mock_server().await;
     let sse1 = responses::sse(vec![
         responses::ev_assistant_message("m1", "FIRST_REPLY"),
         responses::ev_completed_with_tokens("r1", /*total_tokens*/ 70_000),
@@ -67,10 +146,13 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
         responses::ev_assistant_message("m4", "FINAL_REPLY"),
         responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
     ]);
-    responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
+    let server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
+        sse1, sse2, sse3, sse4,
+    ])
+    .await?;
 
     let codex_home = TempDir::new()?;
-    compaction_config(&server.uri(), AUTO_COMPACT_LIMIT).write(codex_home.path())?;
+    compaction_config(server.uri(), AUTO_COMPACT_LIMIT).write(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -104,21 +186,6 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     skip_if_no_network!(Ok(()));
     const REMOTE_AUTO_COMPACT_LIMIT: i64 = 200_000;
 
-    let server = responses::start_mock_server().await;
-    let sse1 = responses::sse(vec![
-        responses::ev_assistant_message("m1", "FIRST_REPLY"),
-        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 70_000),
-    ]);
-    let sse2 = responses::sse(vec![
-        responses::ev_assistant_message("m2", "SECOND_REPLY"),
-        responses::ev_completed_with_tokens("r2", /*total_tokens*/ 330_000),
-    ]);
-    let sse3 = responses::sse(vec![
-        responses::ev_assistant_message("m3", "FINAL_REPLY"),
-        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 120),
-    ]);
-    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
-
     let compacted_history = vec![
         ResponseItem::Message {
             id: None,
@@ -135,14 +202,42 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
             internal_chat_message_metadata_passthrough: None,
         },
     ];
-    let compact_mock = responses::mount_compact_json_once(
-        &server,
-        serde_json::json!({ "output": compacted_history }),
-    )
-    .await;
+    let state = HybridResponsesState {
+        streamed_responses: Arc::new(Mutex::new(VecDeque::from([
+            vec![
+                responses::ev_assistant_message("m1", "FIRST_REPLY"),
+                responses::ev_completed_with_tokens("r1", /*total_tokens*/ 70_000),
+            ],
+            vec![
+                responses::ev_assistant_message("m2", "SECOND_REPLY"),
+                responses::ev_completed_with_tokens("r2", /*total_tokens*/ 330_000),
+            ],
+            vec![
+                responses::ev_assistant_message("m3", "FINAL_REPLY"),
+                responses::ev_completed_with_tokens("r3", /*total_tokens*/ 120),
+            ],
+        ]))),
+        response_requests: Arc::new(Mutex::new(Vec::new())),
+        compact_requests: Arc::new(Mutex::new(Vec::new())),
+        compact_output: serde_json::to_value(compacted_history)?,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let responses_url = format!("http://{}", listener.local_addr()?);
+    let router = Router::new()
+        .route("/v1/responses", get(hybrid_responses_websocket))
+        .route("/v1/responses/compact", post(hybrid_compact_response))
+        .with_state(state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("serve hybrid Responses fixture");
+    });
 
     let codex_home = TempDir::new()?;
-    compaction_config(&server.uri(), REMOTE_AUTO_COMPACT_LIMIT)
+    MockResponsesConfig::new_websocket(&responses_url)
+        .with_root_config(&format!(
+            "compact_prompt = \"{COMPACT_PROMPT}\"\nmodel_auto_compact_token_limit = {REMOTE_AUTO_COMPACT_LIMIT}"
+        ))
         .disable_feature(Feature::RemoteCompactionV2)
         .with_provider_name("OpenAI")
         .with_provider_config("requires_openai_auth = true")
@@ -178,18 +273,25 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
 
-    let compact_requests = compact_mock.requests();
+    let compact_requests = state
+        .compact_requests
+        .lock()
+        .expect("compact request lock")
+        .clone();
     assert_eq!(compact_requests.len(), 1);
-    assert_eq!(compact_requests[0].path(), "/v1/responses/compact");
 
-    let response_requests = responses_log.requests();
+    let response_requests = state
+        .response_requests
+        .lock()
+        .expect("response request lock")
+        .clone();
     assert_eq!(response_requests.len(), 3);
     let turn_metadata = response_requests
         .iter()
         .map(|request| {
             request
-                .header("x-codex-turn-metadata")
-                .as_deref()
+                .pointer("/client_metadata/x-codex-turn-metadata")
+                .and_then(Value::as_str)
                 .map(parse_json_header)
                 .expect("turn request should include turn metadata")
         })
@@ -204,14 +306,17 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
         );
         assert_eq!(
             metadata["window_id"].as_str(),
-            request.header("x-codex-window-id").as_deref()
+            request
+                .pointer("/client_metadata/x-codex-window-id")
+                .and_then(Value::as_str)
         );
         assert!(metadata.get("compaction").is_none());
     }
 
     let compact_metadata = compact_requests[0]
-        .header("x-codex-turn-metadata")
-        .as_deref()
+        .0
+        .get("x-codex-turn-metadata")
+        .and_then(|value| value.to_str().ok())
         .map(parse_json_header)
         .expect("compact request should include turn metadata");
     assert_eq!(
@@ -234,9 +339,13 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     );
     assert_eq!(
         compact_metadata["window_id"].as_str(),
-        compact_requests[0].header("x-codex-window-id").as_deref()
+        compact_requests[0]
+            .0
+            .get("x-codex-window-id")
+            .and_then(|value| value.to_str().ok())
     );
 
+    server.abort();
     Ok(())
 }
 
@@ -244,26 +353,44 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
 async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = responses::start_mock_server().await;
+    let seed = responses::sse(vec![
+        responses::ev_assistant_message("seed", "FIRST_REPLY"),
+        responses::ev_completed_with_tokens("seed", /*total_tokens*/ 120),
+    ]);
     let mut completed = responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200);
     completed["response"]["usage_metadata"] = serde_json::json!({ "amount": "0.125" });
+    completed["response"]["usage"]["extra"] = serde_json::json!({ "label": "example" });
+    let expected_metadata = completed["response"]["usage"].clone();
     let sse = responses::sse(vec![
         responses::ev_assistant_message("m1", "MANUAL_COMPACT_SUMMARY"),
         completed,
     ]);
-    responses::mount_sse_sequence(&server, vec![sse]).await;
+    let followup = responses::sse(vec![
+        responses::ev_assistant_message("followup", "FINAL_REPLY"),
+        responses::ev_completed_with_tokens("followup", /*total_tokens*/ 120),
+    ]);
+    let server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
+        seed, sse, followup,
+    ])
+    .await?;
 
     let codex_home = TempDir::new()?;
-    compaction_config(&server.uri(), AUTO_COMPACT_LIMIT).write(codex_home.path())?;
+    let initial_cwd = TempDir::new()?;
+    let updated_cwd = TempDir::new()?;
+    compaction_config(server.uri(), /*auto_compact_limit*/ 1_000_000).write(codex_home.path())?;
 
+    // Top-level cwd restoration uses host-native paths, not a foreign executor's paths.
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
+        .without_auto_env()
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
     let thread_req = mcp
-        .send_thread_start_request_with_auto_env(ThreadStartParams {
+        .send_thread_start_request(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            cwd: Some(initial_cwd.path().to_string_lossy().into_owned()),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             experimental_raw_events: true,
             ..Default::default()
         })
@@ -271,6 +398,21 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let ThreadStartResponse { thread, .. } =
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(thread_req)).await??;
     let thread_id = thread.id;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.start_turn_and_wait_for_completion(TurnStartParams {
+            thread_id: thread_id.clone(),
+            cwd: Some(updated_cwd.path().to_path_buf()),
+            input: vec![V2UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        }),
+    )
+    .await??;
+    mcp.clear_message_buffer();
+
     let compact_id = mcp
         .send_thread_compact_start_request(ThreadCompactStartParams {
             thread_id: thread_id.clone(),
@@ -286,6 +428,7 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     )
     .await??;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
+    wait_for_turn_completed(&mut mcp, &started.turn_id).await?;
 
     let ThreadItem::ContextCompaction { id: started_id } = started.item else {
         unreachable!("started item should be context compaction");
@@ -300,11 +443,12 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     assert_eq!(
         raw_completed,
         RawResponseCompletedNotification {
-            thread_id,
+            thread_id: thread_id.clone(),
             turn_id: started.turn_id,
             response_id: "r1".to_string(),
             usage_metadata: Some(ResponseUsageMetadata {
                 amount: Some("0.125".to_string()),
+                metadata: Some(expected_metadata),
             }),
             usage: Some(TokenUsageBreakdown {
                 total_tokens: 200,
@@ -316,6 +460,27 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
             }),
         }
     );
+
+    // A completed turn after compaction permits bounded replay. Neither this turn nor
+    // resume resends settings, so restoring the updated cwd depends on the checkpoint.
+    send_turn_and_wait(&mut mcp, &thread_id, "continue").await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.shutdown_gracefully()).await??;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id,
+            exclude_turns: true,
+            ..Default::default()
+        })
+        .await?;
+    let ThreadResumeResponse { cwd, .. } =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
+    assert_eq!(cwd.as_path(), updated_cwd.path());
 
     Ok(())
 }
@@ -459,9 +624,13 @@ fn parse_json_header(value: &str) -> serde_json::Value {
 }
 
 fn compaction_config(server_uri: &str, auto_compact_limit: i64) -> MockResponsesConfig {
-    MockResponsesConfig::new(server_uri)
+    let config = if server_uri.starts_with("ws") {
+        MockResponsesConfig::new_websocket(server_uri)
+    } else {
+        MockResponsesConfig::new(server_uri).with_provider_config("supports_websockets = false")
+    };
+    config
         .with_root_config(&format!(
             "compact_prompt = \"{COMPACT_PROMPT}\"\nmodel_auto_compact_token_limit = {auto_compact_limit}"
         ))
-        .with_provider_config("supports_websockets = false")
 }

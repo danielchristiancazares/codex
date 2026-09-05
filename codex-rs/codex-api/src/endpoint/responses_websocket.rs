@@ -184,6 +184,7 @@ struct ResponsesWebsocketTimingLogContext {
 
 pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
+    auth: SharedAuthProvider,
     endpoint: ResponsesEndpoint,
     // TODO (pakrym): is this the right place for timeout?
     idle_timeout: Duration,
@@ -208,6 +209,7 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
 impl ResponsesWebsocketConnection {
     fn new(
         stream: WsStream,
+        auth: SharedAuthProvider,
         idle_timeout: Duration,
         server_reasoning_included: bool,
         server_model: Option<String>,
@@ -216,6 +218,7 @@ impl ResponsesWebsocketConnection {
     ) -> Self {
         Self {
             stream: Arc::new(Mutex::new(Some(stream))),
+            auth,
             endpoint,
             idle_timeout,
             server_reasoning_included,
@@ -236,9 +239,10 @@ impl ResponsesWebsocketConnection {
     )]
     pub async fn stream_request(
         &self,
-        request: ResponsesWsRequest<'_>,
+        mut request: ResponsesWsRequest<'_>,
         connection_reused: bool,
         turn_state: Option<Arc<OnceLock<String>>>,
+        guardian_ticket: Option<&codex_protocol::guardian_ticket::GuardianTicket>,
     ) -> Result<ResponseStream, ApiError> {
         let (tx_event, rx_event) =
             mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(1600);
@@ -247,6 +251,7 @@ impl ResponsesWebsocketConnection {
         let server_reasoning_included = self.server_reasoning_included;
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
+        let auth = Arc::clone(&self.auth);
         let ResponsesWsRequest::ResponseCreate(ws_request) = &request;
         let client_metadata = ws_request.client_metadata.as_ref();
         let timing_log_context = ResponsesWebsocketTimingLogContext {
@@ -272,7 +277,13 @@ impl ResponsesWebsocketConnection {
             warmup: ws_request.generate == Some(false),
             connection_reused,
         };
-        let request_text = serialize_websocket_request(&request)?;
+        let ResponsesWsRequest::ResponseCreate(ws_request) = &mut request;
+        crate::guardian_ticket::attach(
+            &mut ws_request.client_metadata,
+            guardian_ticket,
+            self.endpoint,
+        );
+        let request_text = prepare_websocket_request(&auth, &request)?;
 
         let current_span = Span::current();
         tokio::spawn(
@@ -325,6 +336,7 @@ impl ResponsesWebsocketConnection {
                 };
 
                 if let Err(err) = result {
+                    reject_responses_websocket_auth(&auth, &err);
                     // A terminal stream error should reach the caller immediately. Waiting for a
                     // graceful close handshake here can stall indefinitely and mask the error.
                     let failed_stream = guard.take();
@@ -413,10 +425,15 @@ impl ResponsesWebsocketClient {
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
         self.auth.add_auth_headers(&mut headers);
 
-        let (stream, _status, server_reasoning_included, server_model) =
-            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await?;
+        let result =
+            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await;
+        if let Err(error) = &result {
+            reject_responses_websocket_auth(&self.auth, error);
+        }
+        let (stream, _status, server_reasoning_included, server_model) = result?;
         Ok(ResponsesWebsocketConnection::new(
             stream,
+            Arc::clone(&self.auth),
             self.provider.stream_idle_timeout,
             server_reasoning_included,
             server_model,
@@ -972,9 +989,34 @@ fn serialize_websocket_request(request: &ResponsesWsRequest<'_>) -> Result<Strin
         .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))
 }
 
+fn prepare_websocket_request(
+    auth: &SharedAuthProvider,
+    request: &ResponsesWsRequest<'_>,
+) -> Result<String, ApiError> {
+    let request = serialize_websocket_request(request)?;
+    auth.prepare_responses_websocket_request(request)
+        .map_err(TransportError::from)
+        .map_err(ApiError::from)
+}
+
+fn is_responses_websocket_auth_rejection(error: &ApiError) -> bool {
+    matches!(
+        error,
+        ApiError::Transport(TransportError::Http { status, .. })
+            if matches!(*status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+    )
+}
+
+fn reject_responses_websocket_auth(auth: &SharedAuthProvider, error: &ApiError) {
+    if is_responses_websocket_auth_rejection(error) {
+        auth.on_responses_websocket_auth_rejected();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::AuthProvider;
     use crate::common::ResponseCreateWsRequest;
     use crate::common::ResponsesApiRequest;
     use codex_protocol::ResponseItemId;
@@ -987,6 +1029,37 @@ mod tests {
     use serde_json::value::to_raw_value;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    struct PreparingAuth;
+
+    impl AuthProvider for PreparingAuth {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+
+        fn prepare_responses_websocket_request(
+            &self,
+            request: String,
+        ) -> Result<String, crate::auth::AuthError> {
+            let mut request: Value = serde_json::from_str(&request)
+                .map_err(|err| crate::auth::AuthError::Build(err.to_string()))?;
+            request["prepared"] = json!(true);
+            serde_json::to_string(&request)
+                .map_err(|err| crate::auth::AuthError::Build(err.to_string()))
+        }
+    }
+
+    struct RejectionTrackingAuth {
+        rejections: Arc<AtomicUsize>,
+    }
+
+    impl AuthProvider for RejectionTrackingAuth {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+
+        fn on_responses_websocket_auth_rejected(&self) {
+            self.rejections.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     #[test]
     fn direct_serialization_preserves_websocket_request_payload() {
@@ -1049,6 +1122,61 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, expected_payload);
+    }
+
+    #[test]
+    fn provider_auth_prepares_the_serialized_websocket_request() {
+        let api_request = ResponsesApiRequest {
+            model: "gpt-test".to_string(),
+            instructions: String::new(),
+            input: Vec::new(),
+            tools: None,
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: false,
+            reasoning: None,
+            store: false,
+            stream: true,
+            stream_options: None,
+            include: Vec::new(),
+            service_tier: ServiceTier::Default,
+            prompt_cache_key: None,
+            text: None,
+            access_programs: None,
+            client_metadata: None,
+        };
+        let request =
+            ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest::from(&api_request));
+        let auth: SharedAuthProvider = Arc::new(PreparingAuth);
+
+        let request = prepare_websocket_request(&auth, &request).expect("prepare request");
+        let request: Value = serde_json::from_str(&request).expect("decode prepared request");
+
+        assert_eq!(request["prepared"], true);
+    }
+
+    #[test]
+    fn provider_auth_observes_only_websocket_auth_rejections() {
+        let rejections = Arc::new(AtomicUsize::new(0));
+        let auth: SharedAuthProvider = Arc::new(RejectionTrackingAuth {
+            rejections: Arc::clone(&rejections),
+        });
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            reject_responses_websocket_auth(
+                &auth,
+                &ApiError::Transport(TransportError::Http {
+                    status,
+                    url: None,
+                    headers: None,
+                    body: None,
+                }),
+            );
+        }
+
+        assert_eq!(rejections.load(Ordering::Relaxed), 2);
     }
 
     #[test]

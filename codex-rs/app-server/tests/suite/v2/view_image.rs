@@ -40,12 +40,46 @@ async fn fresh_context_subagent_inherits_disabled_view_image_and_mcp_tools() -> 
     const SPAWN_CALL_ID: &str = "spawn-client-mcp-worker";
     const MCP_CALL_ID: &str = "call-child-mcp-with-disabled-view-image";
 
-    let responses_server = responses::start_mock_server().await;
     let (mcp_server_url, mcp_server_handle) = start_mcp_server(/*sensitive_action*/ None).await?;
+    let namespace = format!("mcp__{TEST_SERVER_NAME}");
+    let message = "client-managed viewer remains available";
+    let responses_server =
+        app_test_support::create_mock_responses_websocket_server_connections(vec![
+            vec![
+                responses::sse(vec![
+                    responses::ev_response_created("parent-spawn"),
+                    responses::ev_function_call_with_namespace(
+                        SPAWN_CALL_ID,
+                        "collaboration",
+                        "spawn_agent",
+                        &serde_json::to_string(&json!({
+                            "message": CHILD_PROMPT,
+                            "task_name": "mcp_worker",
+                            "fork_turns": "none",
+                        }))?,
+                    ),
+                    responses::ev_completed("parent-spawn"),
+                ]),
+                create_final_assistant_message_sse_response("worker spawned")?,
+            ],
+            vec![
+                responses::sse(vec![
+                    responses::ev_response_created("child-mcp"),
+                    responses::ev_function_call_with_namespace(
+                        MCP_CALL_ID,
+                        &namespace,
+                        TEST_TOOL_NAME,
+                        &serde_json::to_string(&json!({ "message": message }))?,
+                    ),
+                    responses::ev_completed("child-mcp"),
+                ]),
+                create_final_assistant_message_sse_response("MCP tool completed")?,
+            ],
+        ])
+        .await?;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&responses_server.uri())
+    MockResponsesConfig::new_websocket(responses_server.uri())
         .with_model("gpt-5.4")
-        .with_provider_config("supports_websockets = false")
         .with_extra_config(&format!(
             "[mcp_servers.{TEST_SERVER_NAME}]\nurl = \"{mcp_server_url}/mcp\"\n\n[features.multi_agent_v2]\nenabled = true"
         ))
@@ -67,61 +101,6 @@ async fn fresh_context_subagent_inherits_disabled_view_image_and_mcp_tools() -> 
             ..Default::default()
         })
         .await?;
-
-    let namespace = format!("mcp__{TEST_SERVER_NAME}");
-    let message = "client-managed viewer remains available";
-    responses::mount_sse_once(
-        &responses_server,
-        responses::sse(vec![
-            responses::ev_response_created("parent-spawn"),
-            responses::ev_function_call_with_namespace(
-                SPAWN_CALL_ID,
-                "collaboration",
-                "spawn_agent",
-                &serde_json::to_string(&json!({
-                    "message": CHILD_PROMPT,
-                    "task_name": "mcp_worker",
-                    "fork_turns": "none",
-                }))?,
-            ),
-            responses::ev_completed("parent-spawn"),
-        ]),
-    )
-    .await;
-    let child_requests = responses::mount_sse_once_match(
-        &responses_server,
-        |request: &wiremock::Request| {
-            let body = String::from_utf8_lossy(&request.body);
-            body.contains(CHILD_PROMPT)
-                && !body.contains(SPAWN_CALL_ID)
-                && !body.contains(MCP_CALL_ID)
-        },
-        responses::sse(vec![
-            responses::ev_response_created("child-mcp"),
-            responses::ev_function_call_with_namespace(
-                MCP_CALL_ID,
-                &namespace,
-                TEST_TOOL_NAME,
-                &serde_json::to_string(&json!({ "message": message }))?,
-            ),
-            responses::ev_completed("child-mcp"),
-        ]),
-    )
-    .await;
-    responses::mount_sse_once_match(
-        &responses_server,
-        |request: &wiremock::Request| {
-            String::from_utf8_lossy(&request.body).contains(SPAWN_CALL_ID)
-        },
-        create_final_assistant_message_sse_response("worker spawned")?,
-    )
-    .await;
-    let child_followup = responses::mount_sse_once_match(
-        &responses_server,
-        |request: &wiremock::Request| String::from_utf8_lossy(&request.body).contains(MCP_CALL_ID),
-        create_final_assistant_message_sse_response("MCP tool completed")?,
-    )
-    .await;
 
     let _: TurnStartResponse = mcp
         .request(|request_id| ClientRequest::TurnStart {
@@ -159,10 +138,16 @@ async fn fresh_context_subagent_inherits_disabled_view_image_and_mcp_tools() -> 
         }
     }
 
-    let model_request = child_requests
-        .last_request()
-        .expect("expected fresh-context child model request")
-        .body_json();
+    let model_requests = app_test_support::websocket_model_request_bodies(&responses_server);
+    let model_request = model_requests
+        .iter()
+        .find(|request| {
+            let body = request.to_string();
+            body.contains(CHILD_PROMPT)
+                && !body.contains(SPAWN_CALL_ID)
+                && !body.contains(MCP_CALL_ID)
+        })
+        .expect("expected fresh-context child model request");
     let visible_tools = model_request["tools"]
         .as_array()
         .expect("expected model-visible tools");
@@ -173,16 +158,22 @@ async fn fresh_context_subagent_inherits_disabled_view_image_and_mcp_tools() -> 
         "the native image viewer must not reach the model"
     );
     assert!(
-        responses::namespace_child_tool(&model_request, &namespace, TEST_TOOL_NAME).is_some()
+        responses::namespace_child_tool(model_request, &namespace, TEST_TOOL_NAME).is_some()
             || visible_tools
                 .iter()
                 .any(|tool| tool["type"] == "tool_search"),
         "the namespaced MCP tool must remain directly visible or searchable"
     );
-    let tool_output = child_followup
-        .last_request()
-        .expect("expected child follow-up model request")
-        .function_call_output(MCP_CALL_ID);
+    let tool_output = model_requests
+        .iter()
+        .find_map(|request| {
+            app_test_support::response_request_input(request)
+                .into_iter()
+                .find(|item| {
+                    item["type"] == "function_call_output" && item["call_id"] == MCP_CALL_ID
+                })
+        })
+        .expect("expected child follow-up model request");
     assert!(
         tool_output.to_string().contains(message),
         "expected the child model to receive the MCP result: {tool_output}"
@@ -196,16 +187,12 @@ async fn fresh_context_subagent_inherits_disabled_view_image_and_mcp_tools() -> 
 /// Guardian reviewer turns respect a disabled viewer while retaining execution tools.
 #[tokio::test]
 async fn guardian_reviewer_inherits_disabled_view_image() -> Result<()> {
-    let responses_server = responses::start_mock_server().await;
-    let guardian_request = responses::mount_sse_once(
-        &responses_server,
+    let responses_server = app_test_support::create_mock_responses_websocket_server_sequence(vec![
         create_final_assistant_message_sse_response("review complete")?,
-    )
-    .await;
+    ])
+    .await?;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&responses_server.uri())
-        .with_provider_config("supports_websockets = false")
-        .write(codex_home.path())?;
+    MockResponsesConfig::new_websocket(responses_server.uri()).write(codex_home.path())?;
 
     let guardian_thread_id = create_fake_parented_rollout_with_source(
         codex_home.path(),
@@ -258,7 +245,8 @@ async fn guardian_reviewer_inherits_disabled_view_image() -> Result<()> {
     )
     .await??;
 
-    let request = guardian_request.single_request().body_json();
+    let requests = app_test_support::websocket_model_request_bodies(&responses_server);
+    let request = requests.first().expect("expected guardian model request");
     let tools = request["tools"].as_array().expect("model-visible tools");
     for tool in ["exec_command", "write_stdin"] {
         assert!(

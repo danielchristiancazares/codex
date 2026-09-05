@@ -23,8 +23,9 @@ use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
 use crate::tools::handlers::RequestPluginInstallHandler;
+use crate::tools::handlers::RequestUserInputAsyncHandler;
 use crate::tools::handlers::RequestUserInputHandler;
-use crate::tools::handlers::SendUserMessageAsyncHandler;
+use crate::tools::handlers::SendMessageToUserAsyncHandler;
 use crate::tools::handlers::SleepHandler;
 use crate::tools::handlers::TestSyncHandler;
 use crate::tools::handlers::ToolSearchHandlerCache;
@@ -75,6 +76,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelMessages;
 use codex_protocol::openai_models::ToolMode;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_tools::ResponsesApiNamespace;
@@ -109,6 +111,7 @@ const IMAGEGEN_TOOL_NAME: &str = "imagegen";
 struct CoreToolPlanContext<'a> {
     turn_context: &'a TurnContext,
     model_info: &'a ModelInfo,
+    model_messages: Option<&'a ModelMessages>,
     environments: &'a TurnEnvironmentSnapshot,
     mcp: &'a codex_mcp::McpBinding,
     tool_suggest_candidates: Option<&'a crate::tools::router::ToolSuggestCandidates>,
@@ -123,6 +126,7 @@ pub(crate) fn build_tool_router(
     session: &Session,
     turn_context: &TurnContext,
     model_info: &ModelInfo,
+    model_messages: Option<&ModelMessages>,
     environments: &TurnEnvironmentSnapshot,
     mcp: &Arc<codex_mcp::McpBinding>,
     apps_enabled: bool,
@@ -138,6 +142,7 @@ pub(crate) fn build_tool_router(
     let context = CoreToolPlanContext {
         turn_context,
         model_info,
+        model_messages,
         environments,
         mcp,
         tool_suggest_candidates,
@@ -290,6 +295,7 @@ pub(crate) fn build_core_tool_registry(
     let context = CoreToolPlanContext {
         turn_context,
         model_info,
+        model_messages: model_info.model_messages.as_ref(),
         environments,
         mcp,
         tool_suggest_candidates,
@@ -1003,6 +1009,10 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
             {
                 registry.add(ExecCommandHandler::new(ExecCommandHandlerOptions {
                     allow_login_shell: any_environment_allows_login_shell(context.environments),
+                    allow_tty: turn_context
+                        .config
+                        .features
+                        .enabled(Feature::UnifiedExecTty),
                     exec_permission_approvals_enabled: false,
                     include_environment_id,
                     include_shell_parameter: unified_exec_should_include_shell_parameter(
@@ -1094,6 +1104,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
     let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
     let options = ExecCommandHandlerOptions {
         allow_login_shell,
+        allow_tty: features.enabled(Feature::UnifiedExecTty),
         exec_permission_approvals_enabled,
         include_environment_id,
         include_shell_parameter: unified_exec_should_include_shell_parameter(
@@ -1170,9 +1181,34 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
             .model_info
             .experimental_supported_tools
             .iter()
-            .any(|tool| tool == "send_user_message_async")
+            // Existing model catalogs still advertise the previous name.
+            .any(|tool| {
+                matches!(
+                    tool.as_str(),
+                    "request_user_input_async" | "send_user_message_async"
+                )
+            })
     {
-        registry.add_with_exposure(SendUserMessageAsyncHandler, ToolExposure::DirectModelOnly);
+        registry.add_with_exposure(
+            RequestUserInputAsyncHandler {
+                description: context
+                    .model_messages
+                    .and_then(|messages| messages.tools.as_ref())
+                    .and_then(|tools| tools.send_user_message_async.as_ref())
+                    .and_then(|tool| tool.description.clone()),
+            },
+            ToolExposure::DirectModelOnly,
+        );
+    }
+
+    if !turn_context.session_source.is_non_root_agent()
+        && context
+            .model_info
+            .experimental_supported_tools
+            .iter()
+            .any(|tool| tool == "send_message_to_user_async")
+    {
+        registry.add_with_exposure(SendMessageToUserAsyncHandler, ToolExposure::DirectModelOnly);
     }
 
     if environment_mode.has_environment() && features.enabled(Feature::RequestPermissionsTool) {

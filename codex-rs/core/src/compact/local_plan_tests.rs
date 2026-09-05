@@ -92,6 +92,7 @@ fn replacement_budget_charges_media_only_and_tiny_message_envelopes() {
             "bounded summary",
             &base_instructions(),
             Some(400),
+            CompactedMessageIdentity::Regenerate,
         )
         .expect("a bounded replacement should fit");
 
@@ -105,7 +106,13 @@ fn replacement_budget_truncates_an_oversized_summary() {
     let summary = "summary ".repeat(2_000);
 
     let replacement = plan
-        .build_replacement(Vec::new(), &summary, &base_instructions(), Some(200))
+        .build_replacement(
+            Vec::new(),
+            &summary,
+            &base_instructions(),
+            Some(200),
+            CompactedMessageIdentity::Regenerate,
+        )
         .expect("the summary should be reduced to fit");
 
     assert!(replacement.summary_text.len() < summary.len());

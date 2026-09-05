@@ -201,6 +201,7 @@ impl WidgetRef for &UpdatePromptScreen {
         let update_detail = match self.update_action {
             UpdateAction::NpmGlobalLatest => "Runs npm to install the latest release.",
             UpdateAction::BunGlobalLatest => "Runs bun to install the latest release.",
+            UpdateAction::VitePlusGlobalLatest => "Runs Vite+ to install the latest release.",
             UpdateAction::PnpmGlobalLatest => "Runs pnpm to install the latest release.",
             UpdateAction::BrewUpgrade => "Runs Homebrew to upgrade Codex.",
             UpdateAction::StandaloneUnix | UpdateAction::StandaloneWindows => {

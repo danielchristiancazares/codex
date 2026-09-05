@@ -233,7 +233,8 @@ fn reasoning_effort_for_request(
                     .map(|preset| preset.effort.clone())
             })
             .unwrap_or(ReasoningEffortConfig::Medium),
-        ReasoningEffortConfig::Persistent => ReasoningEffortConfig::Max,
+        // Keep "persistent" in local settings; the Responses API calls it "disabled".
+        ReasoningEffortConfig::Persistent => ReasoningEffortConfig::Custom("disabled".to_string()),
         effort => effort,
     }
 }
@@ -891,6 +892,7 @@ impl ModelClient {
     }
 
     fn build_reasoning(
+        &self,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
         mode: ReasoningMode,
@@ -995,7 +997,7 @@ impl ModelClient {
             }
         }
         let summary = Self::reasoning_summary_for_request(summary, responses_metadata);
-        let reasoning = Self::build_reasoning(model_info, effort, mode, summary);
+        let reasoning = self.build_reasoning(model_info, effort, mode, summary);
         let stream_options = (self.state.concurrent_reasoning_summaries_enabled
             && is_openai
             && reasoning.summary.is_some())
@@ -1140,6 +1142,31 @@ impl ModelClient {
             && provider.experimental_bearer_token.is_none()
             && provider.auth.is_none()
             && provider.aws.is_none()
+    }
+
+    fn set_guardian_ticket_request(
+        &self,
+        metadata: &mut Option<HashMap<String, String>>,
+        auth: Option<&CodexAuth>,
+        endpoint: ResponsesEndpoint,
+    ) {
+        if let Some(metadata) = metadata.as_mut() {
+            metadata.remove("guardian_ticket_requested");
+        }
+        if self.free_guardian_enabled
+            && endpoint == ResponsesEndpoint::Responses
+            && !crate::guardian::is_basic_session_source(&self.state.session_source)
+            && matches!(
+                auth,
+                Some(CodexAuth::Chatgpt(_) | CodexAuth::ChatgptAuthTokens(_))
+            )
+            && self.uses_codex_backend(auth)
+            && self.state.provider.info().supports_codex_backend_routes()
+        {
+            metadata
+                .get_or_insert_with(HashMap::new)
+                .insert("guardian_ticket_requested".to_owned(), "true".to_owned());
+        }
     }
 
     fn build_routing_hint_header(
@@ -1370,6 +1397,7 @@ impl ModelClientSession {
             },
             compression,
             turn_state: Some(Arc::clone(&self.turn_state)),
+            guardian_ticket: responses_metadata.guardian_ticket.clone(),
         }
     }
 
@@ -1676,6 +1704,11 @@ impl ModelClientSession {
                 service_tier,
                 responses_metadata,
             )?;
+            self.client.set_guardian_ticket_request(
+                &mut request.client_metadata,
+                client_setup.auth.as_ref(),
+                endpoint,
+            );
             if endpoint == ResponsesEndpoint::Guardian {
                 request.service_tier = ServiceTier::Default;
             }
@@ -1921,7 +1954,7 @@ impl ModelClientSession {
             if let Some(turn_state) = self.turn_state.get() {
                 client_metadata.insert(X_CODEX_TURN_STATE_HEADER.to_string(), turn_state.clone());
             }
-            let ws_payload = ResponseCreateWsRequest {
+            let mut ws_payload = ResponseCreateWsRequest {
                 previous_response_id,
                 input: incremental_items.as_deref().unwrap_or(&request.input),
                 generate: if warmup { Some(false) } else { None },
@@ -1931,6 +1964,11 @@ impl ModelClientSession {
                 ),
                 ..ResponseCreateWsRequest::from(&request)
             };
+            self.client.set_guardian_ticket_request(
+                &mut ws_payload.client_metadata,
+                client_setup.auth.as_ref(),
+                endpoint,
+            );
             let mut ws_request = ResponsesWsRequest::ResponseCreate(ws_payload);
             stamp_ws_stream_request_start_ms(&mut ws_request);
             if !previous_response_id_from_untraced_warmup {
@@ -1948,6 +1986,7 @@ impl ModelClientSession {
                     ws_request,
                     self.websocket_session.connection_reused(),
                     Some(Arc::clone(&self.turn_state)),
+                    responses_metadata.guardian_ticket.as_ref(),
                 )
                 .await;
             if let Some(original_item_ids) = original_item_ids {

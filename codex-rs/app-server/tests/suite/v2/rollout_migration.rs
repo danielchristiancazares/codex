@@ -23,25 +23,21 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 #[tokio::test]
 async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context() -> Result<()> {
-    let server = responses::start_mock_server().await;
-    let response_mock = responses::mount_sse_sequence(
-        &server,
-        vec![
-            responses::sse(vec![
-                responses::ev_response_created("resp-1"),
-                responses::ev_assistant_message("msg-1", "legacy assistant message"),
-                responses::ev_completed("resp-1"),
-            ]),
-            responses::sse(vec![
-                responses::ev_response_created("resp-2"),
-                responses::ev_assistant_message("msg-2", "resumed assistant message"),
-                responses::ev_completed("resp-2"),
-            ]),
-        ],
-    )
-    .await;
+    let server = app_test_support::create_mock_responses_websocket_server_connections(vec![
+        vec![responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_assistant_message("msg-1", "legacy assistant message"),
+            responses::ev_completed("resp-1"),
+        ])],
+        vec![responses::sse(vec![
+            responses::ev_response_created("resp-2"),
+            responses::ev_assistant_message("msg-2", "resumed assistant message"),
+            responses::ev_completed("resp-2"),
+        ])],
+    ])
+    .await?;
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+    MockResponsesConfig::new_websocket(server.uri()).write(codex_home.path())?;
 
     let mut primary = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -125,13 +121,13 @@ async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context() 
     )
     .await??;
 
-    let requests = response_mock.requests();
+    let requests = app_test_support::websocket_model_request_bodies(&server);
     assert_eq!(requests.len(), 2);
     let resumed_request = requests.last().expect("resumed turn request");
-    let user_messages = resumed_request.message_input_texts("user");
-    assert!(user_messages.contains(&"legacy user message".to_string()));
-    assert!(user_messages.contains(&"resumed user message".to_string()));
-    assert!(resumed_request.body_contains_text("legacy assistant message"));
+    let resumed_request = resumed_request.to_string();
+    assert!(resumed_request.contains("legacy user message"));
+    assert!(resumed_request.contains("resumed user message"));
+    assert!(resumed_request.contains("legacy assistant message"));
 
     Ok(())
 }

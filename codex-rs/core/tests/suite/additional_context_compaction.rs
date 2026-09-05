@@ -8,7 +8,6 @@ use codex_core::NewThread;
 use codex_core::TurnInputRequest;
 use codex_features::Feature;
 use codex_history::RolloutItem;
-use codex_history::RolloutLine;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind;
@@ -192,7 +191,7 @@ fn assert_compaction_checkpoint_has_additional_context_baseline(test: &TestCodex
     let lines = std::fs::read_to_string(rollout_path)?
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str::<RolloutLine>)
+        .map(codex_rollout::parse_rollout_line)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let compacted_index = lines
         .iter()
@@ -206,6 +205,8 @@ fn assert_compaction_checkpoint_has_additional_context_baseline(test: &TestCodex
             RolloutItem::Compacted(_) => None,
             RolloutItem::SessionMeta(_)
             | RolloutItem::ResponseItem(_)
+            | RolloutItem::TokenUsageRecord(_)
+            | RolloutItem::RetainedContext(_)
             | RolloutItem::InterAgentCommunication(_)
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::TurnContext(_)

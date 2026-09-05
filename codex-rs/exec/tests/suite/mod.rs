@@ -16,3 +16,4 @@ mod sandbox;
 mod seatbelt;
 mod server_error_exit;
 mod turn_completion;
+mod worktree;

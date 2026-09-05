@@ -3,6 +3,7 @@ use std::sync::Weak;
 
 use codex_analytics::AnalyticsEventsClient;
 use codex_core::ThreadManager;
+use codex_core::TurnStartOptions;
 use codex_extension_api::ConfigContributor;
 use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionData;
@@ -26,6 +27,7 @@ use codex_extension_api::TurnErrorInput;
 use codex_extension_api::TurnLifecycleContributor;
 use codex_extension_api::TurnStartInput;
 use codex_extension_api::TurnStopInput;
+use codex_extension_api::UpdatePlanState;
 use codex_extension_api::WorldStateContributionInput;
 use codex_extension_api::WorldStateSectionContribution;
 use codex_otel::MetricsClient;
@@ -45,6 +47,7 @@ use crate::metrics::GoalMetrics;
 use crate::runtime::ActiveGoalStopReason;
 use crate::runtime::GoalRuntimeConfig;
 use crate::runtime::GoalRuntimeHandle;
+use crate::spec::CREATE_GOAL_TOOL_NAME;
 use crate::spec::UPDATE_GOAL_TOOL_NAME;
 use crate::steering::budget_limit_steering_item;
 use crate::steering::goal_context_world_state_section;
@@ -246,7 +249,11 @@ where
                 .await
             {
                 Ok(Some(goal)) if goal.status != codex_state::ThreadGoalStatus::Complete => {
-                    vec![goal_context_world_state_section(&goal)]
+                    let update_plan_enabled = input.turn_store.get::<UpdatePlanState>().map_or(
+                        /*default*/ true,
+                        |state| matches!(*state, UpdatePlanState::Enabled),
+                    );
+                    vec![goal_context_world_state_section(&goal, update_plan_enabled)]
                 }
                 Ok(Some(_)) | Ok(None) => Vec::new(),
                 Err(err) => {
@@ -335,6 +342,7 @@ where
                     )
                     .await
             {
+                input.thread_store.remove::<TurnStartOptions>();
                 let message = format!(
                     "failed to persist goal execution block; automatic continuation stopped: {err}"
                 );
@@ -358,6 +366,7 @@ where
                 )
                 .await
             {
+                input.thread_store.remove::<TurnStartOptions>();
                 let message = format!(
                     "failed to persist goal progress; automatic continuation stopped: {err}"
                 );
@@ -372,7 +381,21 @@ where
                 );
                 return;
             }
-            runtime.accounting_state().finish_turn(turn_id);
+            let accounting = runtime.accounting_state();
+            if accounting
+                .current_active_goal_id_for_turn(turn_id)
+                .is_some()
+                && let Some(options) = input.thread_store.get::<TurnStartOptions>()
+            {
+                input.thread_store.insert_if(
+                    TurnStartOptions {
+                        parent_turn_id: Some(turn_id.to_string()),
+                        ..options.as_ref().clone()
+                    },
+                    |current| current.is_some(),
+                );
+            }
+            accounting.finish_turn(turn_id);
         })
     }
 
@@ -386,6 +409,7 @@ where
             }
 
             let turn_id = input.turn_store.level_id();
+            input.thread_store.remove::<TurnStartOptions>();
             if let Err(err) = runtime
                 .account_active_goal_progress(
                     turn_id,
@@ -486,6 +510,23 @@ where
                 input.tool_name,
                 input.outcome,
             );
+            if input.tool_name.is_default_namespace()
+                && input.tool_name.name == CREATE_GOAL_TOOL_NAME
+                && matches!(input.outcome, ToolCallOutcome::Completed { success: true })
+            {
+                input.thread_store.remove::<TurnStartOptions>();
+                if let Ok(_goal_state_permit) = runtime.goal_state_permit().await
+                    && let Some(thread_manager) = self.thread_manager.upgrade()
+                    && let Ok(thread) = thread_manager.get_thread(runtime.thread_id()).await
+                    && let Some(root_turn_id) = thread.active_turn_root(input.turn_id).await
+                {
+                    input.thread_store.insert(TurnStartOptions {
+                        root_turn_id: Some(root_turn_id),
+                        parent_turn_id: Some(input.turn_id.to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
             let should_count_for_goal_progress =
                 tool_attempt_counts_for_goal_progress(input.outcome)
                     && !(input.tool_name.is_default_namespace()

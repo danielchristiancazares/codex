@@ -240,6 +240,8 @@ pub(crate) struct SelectionViewParams {
     /// Rendered left-column width to use for auto-sized rows.
     pub name_column_width: Option<usize>,
     pub header: Box<dyn Renderable>,
+    /// Blank rows after the header; defaults to one. Inline banners use zero.
+    pub header_gap: u16,
     pub initial_selected_idx: Option<usize>,
 
     /// Rich content rendered beside (wide terminals) or below (narrow terminals)
@@ -292,6 +294,7 @@ impl Default for SelectionViewParams {
             description_layout: SelectionDescriptionLayout::Columns,
             name_column_width: None,
             header: Box::new(()),
+            header_gap: 1,
             initial_selected_idx: None,
             side_content: Box::new(()),
             side_content_width: SideContentWidth::default(),
@@ -320,7 +323,7 @@ pub(crate) struct ListSelectionView {
     active_tab_idx: Option<usize>,
     state: ScrollState,
     completion: Option<ViewCompletion>,
-    dismiss_after_child_accept: bool,
+    pub(super) dismiss_after_child_accept: bool,
     app_event_tx: AppEventSender,
     is_searchable: bool,
     search_query: String,
@@ -332,7 +335,9 @@ pub(crate) struct ListSelectionView {
     name_column_width: Option<usize>,
     filtered_indices: Vec<usize>,
     last_selected_actual_idx: Option<usize>,
+    rendered_item_count: std::cell::Cell<usize>,
     header: Box<dyn Renderable>,
+    header_gap: u16,
     initial_selected_idx: Option<usize>,
     side_content: Box<dyn Renderable>,
     side_content_width: SideContentWidth,
@@ -472,7 +477,9 @@ impl ListSelectionView {
             name_column_width: params.name_column_width,
             filtered_indices: Vec::new(),
             last_selected_actual_idx: None,
+            rendered_item_count: std::cell::Cell::new(0),
             header,
+            header_gap: params.header_gap,
             initial_selected_idx: params.initial_selected_idx,
             side_content: params.side_content,
             side_content_width: params.side_content_width,
@@ -1392,7 +1399,7 @@ impl Renderable for ListSelectionView {
         let tab_height = tab_bar_height(&self.tabs, self.active_tab_idx.unwrap_or(0), inner_width);
         let mut height = header.desired_height(inner_width);
         height = height.saturating_add(tab_height + u16::from(tab_height > 0));
-        height = height.saturating_add(rows_height + 3);
+        height = height.saturating_add(rows_height + 2 + self.header_gap);
         if self.is_searchable {
             height = height.saturating_add(1);
         }
@@ -1422,6 +1429,7 @@ impl Renderable for ListSelectionView {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.rendered_item_count.set(0);
         if area.height == 0 || area.width == 0 {
             return;
         }
@@ -1487,7 +1495,7 @@ impl Renderable for ListSelectionView {
         };
         let stacked_gap = if stacked_side_h > 0 { 1 } else { 0 };
         let required_content_height = header_height
-            .saturating_add(1)
+            .saturating_add(self.header_gap)
             .saturating_add(tab_height)
             .saturating_add(u16::from(tab_height > 0))
             .saturating_add(u16::from(self.is_searchable))
@@ -1516,7 +1524,7 @@ impl Renderable for ListSelectionView {
             stacked_side_area,
         ] = Layout::vertical([
             Constraint::Max(header_height),
-            Constraint::Length(1),
+            Constraint::Max(self.header_gap),
             Constraint::Length(tab_height),
             Constraint::Length(u16::from(tab_height > 0)),
             Constraint::Length(if self.is_searchable { 1 } else { 0 }),
@@ -1572,7 +1580,7 @@ impl Renderable for ListSelectionView {
                 width: effective_rows_width.max(1),
                 height: list_area.height,
             };
-            match self.row_display {
+            let rendered_rows = match self.row_display {
                 SelectionRowDisplay::Wrapped => render_rows_with_col_width_mode(
                     render_area,
                     buf,
@@ -1600,6 +1608,7 @@ impl Renderable for ListSelectionView {
                     column_width,
                 ),
             };
+            self.rendered_item_count.set(rendered_rows.items);
         }
 
         // -- Side content (preview panel) --
@@ -1689,6 +1698,12 @@ impl Renderable for ListSelectionView {
                 hint.clone().dim().render(hint_area, buf);
             }
         }
+    }
+}
+
+impl ListSelectionView {
+    pub(crate) fn rendered_item_count(&self) -> usize {
+        self.rendered_item_count.get()
     }
 }
 

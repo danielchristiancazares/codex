@@ -12,6 +12,7 @@ fn snapshot(
     RateLimitSnapshot {
         limit_id: Some("codex".to_string()),
         limit_name: None,
+        normal_model_slug: None,
         primary: None,
         secondary: None,
         credits: None,

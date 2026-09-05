@@ -505,6 +505,7 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         upgrade: None,
         model_messages: Some(ModelMessages {
             persistent_instructions: None,
+            tools: None,
             instructions_template: Some("base instructions".to_string()),
             instructions_variables: None,
             approvals: None,
@@ -538,6 +539,7 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         used_fallback_model_metadata: false,
         supports_search_tool: false,
         use_responses_lite: false,
+        guardian: None,
         node_repl_auto_review_required: false,
         node_repl_disabled: false,
         auto_review_model_override: None,

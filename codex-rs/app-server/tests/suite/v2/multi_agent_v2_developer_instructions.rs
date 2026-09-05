@@ -297,9 +297,7 @@ async fn compacted_full_history_fork_replaces_parent_developer_instructions() ->
     const SETUP_CALL_ID: &str = "trigger-parent-compaction";
     const SPAWN_CALL_ID: &str = "spawn-compacted-history-worker";
 
-    let server = responses::start_mock_server().await;
-    let compaction_requests = responses::mount_sse_sequence(
-        &server,
+    let server = app_test_support::create_mock_responses_websocket_server_connections(vec![
         vec![
             responses::sse(vec![
                 responses::ev_response_created("parent-before-compaction"),
@@ -322,55 +320,35 @@ async fn compacted_full_history_fork_replaces_parent_developer_instructions() ->
                     /*total_tokens*/ 10,
                 ),
             ]),
+            responses::sse(vec![
+                responses::ev_response_created("parent-spawn-after-compaction"),
+                responses::ev_function_call_with_namespace(
+                    SPAWN_CALL_ID,
+                    NAMESPACE,
+                    "spawn_agent",
+                    &serde_json::to_string(&json!({
+                        "message": CHILD_PROMPT,
+                        "task_name": "compacted_worker",
+                    }))?,
+                ),
+                responses::ev_completed("parent-spawn-after-compaction"),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("compacted-parent-complete"),
+                responses::ev_assistant_message("compacted-parent-message", "parent complete"),
+                responses::ev_completed("compacted-parent-complete"),
+            ]),
         ],
-    )
-    .await;
-    let parent_request = responses::mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| String::from_utf8_lossy(&request.body).contains(SPAWN_PROMPT),
-        responses::sse(vec![
-            responses::ev_response_created("parent-spawn-after-compaction"),
-            responses::ev_function_call_with_namespace(
-                SPAWN_CALL_ID,
-                NAMESPACE,
-                "spawn_agent",
-                &serde_json::to_string(&json!({
-                    "message": CHILD_PROMPT,
-                    "task_name": "compacted_worker",
-                }))?,
-            ),
-            responses::ev_completed("parent-spawn-after-compaction"),
-        ]),
-    )
-    .await;
-    let child_request = responses::mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| {
-            let body = String::from_utf8_lossy(&request.body);
-            body.contains(CHILD_PROMPT) && !body.contains(SPAWN_CALL_ID)
-        },
-        responses::sse(vec![
+        vec![responses::sse(vec![
             responses::ev_response_created("compacted-child-work"),
             responses::ev_assistant_message("compacted-child-message", "child complete"),
             responses::ev_completed("compacted-child-work"),
-        ]),
-    )
-    .await;
-    responses::mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| {
-            String::from_utf8_lossy(&request.body).contains(SPAWN_CALL_ID)
-        },
-        responses::sse(vec![
-            responses::ev_response_created("compacted-parent-complete"),
-            responses::ev_assistant_message("compacted-parent-message", "parent complete"),
-            responses::ev_completed("compacted-parent-complete"),
-        ]),
-    )
-    .await;
+        ])],
+    ])
+    .await?;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri())
+    MockResponsesConfig::new_websocket(server.uri())
         .with_model("gpt-5.4")
         .with_root_config(&format!(
             "developer_instructions = {PARENT_INSTRUCTIONS:?}\nmodel_context_window = 100\nmodel_auto_compact_token_limit = 90\ncompact_prompt = {COMPACT_PROMPT:?}"
@@ -404,17 +382,20 @@ async fn compacted_full_history_fork_replaces_parent_developer_instructions() ->
     )
     .await??;
 
-    let compaction_requests = compaction_requests.requests();
+    let requests = app_test_support::websocket_model_request_bodies(&server);
+    let compaction_requests = &requests[..3];
     assert_eq!(compaction_requests.len(), 3);
     assert!(
-        compaction_requests[1].body_contains_text(COMPACT_PROMPT),
+        compaction_requests[1].to_string().contains(COMPACT_PROMPT),
         "the setup turn should perform actual mid-turn compaction"
     );
     assert!(
-        compaction_requests[2]
-            .message_input_texts("developer")
-            .iter()
-            .any(|text| text == PARENT_INSTRUCTIONS),
+        app_test_support::response_request_message_input_texts(
+            &compaction_requests[2],
+            "developer",
+        )
+        .iter()
+        .any(|text| text == PARENT_INSTRUCTIONS),
         "mid-turn compaction should retain parent instructions in its replacement history"
     );
 
@@ -433,10 +414,13 @@ async fn compacted_full_history_fork_replaces_parent_developer_instructions() ->
         .await?;
     let child_request = timeout(READ_TIMEOUT, async {
         loop {
-            if let Some(request) = child_request
-                .requests()
+            if let Some(request) = app_test_support::websocket_model_request_bodies(&server)
                 .into_iter()
-                .find(|request| !request.inputs_of_type("agent_message").is_empty())
+                .find(|request| {
+                    app_test_support::response_request_input(request)
+                        .iter()
+                        .any(|item| item["type"] == "agent_message")
+                })
             {
                 break request;
             }
@@ -445,19 +429,25 @@ async fn compacted_full_history_fork_replaces_parent_developer_instructions() ->
     })
     .await?;
 
+    let requests = app_test_support::websocket_model_request_bodies(&server);
     assert!(
-        parent_request
-            .single_request()
-            .message_input_texts("developer")
-            .iter()
-            .any(|text| text == PARENT_INSTRUCTIONS),
+        app_test_support::response_request_message_input_texts(
+            requests
+                .iter()
+                .find(|request| request.to_string().contains(SPAWN_PROMPT))
+                .expect("parent spawn request"),
+            "developer",
+        )
+        .iter()
+        .any(|text| text == PARENT_INSTRUCTIONS),
         "the parent should retain its own developer instructions after compaction"
     );
     assert!(
-        child_request.body_contains_text(COMPACTED_SUMMARY),
+        child_request.to_string().contains(COMPACTED_SUMMARY),
         "the full-history child should inherit the compacted parent summary"
     );
-    let child_developer_texts = child_request.message_input_texts("developer");
+    let child_developer_texts =
+        app_test_support::response_request_message_input_texts(&child_request, "developer");
     assert_eq!(
         child_developer_texts
             .iter()

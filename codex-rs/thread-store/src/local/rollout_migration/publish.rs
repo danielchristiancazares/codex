@@ -169,8 +169,7 @@ pub(super) async fn rewrite_subagent_history_boundary(
         .read_until(b'\n', &mut head_bytes)
         .await
         .map_err(migration_error)?;
-    let mut head =
-        codex_rollout::decode_rollout_line_slice(&head_bytes).map_err(migration_error)?;
+    let mut head = codex_rollout::parse_rollout_line_bytes(&head_bytes).map_err(migration_error)?;
     let RolloutItem::SessionMeta(session_meta) = &mut head.item else {
         return Err(migration_error(
             "staged rollout head is not session metadata",

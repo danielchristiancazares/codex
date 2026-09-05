@@ -1,0 +1,11 @@
+---
+source: tui/src/app/tests/active_reconnect_tests.rs
+assertion_line: 297
+expression: "render_bottom_popup(&app.chat_widget, 80)"
+---
+• 1 queued · ⌥ + ↑ edit latest queued
+  + Queued: old queued input
+────────────────────────────────────────────────────────────────────────────────
+│› kept draft
+────────────────────────────────────────────────────────────────────────────────
+  GPT Test Default                                 Plan mode (Shift+Tab cycle)

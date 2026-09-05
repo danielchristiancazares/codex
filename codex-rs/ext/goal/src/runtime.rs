@@ -135,6 +135,16 @@ impl GoalRuntimeHandle {
         self.inner.root_accounting_state.clone()
     }
 
+    pub(crate) async fn clear_pending_turn_start_options(&self) {
+        let Some(thread_manager) = self.inner.thread_manager.upgrade() else {
+            return;
+        };
+        let Ok(thread) = thread_manager.get_thread(self.inner.thread_id).await else {
+            return;
+        };
+        thread.thread_extension_data().remove::<TurnStartOptions>();
+    }
+
     pub(crate) async fn goal_state_permit(&self) -> Result<SemaphorePermit<'_>, String> {
         self.inner
             .goal_state_lock
@@ -290,6 +300,7 @@ impl GoalRuntimeHandle {
                 codex_state::ThreadGoalStatus::Blocked,
             ),
         };
+        let expected_goal_id = accounting_goal_id;
         self.account_active_goal_progress(
             turn_id,
             &format!("{turn_id}:{event_name}-progress"),
@@ -309,9 +320,7 @@ impl GoalRuntimeHandle {
             self.inner.accounting_state.clear_active_goal();
             return Ok(());
         };
-        if let ActiveGoalStopReason::ExecutionUnavailable { expected_goal_id } = &reason
-            && active_goal.goal_id != *expected_goal_id
-        {
+        if active_goal.goal_id != expected_goal_id {
             return Ok(());
         }
         let can_stop = active_goal.status == codex_state::ThreadGoalStatus::Active
@@ -332,7 +341,7 @@ impl GoalRuntimeHandle {
                     objective: None,
                     status: Some(status),
                     token_budget: None,
-                    expected_goal_id: Some(active_goal.goal_id),
+                    expected_goal_id: Some(expected_goal_id),
                 },
             )
             .await
@@ -431,13 +440,21 @@ impl GoalRuntimeHandle {
             self.inner.accounting_state.clear_active_goal();
             return Ok(());
         }
-        let item = continuation_delta_steering_item(&protocol_goal_from_state(goal));
+        let start_options = thread
+            .thread_extension_data()
+            .get::<TurnStartOptions>()
+            .map(|options| options.as_ref().clone())
+            .unwrap_or_default();
+        let item = continuation_delta_steering_item(
+            &protocol_goal_from_state(goal),
+            thread.config().await.update_plan_enabled,
+        );
 
         match thread
             .start_turn_if_idle(
                 TurnInputRequest::new(TurnInput::ResponseItem(item)).on_start(TurnStartOptions {
                     turn_trigger: Some("goal".to_string()),
-                    ..Default::default()
+                    ..start_options
                 }),
             )
             .await

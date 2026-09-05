@@ -1,4 +1,5 @@
 use super::COMPACT_USER_MESSAGE_MAX_TOKENS;
+use super::CompactedMessageIdentity;
 use super::build_compacted_history_with_limit;
 use super::canonical_compaction_summary_text;
 use super::collect_annotated_user_messages;
@@ -19,8 +20,6 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RawResponseCompletedEvent;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
@@ -47,6 +46,7 @@ pub(super) struct LocalCompactionReduction {
 
 pub(super) struct LocalCompactionOutput {
     pub(super) items: Vec<ResponseItem>,
+    pub(super) response_id: String,
 }
 
 pub(super) struct LocalCompactionReplacement {
@@ -149,14 +149,17 @@ impl LocalCompactionPlan {
         summary_text: &str,
         base_instructions: &BaseInstructions,
         context_window: Option<i64>,
+        identity: CompactedMessageIdentity,
     ) -> Option<LocalCompactionReplacement> {
         let retained_source_len = self
             .history
             .annotated_items()
             .len()
             .saturating_sub(self.compaction_input_items);
-        let user_messages =
-            collect_annotated_user_messages(&self.history.annotated_items()[..retained_source_len]);
+        let user_messages = collect_annotated_user_messages(
+            &self.history.annotated_items()[..retained_source_len],
+            identity,
+        );
         let Some(context_window) = context_window else {
             return Some(LocalCompactionReplacement {
                 items: replacement_candidate(
@@ -309,18 +312,16 @@ pub(super) async fn drain_to_completed(
                 usage_metadata,
                 ..
             }) => {
-                sess.send_event(
+                sess.record_observed_response_completed(
                     turn_context,
-                    EventMsg::RawResponseCompleted(RawResponseCompletedEvent {
-                        response_id,
-                        token_usage: token_usage.clone(),
-                        usage_metadata,
-                    }),
+                    &response_id,
+                    token_usage.as_ref(),
+                    usage_metadata.as_ref(),
                 )
                 .await;
                 sess.update_token_usage_info(turn_context, token_usage.as_ref())
                     .await?;
-                return Ok(LocalCompactionOutput { items });
+                return Ok(LocalCompactionOutput { items, response_id });
             }
             Ok(_) => continue,
             Err(error) => return Err(error),

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use super::SessionTask;
 use super::SessionTaskResult;
 use super::emit_compact_metric;
-use crate::context_manager::is_user_turn_boundary;
 use crate::session::TurnInput;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -33,17 +32,18 @@ impl SessionTask for CompactTask {
         _input: Vec<TurnInput>,
         _cancellation_token: CancellationToken,
     ) -> SessionTaskResult {
-        let history = session.clone_history().await;
-        if !history.raw_items().any(is_user_turn_boundary) {
-            return Ok(None);
-        }
-
-        let _profile_guard = ctx.turn_timing_state.begin_compaction();
         if ctx.config.features.enabled(Feature::TokenBudget) {
+            let _profile_guard = ctx.turn_timing_state.begin_compaction();
             crate::compact_token_budget::run_manual_compact_task(session, ctx).await?;
             return Ok(None);
         }
 
+        let history = session.clone_history().await;
+        if history.history_version() == 0 {
+            return Ok(None);
+        }
+
+        let _profile_guard = ctx.turn_timing_state.begin_compaction();
         let result = match ctx.provider.capabilities().remote_compaction {
             RemoteCompactionSupport::V2
                 if ctx.config.features.enabled(Feature::RemoteCompactionV2) =>

@@ -10,7 +10,6 @@ use codex_protocol::protocol::HistoryPosition;
 use codex_protocol::protocol::ThreadHistoryMode;
 
 use crate::RolloutItem;
-use crate::decode_rollout_line_slice;
 use crate::reverse_jsonl_scanner::ReverseJsonlScanner;
 use crate::reverse_jsonl_scanner::ScanOutcome;
 
@@ -69,7 +68,7 @@ pub(crate) fn ordinal_state_for_rollout(
     let mut scanner = ReverseJsonlScanner::new(file)?;
     let mut is_final_record = true;
     let record = loop {
-        match scanner.scan_next_with(decode_rollout_line_slice)? {
+        match scanner.scan_next_rollout_line()? {
             Some(ScanOutcome::Parsed(record)) => break record,
             Some(ScanOutcome::Rejected(_)) if is_final_record && final_record_may_be_partial => {
                 is_final_record = false;
@@ -124,7 +123,7 @@ fn read_history_metadata(
         if line.trim().is_empty() {
             continue;
         }
-        let record = decode_rollout_line_slice(line.as_bytes()).map_err(|error| {
+        let record = crate::parse_rollout_line(line.as_str()).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(

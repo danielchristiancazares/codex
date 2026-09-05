@@ -1,7 +1,0 @@
----
-source: tui/src/bottom_pane/feedback_view.rs
-expression: "render_buffer(area, &buf)"
----
-▌ Tell us more (bug)
-▌
-▌ ten

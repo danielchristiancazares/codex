@@ -82,6 +82,11 @@ fn sandbox_cwd() -> PathBuf {
         .to_path_buf()
 }
 
+fn sandbox_workspace() -> TempDir {
+    // Keep ACL fixtures bounded instead of making test duration depend on the repository size.
+    TempDir::new_in(sandbox_cwd()).expect("create isolated sandbox workspace")
+}
+
 fn sandbox_home(name: &str) -> TempDir {
     let id = TEST_HOME_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!("codex-windows-sandbox-{name}-{id}"));
@@ -268,7 +273,8 @@ fn legacy_non_tty_cmd_emits_output() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        let cwd = sandbox_cwd();
+        let workspace = sandbox_workspace();
+        let cwd = workspace.path().to_path_buf();
         let codex_home = sandbox_home("legacy-non-tty-cmd");
         println!("cmd codex_home={}", codex_home.path().display());
         let permission_profile = PermissionProfile::workspace_write();
@@ -395,7 +401,8 @@ fn legacy_non_tty_powershell_interrupt_terminates_process() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        let cwd = sandbox_cwd();
+        let workspace = sandbox_workspace();
+        let cwd = workspace.path().to_path_buf();
         let codex_home = sandbox_home("legacy-non-tty-pwsh");
         println!("pwsh codex_home={}", codex_home.path().display());
         let permission_profile = PermissionProfile::workspace_write();
@@ -612,7 +619,8 @@ fn legacy_capture_emits_output_and_preserves_descendant_after_normal_exit() {
         return;
     };
     let _guard = legacy_process_test_guard();
-    let cwd = sandbox_cwd();
+    let workspace = sandbox_workspace();
+    let cwd = workspace.path().to_path_buf();
     let codex_home = sandbox_home("legacy-capture-pwsh");
     println!("capture pwsh codex_home={}", codex_home.path().display());
     let ready_marker = codex_home.path().join("descendant-started");
@@ -794,7 +802,8 @@ fn legacy_capture_cancellation_terminates_descendants_without_timeout() {
         return;
     };
     let _guard = legacy_process_test_guard();
-    let cwd = sandbox_cwd();
+    let workspace = sandbox_workspace();
+    let cwd = workspace.path().to_path_buf();
     let codex_home = sandbox_home("legacy-capture-cancel");
     let descendant_marker = codex_home.path().join("descendant-survived");
     let ready_marker = codex_home.path().join("descendant-started");
@@ -880,7 +889,8 @@ async fn assert_legacy_tty_descendant_lifecycle(
     pwsh: &Path,
     lifecycle: LegacyTtyDescendantLifecycle,
 ) {
-    let cwd = sandbox_cwd();
+    let workspace = sandbox_workspace();
+    let cwd = workspace.path().to_path_buf();
     let codex_home = sandbox_home(match lifecycle {
         LegacyTtyDescendantLifecycle::Terminate => "legacy-tty-descendant-terminate",
         LegacyTtyDescendantLifecycle::Preserve => "legacy-tty-descendant-preserve",
@@ -988,7 +998,8 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        let cwd = sandbox_cwd();
+        let workspace = sandbox_workspace();
+        let cwd = workspace.path().to_path_buf();
         let codex_home = sandbox_home("legacy-tty-pwsh");
         println!("tty pwsh codex_home={}", codex_home.path().display());
         let permission_profile = PermissionProfile::workspace_write();

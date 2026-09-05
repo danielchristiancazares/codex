@@ -1,6 +1,7 @@
 use codex_core::context::ContextualUserFragment;
 use codex_core::context::InternalContextSource;
 use codex_core::context::InternalModelContextFragment;
+use codex_core::context::without_update_plan_instructions;
 use codex_extension_api::PreviousWorldStateSection;
 use codex_extension_api::RenderedWorldStateFragment;
 use codex_extension_api::WorldStateSectionContribution;
@@ -22,9 +23,23 @@ static GOAL_CONTEXT_REVISION_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new
     )
 });
 
+static GOAL_CONTEXT_REVISION_PROMPT_WITHOUT_UPDATE_PLAN: LazyLock<Template> = LazyLock::new(|| {
+    parse_embedded_template(
+        &without_update_plan_instructions(include_str!("../templates/goals/continuation.md")),
+        "goals/continuation.md",
+    )
+});
+
 static CONTINUATION_DELTA_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
     parse_embedded_template(
         include_str!("../templates/goals/continuation_delta.md"),
+        "goals/continuation_delta.md",
+    )
+});
+
+static CONTINUATION_DELTA_PROMPT_WITHOUT_UPDATE_PLAN: LazyLock<Template> = LazyLock::new(|| {
+    parse_embedded_template(
+        &without_update_plan_instructions(include_str!("../templates/goals/continuation_delta.md")),
         "goals/continuation_delta.md",
     )
 });
@@ -43,7 +58,7 @@ static OBJECTIVE_UPDATED_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| 
     )
 });
 
-fn parse_embedded_template(source: &'static str, template_name: &str) -> Template {
+fn parse_embedded_template(source: &str, template_name: &str) -> Template {
     match Template::parse(source) {
         Ok(template) => template,
         Err(err) => panic!("embedded template {template_name} is invalid: {err}"),
@@ -58,12 +73,19 @@ pub(crate) fn objective_updated_steering_item(goal: &ThreadGoal) -> ResponseItem
     goal_context_input_item("goal", objective_updated_prompt(goal))
 }
 
-pub(crate) fn continuation_delta_steering_item(goal: &ThreadGoal) -> ResponseItem {
-    goal_context_input_item("goal_continuation", continuation_delta_prompt(goal))
+pub(crate) fn continuation_delta_steering_item(
+    goal: &ThreadGoal,
+    update_plan_enabled: bool,
+) -> ResponseItem {
+    goal_context_input_item(
+        "goal_continuation",
+        continuation_delta_prompt(goal, update_plan_enabled),
+    )
 }
 
 pub(crate) fn goal_context_world_state_section(
     goal: &codex_state::ThreadGoal,
+    update_plan_enabled: bool,
 ) -> WorldStateSectionContribution {
     let goal_id = goal.goal_id.clone();
     let objective = goal.objective.clone();
@@ -71,10 +93,12 @@ pub(crate) fn goal_context_world_state_section(
     let rendered_objective = escape_xml_text(&objective);
     let retained_goal_revision = format!("<goal_revision>{rendered_goal_id}</goal_revision>");
     let retained_objective = format!("<objective>\n{rendered_objective}\n</objective>");
-    let body = goal_context_revision_prompt(goal);
+    let body = goal_context_revision_prompt(goal, update_plan_enabled);
+    let retained_body = body.clone();
     let snapshot = json!({
         "goalId": goal_id,
         "objective": objective,
+        "updatePlanEnabled": update_plan_enabled,
     });
     let expected_goal_id = goal.goal_id.clone();
     let expected_objective = goal.objective.clone();
@@ -82,7 +106,12 @@ pub(crate) fn goal_context_world_state_section(
     WorldStateSectionContribution::new(GOAL_CONTEXT_WORLD_STATE_ID, snapshot, move |previous| {
         match previous {
             PreviousWorldStateSection::Known(previous)
-                if goal_revision_matches(previous, &expected_goal_id, &expected_objective) =>
+                if goal_revision_matches(
+                    previous,
+                    &expected_goal_id,
+                    &expected_objective,
+                    update_plan_enabled,
+                ) =>
             {
                 None
             }
@@ -96,12 +125,16 @@ pub(crate) fn goal_context_world_state_section(
             }
         }
     })
-    .with_legacy_matcher(is_legacy_goal_continuation_context)
+    .with_legacy_matcher(move |role, text| {
+        is_legacy_goal_continuation_context(role, text)
+            && (update_plan_enabled || !text.contains("If update_plan is available"))
+    })
     .with_retained_fragment_matcher(move |role, text| {
         role == "user"
             && text.trim_start().starts_with(GOAL_CONTEXT_REVISION_START)
             && text.contains(&retained_goal_revision)
             && text.contains(&retained_objective)
+            && text.contains(&retained_body)
             && text.trim_end().ends_with(GOAL_CONTEXT_REVISION_END)
     })
 }
@@ -113,11 +146,19 @@ fn goal_context_input_item(source: &'static str, prompt: String) -> ResponseItem
     ))
 }
 
-fn goal_context_revision_prompt(goal: &codex_state::ThreadGoal) -> String {
+fn goal_context_revision_prompt(
+    goal: &codex_state::ThreadGoal,
+    update_plan_enabled: bool,
+) -> String {
     let goal_revision = escape_xml_text(&goal.goal_id);
     let objective = escape_xml_text(&goal.objective);
 
-    GOAL_CONTEXT_REVISION_PROMPT_TEMPLATE
+    let template = if update_plan_enabled {
+        &*GOAL_CONTEXT_REVISION_PROMPT_TEMPLATE
+    } else {
+        &*GOAL_CONTEXT_REVISION_PROMPT_WITHOUT_UPDATE_PLAN
+    };
+    template
         .render([
             ("goal_revision", goal_revision.as_str()),
             ("objective", objective.as_str()),
@@ -127,7 +168,7 @@ fn goal_context_revision_prompt(goal: &codex_state::ThreadGoal) -> String {
         })
 }
 
-fn continuation_delta_prompt(goal: &ThreadGoal) -> String {
+fn continuation_delta_prompt(goal: &ThreadGoal, update_plan_enabled: bool) -> String {
     let tokens_used = goal.tokens_used.to_string();
     let token_budget = goal
         .token_budget
@@ -138,7 +179,12 @@ fn continuation_delta_prompt(goal: &ThreadGoal) -> String {
         .map(|budget| (budget - goal.tokens_used).max(0).to_string())
         .unwrap_or_else(|| "unbounded".to_string());
 
-    CONTINUATION_DELTA_PROMPT_TEMPLATE
+    let template = if update_plan_enabled {
+        &*CONTINUATION_DELTA_PROMPT_TEMPLATE
+    } else {
+        &*CONTINUATION_DELTA_PROMPT_WITHOUT_UPDATE_PLAN
+    };
+    template
         .render([
             ("tokens_used", tokens_used.as_str()),
             ("token_budget", token_budget.as_str()),
@@ -190,9 +236,15 @@ fn objective_updated_prompt(goal: &ThreadGoal) -> String {
         })
 }
 
-fn goal_revision_matches(previous: &Value, goal_id: &str, objective: &str) -> bool {
+fn goal_revision_matches(
+    previous: &Value,
+    goal_id: &str,
+    objective: &str,
+    update_plan_enabled: bool,
+) -> bool {
     previous.get("goalId").and_then(Value::as_str) == Some(goal_id)
         && previous.get("objective").and_then(Value::as_str) == Some(objective)
+        && previous.get("updatePlanEnabled").and_then(Value::as_bool) == Some(update_plan_enabled)
 }
 
 fn is_legacy_goal_continuation_context(role: &str, text: &str) -> bool {

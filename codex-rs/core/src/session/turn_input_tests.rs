@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::Constrained;
 use crate::session::step_settings::StepSettingsUpdate;
+use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
@@ -105,6 +106,76 @@ async fn submit_steer_only(
     )
     .await
     .expect("steer-only submission should be valid")
+}
+
+fn delegated_user_input_request(
+    input: Vec<UserInput>,
+    root_turn_id: Option<&str>,
+) -> TurnInputRequest {
+    TurnInputRequest::user_input(input).on_start(TurnStartOptions {
+        parent_turn_id: Some("incoming-parent".to_string()),
+        root_turn_id: root_turn_id.map(str::to_string),
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "simulate an in-flight realtime append while checking input admission"
+)]
+async fn steering_does_not_wait_for_realtime_history() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    session.realtime_history = Some(tokio::sync::Mutex::new(Default::default()));
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    session
+        .spawn_task(
+            Arc::clone(&turn_context),
+            Vec::new(),
+            NeverEndingTask {
+                kind: TaskKind::Regular,
+                listen_to_cancellation_token: true,
+            },
+        )
+        .await;
+
+    let history = session
+        .realtime_history
+        .as_ref()
+        .expect("realtime history")
+        .lock()
+        .await;
+    for mode in [
+        TurnInputMode::StartOrSteer,
+        TurnInputMode::Steer {
+            expected_turn_id: turn_context.sub_id.clone(),
+        },
+    ] {
+        let submission = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle(
+                &session,
+                TurnInputRequest::user_input(vec![UserInput::Text {
+                    text: "steer without waiting for persistence".to_string(),
+                    text_elements: Vec::new(),
+                }]),
+                mode,
+                "steer-submission".to_string(),
+            ),
+        )
+        .await
+        .expect("steering must not wait for the realtime recorder")
+        .expect("steering should succeed");
+        assert_eq!(
+            submission,
+            TurnInputSubmission::Steered {
+                turn_id: turn_context.sub_id.clone()
+            }
+        );
+    }
+    drop(history);
+    session.abort_all_tasks(TurnAbortReason::Interrupted).await;
 }
 
 #[tokio::test]
@@ -802,6 +873,7 @@ async fn steer_only_enforces_expected_turn_id() {
         .spawn_task(
             Arc::clone(&turn_context),
             vec![TurnInput::UserInput {
+                acceptance_order: None,
                 content: vec![UserInput::Text {
                     text: "hello".to_string(),
                     text_elements: Vec::new(),
@@ -872,15 +944,73 @@ async fn steer_only_enforces_expected_turn_id() {
 }
 
 #[tokio::test]
+async fn accepted_delegated_steer_preserves_only_matching_root_lineage() {
+    for (incoming_root_turn_id, expected_root_turn_id) in [
+        (Some("active-root"), Some("active-root")),
+        (Some("conflicting-root"), None),
+        (None, None),
+    ] {
+        let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+        turn_context
+            .turn_metadata_state
+            .set_root_turn_id("active-root".to_string());
+        session
+            .spawn_task(
+                Arc::clone(&turn_context),
+                vec![TurnInput::UserInput {
+                    acceptance_order: None,
+                    content: vec![UserInput::Text {
+                        text: "hello".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    client_id: None,
+                }],
+                NeverEndingTask {
+                    kind: TaskKind::Regular,
+                    listen_to_cancellation_token: true,
+                },
+            )
+            .await;
+
+        let submission = handle(
+            &session,
+            delegated_user_input_request(
+                vec![UserInput::Text {
+                    text: "steer".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                incoming_root_turn_id,
+            ),
+            TurnInputMode::Steer {
+                expected_turn_id: turn_context.sub_id.clone(),
+            },
+            "test-submission".to_string(),
+        )
+        .await
+        .expect("delegated steer should be valid");
+
+        assert_eq!(
+            submission,
+            TurnInputSubmission::Steered {
+                turn_id: turn_context.sub_id.clone()
+            }
+        );
+        assert_eq!(
+            turn_context.turn_metadata_state.root_turn_id().as_deref(),
+            expected_root_turn_id
+        );
+
+        session.abort_all_tasks(TurnAbortReason::Interrupted).await;
+    }
+}
+
+#[tokio::test]
 async fn rejects_non_regular_turns() {
     for (task_kind, turn_kind) in [
         (TaskKind::Review, NonSteerableTurnKind::Review),
         (TaskKind::Compact, NonSteerableTurnKind::Compact),
     ] {
-        let (session, incoming_turn_context, _rx) = make_session_and_context_with_rx().await;
-        incoming_turn_context
-            .turn_metadata_state
-            .set_root_turn_id("incoming-root".to_string());
+        let (session, _incoming_turn_context, _rx) = make_session_and_context_with_rx().await;
         let turn_context = session
             .new_turn_with_default_settings("turn".to_string(), Default::default())
             .await;
@@ -891,6 +1021,7 @@ async fn rejects_non_regular_turns() {
             .spawn_task(
                 Arc::clone(&turn_context),
                 vec![TurnInput::UserInput {
+                    acceptance_order: None,
                     content: vec![UserInput::Text {
                         text: "hello".to_string(),
                         text_elements: Vec::new(),
@@ -908,7 +1039,16 @@ async fn rejects_non_regular_turns() {
             text: "steer".to_string(),
             text_elements: Vec::new(),
         }];
-        let steer_submission = submit_steer_only(&session, steer_input.clone(), "turn").await;
+        let steer_submission = handle(
+            &session,
+            delegated_user_input_request(steer_input.clone(), Some("incoming-root")),
+            TurnInputMode::Steer {
+                expected_turn_id: "turn".to_string(),
+            },
+            "test-submission".to_string(),
+        )
+        .await
+        .expect("steer-only submission should be valid");
         assert_eq!(
             TurnInputSubmission::NotSubmitted {
                 reason: NotSubmittedReason::ActiveTurnNotSteerable { turn_kind },
@@ -917,7 +1057,7 @@ async fn rejects_non_regular_turns() {
         );
         let start_or_steer_submission = handle(
             &session,
-            TurnInputRequest::user_input(steer_input),
+            delegated_user_input_request(steer_input, Some("incoming-root")),
             TurnInputMode::StartOrSteer,
             "test-submission".to_string(),
         )

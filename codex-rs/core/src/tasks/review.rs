@@ -265,6 +265,7 @@ pub(crate) async fn exit_review_mode(
         content: vec![AgentMessageContent::Text {
             text: assistant_message,
         }],
+        questions: None,
         phase: None,
         memory_citation: None,
         delivery: None,
