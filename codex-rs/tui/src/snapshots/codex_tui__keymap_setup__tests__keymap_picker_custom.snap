@@ -1,6 +1,5 @@
 ---
 source: tui/src/keymap_setup.rs
-assertion_line: 1202
 expression: "render_picker(params, 120)"
 ---
 
@@ -20,4 +19,4 @@ expression: "render_picker(params, 120)"
   Global         Toggle Raw Output          alt-r
   Global         Toggle Side Conversation   ctrl-/
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/139 · +131 more ↓
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/141 · +133 more ↓

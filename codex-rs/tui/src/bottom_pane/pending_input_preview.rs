@@ -821,7 +821,8 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
-        let lines = queue.preview_lines(/*width*/ 40, VISIBLE_ROW_CAP, QuestionPresence::Absent);
+        let lines =
+            queue.preview_lines(/*width*/ 40, VISIBLE_ROW_CAP, QuestionPresence::Absent);
         let disclosure = lines[2]
             .spans
             .iter()

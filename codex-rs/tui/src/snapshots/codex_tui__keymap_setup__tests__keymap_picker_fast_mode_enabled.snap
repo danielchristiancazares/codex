@@ -1,6 +1,5 @@
 ---
 source: tui/src/keymap_setup.rs
-assertion_line: 911
 expression: "render_picker(params, 120)"
 ---
 
@@ -20,4 +19,4 @@ expression: "render_picker(params, 120)"
   Global       - Toggle Fast Mode           unbound
   Global         Toggle Raw Output          alt-r
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/140 · +132 more ↓
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/142 · +134 more ↓

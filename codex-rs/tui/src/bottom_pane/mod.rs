@@ -2276,6 +2276,11 @@ mod tests {
             /*disable_paste_burst*/ false,
             RuntimeKeymap::defaults(),
         );
+        // The fork admits freeform input only after its editor has been rendered visibly.
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 76, /*height*/ 6,
+        );
+        covering.render(area, &mut Buffer::empty(area));
         for ch in "modal".chars() {
             covering.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
         }

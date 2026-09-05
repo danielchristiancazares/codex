@@ -2,8 +2,8 @@
 source: tui/src/chatwidget/tests/questions_tests.rs
 expression: "render_bottom_popup(&chat, 100)"
 ---
-• Queued follow-up inputs
-  ↳ queued
+• 1 queued
+  + Queued: queued
 
   1 of 2
 

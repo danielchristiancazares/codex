@@ -9,7 +9,7 @@ expression: buffer_text(&buffer)
     11. Option 11
     12. Option 12
   › 13. earlier answer
-        reverse-i-search: e  enter accept · esc
+        reverse-i-search: e  enter accept
 
   enter submit   ctrl + ] skip   option 13/13
   ⌥ + ↓ prev question

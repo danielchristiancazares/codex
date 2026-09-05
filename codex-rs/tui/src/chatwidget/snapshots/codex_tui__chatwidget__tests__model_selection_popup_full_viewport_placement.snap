@@ -3,21 +3,23 @@ source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: snapshots
 ---
 120x36:
-16:   Select model
-17:   Choose a model; effort follows.
-19:   1. gpt-5.6-sol (default)  Latest frontier agentic coding model.
-20:   2. gpt-5.6-terra          Balanced agentic coding model for everyday work.
-21:   3. gpt-5.6-luna           Fast and affordable agentic coding model.
-22:   4. gpt-5.5                Frontier model for complex coding, research, and real-world work.
-23: › 5. gpt-5.2 ✓              Optimized for professional work and long-running agents.
+15:   Select model
+16:   Choose a model; effort follows.
+18:   1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+19:   2. gpt-5.6-sol            Latest frontier agentic coding model.
+20:   3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+21:   4. gpt-5.6-luna           Fast and affordable agentic coding model.
+22:   5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+23: › 6. gpt-5.2 ✓              Optimized for professional work and long-running agents.
 25:   enter confirm · esc back
 
 47x24:
-14:   Select model
-15:   Choose a model; effort follows.
-17:   1. gpt-5.6-sol (default)  Latest frontier …
-18:   2. gpt-5.6-terra          Balanced agentic…
-19:   3. gpt-5.6-luna           Fast and afforda…
-20:   4. gpt-5.5                Frontier model f…
-21: › 5. gpt-5.2 ✓              Optimized for pr…
+13:   Select model
+14:   Choose a model; effort follows.
+16:   1. gpt-6-astra (default)  Our most capable…
+17:   2. gpt-5.6-sol            Latest frontier …
+18:   3. gpt-5.6-terra          Balanced agentic…
+19:   4. gpt-5.6-luna           Fast and afforda…
+20:   5. gpt-5.5                Frontier model f…
+21: › 6. gpt-5.2 ✓              Optimized for pr…
 23:   enter confirm · esc back
