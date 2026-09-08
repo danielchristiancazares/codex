@@ -265,7 +265,7 @@ async fn check_thread_title_generation(automatic: bool) -> color_eyre::Result<()
             .await?;
         }
         assert_eq!(app.chat_widget.thread_name(), None);
-        assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+        assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
         assert_eq!(
             app_server
                 .thread_read(thread_id, /*include_turns*/ false)
@@ -336,7 +336,7 @@ async fn check_thread_title_generation(automatic: bool) -> color_eyre::Result<()
     }
     assert!(app.temporary_structured_requests.is_empty());
     assert!(app.pending_thread_titles.is_empty());
-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
 
     let request = response.single_request();
     assert!(
@@ -613,7 +613,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
         (thread_id, suggestion),
     ]);
     app.sync_thread_title_progress();
-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
 
     app.on_thread_title_started(
         &app_server,
@@ -623,7 +623,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
         /*effort*/ None,
         Err("startup failed".to_string()),
     );
-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
     app.on_thread_title_started(
         &app_server,
         thread_id,
@@ -633,7 +633,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
         Ok("invalid-thread-id".to_string()),
     );
     assert!(app.pending_thread_titles.is_empty());
-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
 
     let mut tui = crate::tui::test_support::make_test_tui()?;
     app.pending_thread_titles
@@ -651,14 +651,14 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
         &mut tui,
         ratatui::layout::Size::new(/*width*/ 120, /*height*/ 30),
     )?;
-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
     app.select_agent_thread(&mut tui, &mut app_server, thread_id)
         .await?;
     app.render_chat_widget_frame(
         &mut tui,
         ratatui::layout::Size::new(/*width*/ 120, /*height*/ 30),
     )?;
-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
     app.handle_event(
         &mut tui,
         &mut app_server,
@@ -671,7 +671,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
     )
     .await?;
     assert!(app.pending_thread_titles.is_empty());
-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("renaming..."));
+    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains("Naming thread"));
     app_server.shutdown().await?;
     Ok(())
 }

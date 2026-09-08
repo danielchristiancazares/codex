@@ -4,6 +4,44 @@ use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn heading_turn_markers_match_streaming_and_finalized_messages() {
+    for (source, expected_prefix) in [
+        ("## A clear heading", "  ## A clear heading"),
+        ("A plain response", "• A plain response"),
+        ("\\## Escaped Markdown", "• ## Escaped Markdown"),
+        ("```\n## code comment\n```", "• ## code comment"),
+    ] {
+        let lines = crate::markdown::render_markdown_agent_with_links_cwd_and_visualizations(
+            source,
+            Some(78),
+            /*cwd*/ None,
+            /*inline_visualization_context*/ None,
+        );
+        let streamed =
+            AgentMessageCell::new_hyperlink_lines(lines.clone(), /*is_first_line*/ true);
+        let tail = StreamingAgentTailCell::new(lines, /*is_first_line*/ true);
+        let finalized = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+        let expected = finalized.display_lines(/*width*/ 80);
+        let render = |cell: &dyn HistoryCell| {
+            let area = Rect::new(
+                /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 4,
+            );
+            let mut buffer = Buffer::empty(area);
+            ratatui::widgets::Widget::render(
+                ratatui::widgets::Paragraph::new(cell.display_lines(area.width)),
+                area,
+                &mut buffer,
+            );
+            buffer
+        };
+        assert_eq!(render(&streamed), render(&finalized));
+        assert_eq!(render(&tail), render(&finalized));
+        assert_eq!(expected[0].to_string(), expected_prefix);
+        assert_eq!(finalized.raw_lines(), raw_lines_from_source(source));
+    }
+}
+
+#[test]
 fn sanitizer_borrows_clean_text_and_removes_control_sequences() {
     for (text, expected) in [
         ("clean\ttext\n", "clean\ttext\n"),

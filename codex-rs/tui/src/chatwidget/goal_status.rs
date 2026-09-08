@@ -4,6 +4,7 @@ use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use std::time::Instant;
 
+use crate::bottom_pane::ActiveGoalDetail;
 use crate::bottom_pane::GoalStatusIndicator;
 use crate::goal_display::format_goal_elapsed_seconds;
 use crate::status::format_tokens_compact;
@@ -47,7 +48,7 @@ pub(super) fn goal_status_indicator_from_app_goal(
 ) -> Option<GoalStatusIndicator> {
     match goal.status {
         AppThreadGoalStatus::Active => Some(GoalStatusIndicator::Active {
-            usage: active_goal_usage(goal.token_budget, goal.tokens_used, goal.time_used_seconds),
+            detail: active_goal_detail(goal.token_budget, goal.tokens_used, goal.time_used_seconds),
         }),
         AppThreadGoalStatus::Paused => Some(GoalStatusIndicator::Paused),
         AppThreadGoalStatus::Blocked => Some(GoalStatusIndicator::Blocked),
@@ -65,20 +66,22 @@ pub(super) fn goal_status_indicator_from_app_goal(
     }
 }
 
-fn active_goal_usage(
+fn active_goal_detail(
     token_budget: Option<i64>,
     tokens_used: i64,
     time_used_seconds: i64,
-) -> Option<String> {
+) -> Option<ActiveGoalDetail> {
     if let Some(token_budget) = token_budget {
-        return Some(format!(
+        return Some(ActiveGoalDetail::TokenBudget(format!(
             "{} / {}",
             format_tokens_compact(tokens_used),
             format_tokens_compact(token_budget)
-        ));
+        )));
     }
 
-    Some(format_goal_elapsed_seconds(time_used_seconds))
+    Some(ActiveGoalDetail::Elapsed(format_goal_elapsed_seconds(
+        time_used_seconds,
+    )))
 }
 
 fn stopped_goal_budget_usage(token_budget: Option<i64>, tokens_used: i64) -> Option<String> {
@@ -106,9 +109,10 @@ fn completed_goal_usage(
 #[cfg(test)]
 mod tests {
     use super::GoalStatusState;
-    use super::active_goal_usage;
+    use super::active_goal_detail;
     use super::completed_goal_usage;
     use super::stopped_goal_budget_usage;
+    use crate::bottom_pane::ActiveGoalDetail;
     use crate::bottom_pane::GoalStatusIndicator;
     use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
     use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
@@ -116,25 +120,25 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn active_goal_usage_prefers_token_budget() {
+    fn active_goal_detail_prefers_token_budget() {
         assert_eq!(
-            active_goal_usage(
+            active_goal_detail(
                 Some(50_000),
                 /*tokens_used*/ 12_500,
                 /*time_used_seconds*/ 90
             ),
-            Some("12.5K / 50K".to_string())
+            Some(ActiveGoalDetail::TokenBudget("12.5K / 50K".to_string()))
         );
     }
 
     #[test]
-    fn active_goal_usage_reports_time_without_budget() {
+    fn active_goal_detail_reports_time_without_budget() {
         assert_eq!(
-            active_goal_usage(
+            active_goal_detail(
                 /*token_budget*/ None, /*tokens_used*/ 12_500,
                 /*time_used_seconds*/ 120,
             ),
-            Some("2m".to_string())
+            Some(ActiveGoalDetail::Elapsed("2m".to_string()))
         );
     }
 
@@ -188,7 +192,7 @@ mod tests {
                 Some(observed_at - Duration::from_secs(120)),
             ),
             Some(GoalStatusIndicator::Active {
-                usage: Some("2m".to_string())
+                detail: Some(ActiveGoalDetail::Elapsed("2m".to_string()))
             })
         );
     }
@@ -205,7 +209,7 @@ mod tests {
                 Some(active_turn_started_at),
             ),
             Some(GoalStatusIndicator::Active {
-                usage: Some("2m".to_string())
+                detail: Some(ActiveGoalDetail::Elapsed("2m".to_string()))
             })
         );
     }

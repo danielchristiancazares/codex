@@ -1,3 +1,5 @@
 codex-rs/app-server-protocol/schema/** linguist-generated
 codex-rs/hooks/schema/generated/** linguist-generated
+# Ratatui snapshots preserve fixed-width terminal rows, including right padding.
+codex-rs/tui/**/*.snap whitespace=-blank-at-eol
 third_party/voice/sources.json text eol=lf

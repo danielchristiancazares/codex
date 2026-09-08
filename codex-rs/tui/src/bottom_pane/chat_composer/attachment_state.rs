@@ -8,12 +8,16 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Span;
 
 use super::InputResult;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::textarea::TextArea;
+use crate::key_hint;
+use crate::style::attachment_chip_style;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::user_input::TextElement;
 
@@ -137,16 +141,26 @@ impl AttachmentState {
             .collect()
     }
 
+    /// Renders the remote image rows shown above the text area.
+    ///
+    /// The selected row also spells out how to remove it. The composer marks that row with the
+    /// prompt caret, so the row itself stays flat instead of using reverse video.
     pub(super) fn remote_image_lines(&self) -> Vec<Line<'static>> {
         self.remote_image_urls
             .iter()
             .enumerate()
             .map(|(index, _)| {
-                let label = local_image_label_text(index + 1);
+                let label = Span::from(local_image_label_text(index + 1))
+                    .set_style(attachment_chip_style());
                 if self.selected_remote_image_index == Some(index) {
-                    label.cyan().reversed().into()
+                    Line::from(vec![
+                        label,
+                        "  ".into(),
+                        Span::from(key_hint::plain(KeyCode::Delete)).dim(),
+                        " to remove".dim(),
+                    ])
                 } else {
-                    label.cyan().into()
+                    label.into()
                 }
             })
             .collect()

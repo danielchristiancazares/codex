@@ -103,7 +103,7 @@ async fn slash_commands_without_side_flag_are_rejected_for_side_threads() {
         .expect("expected side conversation slash command error");
     match event {
         AppEvent::InsertHistoryCell(cell) => {
-            let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+            let rendered = lines_to_single_string(&cell.raw_lines());
             assert!(
                 rendered.contains(
                     "'/review' is unavailable in side conversations. Press Ctrl+C to return to the main thread first."
@@ -129,7 +129,7 @@ async fn slash_side_is_rejected_for_side_threads() {
         .expect("expected side conversation slash command error");
     match event {
         AppEvent::InsertHistoryCell(cell) => {
-            let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+            let rendered = lines_to_single_string(&cell.raw_lines());
             assert!(
                 rendered.contains(
                     "'/side' is unavailable in side conversations. Press Ctrl+C to return to the main thread first."

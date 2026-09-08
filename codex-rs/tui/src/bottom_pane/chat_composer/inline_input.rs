@@ -125,7 +125,7 @@ impl ChatComposer {
                 Rect::new(area.x, area.bottom(), area.width, /*height*/ 1),
                 buf,
             );
-        } else if let Some(line) = self.history_search_footer_line() {
+        } else if let Some(line) = self.history_search_footer_line(area.width) {
             area.height = area.height.saturating_sub(1);
             line.render(
                 Rect::new(area.x, area.bottom(), area.width, /*height*/ 1),

@@ -62,8 +62,12 @@ pub(crate) struct McpInvocation {
 
 impl McpInvocation {
     pub(crate) fn is_computer_activity(&self) -> bool {
-        self.server == "cua_repl"
+        is_computer_activity_server(&self.server)
     }
+}
+
+pub(crate) fn is_computer_activity_server(server: &str) -> bool {
+    server == "cua_repl"
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -98,6 +102,10 @@ impl McpToolCallCell {
 
     pub(crate) fn call_id(&self) -> &str {
         &self.call_id
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.result.is_none()
     }
 
     pub(crate) fn complete(
@@ -155,9 +163,7 @@ impl McpToolCallCell {
             None => activity_indicator(
                 Some(self.start_time),
                 MotionMode::from_animations_enabled(self.animations_enabled),
-                ReducedMotionIndicator::StaticBullet,
-            )
-            .unwrap_or_else(|| "•".dim()),
+            ),
         };
         let header_text = if status.is_some() {
             "Called"
@@ -709,9 +715,7 @@ impl HistoryCell for McpInventoryLoadingCell {
                 activity_indicator(
                     Some(self.start_time),
                     MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
+                ),
                 " ".into(),
                 "Loading MCP inventory".bold(),
                 "…".dim(),

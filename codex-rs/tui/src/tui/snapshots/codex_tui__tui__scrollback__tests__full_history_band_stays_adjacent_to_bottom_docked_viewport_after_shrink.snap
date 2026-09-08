@@ -1,0 +1,12 @@
+---
+source: tui/src/tui/scrollback_tests.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+history-row-one
+history-row-two
+history-row-three
+history-row-four
+composer-top
+composer-bottom

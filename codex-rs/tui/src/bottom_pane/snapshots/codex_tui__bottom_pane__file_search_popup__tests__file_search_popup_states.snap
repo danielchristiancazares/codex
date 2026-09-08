@@ -1,0 +1,20 @@
+---
+source: tui/src/bottom_pane/file_search_popup.rs
+expression: "format!(\"searching:\\n{}\\n\\nempty:\\n{}\\n\\nno matches:\\n{}\\n\\nselected:\\n{}\\n\\nnarrow:\\n{}\",\nrender_popup(&searching, 64), render_popup(&empty, 64),\nrender_popup(&no_matches, 64), render_popup(&matches, 64),\nrender_popup(&matches, 28),)"
+---
+searching:
+  Searching files…
+
+empty:
+  Type to search files
+
+no matches:
+  No matching files
+
+selected:
+    file_01.rs
+  › file_02.rs
+
+narrow:
+    file_01.rs
+  › file_02.rs

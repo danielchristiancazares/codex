@@ -1,8 +1,9 @@
 //! Centralized motion primitives for the TUI.
 //!
-//! Callers choose an explicit reduced-motion fallback here instead of reaching
-//! directly for time-varying spinner or shimmer helpers.
+//! Reduced motion keeps a static activity bullet and plain text instead of
+//! time-varying spinner or shimmer effects.
 
+use std::time::Duration;
 use std::time::Instant;
 
 use ratatui::style::Stylize;
@@ -29,23 +30,13 @@ impl MotionMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReducedMotionIndicator {
-    Hidden,
-    StaticBullet,
-}
-
 pub(crate) fn activity_indicator(
     start_time: Option<Instant>,
     motion_mode: MotionMode,
-    reduced_motion_indicator: ReducedMotionIndicator,
-) -> Option<Span<'static>> {
+) -> Span<'static> {
     match motion_mode {
-        MotionMode::Animated => Some(animated_activity_indicator(start_time)),
-        MotionMode::Reduced => match reduced_motion_indicator {
-            ReducedMotionIndicator::Hidden => None,
-            ReducedMotionIndicator::StaticBullet => Some("•".dim()),
-        },
+        MotionMode::Animated => animated_activity_indicator(start_time),
+        MotionMode::Reduced => "•".into(),
     }
 }
 
@@ -64,17 +55,14 @@ pub(crate) fn shimmer_text(text: &str, motion_mode: MotionMode) -> Vec<Span<'sta
 
 fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
     let elapsed = start_time.map(|st| st.elapsed()).unwrap_or_default();
-    if supports_color::on_cached(supports_color::Stream::Stdout)
-        .map(|level| level.has_16m)
-        .unwrap_or(false)
-    {
-        shimmer_spans("•")
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "•".into())
+    activity_indicator_for_elapsed(elapsed)
+}
+
+fn activity_indicator_for_elapsed(elapsed: Duration) -> Span<'static> {
+    if (elapsed.as_millis() / 600).is_multiple_of(2) {
+        "•".bold()
     } else {
-        let blink_on = (elapsed.as_millis() / 600).is_multiple_of(2);
-        if blink_on { "•".into() } else { "◦".dim() }
+        "•".into()
     }
 }
 
@@ -85,22 +73,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reduced_motion_activity_indicator_uses_explicit_fallback() {
+    fn reduced_motion_activity_indicator_uses_static_bullet() {
         assert_eq!(
-            activity_indicator(
-                /*start_time*/ None,
-                MotionMode::Reduced,
-                ReducedMotionIndicator::Hidden,
-            ),
-            None
-        );
-        assert_eq!(
-            activity_indicator(
-                /*start_time*/ None,
-                MotionMode::Reduced,
-                ReducedMotionIndicator::StaticBullet,
-            ),
-            Some("•".dim())
+            activity_indicator(/*start_time*/ None, MotionMode::Reduced),
+            Span::from("•")
         );
     }
 
@@ -114,5 +90,25 @@ mod tests {
             shimmer_text("", MotionMode::Reduced),
             Vec::<Span<'static>>::new()
         );
+    }
+
+    #[test]
+    fn activity_indicator_uses_stable_geometry_for_motion_and_reduced_motion() {
+        let states = [
+            (
+                "animated emphasized",
+                activity_indicator_for_elapsed(Duration::ZERO),
+            ),
+            (
+                "animated resting",
+                activity_indicator_for_elapsed(Duration::from_millis(700)),
+            ),
+            (
+                "reduced static",
+                activity_indicator(/*start_time*/ None, MotionMode::Reduced),
+            ),
+        ];
+
+        insta::assert_debug_snapshot!("activity_indicator_motion_modes", states);
     }
 }

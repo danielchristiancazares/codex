@@ -307,7 +307,7 @@ impl App {
                 .await;
             }
             AppEvent::RawOutputModeChanged { enabled } => {
-                self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+                self.apply_raw_output_mode(tui, enabled);
             }
             AppEvent::ClearUiAndSubmitUserMessage { text } => {
                 self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
@@ -674,6 +674,7 @@ impl App {
                     deferred_history_cell,
                 )?;
                 self.chat_widget.note_stream_consolidation_completed();
+                self.apply_pending_raw_output_mode_after_stream(tui);
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::ConsolidateProposedPlan(source) => {
@@ -710,6 +711,7 @@ impl App {
                     self.maybe_finish_stream_reflow(tui)?;
                 }
                 self.chat_widget.note_stream_consolidation_completed();
+                self.apply_pending_raw_output_mode_after_stream(tui);
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::StartCommitAnimation => {
@@ -1029,7 +1031,7 @@ impl App {
                 self.handle_pet_selected(tui, pet_id);
             }
             AppEvent::PetDisabled => {
-                self.handle_pet_disabled(tui).await;
+                self.handle_pet_disabled(tui).await?;
             }
             AppEvent::PetPreviewRequested { pet_id } => {
                 self.chat_widget.start_pet_picker_preview(pet_id);
@@ -1047,7 +1049,7 @@ impl App {
                     .await;
             }
             AppEvent::ConfiguredPetLoaded { pet_id, result } => {
-                self.handle_configured_pet_loaded(tui, pet_id, result);
+                self.handle_configured_pet_loaded(tui, pet_id, result)?;
             }
             AppEvent::RefreshConnectors { force_refetch } => {
                 self.chat_widget.refresh_connectors(force_refetch);
@@ -1732,6 +1734,25 @@ impl App {
                         .await;
                 }
             }
+            AppEvent::SwitchModelProvider(provider_id) => {
+                self.start_model_provider_switch(app_server, provider_id);
+            }
+            AppEvent::ModelProviderSwitchPrepared(
+                request_id,
+                thread_id,
+                provider_id,
+                result,
+            ) => {
+                self.complete_model_provider_switch(
+                    tui,
+                    app_server,
+                    request_id,
+                    thread_id,
+                    provider_id,
+                    result,
+                )
+                .await;
+            }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
                 self.sync_active_thread_personality_setting(app_server, personality)
@@ -1782,7 +1803,8 @@ impl App {
                 self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             }
             AppEvent::SettingsSelectionSettled => {
-                if self.chat_widget.no_modal_or_popup_active()
+                if self.pending_provider_switch.is_none()
+                    && self.chat_widget.no_modal_or_popup_active()
                     && !self
                         .chat_widget
                         .thread_id()

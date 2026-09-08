@@ -1,0 +1,9 @@
+---
+source: tui/src/key_hint.rs
+expression: hints
+---
+[
+    Span::from("esc").fg(Color::Reset).bold().not_dim(),
+    Span::from("ctrl + x").fg(Color::Reset).bold().not_dim(),
+    Span::from("ctrl + x enter").fg(Color::Reset).bold().not_dim(),
+]

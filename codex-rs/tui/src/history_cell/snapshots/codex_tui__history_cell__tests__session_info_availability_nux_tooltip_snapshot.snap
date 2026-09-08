@@ -1,12 +1,10 @@
 ---
-source: tui/src/history_cell.rs
+source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
-╭─────────────────────────────────────╮
-│ >_ OpenAI Codex (v0.0.0)            │
-│                                     │
-│ model:     gpt-5   /model to change │
-│ directory: /tmp/project             │
-╰─────────────────────────────────────╯
+  >_ Codex v0.0.0
+  GPT 5  /model to change
+  /tmp/project
+  Guarded access  /permissions to review
 
   Tip: Model just became available

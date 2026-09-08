@@ -1,0 +1,60 @@
+---
+source: tui/src/exec_cell/exploration_tests.rs
+expression: responsive
+---
+[
+    (
+        40,
+        [
+            "• Explored",
+            "  ├ Read lib.rs, endpoint.rs, types.rs,",
+            "  │      storage_tests.rs, Cargo.toml,",
+            "  │      justfile, BUILD.bazel,",
+            "  │      provider.rs, manager.rs,",
+            "  │      endpoint.rs, auth_keyring.rs",
+            "  ├ Searched CopilotModelProvider::new|",
+            "  │          fn.*provider|",
+            "  │          struct.*Provider|",
+            "  │          codex_home|store_mode in",
+            "  │          registry.rs, pub.*fn new|",
+            "  │          pub.*fn.*store|codex_home|",
+            "  │          auth_credentials_store_mode",
+            "  │          in manager.rs,",
+            "  │          codex_model_provider::|",
+            "  │          ModelProviderFactory|",
+            "  │          build_model_provider|",
+            "  │          create_model_provider in",
+            "  │          mod.rs,",
+            "  │          create_model_provider\\( in",
+            "  │          codex-rs",
+            "  └ Listed .github",
+        ],
+    ),
+    (
+        80,
+        [
+            "• Explored",
+            "  ├ Read lib.rs, endpoint.rs, types.rs, storage_tests.rs, Cargo.toml, justfile,",
+            "  │      BUILD.bazel, provider.rs, manager.rs, endpoint.rs, auth_keyring.rs",
+            "  ├ Searched CopilotModelProvider::new|fn.*provider|struct.*Provider|codex_home|",
+            "  │          store_mode in registry.rs, pub.*fn new|pub.*fn.*store|codex_home|",
+            "  │          auth_credentials_store_mode in manager.rs, codex_model_provider::|",
+            "  │          ModelProviderFactory|build_model_provider|create_model_provider in",
+            "  │          mod.rs, create_model_provider\\( in codex-rs",
+            "  └ Listed .github",
+        ],
+    ),
+    (
+        120,
+        [
+            "• Explored",
+            "  ├ Read lib.rs, endpoint.rs, types.rs, storage_tests.rs, Cargo.toml, justfile, BUILD.bazel, provider.rs, manager.rs,",
+            "  │      endpoint.rs, auth_keyring.rs",
+            "  ├ Searched CopilotModelProvider::new|fn.*provider|struct.*Provider|codex_home|store_mode in registry.rs, pub.*fn new|",
+            "  │          pub.*fn.*store|codex_home|auth_credentials_store_mode in manager.rs, codex_model_provider::|",
+            "  │          ModelProviderFactory|build_model_provider|create_model_provider in mod.rs, create_model_provider\\( in",
+            "  │          codex-rs",
+            "  └ Listed .github",
+        ],
+    ),
+]

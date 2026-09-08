@@ -83,6 +83,7 @@ use crate::test_support::test_path_buf;
 use crate::test_support::test_path_display;
 use crate::token_usage::TokenUsage;
 use crate::transcript_reflow::TranscriptReflowState;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
@@ -225,6 +226,7 @@ mod file_change_approvals;
 mod history_pagination;
 mod history_ui;
 mod input;
+mod landing;
 mod loaded_threads;
 mod managed_worktree_creation;
 mod misalignment_policy;
@@ -236,6 +238,7 @@ mod permission_shortcuts;
 mod pets;
 mod platform_actions;
 mod plugin_mentions;
+mod provider_switch;
 mod rate_limit_refresh;
 mod realtime_delivery;
 mod realtime_settings;
@@ -264,6 +267,7 @@ mod transcript_export;
 mod user_verification;
 mod user_verification_errors;
 mod user_verification_requests;
+mod viewport_history;
 mod working_directory;
 
 use self::agent_navigation::AgentNavigationDirection;
@@ -586,6 +590,7 @@ pub(crate) struct App {
     pub(crate) deferred_history_lines: Vec<crate::terminal_hyperlinks::HyperlinkLine>,
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
+    transcript_replay_policy: TranscriptReplayPolicy,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
     pending_thread_switch_resets: usize,
     pub(crate) scrollback_has_older_history: bool,
@@ -682,6 +687,7 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+    pending_provider_switch: Option<Uuid>,
     recap: recap::RecapState,
 }
 
@@ -825,6 +831,7 @@ impl App {
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
         crate::chatwidget::ChatWidgetInit {
+            transcript_replay_policy: self.transcript_replay_policy,
             local_settings: self.local_settings.clone(),
             config: cfg,
             frame_requester: tui.frame_requester(),
@@ -985,6 +992,10 @@ impl App {
                         ) {
                             self.handle_ambient_pet_image_render_error(tui, err)?;
                         }
+                    } else if self.chat_widget.should_clear_ambient_pet_image()
+                        && let Err(err) = tui.clear_ambient_pet_image()
+                    {
+                        self.handle_ambient_pet_image_render_error(tui, err)?;
                     }
                     if let Some(request) = self.chat_widget.pet_picker_preview_draw() {
                         if let Err(err) = tui.draw_pet_picker_preview_image(Some(request)) {
@@ -1019,6 +1030,9 @@ impl App {
 
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
         self.sync_thread_title_progress();
+        if let Some(area) = self.render_landing_frame(tui, screen_size)? {
+            return Ok(area);
+        }
         let dashboard_visible = self
             .chat_widget
             .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
@@ -1027,6 +1041,12 @@ impl App {
             &mut self.agents_overview.rendered_full_screen,
             dashboard_visible,
         );
+        let interactive_view_visible = !self.chat_widget.no_modal_or_popup_active();
+        let viewport_role = if interactive_view_visible && !dashboard_visible {
+            tui::InlineViewportRole::Transient
+        } else {
+            tui::InlineViewportRole::Persistent
+        };
         // Full-height inline overlays scroll history off screen without a terminal resize.
         // Rebuild it once when returning to a content-height chat viewport.
         let restoring_inline_viewport = !tui.is_alt_screen_active()
@@ -1037,23 +1057,49 @@ impl App {
             self.schedule_immediate_resize_reflow(tui);
             self.maybe_run_resize_reflow(tui, screen_size)?;
         }
+        if !dashboard_visible {
+            // Filtering or closing a popup only releases visible rows. Restore that bounded
+            // band at each shrink so nested popups keep history adjacent to the viewport.
+            let height = self.with_chat_widget_frame(screen_size.width, |height, _| height);
+            let height = if interactive_view_visible {
+                height.min(
+                    screen_size
+                        .height
+                        .saturating_sub(/*rhs*/ 1)
+                        .max(/*other*/ 1),
+                )
+            } else {
+                height
+            };
+            self.refill_history_after_viewport_shrink(tui, screen_size, height)?;
+        }
         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
             let desired_height = if dashboard_visible {
                 screen_size.height
+            } else if interactive_view_visible {
+                // Keep one row above an inline view so its geometry continues to identify it as
+                // bottom-docked when a shorter selection stage or the composer replaces it.
+                desired_height.min(screen_size.height.saturating_sub(1).max(1))
             } else {
                 desired_height
             };
             let mut rendered_area = Rect::default();
-            tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-                let area = frame.area();
-                rendered_area = area;
-                chat_widget.render(area, frame.buffer);
-                self.chat_widget.note_rendered_width(area.width);
-                if let Some((x, y)) = chat_widget.cursor_pos(area) {
-                    frame.set_cursor_style(chat_widget.cursor_style(area));
-                    frame.set_cursor_position((x, y));
-                }
-            })?;
+            tui.draw_with_resize_reflow(
+                desired_height,
+                screen_size,
+                tui::InlineViewportPlacement::BottomDocked,
+                viewport_role,
+                |frame| {
+                    let area = frame.area();
+                    rendered_area = area;
+                    chat_widget.render(area, frame.buffer);
+                    self.chat_widget.note_rendered_width(area.width);
+                    if let Some((x, y)) = chat_widget.cursor_pos(area) {
+                        frame.set_cursor_style(chat_widget.cursor_style(area));
+                        frame.set_cursor_position((x, y));
+                    }
+                },
+            )?;
             Ok(rendered_area)
         })
     }
@@ -1080,3 +1126,10 @@ impl Drop for App {
 pub(super) mod test_support;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "app/slash_popup_tests.rs"]
+mod slash_popup_tests;
+#[cfg(test)]
+#[path = "app/viewport_anchor_tests.rs"]
+mod viewport_anchor_tests;

@@ -317,9 +317,12 @@ impl ChatWidget {
     /// standalone history entry instead of replacing or flushing the unrelated active exploring
     /// cell. If this method treated every unknown end as "complete the active cell", the UI could
     /// merge unrelated commands and hide still-running exploring work.
+    ///
+    /// Completed exploration groups can accept another exploration call even without a begin
+    /// event. Resume supplies completed items directly, so use the same grouping rule as live starts.
     pub(crate) fn handle_command_execution_completed_now(&mut self, item: ThreadItem) {
         enum ExecEndTarget {
-            // Normal case: the active exec cell already tracks this call id.
+            // The current exec cell tracks this call, including a newly joined completed call.
             ActiveTracked,
             // We have an active exec group, but it does not contain this call id. Render the end
             // as a standalone finalized history cell so the active group remains intact.
@@ -343,11 +346,8 @@ impl ChatWidget {
         else {
             return;
         };
-        let event_command = split_command_string(&command);
-        let event_parsed = command_actions
-            .into_iter()
-            .map(codex_app_server_protocol::CommandAction::into_core)
-            .collect();
+        let (event_command, event_parsed) =
+            command_execution_command_and_parsed(&command, &command_actions);
         let duration = Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64);
         let exit_code = if status == codex_app_server_protocol::CommandExecutionStatus::Completed {
             exit_code.unwrap_or_default()
@@ -368,8 +368,11 @@ impl ChatWidget {
         let is_unified_exec_interaction =
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
-        let end_target = match self.transcript.active_cell.as_ref() {
-            Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
+        let end_target = match self.transcript.active_cell.as_mut() {
+            Some(cell) if cell.as_any().is::<McpToolCallGroupCell>() => {
+                ExecEndTarget::OrphanHistoryWhileActiveExec
+            }
+            Some(cell) => match cell.as_any_mut().downcast_mut::<ExecCell>() {
                 Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
                     ExecEndTarget::ActiveTracked
                 }
@@ -384,7 +387,20 @@ impl ChatWidget {
                 {
                     ExecEndTarget::OrphanHistoryWhileActiveExec
                 }
-                Some(_) | None => ExecEndTarget::NewCell,
+                Some(exec_cell) => {
+                    if exec_cell.add_call(
+                        id.clone(),
+                        command.clone(),
+                        parsed.clone(),
+                        source,
+                        /*interaction_input*/ None,
+                    ) {
+                        ExecEndTarget::ActiveTracked
+                    } else {
+                        ExecEndTarget::NewCell
+                    }
+                }
+                None => ExecEndTarget::NewCell,
             },
             None => ExecEndTarget::NewCell,
         };

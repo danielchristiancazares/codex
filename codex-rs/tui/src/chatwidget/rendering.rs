@@ -24,7 +24,15 @@ impl Renderable for ExternalWriterNotice {
         let card_height = (card_lines.len() as u16).saturating_add(/*rhs*/ 2);
         let card = Rect::new(area.x, area.y, area.width, card_height.min(area.height));
         Widget::render(
-            Block::default().style(crate::style::user_message_style()),
+            Block::default().style(
+                crate::terminal_palette::default_bg()
+                    .map(|bg| {
+                        ratatui::style::Style::default().bg(crate::terminal_palette::best_color(
+                            crate::style::user_message_bg_rgb(bg),
+                        ))
+                    })
+                    .unwrap_or_default(),
+            ),
             card,
             buf,
         );

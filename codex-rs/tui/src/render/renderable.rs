@@ -488,10 +488,11 @@ impl<'a> Renderable for InsetRenderable<'a> {
         self.child.render(area.inset(self.insets), buf);
     }
     fn desired_height(&self, width: u16) -> u16 {
+        let horizontal = self.insets.left.saturating_add(self.insets.right);
         self.child
-            .desired_height(width - self.insets.left - self.insets.right)
-            + self.insets.top
-            + self.insets.bottom
+            .desired_height(width.saturating_sub(horizontal))
+            .saturating_add(self.insets.top)
+            .saturating_add(self.insets.bottom)
     }
 
     /// Preserve clipped inset padding while forwarding only visible child rows.

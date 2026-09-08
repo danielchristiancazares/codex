@@ -9,4 +9,4 @@ expression: "render_bottom_popup(&app.chat_widget, 96)"
   2. Return to this session
 
   Starting a background server will not interrupt or move this session.
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

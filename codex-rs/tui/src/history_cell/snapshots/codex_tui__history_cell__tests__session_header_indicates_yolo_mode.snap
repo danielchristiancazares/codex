@@ -1,11 +1,8 @@
 ---
-source: tui/src/history_cell.rs
+source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (vtest)               │
-│                                       │
-│ model:       gpt-5   /model to change │
-│ directory:   /tmp/project             │
-│ permissions: YOLO mode                │
-╰───────────────────────────────────────╯
+  >_ Codex vtest
+  GPT 5  /model to change
+  /tmp/project
+  [!] Unrestricted access  /permissions to change

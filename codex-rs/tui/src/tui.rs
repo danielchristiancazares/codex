@@ -45,7 +45,9 @@ use self::input_boundary::TerminalInitializationGuard;
 pub(crate) use self::input_boundary::discard_pending_terminal_input;
 #[cfg(all(test, unix))]
 use self::input_boundary::terminal_input_is_readable;
+pub(crate) use self::scrollback::discard_docked_history_gap;
 use crate::custom_terminal;
+use crate::custom_terminal::InlineViewportState;
 use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::notifications::DesktopNotificationBackend;
@@ -57,6 +59,7 @@ use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
 use crate::tui::job_control::SuspendContext;
 use crate::tui::screen_size::ScreenSizePolicy;
+use crate::tui::scrollback::HistoryTailDock;
 use crate::tui::scrollback::ScrollbackStrategy;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
@@ -583,16 +586,35 @@ pub enum TuiEvent {
     FocusLost,
 }
 
+/// Controls how a resize-reflow draw positions the live inline viewport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineViewportPlacement {
+    /// Follow the viewport's existing top or bottom anchor.
+    FollowExisting,
+    /// Place the viewport against the bottom edge of the terminal.
+    BottomDocked,
+}
+
+/// Describes whether an inline frame owns durable transcript layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineViewportRole {
+    /// A durable surface such as the composer or startup draft that owns transcript docking.
+    Persistent,
+    /// A popup or modal that defers history-tail docking until persistent layout resumes.
+    Transient,
+}
+
 pub struct Tui {
     frame_requester: FrameRequester,
     draw_tx: broadcast::Sender<()>,
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
+    pub(crate) last_resize_reflow_role: InlineViewportRole,
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
-    alt_saved_viewport: Option<ratatui::layout::Rect>,
+    alt_saved_viewport: Option<InlineViewportState>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
     // True when overlay alt-screen UI is active
@@ -604,7 +626,7 @@ pub struct Tui {
     notification_condition: NotificationCondition,
     scrollback: ScrollbackStrategy,
     // When false, enter_alt_screen() becomes a no-op.
-    alt_screen_enabled: bool,
+    pub(crate) alt_screen_enabled: bool,
     // Keeps unmanaged process stderr writes out of the inline viewport.
     _stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
@@ -653,6 +675,7 @@ impl Tui {
             event_broker: Arc::new(event_broker),
             terminal,
             pending_history_lines: vec![],
+            last_resize_reflow_role: InlineViewportRole::Persistent,
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
@@ -844,7 +867,7 @@ impl Tui {
         // Enable "alternate scroll" so terminals may translate wheel to arrows
         let _ = execute!(self.terminal.backend_mut(), EnableAlternateScroll);
         if let Ok(size) = self.terminal.size() {
-            self.alt_saved_viewport = Some(self.terminal.viewport_area);
+            self.alt_saved_viewport = Some(self.terminal.inline_viewport_state());
             self.terminal.resize(size)?;
             self.terminal.set_viewport_area(ratatui::layout::Rect::new(
                 0,
@@ -867,7 +890,7 @@ impl Tui {
         let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         if let Some(saved) = self.alt_saved_viewport.take() {
-            self.terminal.set_viewport_area(saved);
+            self.terminal.restore_inline_viewport_state(saved);
         }
         // The restored main screen does not contain the alternate screen's diff baseline.
         self.terminal.invalidate_viewport();
@@ -913,22 +936,54 @@ impl Tui {
         self.pending_history_lines.clear();
     }
 
+    fn update_inline_state_for_size_change(&mut self, screen_size: Size) {
+        let previous_screen_size = self.terminal.last_known_screen_size;
+        if screen_size == previous_screen_size {
+            return;
+        }
+        self.terminal.clear_inline_history_tracking();
+        if let Some(saved) = self.alt_saved_viewport.as_mut() {
+            // Alternate-screen drawing updates the cached terminal size before inline rendering
+            // resumes, so rebase the saved viewport while the previous size is still available.
+            let was_bottom_aligned = saved.area.bottom() == previous_screen_size.height;
+            saved.area.width = screen_size.width;
+            saved.area.height = saved.area.height.min(screen_size.height);
+            if was_bottom_aligned || saved.area.bottom() > screen_size.height {
+                saved.area.y = screen_size.height - saved.area.height;
+            }
+            saved.visible_history_rows = 0;
+            saved.docked_history_gap_rows = 0;
+        }
+    }
+
     /// Resize the inline viewport for the resize-reflow path.
     ///
-    /// Unlike the legacy draw path, this path does not scroll rows above the viewport when the
-    /// terminal shrinks. Resize reflow owns rebuilding those rows from transcript source, so
-    /// scrolling here would move the viewport once and then replay history into the wrong row.
-    fn update_inline_viewport_for_resize_reflow(
-        terminal: &mut Terminal,
+    /// Unlike the legacy draw path, a physical terminal resize leaves rows above the viewport for
+    /// source-backed transcript reflow. When the terminal size is stable and only live content
+    /// shrinks, queued history can occupy the vacated rows before the visible tail is docked.
+    fn update_inline_viewport_for_resize_reflow<B>(
+        terminal: &mut CustomTerminal<B>,
         height: u16,
         screen_size: Size,
+        placement: InlineViewportPlacement,
         scrollback: ScrollbackStrategy,
-    ) -> Result<bool> {
+        history_tail_dock: HistoryTailDock,
+    ) -> Result<bool>
+    where
+        B: Backend<Error = io::Error> + Write,
+    {
         let terminal_height_shrank = screen_size.height < terminal.last_known_screen_size.height;
-        let terminal_height_grew = screen_size.height > terminal.last_known_screen_size.height;
-        let viewport_was_bottom_aligned =
-            terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
+        let terminal_size_changed = screen_size != terminal.last_known_screen_size;
+        let viewport_was_empty = terminal.viewport_area.is_empty();
         let previous_area = terminal.viewport_area;
+        // A full-height viewport also touches the bottom edge, but contracting it must keep the
+        // viewport at row zero so transcript already in terminal scrollback stays adjacent.
+        let viewport_was_bottom_docked = previous_area.top() > 0
+            && previous_area.bottom() == terminal.last_known_screen_size.height;
+
+        if terminal_size_changed {
+            terminal.clear_inline_history_tracking();
+        }
 
         let mut area = terminal.viewport_area;
         area.height = height.min(screen_size.height);
@@ -941,12 +996,36 @@ impl Tui {
                 scrollback.grow_viewport(terminal, area.top(), screen_size, scroll_by)?;
             }
             area.y = screen_size.height - area.height;
-        } else if terminal_height_grew && viewport_was_bottom_aligned {
+        } else if placement == InlineViewportPlacement::BottomDocked
+            || viewport_was_empty
+            || viewport_was_bottom_docked
+        {
             area.y = screen_size.height - area.height;
         }
 
+        if placement == InlineViewportPlacement::FollowExisting
+            && history_tail_dock == HistoryTailDock::DeferToPendingHistory
+            && !terminal_size_changed
+            && terminal.visible_history_rows() > 0
+            && area.y > previous_area.y
+        {
+            area.y = previous_area.y;
+        }
+
         if area != terminal.viewport_area {
-            let clear_position = Position::new(/*x*/ 0, previous_area.y.min(area.y));
+            let history_tail_moved = if terminal_size_changed
+                || history_tail_dock == HistoryTailDock::PreservePosition
+            {
+                false
+            } else {
+                scrollback.dock_sparse_history_tail(terminal, previous_area.top(), area.top())?
+            };
+            let clear_y = if history_tail_moved {
+                area.y
+            } else {
+                previous_area.y.min(area.y)
+            };
+            let clear_position = Position::new(/*x*/ 0, clear_y);
             terminal.set_viewport_area(area);
             terminal.clear_after_position(clear_position)?;
             needs_full_repaint = true;
@@ -986,6 +1065,7 @@ impl Tui {
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
         let screen_size = self.take_event_screen_size()?;
+        self.update_inline_state_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -1044,7 +1124,7 @@ impl Tui {
                 let area = terminal.viewport_area;
                 let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
                     self.alt_saved_viewport
-                        .map(|r| r.bottom().saturating_sub(1))
+                        .map(|state| state.area.bottom().saturating_sub(1))
                         .unwrap_or_else(|| area.bottom().saturating_sub(1))
                 } else {
                     area.bottom().saturating_sub(1)
@@ -1123,8 +1203,11 @@ impl Tui {
         &mut self,
         height: u16,
         screen_size: Size,
+        placement: InlineViewportPlacement,
+        role: InlineViewportRole,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
+        self.update_inline_state_for_size_change(screen_size);
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -1133,6 +1216,25 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
+        // A full-screen history batch advances from the viewport origin by its own row count.
+        // Restore the persistent bottom anchor before flushing a batch queued under a transient
+        // view, including batches shorter than the height vacated by that view.
+        let has_pending_history = !self.pending_history_lines.is_empty();
+        let resumes_persistent_layout_with_pending_history = self.scrollback
+            == ScrollbackStrategy::FullScreen
+            && placement == InlineViewportPlacement::FollowExisting
+            && role == InlineViewportRole::Persistent
+            && self.last_resize_reflow_role == InlineViewportRole::Transient
+            && has_pending_history;
+        let history_tail_dock = if role == InlineViewportRole::Transient
+            || resumes_persistent_layout_with_pending_history
+        {
+            HistoryTailDock::PreservePosition
+        } else if self.scrollback == ScrollbackStrategy::FullScreen && has_pending_history {
+            HistoryTailDock::DeferToPendingHistory
+        } else {
+            HistoryTailDock::Immediate
+        };
 
         stdout().sync_update(|_| {
             #[cfg(unix)]
@@ -1145,12 +1247,10 @@ impl Tui {
                 terminal,
                 height,
                 screen_size,
+                placement,
                 self.scrollback,
+                history_tail_dock,
             )?;
-            // A zero- or one-row history region cannot isolate raw history writes from the
-            // viewport, so replayed rows can leave stale cells inside the composer.
-            let history_can_overlap_viewport =
-                !self.pending_history_lines.is_empty() && terminal.viewport_area.top() <= 1;
             Self::flush_pending_history_lines(
                 terminal,
                 &mut self.pending_history_lines,
@@ -1158,7 +1258,7 @@ impl Tui {
                 screen_size,
             )?;
 
-            if needs_full_repaint || history_can_overlap_viewport {
+            if needs_full_repaint {
                 terminal.invalidate_viewport();
             }
 
@@ -1168,7 +1268,7 @@ impl Tui {
                 let area = terminal.viewport_area;
                 let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
                     self.alt_saved_viewport
-                        .map(|r| r.bottom().saturating_sub(1))
+                        .map(|state| state.area.bottom().saturating_sub(1))
                         .unwrap_or_else(|| area.bottom().saturating_sub(1))
                 } else {
                     area.bottom().saturating_sub(1)
@@ -1179,7 +1279,9 @@ impl Tui {
             terminal.draw_with_size(screen_size, |frame| {
                 draw_fn(frame);
             })
-        })?
+        })??;
+        self.last_resize_reflow_role = role;
+        Ok(())
     }
 
     fn pending_viewport_area(&mut self, screen_size: Size) -> Result<Option<Rect>> {

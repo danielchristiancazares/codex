@@ -1,0 +1,25 @@
+---
+source: tui/src/bottom_pane/multi_select_picker.rs
+expression: "format!(\"wide:\\n{}\\n\\nnarrow:\\n{}\", render_picker(&picker, 64),\nrender_picker(&picker, 28),)"
+---
+wide:
+
+  Test
+
+  Type to search
+  >
+  [ ] theme-colors
+› [ ] long-option-for-na...
+
+  enter confirm; esc close; space toggle; ←/→ move
+
+narrow:
+
+  Test
+
+  Type to search
+  >
+  [ ] theme-colors
+› [ ] long-option-for-na.…
+
+  enter confirm; esc close

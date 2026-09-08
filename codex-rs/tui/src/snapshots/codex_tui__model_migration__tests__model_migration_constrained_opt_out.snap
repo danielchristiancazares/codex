@@ -1,0 +1,14 @@
+---
+source: tui/src/model_migration.rs
+expression: rendered
+---
+
+> Codex just got an upgrade. Introducing gpt-new.
+
+
+  Choose how you'd like Codex to proceed.
+
+› 1. Try new model
+  2. Use existing model
+
+  Use ↑/↓ to move, press enter to confirm

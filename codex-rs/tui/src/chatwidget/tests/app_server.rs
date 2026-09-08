@@ -1057,9 +1057,8 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
         /*replay_kind*/ None,
     );
 
-    let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "expected patch history to be rendered");
-    let transcript = lines_to_single_string(cells.last().expect("patch cell"));
+    assert!(drain_insert_history(&mut rx).is_empty());
+    let transcript = active_blob(&chat);
     assert!(
         transcript.contains("Added foo.txt") || transcript.contains("Edited foo.txt"),
         "expected patch summary to include foo.txt, got: {transcript}"
@@ -1588,7 +1587,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "Responding");
     assert_eq!(status.details(), None);
     assert!(chat.status_state.retry_status_header.is_none());
 }

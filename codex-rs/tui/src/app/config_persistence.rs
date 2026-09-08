@@ -1099,10 +1099,10 @@ impl App {
         self.chat_widget.set_tui_pet(Some(pet));
     }
 
-    pub(super) fn sync_tui_pet_disabled(&mut self) {
+    pub(super) fn sync_tui_pet_disabled(&mut self) -> bool {
         let pet = crate::pets::DISABLED_PET_ID.to_string();
         self.local_settings.tui.pet = Some(pet.clone());
-        self.chat_widget.set_tui_pet(Some(pet));
+        self.chat_widget.set_tui_pet(Some(pet))
     }
 
     pub(super) fn restore_runtime_theme_from_config(&self) {

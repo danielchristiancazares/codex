@@ -35,6 +35,8 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
     let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&cfg),
         config: cfg.clone(),
@@ -93,7 +95,7 @@ async fn marketplace_upgrade_loading_popup_snapshot() {
         .join(" | ");
     insta::assert_snapshot!(
         upgrade_lines,
-        @"Upgrading debug marketplace... | ›    Upgrading debug marketplace...  This updates when marketplace upgrade completes."
+        @"Upgrading debug marketplace... | Upgrading debug marketplace...  This updates when marketplace upgrade completes."
     );
 }
 
@@ -128,7 +130,12 @@ async fn marketplace_upgrade_failure_includes_backend_messages_snapshot() {
         .join("\n");
     insta::assert_snapshot!(
         rendered.trim(),
-        @"■ Failed to upgrade 2 marketplaces: debug: git ls-remote marketplace source failed with status 128: authentication failed; tools: failed to validate upgraded marketplace root: marketplace root does not contain a supported manifest"
+        @"
+    ■ Failed to upgrade 2 marketplaces: debug: git ls-remote marketplace source
+    │ failed with status 128: authentication failed; tools: failed to validate
+    │ upgraded marketplace root: marketplace root does not contain a supported
+    │ manifest
+    "
     );
 }
 
@@ -1232,8 +1239,10 @@ async fn plugins_popup_remote_section_fallback_states_when_remote_plugin_disable
             .expect("expected remote section header");
         let item = popup
             .lines()
-            .find_map(|line| line.trim_start().strip_prefix('›'))
-            .expect("expected selected remote section item")
+            .skip_while(|line| !line.trim_start().starts_with("/ "))
+            .skip(/*n*/ 1)
+            .find(|line| !line.trim().is_empty())
+            .expect("expected remote section item")
             .trim();
         format!("{header}\n{item}")
     };
@@ -2067,7 +2076,7 @@ async fn plugins_popup_search_no_matches_and_backspace_restores_results() {
         "expected popup to show the typed search query, got:\n{no_matches}"
     );
     assert!(
-        no_matches.contains("no matches"),
+        no_matches.contains("No matching options"),
         "expected popup to render the no-matches UX, got:\n{no_matches}"
     );
 
@@ -3318,9 +3327,81 @@ async fn model_selection_popup_snapshot() {
     assert_chatwidget_snapshot!("model_selection_popup", popup);
 }
 
+#[tokio::test]
+async fn provider_selection_popup_snapshot_and_selection_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_provider_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("provider_selection_popup", popup);
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::SwitchModelProvider(provider_id))
+            if provider_id == codex_model_provider_info::COPILOT_PROVIDER_ID
+    );
+}
+
+#[tokio::test]
+async fn provider_selection_popup_compact_padding_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_provider_popup();
+
+    let compact_area = Rect::new(0, 0, /*width*/ 80, /*height*/ 6);
+    let mut compact_buf = Buffer::empty(compact_area);
+    chat.bottom_pane.render(compact_area, &mut compact_buf);
+    assert_chatwidget_snapshot!(
+        "provider_selection_popup_compact",
+        format!("{compact_buf:?}")
+    );
+}
+
+#[tokio::test]
+async fn provider_switch_loading_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.show_provider_switch_loading("GitHub Copilot");
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("provider_switch_loading_popup", popup);
+}
+
 fn apply_model_list_response(chat: &mut ChatWidget, presets: Vec<ModelPreset>) {
     let request_id = chat.model_popup_request_id.expect("pending model request");
     assert!(chat.on_models_loaded(request_id, Ok(presets)));
+}
+
+#[tokio::test]
+async fn model_picker_refresh_replaces_loading_view_without_a_selection() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut presets = chat.model_catalog.try_list_models().unwrap();
+    presets[0].description = "Refreshed model details".to_string();
+    chat.open_model_popup();
+    chat.show_model_selection_view(SelectionViewParams {
+        view_id: Some(super::super::model_popups::MODEL_SELECTION_VIEW_ID),
+        title: Some("Loading models".to_string()),
+        items: vec![SelectionItem {
+            name: "Loading…".to_string(),
+            disabled_reason: Some("Waiting for the provider".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    assert_eq!(
+        chat.bottom_pane
+            .selected_index_for_active_view(super::super::model_popups::MODEL_SELECTION_VIEW_ID,),
+        None,
+    );
+
+    apply_model_list_response(&mut chat, presets);
+    assert!(!render_bottom_popup(&chat, /*width*/ 80).contains("Loading models"));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    assert!(chat.no_modal_or_popup_active());
 }
 
 #[tokio::test]

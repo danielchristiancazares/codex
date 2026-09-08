@@ -9,7 +9,7 @@ expression: "render_picker(params, 120)"
 
   [All]  Common  Customized (0)  Unbound (5)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
-  Type to search shortcuts
+  / ▏ Type to search shortcuts
   Chat           Interrupt Turn             esc
   Chat           Decrease Reasoning Effort  alt-,, shift-down
   Chat           Increase Reasoning Effort  alt-., shift-up
@@ -19,4 +19,4 @@ expression: "render_picker(params, 120)"
   Chat           Prompt Stack Back          alt-down, shift-right
 › Chat           Skip Question              ctrl-]
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 16/141 · ↑8 · 125↓

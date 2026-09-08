@@ -7,10 +7,10 @@ activity:
 "                                                                                "
 "• Checking stop condition                                                       "
 "                                                                                "
-"                                                                                "
-"› Ask Codex to do anything                                                      "
-"                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"╭──────────────────────────────────────────────────────────────────────────────╮"
+"┃ ›                                                                            │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"  GPT 5.6 Sol · Default · /tmp/project                                          "
 history:
 • Hook stopped
   └ continue with more context

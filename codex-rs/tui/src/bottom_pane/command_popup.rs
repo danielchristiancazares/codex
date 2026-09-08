@@ -1,30 +1,20 @@
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::widgets::WidgetRef;
+use ratatui::style::Stylize;
 
 use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
-use super::selection_popup_common::ColumnWidthConfig;
-use super::selection_popup_common::ColumnWidthMode;
 use super::selection_popup_common::GenericDisplayRow;
-use super::selection_popup_common::measure_rows_height_with_col_width_mode;
-use super::selection_popup_common::render_rows_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use super::slash_commands::commands_for_input;
-use crate::render::Insets;
-use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
+
+mod presentation;
 
 // Hide alias commands in the default popup list so each unique action appears once.
 // `quit` is an alias of `exit`, and `btw` is an alias of `side`, so we skip
 // those aliases here.
 const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Btw];
-const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
-    ColumnWidthMode::AutoAllRows,
-    /*name_column_width*/ None,
-);
 
 /// A selectable item in the popup.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,20 +120,6 @@ impl CommandPopup {
             .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
     }
 
-    /// Determine the preferred height of the popup for a given width.
-    /// Accounts for wrapped descriptions so that long tooltips don't overflow.
-    pub(crate) fn calculate_required_height(&self, width: u16) -> u16 {
-        let rows = self.rows_from_matches(self.filtered());
-
-        measure_rows_height_with_col_width_mode(
-            &rows,
-            &self.state,
-            MAX_POPUP_ROWS,
-            width,
-            COMMAND_COLUMN_WIDTH,
-        )
-    }
-
     /// Compute exact/prefix matches over built-in commands and user prompts,
     /// paired with optional highlight indices. Preserves the original
     /// presentation order for built-ins and prompts.
@@ -207,12 +183,17 @@ impl CommandPopup {
     ) -> Vec<GenericDisplayRow> {
         matches
             .into_iter()
-            .map(|(item, indices)| {
+            .enumerate()
+            .map(|(index, (item, indices))| {
                 let name = format!("/{}", item.command());
                 let description = item.description().to_string();
                 GenericDisplayRow {
                     name,
-                    name_prefix_spans: Vec::new(),
+                    name_prefix_spans: vec![if self.state.selected_idx == Some(index) {
+                        "› ".bold()
+                    } else {
+                        "  ".into()
+                    }],
                     match_indices: indices.map(|v| v.into_iter().map(|i| i + 1).collect()),
                     display_shortcut: None,
                     description: Some(description),
@@ -265,27 +246,13 @@ impl CommandItem {
     }
 }
 
-impl WidgetRef for CommandPopup {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let rows = self.rows_from_matches(self.filtered());
-        render_rows_with_col_width_mode(
-            area.inset(Insets::tlbr(
-                /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
-            )),
-            buf,
-            &rows,
-            &self.state,
-            MAX_POPUP_ROWS,
-            "no matches",
-            COMMAND_COLUMN_WIDTH,
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::WidgetRef;
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {

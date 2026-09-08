@@ -1,0 +1,111 @@
+---
+source: tui/src/exec_cell/exploration_tests.rs
+expression: "(active, partially_completed, completed)"
+---
+(
+    [
+        Line::from_iter([
+            Span::from("•"),
+            Span::from(" "),
+            Span::from("Exploring").bold(),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").cyan(),
+            Span::from("Read").cyan(),
+            Span::from(" "),
+            Span::from("lib.rs"),
+            Span::from(", ").dim(),
+            Span::from("endpoint.rs"),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").cyan(),
+            Span::from("Search").cyan(),
+            Span::from(" "),
+            Span::from("needle"),
+            Span::from(" in ").dim(),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("other"),
+            Span::from(" in ").dim(),
+            Span::from("tests"),
+        ]),
+        Line::from_iter([
+            Span::from("  └ ").cyan(),
+            Span::from("List").cyan(),
+            Span::from(" "),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("tests"),
+        ]),
+    ],
+    [
+        Line::from_iter([
+            Span::from("•"),
+            Span::from(" "),
+            Span::from("Exploring").bold(),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").green(),
+            Span::from("Read").cyan(),
+            Span::from(" "),
+            Span::from("lib.rs"),
+            Span::from(", ").dim(),
+            Span::from("endpoint.rs"),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").green(),
+            Span::from("Searched").cyan(),
+            Span::from(" "),
+            Span::from("needle"),
+            Span::from(" in ").dim(),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("other"),
+            Span::from(" in ").dim(),
+            Span::from("tests"),
+        ]),
+        Line::from_iter([
+            Span::from("  └ ").cyan(),
+            Span::from("List").cyan(),
+            Span::from(" "),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("tests"),
+        ]),
+    ],
+    [
+        Line::from_iter([
+            Span::from("•").dim(),
+            Span::from(" "),
+            Span::from("Explored").bold(),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").green(),
+            Span::from("Read").cyan(),
+            Span::from(" "),
+            Span::from("lib.rs"),
+            Span::from(", ").dim(),
+            Span::from("endpoint.rs"),
+        ]),
+        Line::from_iter([
+            Span::from("  ├ ").green(),
+            Span::from("Searched").cyan(),
+            Span::from(" "),
+            Span::from("needle"),
+            Span::from(" in ").dim(),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("other"),
+            Span::from(" in ").dim(),
+            Span::from("tests"),
+        ]),
+        Line::from_iter([
+            Span::from("  └ ").green(),
+            Span::from("Listed").cyan(),
+            Span::from(" "),
+            Span::from("src"),
+            Span::from(", ").dim(),
+            Span::from("tests"),
+        ]),
+    ],
+)

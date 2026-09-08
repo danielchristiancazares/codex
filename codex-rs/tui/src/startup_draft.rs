@@ -13,9 +13,9 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::layout::Size;
-use ratatui::style::Modifier;
-use ratatui::style::Style;
 use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::Stream;
@@ -34,20 +34,28 @@ use crate::history_cell::HistoryCell;
 use crate::key_hint;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
-use crate::render::Insets;
-use crate::render::renderable::FlexRenderable;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::renderable::Renderable;
-use crate::render::renderable::RenderableExt;
-use crate::render::renderable::RenderableItem;
 use crate::resume_picker::SessionSelection;
+use crate::style::StatusTone;
+use crate::style::status_style;
 use crate::tui;
 use crate::tui::FrameRequester;
+use crate::tui::InlineViewportPlacement;
+use crate::tui::InlineViewportRole;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::version::CODEX_CLI_VERSION;
 
 const STARTUP_EVENT_BATCH_SIZE: usize = 64;
 const STARTUP_PASTE_NEWLINE_TIMEOUT: Duration = Duration::from_millis(120);
+
+mod presentation;
+use presentation::startup_draft_renderable;
+
+#[cfg(test)]
+#[path = "startup_draft_visual_tests.rs"]
+mod visual_tests;
 
 /// Identifies the first interactive surface expected for the current invocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -381,16 +389,21 @@ impl StartupDraftPump {
         }
         self.bottom_pane.pre_draw_tick();
         let renderable =
-            startup_draft_renderable(&self.header, &self.bottom_pane, self.session_action);
-        let desired_height = renderable.desired_height(screen_size.width);
-        tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-            let area = frame.area();
-            renderable.render(area, frame.buffer);
-            if let Some((x, y)) = renderable.cursor_pos(area) {
-                frame.set_cursor_style(renderable.cursor_style(area));
-                frame.set_cursor_position((x, y));
-            }
-        })
+            startup_draft_renderable(self.header.as_ref(), &self.bottom_pane, self.session_action);
+        tui.draw_with_resize_reflow(
+            screen_size.height,
+            screen_size,
+            InlineViewportPlacement::BottomDocked,
+            InlineViewportRole::Transient,
+            |frame| {
+                let area = frame.area();
+                renderable.render(area, frame.buffer);
+                if let Some((x, y)) = renderable.cursor_pos(area) {
+                    frame.set_cursor_style(renderable.cursor_style(area));
+                    frame.set_cursor_position((x, y));
+                }
+            },
+        )
     }
 }
 
@@ -451,54 +464,119 @@ fn handle_startup_draft_key(bottom_pane: &mut BottomPane, key: KeyEvent) -> io::
 }
 
 fn startup_session_header(config: Option<&Config>) -> Box<dyn HistoryCell> {
-    let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-    let directory = config.map_or_else(
-        || PathBuf::from("loading"),
-        |config| config.cwd.to_path_buf(),
-    );
-    Box::new(
-        history_cell::SessionHeaderHistoryCell::new_with_style(
-            "loading".to_string(),
-            placeholder_style,
-            /*reasoning_effort*/ None,
-            /*show_fast_status*/ false,
-            directory,
-            CODEX_CLI_VERSION,
-        )
-        .with_yolo_mode(config.is_some_and(history_cell::is_yolo_mode)),
-    )
+    Box::new(StartupSessionHeader {
+        directory: config.map(|config| config.cwd.to_path_buf()),
+        yolo_mode: config.is_some_and(history_cell::is_yolo_mode),
+    })
 }
 
-fn startup_draft_renderable<'a>(
-    header: &'a dyn Renderable,
-    bottom_pane: &'a BottomPane,
-    session_action: StartupDraftSessionAction,
-) -> RenderableItem<'a> {
-    let mut renderable = FlexRenderable::new();
-    renderable.push(/*flex*/ 1, RenderableItem::Borrowed(header));
-    let loading_message = match session_action {
-        StartupDraftSessionAction::New => None,
-        StartupDraftSessionAction::Resume => Some("  Resuming session…"),
-        StartupDraftSessionAction::Fork => Some("  Forking session…"),
-    };
-    if let Some(loading_message) = loading_message {
-        renderable.push(
-            /*flex*/ 0,
-            RenderableItem::Owned(Box::new(loading_message.dim())),
-        );
+/// Compact loading header that keeps startup actions legible before session metadata arrives.
+#[derive(Debug)]
+struct StartupSessionHeader {
+    directory: Option<PathBuf>,
+    yolo_mode: bool,
+}
+
+impl HistoryCell for StartupSessionHeader {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let title = Line::from(vec![
+            Span::styled(">_ ", crate::style::accent_style()),
+            "Codex".bold(),
+            if width <= 18 {
+                Span::styled(" · loading", crate::style::secondary_style())
+            } else if width >= 32 {
+                Span::styled(
+                    format!(" v{CODEX_CLI_VERSION}"),
+                    crate::style::secondary_style(),
+                )
+            } else {
+                Span::raw("")
+            },
+        ]);
+        let lines = if self.directory.is_none() {
+            vec![title, Line::default(), Line::from("Getting ready…".bold())]
+        } else if width <= 18 {
+            let directory = self.directory.as_ref().map_or_else(
+                || "loading".to_string(),
+                |directory| {
+                    history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory,
+                        Some(usize::from(width).saturating_sub(8)),
+                    )
+                },
+            );
+            vec![
+                title,
+                Line::from("Getting ready…"),
+                Line::from(vec![
+                    "cwd".into(),
+                    " · ".dim(),
+                    Span::styled(directory, crate::style::secondary_style()),
+                ]),
+                Line::from(if self.yolo_mode {
+                    "[!] Unrestricted".bold()
+                } else {
+                    "Guarded access".into()
+                }),
+            ]
+        } else {
+            let workspace = self.directory.as_ref().map_or_else(
+                || "loading…".to_string(),
+                |directory| {
+                    history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory,
+                        Some(usize::from(width).saturating_sub(12)),
+                    )
+                },
+            );
+            let access = if self.yolo_mode {
+                vec![Span::styled(
+                    "[!] Unrestricted access",
+                    status_style(StatusTone::Attention),
+                )]
+            } else {
+                vec!["Guarded access".into()]
+            };
+            vec![
+                title,
+                Line::from("Preparing your workspace…"),
+                Line::from(vec![
+                    "Workspace ".into(),
+                    Span::styled(workspace, crate::style::secondary_style()),
+                ]),
+                Line::from(access),
+            ]
+        };
+
+        lines
+            .into_iter()
+            .map(|line| truncate_line_with_ellipsis_if_overflow(line, usize::from(width)))
+            .collect()
     }
-    renderable.push(
-        /*flex*/ 0,
-        bottom_pane
-            .as_renderable_with_composer_right_reserve(/*composer_right_reserve*/ 0)
-            .inset(Insets::tlbr(
-                /*top*/ u16::from(loading_message.is_none()),
-                /*left*/ 0,
-                /*bottom*/ 0,
-                /*right*/ 0,
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from(format!("OpenAI Codex (v{CODEX_CLI_VERSION})")),
+            Line::from("model: loading"),
+            Line::from(format!(
+                "directory: {}",
+                self.directory.as_ref().map_or_else(
+                    || "loading".to_string(),
+                    |directory| history_cell::SessionHeaderHistoryCell::format_directory_inner(
+                        directory, /*max_width*/ None,
+                    ),
+                )
             )),
-    );
-    RenderableItem::Owned(Box::new(renderable))
+        ];
+        if self.yolo_mode {
+            lines.push(Line::from("permissions: [!] unrestricted access"));
+        }
+        lines
+    }
 }
 
 fn startup_draft_bottom_pane(
@@ -512,7 +590,7 @@ fn startup_draft_bottom_pane(
             frame_requester,
             has_input_focus: true,
             enhanced_keys_supported,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: "Type a draft while Codex gets ready…".to_string(),
             disable_paste_burst: false,
             animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
             skills: None,

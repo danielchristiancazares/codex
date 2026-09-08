@@ -2,20 +2,17 @@
 source: tui/src/status_indicator_widget.rs
 expression: "frames.join(\"\\n\")"
 ---
-61 columns:
-"Working (0s • esc to interrupt) · checking 日本語 ｶﾞﾊﾟ policy" Hidden by multi-width symbols: [(44, " "), (46, " "), (48, " "), (51, " "), (53, " ")]
-"  └ existing details                                         "
+120 columns:
+"✦ Working · existing details · checking 日本語 ｶﾞﾊﾟ policy                                              0s · Esc interr…" Hidden by multi-width symbols: [(41, " "), (43, " "), (45, " "), (48, " "), (50, " ")]
 
 60 columns:
-"Working (0s • esc to interrupt)                             "
+"✦ Working · existing details              0s · Esc interrupt"
 "  └ checking 日本語 ｶﾞﾊﾟ policy                             " Hidden by multi-width symbols: [(14, " "), (16, " "), (18, " "), (21, " "), (23, " ")]
-"  └ existing details                                        "
 
 24 columns:
-"Working (0s • esc to in…"
-"  └ checking 日本語 ｶﾞ… " Hidden by multi-width symbols: [(14, " "), (16, " "), (18, " "), (21, " ")]
+"✦ Working       Esc stop"
+"  ├ checking 日本語 ｶﾞ… " Hidden by multi-width symbols: [(14, " "), (16, " "), (18, " "), (21, " ")]
 "  └ existing details    "
 
-61 columns:
-"Working (0s • esc to interrupt) · checking 日本語 ｶﾞﾊﾟ policy" Hidden by multi-width symbols: [(44, " "), (46, " "), (48, " "), (51, " "), (53, " ")]
-"  └ existing details                                         "
+120 columns:
+"✦ Working · existing details · checking 日本語 ｶﾞﾊﾟ policy                                              0s · Esc interr…" Hidden by multi-width symbols: [(41, " "), (43, " "), (45, " "), (48, " "), (50, " ")]

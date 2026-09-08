@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+expression: popup
+---
+  Select Provider
+
+› 1. OpenAI ✓        Use your OpenAI account
+  2. GitHub Copilot  Use your GitHub account
+
+  ↑/↓ choose · enter confirm · esc back

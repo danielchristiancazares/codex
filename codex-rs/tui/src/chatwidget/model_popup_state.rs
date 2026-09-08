@@ -8,11 +8,7 @@ impl ChatWidget {
     fn model_popup_view_id(&self) -> Option<&'static str> {
         [MODEL_SELECTION_VIEW_ID, ALL_MODELS_SELECTION_VIEW_ID]
             .into_iter()
-            .find(|view_id| {
-                self.bottom_pane
-                    .selected_index_for_present_view(view_id)
-                    .is_some()
-            })
+            .find(|view_id| self.bottom_pane.has_view(view_id))
     }
 
     pub(crate) fn model_popup_request_is_current(&self, request_id: uuid::Uuid) -> bool {
@@ -64,7 +60,10 @@ impl ChatWidget {
             .iter()
             .position(|item| Some(&item.name) == selected_model);
         self.model_popup_model_ids = params.items.iter().map(|item| item.name.clone()).collect();
-        if let Some(view_id) = params.view_id.filter(|_| selected_index.is_some()) {
+        if let Some(view_id) = params
+            .view_id
+            .filter(|view_id| self.bottom_pane.has_view(view_id))
+        {
             self.bottom_pane
                 .replace_selection_view_if_present(view_id, params);
         } else {

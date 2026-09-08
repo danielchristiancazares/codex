@@ -1,0 +1,6 @@
+---
+source: tui/src/style_contrast_tests.rs
+expression: "snapshots.join(\"\\n\")"
+---
+dark: Style::new().fg(Color::Rgb(163, 163, 160)).not_dim(), contrast 6.44
+light: Style::new().fg(Color::Rgb(100, 99, 99)).not_dim(), contrast 5.69

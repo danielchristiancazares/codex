@@ -9,7 +9,7 @@ expression: "render_picker(params, 120)"
 
   [All]  Common  Customized (0)  Unbound (6)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
-  Type to search shortcuts
+  / ▏ Type to search shortcuts
 › Global       - Open Agents                unbound
   Global         Open Transcript            ctrl-t
   Global         Open External Editor       ctrl-g
@@ -19,4 +19,4 @@ expression: "render_picker(params, 120)"
   Global       - Toggle Fast Mode           unbound
   Global         Toggle Raw Output          alt-r
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 1/142 · +134 more ↓

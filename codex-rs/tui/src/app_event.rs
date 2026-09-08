@@ -156,6 +156,13 @@ pub(crate) enum HistoryLookupResponse {
 pub(crate) enum ConsolidationScrollbackReflow {
     IfResizeReflowRan,
     Required,
+    InlinePreserve(InlineCanonicalCorrection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InlineCanonicalCorrection {
+    None,
+    AppendAuthoritativeSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1105,6 +1112,12 @@ pub(crate) enum AppEvent {
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
+
+    /// Continue the active conversation with another model provider.
+    SwitchModelProvider(String),
+
+    /// Provider discovery completed without occupying the TUI event loop.
+    ModelProviderSwitchPrepared(Uuid, ThreadId, String, Result<Vec<ModelPreset>, String>),
 
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),

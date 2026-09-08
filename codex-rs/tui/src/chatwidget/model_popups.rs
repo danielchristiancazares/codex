@@ -4,6 +4,7 @@
 //! into another, especially while Plan mode is active.
 
 use super::*;
+use crate::bottom_pane::SelectionRowDisplay;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
 
 const ULTRA_REASONING_CONCURRENCY_WARNING_THRESHOLD: usize = 8;
@@ -175,6 +176,7 @@ impl ChatWidget {
         );
         self.show_model_selection_view(SelectionViewParams {
             view_id: Some(MODEL_SELECTION_VIEW_ID),
+            row_display: SelectionRowDisplay::SingleLine,
             footer_hint: Some(standard_popup_hint_line()),
             items,
             header,
@@ -258,6 +260,7 @@ impl ChatWidget {
         );
         self.show_model_selection_view(SelectionViewParams {
             view_id: Some(view_id),
+            row_display: SelectionRowDisplay::SingleLine,
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,
             header,

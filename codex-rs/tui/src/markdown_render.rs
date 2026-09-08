@@ -35,6 +35,9 @@
 //! unusably short chunks, expansive cells form tall narrow strips across enough
 //! body rows, or even 3-char-wide columns cannot fit, body rows render as
 //! key/value records.
+//!
+//! Narrative lines keep an 88-column reading measure when a viewport width is provided.
+//! Fenced code and prelaid-out tables retain their existing full-width behavior.
 
 use crate::markdown_text_merge::DecodedTextMerge;
 use crate::render::highlight::foreground_style_for_scopes;
@@ -73,6 +76,10 @@ mod local_links;
 mod streaming;
 mod table_key_value;
 mod web_links;
+
+#[cfg(test)]
+#[path = "markdown_render/prose_measure_tests.rs"]
+mod prose_measure_tests;
 
 use file_citations::FileCitations;
 use local_links::is_local_path_like_link;
@@ -444,7 +451,15 @@ where
     }
 
     fn run(&mut self) {
+        self.run_with_event_observer(|_, _, _| {});
+    }
+
+    fn run_with_event_observer(
+        &mut self,
+        mut observe: impl FnMut(&mut Self, &Event<'a>, &Range<usize>),
+    ) {
         while let Some((ev, range)) = self.iter.next() {
+            observe(self, &ev, &range);
             self.handle_event(ev, range);
         }
         self.flush_current_line();
@@ -593,7 +608,10 @@ where
             HeadingLevel::H6 => self.styles.h6,
         };
         let content = format!("{} ", "#".repeat(level as usize));
-        self.push_line(Line::from(vec![Span::styled(content, heading_style)]));
+        self.push_line(Line::from(vec![Span::styled(
+            content,
+            crate::style::secondary_style(),
+        )]));
         self.push_inline_style(heading_style);
         self.needs_newline = false;
     }

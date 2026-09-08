@@ -1,0 +1,66 @@
+---
+source: tui/src/shimmer.rs
+expression: cases
+---
+[
+    (
+        "dark truecolor",
+        [
+            Span::from("W").fg(Color::Rgb(219, 221, 225)),
+            Span::from("o").fg(Color::Rgb(223, 224, 228)),
+            Span::from("r").fg(Color::Rgb(226, 228, 231)),
+            Span::from("k").fg(Color::Rgb(228, 229, 232)).bold(),
+            Span::from("i").fg(Color::Rgb(226, 228, 231)),
+            Span::from("n").fg(Color::Rgb(223, 224, 228)),
+            Span::from("g").fg(Color::Rgb(219, 221, 225)),
+        ],
+    ),
+    (
+        "light truecolor",
+        [
+            Span::from("W").fg(Color::Rgb(43, 46, 49)),
+            Span::from("o").fg(Color::Rgb(38, 41, 44)),
+            Span::from("r").fg(Color::Rgb(34, 36, 39)),
+            Span::from("k").fg(Color::Rgb(32, 34, 37)).bold(),
+            Span::from("i").fg(Color::Rgb(34, 36, 39)),
+            Span::from("n").fg(Color::Rgb(38, 41, 44)),
+            Span::from("g").fg(Color::Rgb(43, 46, 49)),
+        ],
+    ),
+    (
+        "256-color fallback",
+        [
+            Span::from("W"),
+            Span::from("o"),
+            Span::from("r"),
+            Span::from("k").bold(),
+            Span::from("i"),
+            Span::from("n"),
+            Span::from("g"),
+        ],
+    ),
+    (
+        "16-color fallback",
+        [
+            Span::from("W"),
+            Span::from("o"),
+            Span::from("r"),
+            Span::from("k").bold(),
+            Span::from("i"),
+            Span::from("n"),
+            Span::from("g"),
+        ],
+    ),
+    (
+        "no-color fallback",
+        [
+            Span::from("W"),
+            Span::from("o"),
+            Span::from("r"),
+            Span::from("k").bold(),
+            Span::from("i"),
+            Span::from("n"),
+            Span::from("g"),
+        ],
+    ),
+]

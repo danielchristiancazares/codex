@@ -2,8 +2,8 @@
 //!
 //! It edits the [`TextArea`] buffer and attachment elements, routes popup keys, promotes
 //! completed slash commands to atomic elements, and handles Enter submission/newlines.
-//! It also shows Luna Reserve's yellow prompt arrow and detects unbracketed paste bursts
-//! from raw key streams, particularly on Windows.
+//! It renders a single prompt-gutter caret, including Luna Reserve's yellow prompt arrow,
+//! and detects unbracketed paste bursts from raw key streams, particularly on Windows.
 //! The live voice strip renders after effort ignition and before stars, which skip its text.
 //!
 //! The plain-text preset keeps command prefixes literal, including `!`, so Enter and Tab
@@ -150,6 +150,11 @@
 //! same composer block). These rows represent image attachments rehydrated from app-server/backtrack
 //! history; TUI users can remove them, but cannot type into that row region.
 //!
+//! Selecting a row hides the terminal cursor, so the composer moves its prompt caret onto the
+//! selected row and spells out the removal key there. See `chat_composer/prompt_gutter.rs` for the
+//! single-caret rule that keeps focus unambiguous across the text area, remote rows, and disabled
+//! input.
+//!
 //! Keyboard behavior:
 //!
 //! - `Up` at textarea cursor `0` enters remote-row selection at the last remote image.
@@ -204,15 +209,14 @@
 //! # Input Disabled Mode
 //!
 //! The composer can be temporarily read-only (`input_enabled = false`). In that mode it ignores
-//! edits and renders a placeholder prompt instead of the editable textarea. This is part of the
-//! overall state machine, since it affects which transitions are even possible from a given UI
-//! state.
+//! edits, measures a single prompt row while retaining the draft, and renders a placeholder prompt
+//! instead of the editable textarea. This is part of the overall state machine, since it affects
+//! which transitions are even possible from a given UI state.
 //!
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::ShortcutHint;
 use crate::key_hint::has_ctrl_or_alt;
-use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::ui_consts::FOOTER_INDENT_COLS;
 use codex_message_history::HistoryBatchCursor;
 use crossterm::event::KeyCode;
@@ -222,7 +226,6 @@ use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
-use ratatui::layout::Margin;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -230,6 +233,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::Widget;
@@ -298,6 +302,8 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
+use crate::style::attachment_chip_style;
+use crate::style::table_separator_style;
 use crate::style::user_message_style;
 use codex_protocol::ThreadId;
 use codex_protocol::user_input::ByteRange;
@@ -306,6 +312,7 @@ use codex_protocol::user_input::TextElement;
 
 mod agents_navigation;
 mod attachment_state;
+mod chrome;
 mod completion_target;
 mod composer_layout;
 mod draft_state;
@@ -313,6 +320,7 @@ mod footer_state;
 mod history_search;
 mod inline_input;
 mod popup_state;
+mod prompt_gutter;
 mod reconnect;
 mod slash_input;
 mod sparkle;
@@ -327,6 +335,7 @@ use self::history_search::HistorySearchSession;
 use self::popup_state::ActivePopup;
 use self::popup_state::DismissedToken;
 use self::popup_state::PopupState;
+use self::prompt_gutter::PromptGutterState;
 use self::slash_input::SlashInput;
 use self::slash_input::SlashValidation;
 use self::slash_input::SubmissionValidation;
@@ -481,6 +490,8 @@ pub(crate) struct ChatComposerConfig {
     pub(crate) shell_commands_enabled: bool,
     /// Whether pasting a file path can attach local images.
     pub(crate) image_paste_enabled: bool,
+    /// Whether a two-row frame omits the bottom border to retain one editable text row.
+    pub(crate) compact_two_row_layout: bool,
     /// Strip leading and trailing whitespace from submissions.
     pub(crate) trim_submission: bool,
     /// Embedded editors reset Vim only when their owner accepts the answer.
@@ -494,6 +505,7 @@ impl Default for ChatComposerConfig {
             slash_commands_enabled: true,
             shell_commands_enabled: true,
             image_paste_enabled: true,
+            compact_two_row_layout: false,
             trim_submission: true,
             reset_vim_on_submission: true,
         }
@@ -511,6 +523,7 @@ impl ChatComposerConfig {
             slash_commands_enabled: false,
             shell_commands_enabled: false,
             image_paste_enabled: false,
+            compact_two_row_layout: false,
             trim_submission: true,
             reset_vim_on_submission: true,
         }
@@ -1051,15 +1064,22 @@ impl ChatComposer {
             .required_height(area.width, footer_total_height);
         let popup_constraint = Constraint::Max(popup_height);
         let voice_rows = if self.voice_strip.is_some() { 3 } else { 0 };
-        let [composer_rect, popup_rect] =
-            Layout::vertical([Constraint::Min(3 + voice_rows), popup_constraint]).areas(area);
+        let [composer_rect, popup_rect] = if matches!(self.popups.active, ActivePopup::None) {
+            Layout::vertical([Constraint::Min(3 + voice_rows), popup_constraint]).areas(area)
+        } else {
+            let [popup_rect, composer_rect] =
+                Layout::vertical([popup_constraint, Constraint::Min(3 + voice_rows)]).areas(area);
+            [composer_rect, popup_rect]
+        };
         // Keep the draft visible when clipped.
         let voice_rows = voice_rows * u16::from(composer_rect.height >= 6);
+        let compact_two_row_composer =
+            self.config.compact_two_row_layout && composer_rect.height == 2;
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1 + voice_rows,
-            LIVE_PREFIX_COLS,
-            /*bottom*/ 1,
-            /*right*/ 1u16.saturating_add(textarea_right_reserve),
+            LIVE_PREFIX_COLS.saturating_add(/*rhs*/ 2),
+            /*bottom*/ u16::from(!compact_two_row_composer),
+            /*right*/ 2u16.saturating_add(textarea_right_reserve),
         ));
         let remote_images_height = self
             .attachments
@@ -1098,7 +1118,11 @@ impl ChatComposer {
         area: Rect,
         textarea_right_reserve: u16,
     ) -> Option<(u16, u16)> {
-        if !self.draft.input_enabled || self.attachments.selected_remote_image_index.is_some() {
+        if !self.has_focus
+            || !self.draft.input_enabled
+            || self.blocks_direct_input
+            || self.attachments.selected_remote_image_index.is_some()
+        {
             return None;
         }
 
@@ -1472,7 +1496,7 @@ impl ChatComposer {
             show_cycle_hint,
         ) {
             if !spans.is_empty() {
-                spans.push(" | ".dim());
+                spans.push(" · ".dim());
             }
             spans.extend(indicators.spans);
         }
@@ -1493,7 +1517,7 @@ impl ChatComposer {
             )
         };
         if let Some(vim_mode) = self.vim_mode_indicator_span() {
-            line.spans.push(" | ".dim());
+            line.spans.push(" · ".dim());
             line.spans.push(vim_mode);
         }
         line
@@ -4646,7 +4670,7 @@ impl ChatComposer {
             .custom_footer_height()
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_total_height = footer_hint_height + Self::footer_spacing(footer_hint_height);
-        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
+        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 4;
         let inner_width =
             width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
         let remote_images_height: u16 = self
@@ -4656,7 +4680,12 @@ impl ChatComposer {
             .try_into()
             .unwrap_or(u16::MAX);
         let remote_images_separator = u16::from(remote_images_height > 0);
-        self.draft.textarea.desired_height(inner_width)
+        let textarea_height = if self.draft.input_enabled {
+            self.draft.textarea.desired_height(inner_width)
+        } else {
+            1
+        };
+        textarea_height
             + remote_images_height
             + remote_images_separator
             + 2
@@ -4733,11 +4762,15 @@ impl ChatComposer {
                 };
                 if let Some(input) = self.draft.textarea.vim_query() {
                     input.render(inset_footer_hint_area(hint_rect), buf);
-                } else if let Some(line) = self.history_search_footer_line() {
+                } else if let Some(line) = self.history_search_footer_line(
+                    hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16),
+                ) {
                     render_footer_line(hint_rect, buf, line);
                 } else {
-                    let available_width =
-                        hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+                    let available_width = hint_rect
+                        .width
+                        .saturating_sub((2 * FOOTER_INDENT_COLS) as u16)
+                        as usize;
                     let status_line_active = uses_passive_footer_status_layout(&footer_props);
                     let combined_status_line = if status_line_active {
                         passive_footer_status_line(&footer_props)
@@ -4765,7 +4798,10 @@ impl ChatComposer {
                     };
                     let mut truncated_status_line = if status_line_active {
                         combined_status_line.as_ref().map(|line| {
-                            truncate_line_with_ellipsis_if_overflow(line.clone(), available_width)
+                            super::status_line_layout::truncate_status_line(
+                                line.clone(),
+                                available_width,
+                            )
                         })
                     } else {
                         None
@@ -4822,7 +4858,10 @@ impl ChatComposer {
                         && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
                         && left_width > max_left
                         && let Some(line) = combined_status_line.as_ref().map(|line| {
-                            truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
+                            super::status_line_layout::truncate_status_line(
+                                line.clone(),
+                                max_left as usize,
+                            )
                         })
                     {
                         left_width = line.width() as u16;
@@ -4945,40 +4984,48 @@ impl ChatComposer {
                 }
             }
         }
-        let style = user_message_style();
-        Block::default().style(style).render(composer_rect, buf);
+        let frame_rect = Rect {
+            width: composer_rect.width.saturating_sub(textarea_right_reserve),
+            ..composer_rect
+        };
+        let style = self.render_composer_frame(frame_rect, buf);
+        let prompt_gutter = PromptGutterState {
+            input_enabled: self.draft.input_enabled && !self.blocks_direct_input,
+            is_bash_mode: self.draft.is_bash_mode,
+            luna_reserve_active: self.luna_reserve_active,
+            effort_tier: self.effort_tier,
+            ignition_charge: self
+                .effort_ignition
+                .as_ref()
+                .map(EffortIgnition::charge_alpha)
+                .unwrap_or(1.0),
+            selected_remote_image_index: self.attachments.selected_remote_image_index,
+        }
+        .resolve();
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
                 .render(remote_images_rect, buf);
+            if let Some((index, caret)) = prompt_gutter.remote_image_row.as_ref()
+                && let Ok(row) = u16::try_from(*index)
+                && row < remote_images_rect.height
+            {
+                buf.set_span(
+                    remote_images_rect.x.saturating_sub(/*rhs*/ 2),
+                    remote_images_rect.y.saturating_add(row),
+                    caret,
+                    /*width*/ 1,
+                );
+            }
         }
-        if !textarea_rect.is_empty() {
-            let prompt = if self.draft.input_enabled {
-                if self.draft.is_bash_mode {
-                    Span::from("!").light_red().bold()
-                } else if self.luna_reserve_active {
-                    // Reserve keeps one arrow at every reasoning effort; only its foreground changes.
-                    "›"
-                        .fg(crate::terminal_palette::best_color((246, 197, 67)))
-                        .bold()
-                } else if let Some(tier) = self.effort_tier {
-                    let charge = self
-                        .effort_ignition
-                        .as_ref()
-                        .map(EffortIgnition::charge_alpha)
-                        .unwrap_or(1.0);
-                    tier.prompt(charge)
-                } else {
-                    "›".bold()
-                }
-            } else {
-                "›".dim()
-            };
+        if !textarea_rect.is_empty()
+            && let Some(caret) = prompt_gutter.textarea.as_ref()
+        {
             buf.set_span(
-                textarea_rect.x - LIVE_PREFIX_COLS,
+                textarea_rect.x.saturating_sub(/*rhs*/ 2),
                 textarea_rect.y,
-                &prompt,
-                textarea_rect.width,
+                caret,
+                /*width*/ 1,
             );
         }
 
@@ -4991,6 +5038,19 @@ impl ChatComposer {
                     .render_ref_masked(textarea_rect, buf, &mut state, mask_char);
             } else {
                 let mut highlights = self.plugin_at_mention_highlights();
+                highlights.extend(
+                    self.draft
+                        .textarea
+                        .text_element_snapshots()
+                        .into_iter()
+                        .filter(|snapshot| {
+                            self.attachments
+                                .local_images
+                                .iter()
+                                .any(|image| image.placeholder == snapshot.text)
+                        })
+                        .map(|snapshot| (snapshot.range, attachment_chip_style())),
+                );
                 let search_highlight_style =
                     Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
                 highlights.extend(
@@ -5019,7 +5079,11 @@ impl ChatComposer {
         }
         if !self.draft.input_enabled || textarea_is_empty {
             let text = if self.draft.input_enabled {
-                self.placeholder_text.as_str().to_string()
+                if self.placeholder_text == "Ask Codex to do anything" && textarea_rect.width < 24 {
+                    "Ask Codex…".to_string()
+                } else {
+                    self.placeholder_text.clone()
+                }
             } else {
                 self.draft
                     .input_disabled_placeholder
@@ -5028,9 +5092,16 @@ impl ChatComposer {
                     .to_string()
             };
             if !textarea_rect.is_empty() {
-                let placeholder = Span::from(text).dim();
-                Line::from(vec![placeholder]).render(textarea_rect.inner(Margin::new(0, 0)), buf);
+                let placeholder = Span::styled(text, crate::style::secondary_style());
+                crate::line_truncation::truncate_line_with_ellipsis_if_overflow(
+                    Line::from(placeholder),
+                    usize::from(textarea_rect.width),
+                )
+                .render(textarea_rect, buf);
             }
+        }
+        if self.blocks_direct_input && !textarea_rect.is_empty() {
+            buf.set_style(textarea_rect, crate::style::secondary_style());
         }
         if matches!(self.popups.active, ActivePopup::None)
             && let Some(ignition) = &self.effort_ignition
@@ -5216,16 +5287,13 @@ mod tests {
             let mut buffer = Buffer::empty(area);
             composer.render(area, &mut buffer);
 
-            assert_eq!(
-                buffer[(0, 1)].bg,
-                crate::terminal_palette::rgb_color((244, 244, 244))
-            );
+            assert_eq!(buffer[(0, 1)].bg, ratatui::style::Color::Reset);
             insta::assert_snapshot!("light_terminal_palette_composer", format!("{buffer:?}"));
         });
     }
 
     #[test]
-    fn footer_hint_row_is_separated_from_composer() {
+    fn composer_separates_single_line_input_from_footer_hints() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let composer = ChatComposer::new(
@@ -5236,7 +5304,10 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        let area = Rect::new(0, 0, 40, 6);
+        let width = 40;
+        let height = composer.desired_height(width);
+        assert_eq!(height, 4);
+        let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
@@ -5251,7 +5322,7 @@ mod tests {
         let mut hint_row: Option<(u16, String)> = None;
         for y in 0..area.height {
             let row = row_to_string(y);
-            if row.contains("? for shortcuts") {
+            if row.contains("? shortcuts") {
                 hint_row = Some((y, row));
                 break;
             }
@@ -5265,17 +5336,41 @@ mod tests {
             "hint row should occupy the bottom line: {hint_row_contents:?}",
         );
 
+        let lower_separator = row_to_string(hint_row_idx - 1);
         assert!(
-            hint_row_idx > 0,
-            "expected a spacing row above the footer hints",
+            lower_separator.starts_with('╰') && lower_separator.ends_with('╯'),
+            "expected a lower input separator immediately above hints: {lower_separator:?}",
         );
+        let prompt_row = row_to_string(hint_row_idx - 2);
+        assert!(
+            prompt_row.starts_with("┃ › "),
+            "expected the prompt above the lower separator: {prompt_row:?}",
+        );
+        insta::assert_snapshot!(
+            [
+                row_to_string(/*y*/ 0),
+                prompt_row,
+                lower_separator,
+            ]
+            .map(|row| row.trim_end().to_string())
+            .join("\n"),
+            @"
+        ╭──────────────────────────────────────╮
+        ┃ › Ask Codex to do anything           │
+        ╰ ctrl + t transcript ─────────────────╯
+        "
+        );
+    }
 
-        let spacing_row = row_to_string(hint_row_idx - 1);
-        assert_eq!(
-            spacing_row.trim(),
-            "",
-            "expected blank spacing row above hints but saw: {spacing_row:?}",
+    #[test]
+    fn zero_width_composer_render_does_not_panic() {
+        let (composer, _rx) = new_test_composer();
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 0, /*height*/ 3,
         );
+        let mut buf = Buffer::empty(area);
+
+        composer.render(area, &mut buf);
     }
 
     #[test]
@@ -5373,7 +5468,7 @@ mod tests {
             /*has_input_focus*/ true,
             sender,
             enhanced_keys_supported,
-            "Ask Codex to do anything".to_string(),
+            String::new(),
             /*disable_paste_burst*/ false,
         );
         setup(&mut composer);
@@ -5533,7 +5628,7 @@ mod tests {
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
                 composer.set_status_line(Some(Line::from(
-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+                    "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
                 )));
                 composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
             },
@@ -5545,7 +5640,7 @@ mod tests {
             |composer| {
                 composer.set_status_line_enabled(/*enabled*/ true);
                 composer.set_status_line(Some(Line::from(
-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+                    "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
                 )));
                 composer.set_text_content("!".to_string(), Vec::new(), Vec::new());
                 let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -5568,11 +5663,11 @@ mod tests {
 
         composer.set_text_content("!git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((5, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((7, 1)));
 
         composer.set_text_content("! git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((6, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((8, 1)));
     }
 
     #[test]
@@ -5588,7 +5683,7 @@ mod tests {
         );
         composer.set_status_line_enabled(/*enabled*/ true);
         composer.set_status_line(Some(Line::from(
-            "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+            "gpt-5.4 high fast · ~/code/codex-1 · Context used 0%",
         )));
         composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
 
@@ -5596,7 +5691,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
-        let prompt_cell = &buf[(0, 1)];
+        let prompt_cell = &buf[(2, 1)];
         assert_eq!(prompt_cell.symbol(), "!");
         assert_eq!(prompt_cell.style().fg, Some(Color::LightRed));
 
@@ -6662,20 +6757,20 @@ mod tests {
         let default = style_output(SetCursorStyle::DefaultUserShape);
         let steady_bar = style_output(SetCursorStyle::SteadyBar);
 
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), default);
 
         composer.set_vim_enabled(/*enabled*/ true);
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), default);
 
         composer.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         composer.set_text_content("hey".to_string(), Vec::new(), Vec::new());
         assert_eq!(style_output(composer.cursor_style(area)), steady_bar);
 
         composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), default);
 
         composer.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
-        assert_eq!(style_output(composer.cursor_style(area)), default,);
+        assert_eq!(style_output(composer.cursor_style(area)), default);
     }
 
     #[test]
@@ -7906,7 +8001,10 @@ mod tests {
                         let area = Rect::new(0, 0, 40, 5);
                         let mut buf = Buffer::empty(area);
                         composer.render(area, &mut buf);
-                        assert_eq!(buf[(2, 1)].style().fg, Some(Color::Cyan));
+                        assert!(buf.content.iter().any(|cell| {
+                            cell.symbol() == "@"
+                                && cell.style().fg == crate::style::accent_style().fg
+                        }));
                     }
                 },
             );
@@ -9374,7 +9472,7 @@ mod tests {
                 /*has_input_focus*/ true,
                 sender.clone(),
                 /*enhanced_keys_supported*/ false,
-                "Ask Codex to do anything".to_string(),
+                String::new(),
                 /*disable_paste_burst*/ false,
             );
 
@@ -9426,6 +9524,20 @@ mod tests {
                 composer.attach_image(PathBuf::from("/tmp/image2.png"));
             },
         );
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            AppEventSender::new(tx),
+            /*enhanced_keys_supported*/ false,
+            String::new(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.attach_image(PathBuf::from("/tmp/image1.png"));
+        let area = Rect::new(0, 0, 40, 3);
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        insta::assert_debug_snapshot!("image_placeholder_chip_style", buf[(2, 1)].style());
     }
 
     #[test]
@@ -9476,6 +9588,44 @@ mod tests {
                     composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
             },
         );
+    }
+
+    /// The terminal cursor is hidden while a remote image row is selected, so the composer's caret
+    /// glyph is the only focus cue. Exactly one row may own it.
+    #[test]
+    fn selecting_a_remote_image_row_moves_the_composer_caret_off_the_text_area() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (mut composer, _rx) = new_test_composer();
+        composer.set_remote_image_urls(vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ]);
+        composer.set_text_content("describe these".to_string(), Vec::new(), Vec::new());
+        composer.draft.textarea.set_cursor(/*pos*/ 0);
+
+        let area = Rect::new(0, 0, 40, 9);
+        let caret_column = |buf: &Buffer| {
+            (area.y..area.bottom())
+                .filter(|y| buf[(2, *y)].symbol() == "›")
+                .collect::<Vec<_>>()
+        };
+
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        let unselected_caret_rows = caret_column(&buf);
+        assert_eq!(unselected_caret_rows.len(), 1);
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let mut buf = Buffer::empty(area);
+        composer.render(area, &mut buf);
+        let selected_caret_rows = caret_column(&buf);
+
+        assert_eq!(selected_caret_rows.len(), 1);
+        assert_ne!(selected_caret_rows, unselected_caret_rows);
+        assert_eq!(composer.cursor_pos(area), None);
     }
 
     #[test]
@@ -13059,22 +13209,25 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        composer.set_text_content("hello".to_string(), Vec::new(), Vec::new());
+        let draft = "one\ntwo\nthree\nfour";
+        composer.set_text_content(draft.to_string(), Vec::new(), Vec::new());
         composer.show_shutdown_in_progress();
 
         assert!(!composer.input_enabled());
-        assert_eq!(composer.current_text(), "hello");
+        assert_eq!(composer.current_text(), draft);
         assert_eq!(composer.custom_footer_height(), Some(0));
+        let desired_height = composer.desired_height(/*width*/ 40);
+        assert_eq!(desired_height, 3);
 
         let area = Rect {
             x: 0,
             y: 0,
             width: 40,
-            height: 5,
+            height: desired_height,
         };
         assert_eq!(composer.cursor_pos(area), None);
 
-        let mut terminal = Terminal::new(TestBackend::new(40, 5)).expect("terminal");
+        let mut terminal = Terminal::new(TestBackend::new(40, desired_height)).expect("terminal");
         terminal
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
             .unwrap();

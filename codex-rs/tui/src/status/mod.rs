@@ -10,7 +10,12 @@ mod account;
 mod card;
 mod format;
 mod helpers;
+mod rate_limit_block;
 mod rate_limits;
+#[cfg(test)]
+pub(crate) use rate_limit_block::WorkspaceAccessState;
+#[cfg(test)]
+pub(crate) use rate_limit_block::WorkspaceLimitBlockReason;
 pub(crate) mod remote_connection;
 mod thread_usage;
 

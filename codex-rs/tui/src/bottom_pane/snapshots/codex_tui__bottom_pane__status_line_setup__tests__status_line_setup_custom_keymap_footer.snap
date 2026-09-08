@@ -1,0 +1,5 @@
+---
+source: tui/src/bottom_pane/status_line_setup.rs
+expression: footer
+---
+  Press space to toggle; ctrl + z/ctrl + x to move; f12 to confirm and close

@@ -26,57 +26,59 @@ impl HistoryCell for UpdateAvailableHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         use ratatui_macros::line;
         use ratatui_macros::text;
-        let update_instruction = if let Some(update_action) = self.update_action {
-            line!["Run ", update_action.command_str().cyan(), " to update."]
+        let update_instruction = if self.update_action.is_some() {
+            line![
+                "Restart Codex and choose ",
+                "Update now".bold(),
+                " to install it."
+            ]
         } else {
             line![
-                "See ",
+                "Installation options  ",
                 "https://github.com/openai/codex".cyan().underlined(),
-                " for installation options."
             ]
         };
 
         let content = text![
             line![
-                "✨\u{200A}".bold().cyan(),
-                "Update available!".bold().cyan(),
-                " ",
-                format!("{CODEX_CLI_VERSION} -> {}", self.latest_version).bold(),
+                "Update available".bold(),
+                format!("  v{CODEX_CLI_VERSION} -> v{}", self.latest_version).dim(),
             ],
             update_instruction,
-            "",
-            "See full release notes:",
-            "https://github.com/openai/codex/releases/latest"
-                .cyan()
-                .underlined(),
+            line![
+                "Release notes  ",
+                "https://github.com/openai/codex/releases/latest"
+                    .cyan()
+                    .underlined(),
+            ],
         ];
 
-        let inner_width = content
-            .width()
-            .min(usize::from(width.saturating_sub(4)))
-            .max(1);
+        let inner_width = usize::from(width.saturating_sub(2)).max(1);
         let lines = adaptive_wrap_lines(content.lines, RtOptions::new(inner_width));
-        with_border_with_inner_width(lines, inner_width)
+        prefix_lines(lines, "  ".into(), "  ".into())
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
-        let update_instruction = if let Some(update_action) = self.update_action {
-            format!("Run {} to update.", update_action.command_str())
+        let update_instruction = if self.update_action.is_some() {
+            "Restart Codex and choose Update now to install it.".to_string()
         } else {
-            "See https://github.com/openai/codex for installation options.".to_string()
+            "Installation options: https://github.com/openai/codex".to_string()
         };
         vec![
-            Line::from("Update available!"),
-            Line::from(format!("{CODEX_CLI_VERSION} -> {}", self.latest_version)),
+            Line::from(format!(
+                "Update available: v{CODEX_CLI_VERSION} -> v{}",
+                self.latest_version
+            )),
             Line::from(update_instruction),
-            Line::from(""),
-            Line::from("See full release notes:"),
-            Line::from("https://github.com/openai/codex/releases/latest"),
+            Line::from("Release notes: https://github.com/openai/codex/releases/latest"),
         ]
     }
 
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        crate::terminal_hyperlinks::annotate_web_urls(self.display_lines(width))
+        self.display_lines(width)
+            .into_iter()
+            .map(crate::terminal_hyperlinks::annotate_web_urls_in_line)
+            .collect()
     }
 
     fn transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
@@ -256,12 +258,8 @@ pub(crate) fn new_info_event(message: String, hint: Option<String>) -> PlainHist
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
-    // Use a hair space (U+200A) to create a subtle, near-invisible separation
-    // before the text. VS16 is intentionally omitted to keep spacing tighter
-    // in terminals like Ghostty.
-    let lines: Vec<Line<'static>> = vec![vec![format!("■ {message}").red()].into()];
-    PlainHistoryCell { lines }
+pub(crate) fn new_error_event(message: String) -> super::errors::ErrorHistoryCell {
+    super::errors::ErrorHistoryCell { message }
 }
 
 #[derive(Debug)]
@@ -286,9 +284,7 @@ impl HistoryCell for ThreadRecapLoadingCell {
                 activity_indicator(
                     Some(self.start_time),
                     MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
+                ),
                 " ".into(),
                 "Generating conversation recap".bold(),
                 "…".dim(),

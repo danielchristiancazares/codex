@@ -1,0 +1,5 @@
+---
+source: tui/src/chatwidget/tests/history_render_mode_tests.rs
+expression: history
+---
+• | Key | Value |

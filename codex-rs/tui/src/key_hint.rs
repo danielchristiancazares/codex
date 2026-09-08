@@ -18,8 +18,11 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
-use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
 use ratatui::text::Span;
+
+use crate::style::key_hint_style;
 
 #[cfg(test)]
 const ALT_PREFIX: &str = "⌥ + ";
@@ -29,6 +32,25 @@ const ALT_PREFIX: &str = "⌥ + ";
 const ALT_PREFIX: &str = "alt + ";
 const CTRL_PREFIX: &str = "ctrl + ";
 const SHIFT_PREFIX: &str = "shift + ";
+
+#[cfg(test)]
+thread_local! {
+    static NATIVE_REVIEW_LABELS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Use host-native labels for rendered review artifacts while keeping portable snapshots stable.
+#[cfg(test)]
+pub(crate) fn with_test_native_key_labels<T>(render: impl FnOnce() -> T) -> T {
+    struct RestoreLabels(bool);
+    impl Drop for RestoreLabels {
+        fn drop(&mut self) {
+            NATIVE_REVIEW_LABELS.with(|labels| labels.set(self.0));
+        }
+    }
+    let previous = NATIVE_REVIEW_LABELS.with(|labels| labels.replace(true));
+    let _restore = RestoreLabels(previous);
+    render()
+}
 
 /// One concrete key event that can trigger a TUI action.
 ///
@@ -168,22 +190,24 @@ impl KeyBindingListExt for [KeyBinding] {
 
 /// Returns whether an event should be treated as literal text input.
 ///
-/// Searchable pickers use this to avoid stealing plain printable characters for
-/// navigation when the same character might be a valid query. For example, a
-/// list may bind `j` and `k` for movement, but a searchable list must let
-/// plain `j` update the query while still allowing `Ctrl+J` to move. Calling
-/// this after normalizing keybindings would blur that distinction and cause
-/// printable search input to disappear.
+/// Searchable pickers use this to avoid stealing text-producing characters for
+/// navigation when the same character might be valid input. This matches the
+/// composer's modifier boundary: plain, Shift, and Windows AltGr characters
+/// are text. Ctrl/Alt shortcuts and Super/Hyper/Meta chords remain commands.
+/// Release events are excluded so enhanced-key terminals do not duplicate text.
 pub(crate) fn is_plain_text_key_event(event: KeyEvent) -> bool {
     matches!(
         event,
         KeyEvent {
             code: KeyCode::Char(ch),
             modifiers,
+            kind: KeyEventKind::Press | KeyEventKind::Repeat,
             ..
         } if !ch.is_ascii_control()
-            && !modifiers.contains(KeyModifiers::CONTROL)
-            && !modifiers.contains(KeyModifiers::ALT)
+            && !has_ctrl_or_alt(modifiers)
+            && !modifiers.intersects(
+                KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META
+            )
     )
 }
 
@@ -207,6 +231,24 @@ pub(crate) const fn ctrl_alt(key: KeyCode) -> KeyBinding {
     KeyBinding::new(key, KeyModifiers::CONTROL.union(KeyModifiers::ALT))
 }
 
+pub(crate) fn action_hint_line<const N: usize>(
+    prefix: &'static str,
+    actions: [(KeyBinding, &'static str); N],
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(1 + actions.len() * 3);
+    if !prefix.is_empty() {
+        spans.push(prefix.into());
+    }
+    for (index, (binding, label)) in actions.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(" · ".dim());
+        }
+        spans.push(binding.into());
+        spans.push(format!(" {label}").dim());
+    }
+    Line::from(spans)
+}
+
 fn modifiers_to_string(modifiers: KeyModifiers) -> String {
     let mut result = String::new();
     if modifiers.contains(KeyModifiers::CONTROL) {
@@ -216,7 +258,16 @@ fn modifiers_to_string(modifiers: KeyModifiers) -> String {
         result.push_str(SHIFT_PREFIX);
     }
     if modifiers.contains(KeyModifiers::ALT) {
-        result.push_str(ALT_PREFIX);
+        #[cfg(test)]
+        let prefix =
+            if NATIVE_REVIEW_LABELS.with(std::cell::Cell::get) && !cfg!(target_os = "macos") {
+                "alt + "
+            } else {
+                ALT_PREFIX
+            };
+        #[cfg(not(test))]
+        let prefix = ALT_PREFIX;
+        result.push_str(prefix);
     }
     result
 }
@@ -238,10 +289,6 @@ impl From<ShortcutHint> for Span<'static> {
     }
 }
 
-fn key_hint_style() -> Style {
-    Style::default().dim()
-}
-
 pub(crate) fn has_ctrl_or_alt(mods: KeyModifiers) -> bool {
     (mods.contains(KeyModifiers::CONTROL) || mods.contains(KeyModifiers::ALT)) && !is_altgr(mods)
 }
@@ -261,6 +308,7 @@ pub(crate) fn is_altgr(_mods: KeyModifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn is_press_accepts_press_and_repeat_but_rejects_release() {
@@ -289,6 +337,51 @@ mod tests {
         assert!(bindings.is_pressed(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)));
         assert!(bindings.is_pressed(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)));
         assert!(!bindings.is_pressed(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn plain_text_events_match_composer_modifiers_and_event_kinds() {
+        let press = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let repeat = KeyEvent {
+            kind: KeyEventKind::Repeat,
+            ..press
+        };
+        let release = KeyEvent {
+            kind: KeyEventKind::Release,
+            ..press
+        };
+
+        assert_eq!(
+            [
+                is_plain_text_key_event(press),
+                is_plain_text_key_event(repeat),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('界'), KeyModifiers::NONE,)),
+                is_plain_text_key_event(release),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::SUPER,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::HYPER,)),
+                is_plain_text_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::META,)),
+                is_plain_text_key_event(KeyEvent::new(
+                    KeyCode::Char('@'),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                )),
+            ],
+            [
+                true,
+                true,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                cfg!(windows),
+            ]
+        );
     }
 
     #[test]
@@ -422,5 +515,23 @@ mod tests {
         assert!(!has_ctrl_or_alt(KeyModifiers::CONTROL | KeyModifiers::ALT));
         #[cfg(not(windows))]
         assert!(has_ctrl_or_alt(KeyModifiers::CONTROL | KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn rendered_key_hints_snapshot_semantic_emphasis() {
+        let hints = [
+            Span::from(plain(KeyCode::Esc)),
+            Span::from(ctrl(KeyCode::Char('x'))),
+            Span::from(ShortcutHint::Chord {
+                prefix: ctrl(KeyCode::Char('x')),
+                completion: plain(KeyCode::Enter),
+            }),
+        ];
+
+        assert_eq!(
+            hints.iter().map(|span| span.style).collect::<Vec<_>>(),
+            vec![key_hint_style(); 3]
+        );
+        insta::assert_debug_snapshot!("semantic_key_hints", hints);
     }
 }

@@ -457,9 +457,9 @@ async fn plan_mode_reasoning_override_is_marked_current_in_reasoning_popup() {
     chat.open_reasoning_popup(preset);
 
     let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert!(popup.contains("Low (current)"));
+    assert!(popup.contains("Low ✓"));
     assert!(
-        !popup.contains("High (current)"),
+        !popup.contains("High ✓"),
         "expected Plan override to drive current reasoning label, got: {popup}"
     );
 }
@@ -1133,7 +1133,7 @@ async fn plan_completion_restores_status_indicator_after_streaming_plan_output()
     chat.on_commit_tick();
     drain_insert_history(&mut rx);
 
-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
+    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
     assert_eq!(chat.bottom_pane.is_task_running(), true);
 
     chat.on_plan_item_completed("- Step 1\n".to_string());
@@ -1630,6 +1630,8 @@ async fn make_startup_chat_with_cli_overrides(
     let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&cfg),
         config: cfg.clone(),
@@ -1800,10 +1802,7 @@ async fn plan_update_renders_history_cell() {
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected plan update cell to be sent");
     let blob = lines_to_single_string(cells.last().unwrap());
-    assert!(
-        blob.contains("Updated Plan"),
-        "missing plan header: {blob:?}"
-    );
+    assert!(blob.contains("Plan 1/3"), "missing plan header: {blob:?}");
     assert!(blob.contains("Explore codebase"));
     assert!(blob.contains("Implement feature"));
     assert!(blob.contains("Write tests"));

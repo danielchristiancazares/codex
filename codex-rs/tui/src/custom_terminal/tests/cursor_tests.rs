@@ -6,6 +6,7 @@ use pretty_assertions::assert_eq;
 fn terminal_draw_repairs_styled_anchor_on_cursor_only_frames() {
     let mut terminal =
         Terminal::with_options(CaptureBackend::new(/*width*/ 12, /*height*/ 2)).expect("terminal");
+    terminal.cursor_positioning = CursorPositioning::Predicted;
     let area = Rect::new(
         /*x*/ 0, /*y*/ 1, /*width*/ 12, /*height*/ 1,
     );

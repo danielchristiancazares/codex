@@ -1,0 +1,61 @@
+---
+source: tui/src/bottom_pane/command_popup/presentation_tests.rs
+expression: "snapshots.join(\"\\n\\n\")"
+---
+24 columns
+Buffer {
+    area: Rect { x: 0, y: 0, width: 24, height: 6 },
+    content: [
+        "› /ide                  ",
+        "                        ",
+        "  include current       ",
+        "  selection, open files,",
+        "  and other context from",
+        "  your IDE              ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
+
+48 columns
+Buffer {
+    area: Rect { x: 0, y: 0, width: 48, height: 4 },
+    content: [
+        "› /ide                                          ",
+        "                                                ",
+        "  include current selection, open files, and    ",
+        "  other context from your IDE                   ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
+
+80 columns
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 1 },
+    content: [
+        "› /ide  include current selection, open files, and other context from your IDE  ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 8, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
+
+120 columns
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 1 },
+    content: [
+        "› /ide  include current selection, open files, and other context from your IDE                                          ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 8, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

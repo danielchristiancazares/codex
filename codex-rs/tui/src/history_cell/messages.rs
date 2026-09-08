@@ -2,7 +2,10 @@
 //! Completed reasoning is retained in the expanded transcript, not compact scrollback.
 
 use super::markdown_render_cache::MarkdownRenderCache;
+use super::message_presentation::assistant_turn_prefix;
 use super::*;
+use crate::style::accent_style;
+use crate::style::attachment_chip_style;
 use crate::terminal_hyperlinks::annotate_web_urls_in_line;
 use crate::terminal_hyperlinks::remap_wrapped_line;
 use crate::wrapping::url_preserving_wrap_options;
@@ -92,6 +95,7 @@ fn build_user_message_lines_with_elements(
     elements: &[TextElement],
     style: Style,
     element_style: Style,
+    image_style: Style,
 ) -> Vec<Line<'static>> {
     let mut elements = elements.to_vec();
     elements.sort_by_key(|e| e.byte_range.start);
@@ -124,7 +128,17 @@ fn build_user_message_lines_with_elements(
                 spans.push(Span::from(segment.to_string()));
             }
             if let Some(segment) = line_text.get(rel_start..rel_end) {
-                spans.push(Span::styled(segment.to_string(), element_style));
+                let style = if segment
+                    .strip_prefix("[Image #")
+                    .and_then(|number| number.strip_suffix(']'))
+                    .is_some_and(|number| {
+                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    }) {
+                    image_style
+                } else {
+                    element_style
+                };
+                spans.push(Span::styled(segment.to_string(), style));
                 cursor = end;
             }
         }
@@ -178,7 +192,8 @@ impl HistoryCell for UserHistoryCell {
             .max(1);
 
         let style = user_message_style();
-        let element_style = style.fg(Color::Cyan);
+        let element_style = style.patch(accent_style());
+        let image_style = style.patch(attachment_chip_style());
 
         let wrapped_remote_images = if self.remote_image_urls.is_empty() {
             None
@@ -215,6 +230,7 @@ impl HistoryCell for UserHistoryCell {
                         text_elements,
                         style,
                         element_style,
+                        image_style,
                     ),
                     wrap_options,
                 )
@@ -254,7 +270,7 @@ impl HistoryCell for UserHistoryCell {
             return Vec::new();
         }
 
-        let mut lines = vec![HyperlinkLine::new(Line::from("").style(style))];
+        let mut lines = Vec::new();
 
         if let Some(wrapped_remote_images) = wrapped_remote_images {
             lines.extend(prefix_hyperlink_lines(
@@ -273,13 +289,12 @@ impl HistoryCell for UserHistoryCell {
                 if self.spoken {
                     "› ".red().bold()
                 } else {
-                    "› ".bold().dim()
+                    Span::styled("› ", accent_style())
                 },
-                "  ".into(),
+                "│ ".dim(),
             ));
         }
 
-        lines.push(HyperlinkLine::new(Line::from("").style(style)));
         lines
     }
 
@@ -410,7 +425,7 @@ impl HistoryCell for AgentMessageCell {
         let mut wrapped = Vec::new();
         for (index, line) in self.lines.iter().enumerate() {
             let initial_indent = if index == 0 && self.is_first_line {
-                "• ".dim().into()
+                assistant_turn_prefix(&line.line).into()
             } else {
                 "  ".into()
             };
@@ -556,9 +571,12 @@ impl HistoryCell for AgentMarkdownCell {
             } else {
                 lines
             };
+            let prefix = lines
+                .first()
+                .map_or_else(|| "• ".dim(), |line| assistant_turn_prefix(&line.line));
             normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
                 lines,
-                "• ".dim(),
+                prefix,
                 "  ".into(),
             ))
         };
@@ -618,7 +636,9 @@ impl HistoryCell for StreamingAgentTailCell {
         normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
             self.lines.clone(),
             if self.is_first_line {
-                "• ".dim()
+                self.lines
+                    .first()
+                    .map_or_else(|| "• ".dim(), |line| assistant_turn_prefix(&line.line))
             } else {
                 "  ".into()
             },

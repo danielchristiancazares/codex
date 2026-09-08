@@ -6,7 +6,7 @@ expression: rendered_cases
     [
         HyperlinkLine {
             line: Line::from_iter([
-                Span::from("# ").bold().underlined(),
+                Span::from("# ").not_dim(),
                 Span::from("Output").bold().underlined(),
             ]),
             hyperlinks: [],
@@ -34,7 +34,7 @@ expression: rendered_cases
     [
         HyperlinkLine {
             line: Line::from_iter([
-                Span::from("# ").bold().underlined(),
+                Span::from("# ").not_dim(),
                 Span::from("Output").bold().underlined(),
             ]),
             hyperlinks: [],

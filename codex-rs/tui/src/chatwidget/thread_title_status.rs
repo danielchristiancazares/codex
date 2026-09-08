@@ -23,6 +23,22 @@ impl ChatWidget {
             item,
             StatusLineItem::ThreadName | StatusLineItem::ThreadTitle | StatusLineItem::SessionId
         ) {
+            if value.is_none()
+                && self.status_state.thread_title_generation_pending
+                && self
+                    .last_rendered_width
+                    .get()
+                    .is_some_and(|width| width < 60)
+            {
+                // Background naming has no useful standalone glyph. Keep the identifying
+                // model and workspace visible until a title exists or its label fits.
+                return None;
+            }
+            let value = value.or_else(|| {
+                self.status_state
+                    .thread_title_generation_pending
+                    .then(|| "Naming thread".to_string())
+            });
             self.with_thread_title_progress(value, Instant::now())
         } else {
             value
@@ -37,13 +53,17 @@ impl ChatWidget {
         if !self.status_state.thread_title_generation_pending {
             return value;
         }
-        let spinner = if self.local_settings.tui.animations {
+        let spinner = self.thread_title_progress_spinner(now);
+        let value = value.unwrap_or_else(|| "renaming...".to_string());
+        Some(format!("{value} {spinner}"))
+    }
+
+    fn thread_title_progress_spinner(&self, now: Instant) -> &'static str {
+        if self.local_settings.tui.animations {
             self.terminal_title_spinner_frame_at(now)
         } else {
             TERMINAL_TITLE_SPINNER_FRAMES[0]
-        };
-        let value = value.unwrap_or_else(|| "renaming...".to_string());
-        Some(format!("{value} {spinner}"))
+        }
     }
 
     pub(crate) fn refresh_thread_title_progress_for_time_tick(&mut self) {

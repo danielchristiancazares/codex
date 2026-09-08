@@ -29,7 +29,10 @@ where
         // JediTerm before 3.56 prints DECSCUSR's space intermediate at the cursor.
         // Apply the style over an owned glyph, then repair it even on unchanged frames.
         // https://github.com/JetBrains/jediterm/commit/0c4524f2978bddae65a46c35f264bf89e2ed58fd
-        let buffer = &self.buffers[self.current];
+        // flush() advances `current` before cursor repair, so the inactive buffer owns the
+        // frame that is visible on the terminal.
+        let buffer_index = 1 - self.current;
+        let buffer = &self.buffers[buffer_index];
         let anchor = (0..buffer.area.height).find_map(|row| {
             let row_start = usize::from(row) * usize::from(buffer.area.width);
             let mut column = 0;
@@ -39,20 +42,22 @@ where
                 let is_skip = cell.diff_option == CellDiffOption::Skip;
                 if !is_skip && width > 0 && column + width <= usize::from(buffer.area.width) {
                     let (x, y) = buffer.pos_of(row_start + column);
-                    return Some((Position { x, y }, cell.clone()));
+                    return Some((Position { x, y }, row_start + column));
                 }
                 column += width.max(1);
             }
             None
         });
         // Empty and externally owned viewports have no cell we can safely repair.
-        if let Some((anchor, cell)) = anchor {
+        if let Some((anchor, cell_index)) = anchor {
             self.set_cursor_position(anchor)?;
             self.set_cursor_style(cursor_style)?;
             let Position { x, y } = anchor;
+            let cell = &self.buffers[buffer_index].content[cell_index];
             draw(
                 &mut self.backend,
                 std::iter::once(DrawCommand::Put { x, y, cell }),
+                self.cursor_positioning,
             )?;
         }
 

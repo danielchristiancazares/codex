@@ -9,7 +9,7 @@ external (80 columns)
 ▌
 ▌ (optional) Write a short description to help us further
 
-Press enter to submit or esc to cancel
+enter to submit · esc to cancel
 
 external (40 columns)
 ▌ Tell us more (bug)
@@ -19,7 +19,7 @@ external (40 columns)
 ▌
 ▌ (optional) Write a short description t
 
-Press enter to submit or esc to cancel
+enter to submit · esc to cancel
 
 employee (80 columns)
 ▌ Tell us more (bug)
@@ -32,7 +32,7 @@ employee (80 columns)
 ▌
 ▌ (optional) Write a short description to help us further
 
-Press enter to submit or esc to cancel
+enter to submit · esc to cancel
 
 employee (40 columns)
 ▌ Tell us more (bug)
@@ -50,4 +50,4 @@ employee (40 columns)
 ▌
 ▌ (optional) Write a short description t
 
-Press enter to submit or esc to cancel
+enter to submit · esc to cancel

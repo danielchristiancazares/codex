@@ -41,6 +41,8 @@ mod patch_approval_tests;
 #[path = "tests/permission_shortcuts_tests.rs"]
 mod permission_shortcuts_tests;
 mod plugin_catalog;
+#[path = "tests/provider_switch.rs"]
+mod provider_switch;
 mod rate_limits;
 #[path = "tests/realtime_handoff_e2e.rs"]
 mod realtime_handoff_e2e;
@@ -685,6 +687,8 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
     let config = app.config.clone();
     let model = get_model_offline_for_tests(config.model.as_deref());
     app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&config),
         config,
@@ -4069,7 +4073,8 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
     };
     let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
     assert!(rendered.contains("• Added README.md (+1 -0)"));
-    assert!(rendered.contains("1 +hello"));
+    let transcript = lines_to_single_string(&cell.transcript_lines(/*width*/ 80));
+    assert!(transcript.contains("1 +hello"));
 }
 
 #[tokio::test]
@@ -4660,7 +4665,7 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
         lines_to_single_string(&app.clear_ui_header_lines_with_version(/*width*/ 80, "<VERSION>"));
     let model_line = header
         .lines()
-        .find(|line| line.contains("model:"))
+        .find(|line| line.contains("/model to change"))
         .expect("rendered model line");
     assert_app_snapshot!("thread_read_model_after_switch", model_line);
 }
@@ -5886,6 +5891,7 @@ async fn make_test_app() -> App {
         deferred_history_lines: Vec::new(),
         has_emitted_history_lines: false,
         transcript_reflow: TranscriptReflowState::default(),
+        transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
         initial_history_replay_buffer: None,
         pending_thread_switch_resets: 0,
         scrollback_has_older_history: false,
@@ -5942,6 +5948,7 @@ async fn make_test_app() -> App {
         rate_limit_refresh_state: Default::default(),
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        pending_provider_switch: None,
         recap: recap::RecapState::default(),
     }
 }
@@ -5985,6 +5992,7 @@ pub(super) async fn make_test_app_with_channels() -> (
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
+            transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
             initial_history_replay_buffer: None,
             pending_thread_switch_resets: 0,
             scrollback_has_older_history: false,
@@ -6041,6 +6049,7 @@ pub(super) async fn make_test_app_with_channels() -> (
             rate_limit_refresh_state: Default::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
             recap: recap::RecapState::default(),
         },
         rx,
@@ -8367,6 +8376,8 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
     );
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
+        transcript_replay_policy:
+            crate::transcript_reflow::TranscriptReplayPolicy::OwnedBufferReplay,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&app.config),
         config: app.config.clone(),

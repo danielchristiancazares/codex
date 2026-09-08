@@ -5,6 +5,11 @@ use codex_shell_command::parse_command::extract_shell_command;
 use dirs::home_dir;
 use shlex::try_join;
 
+mod exploration;
+
+pub(crate) use exploration::expand_command_summaries;
+pub(crate) use exploration::is_exploration_command;
+
 pub(crate) fn escape_command(command: &[String]) -> String {
     try_join(command.iter().map(String::as_str)).unwrap_or_else(|_| command.join(" "))
 }

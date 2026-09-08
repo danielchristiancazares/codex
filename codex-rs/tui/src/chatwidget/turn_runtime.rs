@@ -36,12 +36,6 @@ impl ChatWidget {
                 || self.review.is_review_mode
                 || self.mcp_startup_status.is_some(),
         );
-        if self.mcp_startup_status.is_some()
-            && !self.turn_lifecycle.agent_turn_running
-            && !self.review.is_review_mode
-        {
-            self.bottom_pane.hide_status_indicator();
-        }
         self.refresh_status_surfaces();
     }
 
@@ -143,13 +137,14 @@ impl ChatWidget {
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
-            let had_live_tail = controller.has_live_tail();
             self.clear_active_stream_tail();
-            let (cell, source) = controller.finalize();
-            if !had_live_tail && let Some(cell) = cell {
+            let finalization = controller.finalize();
+            if self.transcript_replay_policy == TranscriptReplayPolicy::InlinePreserveScrollback
+                && let Some(cell) = finalization.unobserved_cell
+            {
                 self.add_boxed_history(cell);
             }
-            if let Some(source) = source {
+            if let Some(source) = finalization.canonical_source {
                 self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
@@ -157,6 +152,7 @@ impl ChatWidget {
             self.request_pending_usage_output_insertion_after_stream_shutdown();
         }
         self.flush_unified_exec_wait_streak();
+        self.flush_active_cell();
         if !from_replay {
             self.collect_runtime_metrics_delta();
         }

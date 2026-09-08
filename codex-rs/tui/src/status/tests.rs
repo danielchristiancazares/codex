@@ -57,12 +57,12 @@ use pretty_assertions::assert_eq;
 use ratatui::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use unicode_width::UnicodeWidthStr;
 
 #[test]
 fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
     let now = Local::now();
     let snapshot = RateLimitSnapshotDisplay {
+        workspace_access: crate::status::WorkspaceAccessState::Unknown,
         limit_name: "codex".to_string(),
         normal_model_slug: None,
         captured_at: now,
@@ -184,30 +184,12 @@ fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
 }
 
 fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
-    let frame_width = lines
-        .iter()
-        .find(|line| line.starts_with('╭'))
-        .map(|line| UnicodeWidthStr::width(line.as_str()));
     lines
         .into_iter()
         .map(|line| {
-            if let (Some(frame_width), Some(dir_pos), Some(pipe_idx)) =
-                (frame_width, line.find("Directory: "), line.rfind('│'))
-            {
-                let prefix = &line[..dir_pos + "Directory: ".len()];
-                let suffix = &line[pipe_idx..];
-                let replacement = "[[workspace]]";
-                let content_width = frame_width.saturating_sub(
-                    UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(suffix),
-                );
-                let mut rebuilt = prefix.to_string();
-                rebuilt.push_str(replacement);
-                let replacement_width = UnicodeWidthStr::width(replacement);
-                if content_width > replacement_width {
-                    rebuilt.push_str(&" ".repeat(content_width - replacement_width));
-                }
-                rebuilt.push_str(suffix);
-                rebuilt
+            if let Some((label, directory)) = line.split_once("Directory:") {
+                let padding = &directory[..directory.len() - directory.trim_start().len()];
+                format!("{label}Directory:{padding}[[workspace]]")
             } else {
                 line
             }
@@ -1782,6 +1764,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
 
     handle.finish_rate_limit_refresh(
         &[RateLimitSnapshotDisplay {
+            workspace_access: crate::status::WorkspaceAccessState::Unknown,
             limit_name: "spark".to_string(),
             normal_model_slug: None,
             captured_at: now,

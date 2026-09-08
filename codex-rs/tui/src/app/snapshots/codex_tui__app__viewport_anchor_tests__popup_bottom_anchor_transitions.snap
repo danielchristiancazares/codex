@@ -1,0 +1,131 @@
+---
+source: tui/src/app/viewport_anchor_tests.rs
+expression: "snapshots.join(\"\\n\\n\")"
+---
+Composer: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>
+
+Model: Rect { x: 0, y: 19, width: 132, height: 13 }
+
+
+  Select Model and Effort
+  Access legacy models by running codex -m <model_name> or in your config.toml
+
+  1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+› 2. gpt-5.6-sol ✓          Latest frontier agentic coding model.
+  3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  4. gpt-5.6-luna           Fast and affordable agentic coding model.
+  5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+  6. gpt-5.2                Optimized for professional work and long-running agents.
+
+  ↑/↓ choose · enter confirm · esc back
+
+Reasoning: Rect { x: 0, y: 21, width: 132, height: 11 }
+
+
+  Select Reasoning Level for gpt-5.6-sol
+
+› 1. Low (default)    Fast responses with lighter reasoning
+  2. Medium           Balances speed and reasoning depth for everyday tasks
+  3. High             Greater reasoning depth for complex problems
+  4. Extra high       Extra high reasoning depth for complex problems
+  5. More reasoning…  Max and Ultra consume usage limits faster
+
+  ↑/↓ choose · enter confirm · esc back
+
+Back: Rect { x: 0, y: 19, width: 132, height: 13 }
+
+
+  Select Model and Effort
+  Access legacy models by running codex -m <model_name> or in your config.toml
+
+  1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+› 2. gpt-5.6-sol ✓          Latest frontier agentic coding model.
+  3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  4. gpt-5.6-luna           Fast and affordable agentic coding model.
+  5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+  6. gpt-5.2                Optimized for professional work and long-running agents.
+
+  ↑/↓ choose · enter confirm · esc back
+
+Closed: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>
+
+History: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>
+
+Composer: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>
+
+Model: Rect { x: 0, y: 19, width: 132, height: 13 }
+
+
+  Select Model and Effort
+  Access legacy models by running codex -m <model_name> or in your config.toml
+
+  1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+› 2. gpt-5.6-sol ✓          Latest frontier agentic coding model.
+  3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  4. gpt-5.6-luna           Fast and affordable agentic coding model.
+  5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+  6. gpt-5.2                Optimized for professional work and long-running agents.
+
+  ↑/↓ choose · enter confirm · esc back
+
+Reasoning: Rect { x: 0, y: 21, width: 132, height: 11 }
+
+
+  Select Reasoning Level for gpt-5.6-sol
+
+› 1. Low (default)    Fast responses with lighter reasoning
+  2. Medium           Balances speed and reasoning depth for everyday tasks
+  3. High             Greater reasoning depth for complex problems
+  4. Extra high       Extra high reasoning depth for complex problems
+  5. More reasoning…  Max and Ultra consume usage limits faster
+
+  ↑/↓ choose · enter confirm · esc back
+
+Back: Rect { x: 0, y: 19, width: 132, height: 13 }
+
+
+  Select Model and Effort
+  Access legacy models by running codex -m <model_name> or in your config.toml
+
+  1. gpt-6-astra (default)  Our most capable model for complex, demanding work.
+› 2. gpt-5.6-sol ✓          Latest frontier agentic coding model.
+  3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  4. gpt-5.6-luna           Fast and affordable agentic coding model.
+  5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+  6. gpt-5.2                Optimized for professional work and long-running agents.
+
+  ↑/↓ choose · enter confirm · esc back
+
+Closed: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>
+
+History: Rect { x: 0, y: 27, width: 132, height: 5 }
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+┃ › Keep this draft intact                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  GPT 5.6 Sol · Default · <WORKSPACE>

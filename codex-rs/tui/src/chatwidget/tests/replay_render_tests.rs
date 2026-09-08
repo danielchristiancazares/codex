@@ -31,7 +31,6 @@ async fn completed_replay_preserves_messages_and_draft_across_reconstruction() {
     insta::assert_snapshot!(outputs[0].iter().map(ToString::to_string).collect::<Vec<_>>().join("\n").trim(), @"
     › Question
 
-
     • First answer
 
     • Second answer

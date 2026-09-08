@@ -230,10 +230,7 @@ impl ChatWidget {
         reset_description: String,
     ) -> bool {
         if self.rate_limit_reset_picker_request_id != Some(picker_request_id)
-            || self
-                .bottom_pane
-                .selected_index_for_active_view(RATE_LIMIT_RESET_VIEW_ID)
-                .is_none()
+            || !self.bottom_pane.active_view_is(RATE_LIMIT_RESET_VIEW_ID)
         {
             confirmation_gate.store(true, Ordering::Release);
             return false;

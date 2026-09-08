@@ -12,14 +12,19 @@ async fn chained_config_error_wraps_in_history_snapshot() {
     let height = 8;
     let backend = VT100Backend::new(width, height);
     let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-    term.set_viewport_area(ratatui::layout::Rect::new(0, 0, width, height));
-    for lines in drain_insert_history(&mut rx) {
-        crate::insert_history::insert_history_lines(&mut term, lines)
+    term.set_viewport_area(ratatui::layout::Rect::new(
+        /*x*/ 0,
+        /*y*/ height - 2,
+        width,
+        /*height*/ 2,
+    ));
+    for cell in drain_insert_history_cells(&mut rx) {
+        crate::insert_history::insert_history_lines(&mut term, cell.display_lines(width))
             .expect("insert history lines");
     }
 
-    assert_chatwidget_snapshot!(
-        "chained_config_error_wraps_in_history_snapshot",
-        normalize_snapshot_paths(term.backend().vt100().screen().contents())
-    );
+    let rendered = normalize_snapshot_paths(term.backend().vt100().screen().contents());
+    assert!(rendered.contains("Failed to save default model"));
+    assert!(rendered.contains("allowed set"));
+    assert_chatwidget_snapshot!("chained_config_error_wraps_in_history_snapshot", rendered);
 }

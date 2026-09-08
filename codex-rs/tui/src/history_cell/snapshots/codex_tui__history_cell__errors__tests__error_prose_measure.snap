@@ -1,0 +1,28 @@
+---
+source: tui/src/history_cell/errors_tests.rs
+expression: "frames.join(\"\\n\\n\")"
+---
+18 columns
+■ The connection
+│ was interrupted
+│ after several
+│ retries. Your
+│ draft is
+│ preserved. Check
+│ the connection
+│ and try again
+│ when it is
+│ ready.
+
+48 columns
+■ The connection was interrupted after several
+│ retries. Your draft is preserved. Check the
+│ connection and try again when it is ready.
+
+80 columns
+■ The connection was interrupted after several retries. Your draft is preserved.
+│ Check the connection and try again when it is ready.
+
+120 columns
+■ The connection was interrupted after several retries. Your draft is preserved. Check the connection and try again when
+│ it is ready.

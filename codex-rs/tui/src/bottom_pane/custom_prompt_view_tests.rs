@@ -113,18 +113,53 @@ fn vim_prompt_hint_tracks_escape_behavior() {
         buf[(67, 4)].style().fg
     };
 
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"Press enter to confirm or esc to go back");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"enter confirm · esc back");
     view.enable_vim_in_insert_mode();
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"Press enter to confirm or esc to enter normal mode                 Vim: Insert");
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 60), @"Press enter to confirm or esc to enter norm…   Vim: Insert");
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 14), @"Press enter to");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"enter confirm · esc normal mode                                    Vim: Insert");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 60), @"enter confirm · esc normal mode                Vim: Insert");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 14), @"enter confirm");
     assert_eq!(vim_color(&view), Some(ratatui::style::Color::Green));
 
     view.handle_key_event(KeyEvent::from(KeyCode::Esc));
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"Press enter to confirm or esc to go back                           Vim: Normal");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"enter confirm · esc back                                           Vim: Normal");
     assert_eq!(vim_color(&view), Some(ratatui::style::Color::Magenta));
     view.handle_key_event(KeyEvent::from(KeyCode::Char('R')));
-    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"Press enter to confirm or esc to enter normal mode                Vim: Replace");
+    insta::assert_snapshot!(rendered_hint(&view, /*width*/ 80), @"enter confirm · esc normal mode                                   Vim: Replace");
+}
+
+#[test]
+fn constrained_multiline_prompt_clips_render_and_cursor_to_area() {
+    let (mut view, _submitted_rx) = custom_prompt_view();
+    view.textarea
+        .set_text_clearing_elements("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+    view.textarea.set_cursor(view.textarea.text().len());
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 24, /*height*/ 3,
+    );
+    let mut buf = Buffer::empty(area);
+
+    view.render(area, &mut buf);
+
+    let rendered = (0..area.height)
+        .map(|row| {
+            (0..area.width)
+                .map(|col| buf[(area.x + col, area.y + row)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("custom_prompt_view_constrained_multiline", rendered);
+
+    let (cursor_x, cursor_y) = view.cursor_pos(area).expect("visible textarea cursor");
+    assert!(
+        cursor_x >= area.x
+            && cursor_x < area.right()
+            && cursor_y >= area.y
+            && cursor_y < area.bottom(),
+        "cursor ({cursor_x}, {cursor_y}) escaped render area {area:?}",
+    );
 }
 
 #[test]

@@ -23,7 +23,6 @@ use crate::legacy_core::config::Config;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
 use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
@@ -82,6 +81,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 #[cfg(test)]
 use codex_utils_cli::format_env_display;
 use ratatui::prelude::*;
+#[cfg(test)]
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -104,10 +104,14 @@ const RAW_TOOL_OUTPUT_WIDTH: usize = 10_000;
 
 mod approvals;
 mod base;
+mod errors;
 mod exec;
 mod hook_cell;
+mod inline_correction;
 mod markdown_render_cache;
 mod mcp;
+mod mcp_group;
+mod message_presentation;
 mod messages;
 mod notices;
 mod patches;
@@ -125,7 +129,9 @@ pub(crate) use exec::*;
 pub(crate) use hook_cell::HookCell;
 pub(crate) use hook_cell::new_active_hook_cell;
 pub(crate) use hook_cell::new_completed_hook_cell;
+pub(crate) use inline_correction::InlineCanonicalCorrectionCell;
 pub(crate) use mcp::*;
+pub(crate) use mcp_group::*;
 pub(crate) use messages::*;
 pub(crate) use notices::*;
 pub(crate) use patches::*;
@@ -138,6 +144,10 @@ pub(crate) use startup_warnings::StartupWarningsCell;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "transcript_showcase_tests.rs"]
+mod transcript_showcase_tests;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HistoryRenderMode {

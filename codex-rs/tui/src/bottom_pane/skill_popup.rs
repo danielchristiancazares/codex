@@ -126,7 +126,8 @@ impl SkillPopup {
     ) -> Vec<GenericDisplayRow> {
         matches
             .into_iter()
-            .map(|(idx, indices, _score)| {
+            .enumerate()
+            .map(|(visible_idx, (idx, indices, _score))| {
                 let mention = &self.mentions[idx];
                 let name = truncate_text(&mention.display_name, MENTION_NAME_TRUNCATE_LEN);
                 let description = match (
@@ -144,7 +145,11 @@ impl SkillPopup {
                 };
                 GenericDisplayRow {
                     name,
-                    name_prefix_spans: Vec::new(),
+                    name_prefix_spans: if self.state.selected_idx == Some(visible_idx) {
+                        vec!["› ".into()]
+                    } else {
+                        vec!["  ".into()]
+                    },
                     match_indices: indices,
                     display_shortcut: None,
                     description,
@@ -220,7 +225,7 @@ impl WidgetRef for SkillPopup {
             &rows,
             &self.state,
             MAX_POPUP_ROWS,
-            "no matches",
+            "No matching skills",
         );
         if let Some(hint_area) = hint_area {
             let hint_area = Rect {

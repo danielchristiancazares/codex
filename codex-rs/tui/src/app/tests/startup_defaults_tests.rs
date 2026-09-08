@@ -364,12 +364,18 @@ async fn fresh_startup_reads_destination_and_cleared_model_uses_catalog() -> Res
         let (mut app, _, _) = make_test_app_with_channels().await;
         app.chat_widget.handle_thread_session_quiet(started.session);
         if !remote {
-            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
-                .replace(&destination.path().display().to_string(), "<PROJECT>");
+            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80);
+            let footer = rendered.lines().last().expect("status footer");
+            let directory_name = destination.path().file_name().unwrap().to_string_lossy();
+            assert!(footer.ends_with(directory_name.as_ref()), "{footer}");
+            let (metadata, _) = footer.rsplit_once(" · ").expect("directory status item");
+            // The footer may already have abbreviated the temporary directory's parents.
+            let rendered = rendered.replace(footer, &format!("{metadata} · <PROJECT>"));
             insta::assert_snapshot!(rendered, @r"
-            › Ask Codex to do anything
-
-              gpt-6-astra high · <PROJECT>
+            ╭──────────────────────────────────────────────────────────────────────────────╮
+            ┃ ›                                                                            │
+            ╰──────────────────────────────────────────────────────────────────────────────╯
+              GPT 6 Astra · High · <PROJECT>
             ");
         }
         let expected_cwd = if override_cwd {

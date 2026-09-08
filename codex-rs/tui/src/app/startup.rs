@@ -160,6 +160,11 @@ impl App {
         managed_worktree: Option<crate::ManagedTuiWorktree>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
+        let transcript_replay_policy = if tui.alt_screen_enabled {
+            TranscriptReplayPolicy::OwnedBufferReplay
+        } else {
+            TranscriptReplayPolicy::InlinePreserveScrollback
+        };
 
         async fn shutdown_on_startup_error(
             app_server: AppServerSession,
@@ -260,7 +265,7 @@ impl App {
             );
         }
         let mut model = startup_model(&config, &bootstrap, server_defaults_read);
-        let available_models = bootstrap.available_models;
+        let mut available_models = bootstrap.available_models;
         let remote_connection = crate::status::remote_connection::remote_connection_status_value(
             &app_server_target,
             app_server.server_version(),
@@ -324,7 +329,7 @@ impl App {
         {
             tracing::warn!(%error, "TUI task delegation is unavailable without its MCP server");
         }
-        let model_catalog = Arc::new(
+        let mut model_catalog = Arc::new(
             ModelCatalog::new(available_models.clone())
                 .with_collaboration_modes(bootstrap.collaboration_modes),
         );
@@ -412,6 +417,7 @@ impl App {
                     }
                 };
                 let init = crate::chatwidget::ChatWidgetInit {
+                    transcript_replay_policy,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -529,7 +535,27 @@ impl App {
                         }
                     }
                 };
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &resumed.session,
+                            &mut available_models,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(
+                    ModelCatalog::new(available_models.clone())
+                        .with_collaboration_modes(model_catalog.collaboration_modes.clone()),
+                );
                 let init = crate::chatwidget::ChatWidgetInit {
+                    transcript_replay_policy,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -634,7 +660,27 @@ impl App {
                         config.model_reasoning_effort = forked.session.reasoning_effort.clone();
                     }
                 }
+                match startup_draft
+                    .run_until(
+                        tui,
+                        super::provider_switch::reconcile_session_model_environment(
+                            &mut config,
+                            &mut app_server,
+                            &forked.session,
+                            &mut available_models,
+                        ),
+                    )
+                    .await
+                {
+                    Ok(reconciled) => reconciled?,
+                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                }
+                model_catalog = Arc::new(
+                    ModelCatalog::new(available_models.clone())
+                        .with_collaboration_modes(model_catalog.collaboration_modes.clone()),
+                );
                 let init = crate::chatwidget::ChatWidgetInit {
+                    transcript_replay_policy,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -729,6 +775,7 @@ See the Codex keymap documentation for supported actions and examples."
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
+            transcript_replay_policy,
             initial_history_replay_buffer: None,
             pending_thread_switch_resets: 0,
             scrollback_has_older_history: false,
@@ -792,6 +839,7 @@ See the Codex keymap documentation for supported actions and examples."
             rate_limit_refresh_state: Default::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_provider_switch: None,
             recap: recap::RecapState::default(),
         };
         if !tui.is_terminal_focused() {

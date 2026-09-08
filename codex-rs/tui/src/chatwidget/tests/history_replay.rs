@@ -1607,7 +1607,7 @@ async fn thread_snapshot_replayed_stream_recovery_restores_previous_status_heade
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "Responding");
     assert_eq!(status.details(), None);
     assert!(chat.status_state.retry_status_header.is_none());
 }
@@ -1629,7 +1629,7 @@ async fn stream_recovery_restores_previous_status_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "Responding");
     assert_eq!(status.details(), None);
     assert!(chat.status_state.retry_status_header.is_none());
 }

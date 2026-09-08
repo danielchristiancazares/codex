@@ -1,7 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
 use std::collections::BTreeSet;
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::width::display_width;
 
@@ -36,6 +35,13 @@ impl FieldFormatter {
         }
     }
 
+    pub(crate) fn with_max_label_width(mut self, max_width: usize) -> Self {
+        self.label_width = self.label_width.min(max_width);
+        self.value_offset = display_width(self.indent) + self.label_width + 1 + 3;
+        self.value_indent = " ".repeat(self.value_offset);
+        self
+    }
+
     pub(crate) fn line(
         &self,
         label: &'static str,
@@ -67,13 +73,30 @@ impl FieldFormatter {
     }
 
     fn label_span(&self, label: &str) -> Span<'static> {
+        let compact_label = if display_width(label) > self.label_width {
+            if let Some(prefix) = label.strip_suffix(" credit limit") {
+                format!("{prefix} credits")
+            } else if let Some(prefix) = label.strip_suffix(" usage limit") {
+                format!("{prefix} usage")
+            } else if let Some(prefix) = label.strip_suffix(" limit") {
+                prefix.to_string()
+            } else {
+                label.to_string()
+            }
+        } else {
+            label.to_string()
+        };
+        let label = crate::text_formatting::truncate_text(&compact_label, self.label_width);
+        let label = label
+            .strip_suffix("...")
+            .map_or(label.clone(), |prefix| format!("{prefix}…"));
         let mut buf = String::with_capacity(self.value_offset);
         buf.push_str(self.indent);
 
-        buf.push_str(label);
+        buf.push_str(&label);
         buf.push(':');
 
-        let label_width = display_width(label);
+        let label_width = display_width(&label);
         let padding = 3 + self.label_width.saturating_sub(label_width);
         for _ in 0..padding {
             buf.push(' ');
@@ -91,52 +114,4 @@ pub(crate) fn push_label(labels: &mut Vec<String>, seen: &mut BTreeSet<String>, 
     let owned = label.to_string();
     seen.insert(owned.clone());
     labels.push(owned);
-}
-
-pub(crate) fn truncate_line_to_width(line: Line<'static>, max_width: usize) -> Line<'static> {
-    if max_width == 0 {
-        return Line::from(Vec::<Span<'static>>::new());
-    }
-
-    let mut used = 0usize;
-    let mut spans_out: Vec<Span<'static>> = Vec::new();
-
-    for span in line.spans {
-        let text = span.content.into_owned();
-        let style = span.style;
-        let span_width = display_width(text.as_str());
-
-        if span_width == 0 {
-            spans_out.push(Span::styled(text, style));
-            continue;
-        }
-
-        if used >= max_width {
-            break;
-        }
-
-        if used + span_width <= max_width {
-            used += span_width;
-            spans_out.push(Span::styled(text, style));
-            continue;
-        }
-
-        let mut truncated = String::new();
-        for grapheme in text.graphemes(/*is_extended*/ true) {
-            let grapheme_width = display_width(grapheme);
-            if used + grapheme_width > max_width {
-                break;
-            }
-            truncated.push_str(grapheme);
-            used += grapheme_width;
-        }
-
-        if !truncated.is_empty() {
-            spans_out.push(Span::styled(truncated, style));
-        }
-
-        break;
-    }
-
-    Line::from(spans_out)
 }

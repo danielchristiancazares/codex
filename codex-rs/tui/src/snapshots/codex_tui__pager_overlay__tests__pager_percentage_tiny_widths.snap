@@ -1,0 +1,11 @@
+---
+source: tui/src/pager_overlay.rs
+expression: "format!(\"width 6:\\n{width_six}\\nwidth 7:\\n{width_seven}\")"
+---
+width 6:
+
+──────
+
+width 7:
+
+ 100% ─

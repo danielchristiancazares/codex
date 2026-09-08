@@ -13,6 +13,7 @@ use crate::model_catalog::LUNA_RESERVE_MODEL;
 use crate::status::format_credit_micros;
 use crate::status::format_estimated_usd_micros;
 use crate::status::format_tokens_compact;
+use crate::text_formatting::format_model_status_label;
 use codex_app_server_protocol::AskForApproval;
 use codex_config::ConfigLayerSource;
 use codex_config::os_host_name;
@@ -705,7 +706,7 @@ impl ChatWidget {
     /// git metadata.
     pub(super) fn status_line_value(&mut self, item: StatusLineItem) -> Option<String> {
         match item {
-            StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
+            StatusLineItem::ModelName => Some(format_model_status_label(self.model_display_name())),
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
@@ -747,10 +748,10 @@ impl ChatWidget {
             }
             StatusLineItem::ContextRemaining => self
                 .status_line_context_remaining_percent()
-                .map(|remaining| format!("Context {remaining}% left")),
+                .map(|remaining| format!("{remaining}% context left")),
             StatusLineItem::ContextUsed => self
                 .status_line_context_used_percent()
-                .map(|used| format!("Context {used}% used")),
+                .map(|used| format!("Context used {used}%")),
             StatusLineItem::FiveHourLimit => {
                 let (window, is_secondary) = self
                     .rate_limit_snapshots_by_limit_id
@@ -792,32 +793,34 @@ impl ChatWidget {
                 .and_then(|usage| usage.estimated_usage_usd_micros)
                 .and_then(format_estimated_usd_micros),
             StatusLineItem::SessionId => self.thread_id.map(|id| id.to_string()),
-            StatusLineItem::FastMode => self
-                .model_catalog
-                .try_list_models()
-                .ok()
-                .and_then(|models| {
-                    models
-                        .into_iter()
-                        .find(|preset| preset.model == self.current_model())
-                })
-                .is_none_or(|preset| preset.supports_fast_mode())
-                .then(|| {
-                    if self.current_service_tier() == Some(ServiceTier::Fast.request_value()) {
-                        "Fast on".to_string()
-                    } else {
-                        "Fast off".to_string()
-                    }
-                }),
-            StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
+            StatusLineItem::FastMode => (self.current_service_tier()
+                == Some(ServiceTier::Fast.request_value())
+                && self
+                    .model_catalog
+                    .try_list_models()
+                    .ok()
+                    .and_then(|models| {
+                        models
+                            .into_iter()
+                            .find(|preset| preset.model == self.current_model())
+                    })
+                    .is_none_or(|preset| preset.supports_fast_mode()))
+            .then(|| "Fast".to_string()),
+            StatusLineItem::RawOutput => self.raw_output_mode().then(|| "Raw output".to_string()),
             StatusLineItem::ThreadName => {
                 self.thread_name.as_deref().and_then(normalize_thread_name)
             }
-            StatusLineItem::ThreadTitle => self
-                .thread_name
-                .as_deref()
-                .and_then(normalize_thread_name)
-                .or_else(|| self.thread_id.map(|id| id.to_string())),
+            StatusLineItem::ThreadTitle => self.thread_name.as_ref().map_or_else(
+                || self.thread_id.map(|id| id.to_string()),
+                |name| {
+                    let trimmed = name.trim();
+                    if trimmed.is_empty() {
+                        self.thread_id.map(|id| id.to_string())
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                },
+            ),
             StatusLineItem::WorkspaceHeadline => self.status_line_workspace_headline.clone(),
             StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
         }
@@ -942,7 +945,7 @@ impl ChatWidget {
                 .status_line_value_for_item(StatusLineItem::FastMode)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
-                self.model_display_name().to_string(),
+                format_model_status_label(self.model_display_name()),
                 /*max_chars*/ 32,
             )),
             TerminalTitleItem::ModelWithReasoning => Some(Self::truncate_terminal_title_part(
@@ -975,7 +978,10 @@ impl ChatWidget {
             .filter(|_| self.has_chatgpt_account)
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();
-        format!("{} {label}{service_tier_label}", self.model_display_name())
+        format!(
+            "{} · {label}{service_tier_label}",
+            format_model_status_label(self.model_display_name())
+        )
     }
 
     /// Computes the compact runtime status label used by word-based status items.

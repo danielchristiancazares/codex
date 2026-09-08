@@ -1,0 +1,18 @@
+---
+source: tui/src/markdown_render/prose_measure_tests.rs
+expression: "format!(\"48 columns\\n{narrow}\\n\\n120 columns\\n{wide}\")"
+---
+48 columns
+A careful explanation keeps its source context
+while a reader follows the result. A careful
+explanation keeps its source context while a
+reader follows the result. A careful explanation
+keeps its source context while a reader follows
+the result. A careful explanation keeps its
+source context while a reader follows the
+result.
+
+120 columns
+A careful explanation keeps its source context while a reader follows the result. A careful explanation keeps its source
+context while a reader follows the result. A careful explanation keeps its source context while a reader follows the
+result. A careful explanation keeps its source context while a reader follows the result.

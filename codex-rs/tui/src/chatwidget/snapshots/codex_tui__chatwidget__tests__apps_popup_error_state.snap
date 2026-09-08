@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests/popups_and_settings.rs
-assertion_line: 2796
 expression: popup
 ---
   Apps
@@ -10,4 +9,4 @@ expression: popup
                                 press Esc to continue.
 › 1. Retry                      Reload installed and available apps.
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

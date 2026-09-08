@@ -7,12 +7,10 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::plain_lines;
 use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
-use crate::ui_consts::TRANSCRIPT_HINT;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
@@ -29,6 +27,11 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use textwrap::WordSplitter;
 use unicode_width::UnicodeWidthStr;
+
+#[path = "exploration.rs"]
+mod exploration;
+#[path = "roster.rs"]
+mod roster;
 
 pub(crate) const TOOL_CALL_MAX_LINES: usize = 5;
 const USER_SHELL_TOOL_CALL_MAX_LINES: usize = 50;
@@ -178,17 +181,67 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
     activity_indicator(
         start_time,
         MotionMode::from_animations_enabled(animations_enabled),
-        ReducedMotionIndicator::StaticBullet,
     )
-    .unwrap_or_else(|| "•".dim())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompactCallState {
+    Active,
+    Succeeded,
+    Failed,
+}
+
+fn compact_call_state(call: &ExecCall) -> CompactCallState {
+    if call
+        .output
+        .as_ref()
+        .is_some_and(|output| output.exit_code != 0)
+    {
+        CompactCallState::Failed
+    } else if call.duration.is_none() {
+        CompactCallState::Active
+    } else {
+        CompactCallState::Succeeded
+    }
+}
+
+fn compact_branch(prefix: &'static str, state: CompactCallState) -> Span<'static> {
+    match state {
+        CompactCallState::Active => prefix.cyan(),
+        CompactCallState::Succeeded => prefix.green(),
+        CompactCallState::Failed => prefix.red(),
+    }
 }
 
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.is_exploring_cell() {
-            self.exploring_display_lines(width)
+        if !self.calls.is_empty()
+            && self.calls.iter().all(Self::is_exploring_call)
+            && self
+                .calls
+                .iter()
+                .all(|call| compact_call_state(call) != CompactCallState::Failed)
+        {
+            return self.exploring_display_lines(&self.calls, width);
+        }
+        if self.calls.len() > 1
+            || self.calls.first().is_some_and(|call| {
+                matches!(
+                    call.source,
+                    ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
+                )
+            })
+        {
+            return self.compact_group_display_lines(width);
+        }
+
+        let Some(call) = self.calls.first() else {
+            return Vec::new();
+        };
+        if Self::is_exploring_call(call) {
+            self.exploring_display_lines(&self.calls, width)
         } else {
-            self.command_display_lines(width)
+            self.command_display_lines(call, width)
         }
     }
 
@@ -220,8 +273,7 @@ impl HistoryCell for ExecCell {
                         push_owned_lines(&wrapped, &mut lines);
                     }
                 }
-                if let Some(duration) = call.duration {
-                    let duration = format_duration(duration);
+                if call.duration.is_some() || output.exit_code != 0 {
                     let mut result: Line = if output.exit_code == 0 {
                         Line::from("✓".green().bold())
                     } else {
@@ -230,7 +282,9 @@ impl HistoryCell for ExecCell {
                             format!(" ({})", output.exit_code).into(),
                         ])
                     };
-                    result.push_span(format!(" • {duration}").dim());
+                    if let Some(duration) = call.duration {
+                        result.push_span(format!(" • {}", format_duration(duration)).dim());
+                    }
                     lines.push(result);
                 }
             }
@@ -245,127 +299,25 @@ impl HistoryCell for ExecCell {
 
 impl ExecCell {
     fn output_ellipsis_text(omitted: usize) -> String {
-        format!("… +{omitted} lines ({TRANSCRIPT_HINT})")
+        format!("… +{omitted} lines")
     }
 
     fn output_ellipsis_line(omitted: usize) -> Line<'static> {
         Line::from(vec![Self::output_ellipsis_text(omitted).dim()])
     }
 
-    fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(Line::from(vec![
-            if self.is_active() {
-                activity_marker(self.active_start_time(), self.animations_enabled())
-            } else {
-                "•".dim()
-            },
-            " ".into(),
-            if self.is_active() {
-                "Exploring".bold()
-            } else {
-                "Explored".bold()
-            },
-        ]));
-
-        let mut calls = self.calls.as_slice();
-        let mut out_indented = Vec::new();
-        while let Some((call, remaining)) = calls.split_first() {
-            let reads_only = call
-                .parsed
-                .iter()
-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
-            let group_len = if reads_only {
-                1 + remaining
-                    .iter()
-                    .take_while(|next| {
-                        next.parsed
-                            .iter()
-                            .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }))
-                    })
-                    .count()
-            } else {
-                1
-            };
-            let (group, remaining) = calls.split_at(group_len);
-            calls = remaining;
-
-            let call_lines: Vec<(&str, Vec<Span<'static>>)> = if reads_only {
-                let names = group
-                    .iter()
-                    .flat_map(|call| &call.parsed)
-                    .map(|parsed| match parsed {
-                        ParsedCommand::Read { name, .. } => name.clone(),
-                        _ => unreachable!(),
-                    })
-                    .unique();
-                vec![(
-                    "Read",
-                    Itertools::intersperse(names.into_iter().map(Into::into), ", ".dim()).collect(),
-                )]
-            } else {
-                let mut lines = Vec::new();
-                for parsed in &call.parsed {
-                    match parsed {
-                        ParsedCommand::Read { name, .. } => {
-                            lines.push(("Read", vec![name.clone().into()]));
-                        }
-                        ParsedCommand::ListFiles { cmd, path } => {
-                            lines.push(("List", vec![path.clone().unwrap_or(cmd.clone()).into()]));
-                        }
-                        ParsedCommand::Search { cmd, query, path } => {
-                            let spans = match (query, path) {
-                                (Some(q), Some(p)) => {
-                                    vec![q.clone().into(), " in ".dim(), p.clone().into()]
-                                }
-                                (Some(q), None) => vec![q.clone().into()],
-                                _ => vec![cmd.clone().into()],
-                            };
-                            lines.push(("Search", spans));
-                        }
-                        ParsedCommand::Unknown { cmd } => {
-                            lines.push(("Run", vec![cmd.clone().into()]));
-                        }
-                    }
-                }
-                lines
-            };
-
-            for (title, line) in call_lines {
-                let line = Line::from(line);
-                let initial_indent = Line::from(vec![title.cyan(), " ".into()]);
-                let subsequent_indent = " ".repeat(initial_indent.width()).into();
-                let wrapped = adaptive_wrap_line(
-                    &line,
-                    RtOptions::new(width as usize)
-                        .initial_indent(initial_indent)
-                        .subsequent_indent(subsequent_indent),
-                );
-                push_owned_lines(&wrapped, &mut out_indented);
-            }
-        }
-
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
-        out
-    }
-
-    fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let [call] = &self.calls.as_slice() else {
-            panic!("Expected exactly one call in a command display cell");
-        };
+    fn command_display_lines(&self, call: &ExecCall, width: u16) -> Vec<Line<'static>> {
         let layout = EXEC_DISPLAY_LAYOUT;
-        let success = call
-            .duration
-            .and_then(|_| call.output.as_ref().map(|o| o.exit_code == 0));
-        let bullet = match success {
-            Some(true) => "•".green().bold(),
-            Some(false) => "•".red().bold(),
-            None => activity_marker(call.start_time, self.animations_enabled()),
+        let state = compact_call_state(call);
+        let bullet = match state {
+            CompactCallState::Active => activity_marker(call.start_time, self.animations_enabled()),
+            CompactCallState::Succeeded => "•".green().bold(),
+            CompactCallState::Failed => "•".red().bold(),
         };
         let is_interaction = call.is_unified_exec_interaction();
         let title = if is_interaction {
             ""
-        } else if self.is_active() {
+        } else if state == CompactCallState::Active {
             "Running"
         } else if call.is_user_shell_command() {
             "You ran"
@@ -635,7 +587,7 @@ impl ExecCell {
         .max(1)
     }
 
-    /// Builds an output ellipsis line (`… +N lines (ctrl + t to view transcript)`)
+    /// Builds an output ellipsis line (`… +N lines`)
     /// with an optional leading prefix so the ellipsis aligns with the output gutter.
     fn output_ellipsis_line_with_prefix(
         omitted: usize,
@@ -698,6 +650,10 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
     PrefixedBlock::new("  └ ", "    "),
     /*output_max_lines*/ 5,
 );
+
+#[cfg(test)]
+#[path = "roster_tests.rs"]
+mod roster_tests;
 
 #[cfg(test)]
 mod tests {
@@ -777,7 +733,7 @@ mod tests {
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
 
         // Use a narrow width so each logical line wraps into many on-screen lines.
-        let lines = cell.command_display_lines(width);
+        let lines = cell.command_display_lines(&cell.calls[0], width);
         let rendered_rows = Paragraph::new(Text::from(lines.clone()))
             .wrap(Wrap { trim: false })
             .line_count(width);
@@ -808,8 +764,8 @@ mod tests {
             .split_whitespace()
             .join(" ");
         assert!(
-            normalized.contains(TRANSCRIPT_HINT),
-            "expected truncated output to advertise transcript shortcut, got {normalized}"
+            normalized.contains("… +"),
+            "expected truncated output to report omitted lines, got {normalized}"
         );
     }
 
@@ -835,15 +791,13 @@ mod tests {
         let rendered: Vec<String> = truncated.iter().map(render_line_text).collect();
 
         assert!(
-            rendered
-                .iter()
-                .any(|line| line.contains("… +6 lines (ctrl + t to view transcript)")),
+            rendered.iter().any(|line| line.contains("… +6 lines")),
             "expected omitted hint to count hidden lines (not wrapped rows), got: {rendered:?}"
         );
     }
 
     #[test]
-    fn output_lines_ellipsis_includes_transcript_hint() {
+    fn output_lines_ellipsis_reports_only_omitted_lines() {
         let output = CommandOutput::new(
             /*exit_code*/ 0,
             (1..=7).map(|n| n.to_string()).join("\n"),
@@ -863,16 +817,7 @@ mod tests {
         .map(render_line_text)
         .collect();
 
-        assert_eq!(
-            rendered,
-            vec![
-                "1",
-                "2",
-                "… +3 lines (ctrl + t to view transcript)",
-                "6",
-                "7",
-            ]
-        );
+        assert_eq!(rendered, vec!["1", "2", "… +3 lines", "6", "7",]);
     }
 
     #[test]
@@ -965,34 +910,6 @@ mod tests {
     }
 
     #[test]
-    fn powershell_skill_read_snapshot() {
-        let command = vec![
-            "powershell.exe".to_string(),
-            "-Command".to_string(),
-            r"Get-Content C:\skills\demo\SKILL.md".to_string(),
-        ];
-        let parsed = codex_shell_command::parse_command::parse_command(&command);
-        let cell = new_active_exec_command(
-            "call-id".to_string(),
-            command,
-            parsed,
-            ExecCommandSource::Agent,
-            /*interaction_input*/ None,
-            /*animations_enabled*/ false,
-        );
-        let rendered = cell
-            .display_lines(/*width*/ 80)
-            .iter()
-            .map(render_line_text)
-            .join("\n");
-
-        insta::assert_snapshot!(rendered, @r"
-        • Exploring
-          └ Read SKILL.md
-        ");
-    }
-
-    #[test]
     fn command_truncation_ellipsis_does_not_include_transcript_hint() {
         let truncated = ExecCell::limit_lines_from_start(
             &[
@@ -1045,7 +962,7 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let rendered: Vec<String> = cell
-            .command_display_lines(/*width*/ 36)
+            .command_display_lines(&cell.calls[0], /*width*/ 36)
             .iter()
             .map(|line| {
                 line.spans
@@ -1077,12 +994,12 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let first: Vec<String> = cell
-            .command_display_lines(/*width*/ 80)
+            .command_display_lines(&cell.calls[0], /*width*/ 80)
             .iter()
             .map(render_line_text)
             .collect();
         let second: Vec<String> = cell
-            .command_display_lines(/*width*/ 80)
+            .command_display_lines(&cell.calls[0], /*width*/ 80)
             .iter()
             .map(render_line_text)
             .collect();
@@ -1092,43 +1009,128 @@ mod tests {
     }
 
     #[test]
-    fn exploring_display_does_not_split_long_url_like_search_query() {
-        let url_like = "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path";
-        let call = ExecCall {
-            call_id: "call-id".to_string(),
-            command: vec!["bash".into(), "-lc".into(), "rg foo".into()],
-            parsed: vec![ParsedCommand::Search {
-                cmd: format!("rg {url_like}"),
-                query: Some(url_like.to_string()),
-                path: None,
-            }],
-            output: None,
-            source: ExecCommandSource::Agent,
-            start_time: None,
-            duration: None,
-            interaction_input: None,
-        };
-
-        let cell = ExecCell::new(call, /*animations_enabled*/ false);
-        let rendered: Vec<String> = cell
-            .display_lines(/*width*/ 36)
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect();
-
-        assert_eq!(
-            rendered
-                .iter()
-                .filter(|line| line.contains(url_like))
-                .count(),
-            1,
-            "expected full URL-like query in one rendered line, got: {rendered:?}"
+    fn compact_command_roster_colors_branches_by_lifecycle_state() {
+        let mut cell = new_active_exec_command(
+            "call-success".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf success".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
         );
+        assert!(cell.add_call(
+            "call-failed".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf failed".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+        ));
+        assert!(cell.add_call(
+            "call-active".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "printf active".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+        ));
+        assert!(cell.complete_call(
+            "call-success",
+            CommandOutput::new(/*exit_code*/ 0, String::new()),
+            std::time::Duration::from_millis(5),
+        ));
+        assert!(cell.complete_call(
+            "call-failed",
+            CommandOutput::new(/*exit_code*/ 7, String::new()),
+            std::time::Duration::from_millis(5),
+        ));
+
+        let lines = cell.display_lines(/*width*/ 80);
+        assert_eq!(
+            lines.iter().map(render_line_text).collect::<Vec<_>>(),
+            vec![
+                "• Running 1 of 3 commands · 1 failed",
+                "  ├ printf success",
+                "  ├ printf failed",
+                "  └ printf active",
+            ]
+        );
+        insta::assert_debug_snapshot!("compact_command_roster_branch_states", lines);
+    }
+
+    #[test]
+    fn compact_command_preview_selects_table_payload_and_preserves_transcript() {
+        let mut cell = new_active_exec_command(
+            "call-process".to_string(),
+            vec![
+                "powershell.exe".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Get-Process cargo".to_string(),
+            ],
+            Vec::new(),
+            ExecCommandSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
+        );
+        let output =
+            "\nId ProcessName CPU StartTime\n-- ----------- --- ---------\n42 cargo 8.1 08:01:02\n";
+        assert!(cell.append_output("call-process", output));
+
+        let active = cell
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            active,
+            vec![
+                "• Running 1 command",
+                "  └ Get-Process cargo",
+                "    42 cargo 8.1 08:01:02",
+            ]
+        );
+
+        assert!(cell.complete_call(
+            "call-process",
+            CommandOutput::new(/*exit_code*/ 0, output.to_string()),
+            std::time::Duration::from_millis(5),
+        ));
+        let completed = cell
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            completed,
+            vec![
+                "• Ran 1 command",
+                "  └ Get-Process cargo",
+                "    42 cargo 8.1 08:01:02",
+            ]
+        );
+
+        let transcript = cell
+            .transcript_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+        assert!(transcript.contains("Id ProcessName CPU StartTime"));
+        assert!(transcript.contains("-- ----------- --- ---------"));
+        assert!(transcript.contains("42 cargo 8.1 08:01:02"));
     }
 
     #[test]
@@ -1148,7 +1150,7 @@ mod tests {
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let rendered: Vec<String> = cell
-            .command_display_lines(/*width*/ 36)
+            .command_display_lines(&cell.calls[0], /*width*/ 36)
             .iter()
             .map(|line| {
                 line.spans

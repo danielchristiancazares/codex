@@ -315,6 +315,10 @@ impl ChatWidget {
                 self.open_model_popup();
                 self.defer_input_until_settings_applied();
             }
+            SlashCommand::Provider => {
+                self.open_provider_popup();
+                self.defer_input_until_settings_applied();
+            }
             SlashCommand::Personality => {
                 self.open_personality_popup();
                 self.defer_input_until_settings_applied();
@@ -437,7 +441,8 @@ impl ChatWidget {
                 self.show_transcript_export_popup();
             }
             SlashCommand::Raw => {
-                let enabled = self.toggle_raw_output_mode_and_notify();
+                let enabled = !self.requested_raw_output_mode();
+                self.acknowledge_raw_output_mode_request(enabled);
                 self.emit_raw_output_mode_changed(enabled);
             }
             SlashCommand::Diff => {
@@ -789,11 +794,11 @@ impl ChatWidget {
             },
             SlashCommand::Raw => match trimmed.to_ascii_lowercase().as_str() {
                 "on" => {
-                    self.set_raw_output_mode_and_notify(/*enabled*/ true);
+                    self.acknowledge_raw_output_mode_request(/*enabled*/ true);
                     self.emit_raw_output_mode_changed(/*enabled*/ true);
                 }
                 "off" => {
-                    self.set_raw_output_mode_and_notify(/*enabled*/ false);
+                    self.acknowledge_raw_output_mode_request(/*enabled*/ false);
                     self.emit_raw_output_mode_changed(/*enabled*/ false);
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
@@ -1214,6 +1219,7 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
+            | SlashCommand::Provider
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal

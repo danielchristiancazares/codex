@@ -32,6 +32,7 @@ impl ChatWidget {
             status_line_invalid_items_warned,
             terminal_title_invalid_items_warned,
             session_telemetry,
+            transcript_replay_policy,
         } = common;
         let model = model.filter(|m| !m.trim().is_empty());
         let mut config = config;
@@ -113,6 +114,8 @@ impl ChatWidget {
             }),
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: local_settings.tui.raw_output_mode,
+            transcript_replay_policy,
+            pending_history_render_mode: PendingHistoryRenderMode::None,
             config,
             local_settings,
             effective_service_tier,
@@ -209,6 +212,7 @@ impl ChatWidget {
             pet_picker_preview_state: crate::pets::PetPickerPreviewState::default(),
             pet_picker_preview_pet: None,
             pet_picker_preview_request_id: 0,
+            ambient_pet_image_visible: std::cell::Cell::new(false),
             pet_picker_preview_image_visible: std::cell::Cell::new(/*value*/ false),
             pet_selection_load_request_id: 0,
             #[cfg(test)]
@@ -249,7 +253,7 @@ impl ChatWidget {
             terminal_title_invalid_items_warned,
             last_terminal_title: None,
             last_terminal_title_requires_action: false,
-            terminal_title_setup_original_items: None,
+            terminal_title_setup_snapshot: status_controls::TerminalTitleSetupSnapshot::Inactive,
             terminal_title_animation_origin: Instant::now(),
             terminal_title_next_refresh: None,
             status_line_project_root_name_cache: None,

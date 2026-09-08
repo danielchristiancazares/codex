@@ -20,6 +20,11 @@
 
 use std::ops::Range;
 
+#[path = "history_match_ranges.rs"]
+mod history_match_ranges;
+
+use history_match_ranges::case_insensitive_match_ranges;
+
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -46,6 +51,7 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::has_ctrl_or_alt;
+use crate::style::accent_style;
 use crate::ui_consts::FOOTER_INDENT_COLS;
 
 /// Active composer-owned state for one Ctrl+R search interaction.
@@ -370,22 +376,40 @@ impl ChatComposer {
     /// to show searching, match actions, or no-match feedback. The line is intentionally separate
     /// from cursor placement so rendering can fall back to normal footer layout if a small terminal
     /// cannot allocate a distinct hint row.
-    pub(super) fn history_search_footer_line(&self) -> Option<Line<'static>> {
+    ///
+    /// Match actions collapse from `enter accept · esc cancel` to `enter accept` and then to
+    /// nothing as `available_width` shrinks. The footer row cannot wrap, so appending actions that
+    /// do not fit would clip them mid-word and eat into the query; dropping them keeps the query,
+    /// which is the state the user is actively editing, legible on narrow terminals.
+    pub(super) fn history_search_footer_line(&self, available_width: u16) -> Option<Line<'static>> {
         let search = self.history_search.as_ref()?;
         let mut line = Line::from(vec![
             "reverse-i-search: ".dim(),
-            search.query.clone().cyan(),
+            Span::styled(search.query.clone(), accent_style()),
         ]);
         match search.status {
             HistorySearchStatus::Idle => {}
             HistorySearchStatus::Searching => line.push_span("  searching".dim()),
             HistorySearchStatus::Match => {
-                line.push_span("  ".dim());
-                line.push_span(Self::history_search_action_key_span(KeyCode::Enter));
-                line.push_span(" accept".dim());
-                line.push_span(" · ".dim());
-                line.push_span(Self::history_search_action_key_span(KeyCode::Esc));
-                line.push_span(" cancel".dim());
+                let accept = vec![
+                    "  ".dim(),
+                    Self::history_search_action_key_span(KeyCode::Enter),
+                    " accept".dim(),
+                ];
+                let cancel = vec![
+                    " · ".dim(),
+                    Self::history_search_action_key_span(KeyCode::Esc),
+                    " cancel".dim(),
+                ];
+                let group_width =
+                    |spans: &[Span<'static>]| spans.iter().map(Span::width).sum::<usize>();
+                let available_width = available_width as usize;
+                if line.width() + group_width(&accept) + group_width(&cancel) <= available_width {
+                    line.spans.extend(accept);
+                    line.spans.extend(cancel);
+                } else if line.width() + group_width(&accept) <= available_width {
+                    line.spans.extend(accept);
+                }
             }
             HistorySearchStatus::NoMatch => line.push_span("  no match".red()),
         }
@@ -393,7 +417,7 @@ impl ChatComposer {
     }
 
     fn history_search_action_key_span(key: KeyCode) -> Span<'static> {
-        Span::from(key_hint::plain(key)).cyan().bold().not_dim()
+        key_hint::plain(key).into()
     }
 
     /// Returns byte ranges that should be highlighted in the current composer preview.
@@ -408,53 +432,7 @@ impl ChatComposer {
         if !matches!(search.status, HistorySearchStatus::Match) || search.query.is_empty() {
             return Vec::new();
         }
-        Self::case_insensitive_match_ranges(self.draft.textarea.text(), &search.query)
-    }
-
-    fn case_insensitive_match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-
-        let query_lower = query
-            .chars()
-            .flat_map(char::to_lowercase)
-            .collect::<String>();
-        if query_lower.is_empty() {
-            return Vec::new();
-        }
-
-        let mut folded = String::new();
-        let mut folded_spans: Vec<(Range<usize>, Range<usize>)> = Vec::new();
-        for (original_start, ch) in text.char_indices() {
-            let original_range = original_start..original_start + ch.len_utf8();
-            for lower in ch.to_lowercase() {
-                let folded_start = folded.len();
-                folded.push(lower);
-                folded_spans.push((folded_start..folded.len(), original_range.clone()));
-            }
-        }
-
-        let mut ranges = Vec::new();
-        let mut search_from = 0;
-        // Use two-pointer method to find matches in linear time.
-        let mut start_span = 0;
-        let mut end_span = 0;
-        while search_from <= folded.len()
-            && let Some(relative_start) = folded[search_from..].find(&query_lower)
-        {
-            let folded_start = search_from + relative_start;
-            let folded_end = folded_start + query_lower.len();
-            while folded_spans[start_span].0.end <= folded_start {
-                start_span += 1;
-            }
-            while folded_spans[end_span].0.end < folded_end {
-                end_span += 1;
-            }
-            ranges.push(folded_spans[start_span].1.start..folded_spans[end_span].1.end);
-            search_from = folded_end;
-        }
-        ranges
+        case_insensitive_match_ranges(self.draft.textarea.text(), &search.query)
     }
 
     /// Returns the screen cursor position for the footer query when search mode is active.
@@ -726,38 +704,6 @@ mod tests {
     }
 
     #[test]
-    fn history_search_match_ranges_are_case_insensitive() {
-        assert_eq!(
-            ChatComposer::case_insensitive_match_ranges("git status git", "GIT"),
-            vec![0..3, 11..14]
-        );
-        assert_eq!(
-            ChatComposer::case_insensitive_match_ranges("aİ i", "i"),
-            vec![1..3, 4..5]
-        );
-        assert!(ChatComposer::case_insensitive_match_ranges("git", "").is_empty());
-    }
-
-    #[test]
-    fn history_search_match_ranges_preserve_unicode_boundaries() {
-        for (text, query, expected) in [
-            ("İİ", "i", vec![0..2, 2..4]),
-            ("İİ", "\u{307}", vec![0..2, 2..4]),
-            ("İİİ", "\u{307}i", vec![0..4, 2..6]),
-            ("éÉ é", "É", vec![0..2, 2..4, 5..7]),
-            ("aaaaa", "aa", vec![0..2, 2..4]),
-            ("", "x", vec![]),
-            ("abc", "z", vec![]),
-        ] {
-            assert_eq!(
-                ChatComposer::case_insensitive_match_ranges(text, query),
-                expected,
-                "text: {text:?}, query: {query:?}"
-            );
-        }
-    }
-
-    #[test]
     fn history_search_accepts_matching_entry() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
@@ -898,7 +844,7 @@ mod tests {
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
 
         let line = composer
-            .history_search_footer_line()
+            .history_search_footer_line(/*available_width*/ 80)
             .expect("expected history search footer line");
         assert_eq!(
             line.spans
@@ -918,10 +864,10 @@ mod tests {
         );
 
         let query_style = line.spans[1].style;
-        assert_eq!(query_style.fg, Some(ratatui::style::Color::Cyan));
+        assert_eq!(query_style.fg, crate::style::accent_style().fg);
 
         let enter_style = line.spans[3].style;
-        assert_eq!(enter_style.fg, Some(ratatui::style::Color::Cyan));
+        assert_eq!(enter_style.fg, crate::style::key_hint_style().fg);
         assert!(enter_style.add_modifier.contains(Modifier::BOLD));
         assert!(enter_style.sub_modifier.contains(Modifier::DIM));
 
@@ -932,12 +878,50 @@ mod tests {
         assert!(separator_style.add_modifier.contains(Modifier::DIM));
 
         let esc_style = line.spans[6].style;
-        assert_eq!(esc_style.fg, Some(ratatui::style::Color::Cyan));
+        assert_eq!(esc_style.fg, crate::style::key_hint_style().fg);
         assert!(esc_style.add_modifier.contains(Modifier::BOLD));
         assert!(esc_style.sub_modifier.contains(Modifier::DIM));
 
         let cancel_style = line.spans[7].style;
         assert!(cancel_style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn history_search_footer_drops_action_hints_before_the_query() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ true,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer
+            .history
+            .record_local_submission(HistoryEntry::new("cargo test".to_string()));
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+
+        let footer_texts = |available_width: u16| {
+            composer
+                .history_search_footer_line(available_width)
+                .expect("expected history search footer line")
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            footer_texts(/*available_width*/ 34),
+            vec!["reverse-i-search: ", "c", "  ", "enter", " accept"]
+        );
+        assert_eq!(
+            footer_texts(/*available_width*/ 24),
+            vec!["reverse-i-search: ", "c"]
+        );
     }
 
     #[test]

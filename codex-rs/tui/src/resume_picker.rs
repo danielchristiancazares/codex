@@ -5914,7 +5914,6 @@ session_picker_view = "dense"
             render_list(&mut frame, area, &state);
         }
         terminal.flush().expect("flush");
-        terminal.swap_buffers();
         assert!(terminal.backend().to_string().contains("↓ more"));
 
         state.density = SessionListDensity::Dense;
@@ -6650,7 +6649,7 @@ session_picker_view = "dense"
 
         assert!(rendered.contains("hello from user"));
         assert!(rendered.contains("hello from assistant"));
-        assert!(rendered.contains("Proposed Plan"));
+        assert!(rendered.contains("Proposed plan"));
         assert!(rendered.contains("Do the thing"));
     }
 

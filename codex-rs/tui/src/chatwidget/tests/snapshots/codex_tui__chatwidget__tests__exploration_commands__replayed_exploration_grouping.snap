@@ -1,0 +1,31 @@
+---
+source: tui/src/chatwidget/tests/exploration_commands.rs
+expression: "replay_cells.iter().map(|cell|\nlines_to_single_string(&cell.display_lines(100))).collect::<Vec<_>>().join(\"\\n\")"
+---
+• Ran 1 command · 1 failed
+  └ rg needle missing
+    Error: missing: No such file
+
+• Explored
+  ├ Read first.rs, second.rs, first.rs, second.rs
+  ├ Searched needle in src, fn on_task_complete in *.rs
+  └ Listed src
+
+• Ran 1 command
+  └ printf checkpoint
+
+• Ran 4 commands
+  ├ Searched fn .*command in helpers.rs
+  ├ Read streaming.rs
+  ├ command -v cargo-dylint dylint-link
+  └ rustup toolchain list
+    1.98.1
+
+• Ran 3 commands · failed
+  ├ Searched needle in src
+  ├ Read lib.rs
+  └ cargo test
+    Error: compilation failed
+
+• Explored
+  └ Read after.rs, last.rs

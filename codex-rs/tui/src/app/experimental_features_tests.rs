@@ -87,7 +87,7 @@ async fn experimental_features_use_selected_server_profile_and_preserve_task_set
         app.transcript_cells
             .last()
             .unwrap()
-            .display_lines(/*width*/ 120)
+            .display_lines(u16::MAX)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/exec_flow.rs
+expression: active_blob(&chat)
+---
+• Explored
+  ├ Listed ls -la, src
+  ├ Read foo.txt, bar.txt, baz.txt
+  └ Searched needle in src, other in tests

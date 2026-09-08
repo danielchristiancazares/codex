@@ -41,7 +41,7 @@ use styles::paint_style;
 const PROMPT_ACCENT_ALPHA: f32 = 0.86;
 const CHARGE: Duration = Duration::from_millis(150);
 
-pub(crate) const IGNITION_FRAME_TICK: Duration = Duration::from_millis(33);
+pub(crate) const IGNITION_FRAME_TICK: Duration = crate::tui::TARGET_FRAME_INTERVAL;
 
 pub(crate) fn effort_animation_enabled(
     animations_enabled: bool,

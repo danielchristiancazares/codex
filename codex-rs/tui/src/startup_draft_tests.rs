@@ -19,6 +19,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
+use crate::test_support::sanitize_codex_version;
 use crate::tui::FrameRequester;
 use crate::tui::TuiEvent;
 
@@ -40,12 +41,6 @@ where
         session_action: StartupDraftSessionAction::New,
         pending_paste_newline: None,
     }
-}
-
-pub(crate) fn quiet_startup_test_pump() -> StartupDraftPump {
-    let mut pump = startup_test_pump(std::iter::empty());
-    pump.events = Box::pin(futures::stream::pending());
-    pump
 }
 
 #[test]
@@ -79,16 +74,16 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         pump.bottom_pane
             .set_composer_text(text.to_string(), Vec::new(), Vec::new());
         let renderable =
-            startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action);
+            startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action);
         assert_eq!(
             renderable.desired_height(width),
             startup_draft_renderable(
-                &pump.header,
+                pump.header.as_ref(),
                 &pump.bottom_pane,
                 StartupDraftSessionAction::New,
             )
             .desired_height(width),
-            "loading status should reuse the existing gap above the composer"
+            "loading status should reuse its reserved row above the composer gap"
         );
         let area = Rect::new(
             /*x*/ 0,
@@ -101,18 +96,35 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         let cursor = renderable
             .cursor_pos(area)
             .expect("keep the editable composer cursor visible below its header");
-        let frame = (0..area.height)
-            .map(|row| {
-                (0..area.width)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+        let frame = sanitize_codex_version(
+            &(0..area.height)
+                .map(|row| {
+                    (0..area.width)
+                        .map(|column| buffer[(column, row)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .replace("0.0.0", "<VERSION>");
 
+        if width > 18 {
+            assert_eq!(frame.matches("Getting ready…").count(), 1);
+        } else {
+            assert!(
+                frame.lines().any(|row| row.trim() == "Getting ready…"),
+                "missing startup state: {frame}"
+            );
+            assert!(
+                pump.header
+                    .display_lines(width)
+                    .iter()
+                    .all(|line| line.width() <= usize::from(width)),
+                "startup header rows must fit at {width} columns"
+            );
+        }
         assert!(
             cursor.1 >= pump.header.desired_height(width),
             "the composer cursor should remain below the startup header"
@@ -129,7 +141,7 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
     let render_frame = |pump: &StartupDraftPump| {
         let width = 48;
         let renderable =
-            startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action);
+            startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action);
         let area = Rect::new(
             /*x*/ 0,
             /*y*/ 0,
@@ -138,17 +150,19 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
         );
         let mut buffer = Buffer::empty(area);
         renderable.render(area, &mut buffer);
-        (0..area.height)
-            .map(|row| {
-                (0..area.width)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
+        sanitize_codex_version(
+            &(0..area.height)
+                .map(|row| {
+                    (0..area.width)
+                        .map(|column| buffer[(column, row)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .replace("0.0.0", "<VERSION>")
     };
 
     for (label, initial_screen, session_action) in [
@@ -221,7 +235,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
     let mut pump = startup_test_pump(std::iter::empty());
     let width = 80;
     let initial_height =
-        startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action)
+        startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action)
             .desired_height(width);
 
     assert_eq!(
@@ -241,7 +255,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
         Some(expected_directory)
     );
     assert_eq!(
-        startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action)
+        startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action)
             .desired_height(width),
         initial_height
     );
@@ -687,20 +701,23 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
         .expect("show the composer after onboarding finishes");
     assert!(!tui.terminal.viewport_area.is_empty());
     let area = tui.terminal.viewport_area;
-    let renderable = startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action);
+    let renderable =
+        startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action);
     let mut buffer = Buffer::empty(area);
     renderable.render(area, &mut buffer);
-    let visible_frame = (area.top()..area.bottom())
-        .map(|row| {
-            (area.left()..area.right())
-                .map(|column| buffer[(column, row)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+    let visible_frame = sanitize_codex_version(
+        &(area.top()..area.bottom())
+            .map(|row| {
+                (area.left()..area.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .replace("0.0.0", "<VERSION>");
     drop(renderable);
     frames.push_str(&format!("\n---\nafter onboarding:\n{visible_frame}"));
     insta::assert_snapshot!("startup_draft_onboarding_transition", frames);
@@ -773,6 +790,66 @@ async fn startup_draft_waits_for_session_picker_before_accepting_input() {
 }
 
 #[tokio::test]
+async fn startup_draft_bottom_docks_after_full_screen_startup_surface() {
+    let mut pump = startup_test_pump(std::iter::empty());
+    let mut tui = crate::tui::test_support::make_test_tui().expect("create test terminal");
+    let screen_size = tui.terminal.last_known_screen_size;
+    tui.terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ 0,
+        screen_size.width,
+        screen_size.height,
+    ));
+
+    pump.show(&mut tui)
+        .expect("show the composer after a full-screen startup surface");
+
+    let area = tui.terminal.viewport_area;
+    assert_eq!(area.bottom(), screen_size.height);
+
+    let renderable =
+        startup_draft_renderable(pump.header.as_ref(), &pump.bottom_pane, pump.session_action);
+    let mut buffer = Buffer::empty(area);
+    renderable.render(area, &mut buffer);
+    let visible_frame = sanitize_codex_version(
+        &(area.top()..area.bottom())
+            .map(|row| {
+                (area.left()..area.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .replace("0.0.0", "<VERSION>")
+    .replace(&"─".repeat(usize::from(area.width)), "<composer-border>");
+    insta::assert_snapshot!(
+        format!("screen: {screen_size:?}\nviewport: {area:?}\n{visible_frame}"),
+        @"
+    screen: Size { width: 80, height: 24 }
+    viewport: Rect { x: 0, y: 0, width: 80, height: 24 }
+
+
+      >_ Codex v<VERSION>
+
+      Getting ready…
+
+
+
+
+
+
+      ╭──────────────────────────────────────────────────────────────────────────╮
+      ┃ › Type a draft while Codex gets ready…                                   │
+      ╰──────────────────────────────────────────────────────────────────────────╯
+        ? shortcuts
+    "
+    );
+}
+
+#[tokio::test]
 async fn startup_draft_allows_cancellation_before_session_picker_appears() {
     let mut pump = startup_test_pump(std::iter::once(TuiEvent::Key(KeyEvent::new(
         KeyCode::Char('c'),
@@ -825,4 +902,10 @@ async fn startup_draft_preserves_large_pastes_without_attaching_images() {
     assert_eq!(draft.pending_pastes, vec![(draft.text.clone(), pasted)]);
     assert_eq!(draft.cursor, draft.text.len());
     assert!(draft.local_images.is_empty());
+}
+
+pub(crate) fn quiet_startup_test_pump() -> StartupDraftPump {
+    let mut pump = startup_test_pump(std::iter::empty());
+    pump.events = Box::pin(futures::stream::pending());
+    pump
 }

@@ -7,6 +7,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::selection_popup_common::GenericDisplayRow;
 use crate::line_truncation::line_width;
+use crate::style::secondary_style;
 use crate::width::display_width;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
@@ -20,18 +21,43 @@ pub(crate) enum SelectionDescriptionLayout {
     StackBelowWhenNarrow {
         min_description_width: u16,
     },
+    /// At compact widths, expand only the selected row's description. Disabled rows
+    /// retain their explanations so their availability remains understandable.
+    SelectedBelowWhenNarrow {
+        max_width: u16,
+    },
 }
 
 impl SelectionDescriptionLayout {
     pub(super) fn should_stack(self, width: u16, desc_col: usize) -> bool {
-        let Self::StackBelowWhenNarrow {
-            min_description_width,
-        } = self
-        else {
-            return false;
-        };
-        let desc_col = desc_col.min(width as usize) as u16;
-        width.saturating_sub(desc_col) < min_description_width
+        match self {
+            Self::Columns => false,
+            Self::StackBelowWhenNarrow {
+                min_description_width,
+            } => {
+                let desc_col = desc_col.min(width as usize) as u16;
+                width.saturating_sub(desc_col) < min_description_width
+            }
+            Self::SelectedBelowWhenNarrow { max_width } => width <= max_width,
+        }
+    }
+
+    /// Apply the same compact description policy before measuring and rendering rows.
+    pub(super) fn prepare_rows(
+        self,
+        rows: &mut [GenericDisplayRow],
+        selected_idx: Option<usize>,
+        width: u16,
+    ) {
+        if let Self::SelectedBelowWhenNarrow { max_width } = self
+            && width <= max_width
+        {
+            for (index, row) in rows.iter_mut().enumerate() {
+                if selected_idx != Some(index) && !row.is_disabled {
+                    row.description = None;
+                }
+            }
+        }
     }
 }
 
@@ -61,6 +87,7 @@ fn combined_description(
             if matches!(
                 description_layout,
                 SelectionDescriptionLayout::StackBelowWhenNarrow { .. }
+                    | SelectionDescriptionLayout::SelectedBelowWhenNarrow { .. }
             ) =>
         {
             Some(reason.clone())
@@ -156,7 +183,7 @@ pub(super) fn build_full_line(
         if gap > 0 {
             spans.push(" ".repeat(gap).into());
         }
-        spans.push(description.dim());
+        spans.push(Span::styled(description, secondary_style()));
     }
     append_category_tag(row, &mut spans);
     Line::from(spans)
@@ -183,7 +210,7 @@ pub(super) fn wrap_stacked_row(row: &GenericDisplayRow, width: u16) -> Vec<Line<
         .collect::<Vec<_>>();
 
     if let Some(description) = stacked_description(row) {
-        let description = Line::from(description.dim());
+        let description = Line::from(Span::styled(description, secondary_style()));
         let description_options = RtOptions::new(width as usize)
             .initial_indent(Line::from(indent.clone()))
             .subsequent_indent(Line::from(indent));

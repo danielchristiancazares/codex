@@ -7,4 +7,4 @@ expression: "render_bottom_popup(&app.chat_widget, 96)"
 
 › 1. Return to command center
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

@@ -31,7 +31,7 @@
 //! Syntax-highlighted spans are split at character boundaries with styles
 //! preserved across the split so that no color information is lost.
 
-use diffy::Hunk;
+use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -47,6 +47,16 @@ use std::path::PathBuf;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
 use unicode_width::UnicodeWidthChar;
+
+mod grouped;
+mod preview;
+mod update_parse;
+
+pub(crate) use grouped::create_grouped_diff_file_summary;
+
+#[cfg(test)]
+#[path = "diff_render_light_palette_tests.rs"]
+mod light_palette_tests;
 
 /// Replacement for a tab character in rendered diff content.
 const TAB_REPLACEMENT: &str = "    ";
@@ -81,6 +91,7 @@ use crate::color::is_light;
 use crate::color::perceptual_distance;
 use crate::diff_model::FileChange;
 use crate::exec_command::relativize_to_home;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::Insets;
 use crate::render::highlight::DiffScopeBackgroundRgbs;
 use crate::render::highlight::diff_scope_background_rgbs;
@@ -90,15 +101,20 @@ use crate::render::line_utils::prefix_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
+use crate::style::StatusTone;
+use crate::style::status_style;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::XTERM_COLORS;
 use crate::terminal_palette::default_bg;
+use crate::terminal_palette::effective_stdout_color_level;
 use crate::terminal_palette::indexed_color;
 use crate::terminal_palette::rgb_color;
-use crate::terminal_palette::stdout_color_level;
 use codex_git_utils::get_git_repo_root;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
+use update_parse::PreparedUpdateDiff;
+use update_parse::RAW_FALLBACK_WARNING;
+use update_parse::UpdateDiffMode;
 
 /// Classifies a diff line for gutter sign rendering and style selection.
 ///
@@ -309,13 +325,25 @@ impl DiffSummary {
 impl Renderable for FileChange {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let mut lines = vec![];
-        render_change(self, &mut lines, area.width as usize, /*lang*/ None);
+        render_change(
+            self,
+            &mut lines,
+            area.width as usize,
+            /*lang*/ None,
+            /*max_rows*/ usize::MAX,
+        );
         Paragraph::new(lines).render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
         let mut lines = vec![];
-        render_change(self, &mut lines, width as usize, /*lang*/ None);
+        render_change(
+            self,
+            &mut lines,
+            width as usize,
+            /*lang*/ None,
+            /*max_rows*/ usize::MAX,
+        );
         lines.len() as u16
     }
 }
@@ -331,10 +359,20 @@ impl From<DiffSummary> for Box<dyn Renderable> {
                 rows.push(Box::new(RtLine::from("")));
             }
             let (added, removed) = line_counts(&change);
-            let mut path = RtLine::from(display_path_for(&path, val.cwd.as_path()));
-            path.push_span(" ");
-            path.extend(render_line_count_summary(added, removed));
-            rows.push(Box::new(path));
+            let mut path_line = RtLine::from(display_path_for(&path, val.cwd.as_path()));
+            if let FileChange::Update {
+                move_path: Some(move_path),
+                ..
+            } = &change
+            {
+                path_line.push_span(format!(
+                    " → {}",
+                    display_path_for(move_path, val.cwd.as_path())
+                ));
+            }
+            path_line.push_span(" ");
+            path_line.extend(render_line_count_summary(added, removed));
+            rows.push(Box::new(path_line));
             rows.push(Box::new(RtLine::from("")));
             rows.push(Box::new(InsetRenderable::new(
                 Box::new(change) as Box<dyn Renderable>,
@@ -354,7 +392,20 @@ pub(crate) fn create_diff_summary(
     wrap_cols: usize,
 ) -> Vec<RtLine<'static>> {
     let rows = collect_rows(changes);
-    render_changes_block(rows, wrap_cols, cwd)
+    render_changes_block(rows, wrap_cols, cwd, DiffSummaryDetail::Full, usize::MAX)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiffSummaryDetail {
+    Files,
+    Full,
+}
+
+fn transcript_hint() -> String {
+    format!(
+        "{} to view transcript",
+        crate::key_hint::ctrl(KeyCode::Char('t')).display_label()
+    )
 }
 
 // Shared row for per-file presentation
@@ -363,6 +414,7 @@ struct Row<'a> {
     move_path: Option<&'a Path>,
     added: usize,
     removed: usize,
+    change_count: usize,
     change: &'a FileChange,
 }
 
@@ -382,6 +434,7 @@ fn collect_rows(changes: &HashMap<PathBuf, FileChange>) -> Vec<Row<'_>> {
             move_path,
             added,
             removed,
+            change_count: 1,
             change,
         });
     }
@@ -393,7 +446,13 @@ fn line_counts(change: &FileChange) -> (usize, usize) {
     match change {
         FileChange::Add { content } => (content.lines().count(), 0),
         FileChange::Delete { content } => (0, content.lines().count()),
-        FileChange::Update { unified_diff, .. } => calculate_add_remove_from_diff(unified_diff),
+        FileChange::Update {
+            unified_diff,
+            move_path,
+        } => {
+            let prepared = PreparedUpdateDiff::new(unified_diff, move_path.as_deref());
+            calculate_add_remove_from_diff(&prepared)
+        }
     }
 }
 
@@ -407,7 +466,13 @@ fn render_line_count_summary(added: usize, removed: usize) -> Vec<RtSpan<'static
     spans
 }
 
-fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec<RtLine<'static>> {
+fn render_changes_block(
+    rows: Vec<Row<'_>>,
+    wrap_cols: usize,
+    cwd: &Path,
+    detail: DiffSummaryDetail,
+    mut remaining_rows: usize,
+) -> Vec<RtLine<'static>> {
     let mut out: Vec<RtLine<'static>> = Vec::new();
 
     let render_path = |row: &Row<'_>| -> Vec<RtSpan<'static>> {
@@ -426,10 +491,12 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
     let noun = if file_count == 1 { "file" } else { "files" };
     let mut header_spans: Vec<RtSpan<'static>> = vec!["• ".dim()];
     if let [row] = &rows[..] {
-        let verb = match row.change {
-            FileChange::Add { .. } => "Added",
-            FileChange::Delete { .. } => "Deleted",
-            _ => "Edited",
+        let verb = match (row.change_count, row.change) {
+            (1, FileChange::Add { .. }) => "Added",
+            (1, FileChange::Delete { .. }) => "Deleted",
+            (_, FileChange::Add { .. } | FileChange::Delete { .. } | FileChange::Update { .. }) => {
+                "Edited"
+            }
         };
         header_spans.push(verb.bold());
         header_spans.push(" ".into());
@@ -443,6 +510,50 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
     }
     out.push(RtLine::from(header_spans));
 
+    if detail == DiffSummaryDetail::Files {
+        if file_count == 1 {
+            return out
+                .into_iter()
+                .map(|line| truncate_line_with_ellipsis_if_overflow(line, wrap_cols))
+                .collect();
+        }
+        let visible_file_count = file_count.min(remaining_rows);
+        for (index, row) in rows.iter().take(visible_file_count).enumerate() {
+            let marker = match (row.change_count, row.move_path, row.change) {
+                (_, Some(_), _) => "R",
+                (1, None, FileChange::Add { .. }) => "A",
+                (1, None, FileChange::Delete { .. }) => "D",
+                (
+                    _,
+                    None,
+                    FileChange::Add { .. } | FileChange::Delete { .. } | FileChange::Update { .. },
+                ) => "M",
+            };
+            let branch = if index + 1 == file_count {
+                "  └ "
+            } else {
+                "  ├ "
+            };
+            let mut line = vec![branch.dim(), marker.bold(), " ".dim()];
+            line.extend(render_path(row));
+            line.push(" ".into());
+            line.extend(render_line_count_summary(row.added, row.removed));
+            out.push(truncate_line_with_ellipsis_if_overflow(
+                RtLine::from(line),
+                wrap_cols,
+            ));
+        }
+        if visible_file_count < file_count {
+            out.push(
+                format!("  … Diff preview limited ({}).", transcript_hint())
+                    .dim()
+                    .into(),
+            );
+        }
+        return out;
+    }
+
+    let mut omitted = false;
     for (idx, r) in rows.into_iter().enumerate() {
         // Insert a blank separator between file chunks (except before the first)
         if idx > 0 {
@@ -459,6 +570,11 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
             out.push(RtLine::from(header));
         }
 
+        if remaining_rows == 0 && (omitted || r.added > 0 || r.removed > 0) {
+            omitted = true;
+            continue;
+        }
+
         // For renames, use the destination extension for highlighting — the
         // diff content reflects the new file, not the old one.
         let lang_path = r.move_path.unwrap_or(r.path);
@@ -466,10 +582,44 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
         let mut lines = vec![];
         let prefix = "    ";
         let content_width = wrap_cols.saturating_sub(prefix.len());
-        render_change(r.change, &mut lines, content_width, lang.as_deref());
-        out.extend(prefix_lines(lines, prefix.into(), prefix.into()));
+        omitted |= render_change(
+            r.change,
+            &mut lines,
+            content_width,
+            lang.as_deref(),
+            remaining_rows,
+        );
+        for line in prefix_lines(lines, prefix.into(), prefix.into()) {
+            if remaining_rows != usize::MAX {
+                let rows = Paragraph::new(line.clone())
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .line_count(wrap_cols as u16);
+                if rows > remaining_rows {
+                    out.extend(preview::rendered_prefix(
+                        line,
+                        wrap_cols as u16,
+                        remaining_rows as u16,
+                    ));
+                    remaining_rows = 0;
+                    omitted = true;
+                    break;
+                }
+                remaining_rows -= rows;
+            }
+            out.push(line);
+        }
+        if omitted {
+            remaining_rows = 0;
+        }
     }
 
+    if omitted {
+        out.push(
+            format!("  … Diff preview limited ({}).", transcript_hint())
+                .dim()
+                .into(),
+        );
+    }
     out
 }
 
@@ -486,14 +636,27 @@ fn render_change(
     out: &mut Vec<RtLine<'static>>,
     width: usize,
     lang: Option<&str>,
-) {
+    max_rows: usize,
+) -> bool {
+    let mut omitted = false;
     let style_context = current_diff_render_style_context();
     match change {
         FileChange::Add { content } => {
-            // Pre-highlight the entire file content as a whole.
-            let syntax_lines = lang.and_then(|l| highlight_code_to_styled_spans(content, l));
             let line_number_width = line_number_width(content.lines().count());
-            for (i, raw) in content.lines().enumerate() {
+            let end = if max_rows == usize::MAX {
+                content.len()
+            } else {
+                preview::visible_byte_count(
+                    content.split_inclusive('\n'),
+                    width.saturating_sub(line_number_width + 2),
+                    max_rows,
+                )
+            };
+            let visible_content = &content[..end];
+            omitted = visible_content.len() < content.len();
+            let syntax_lines =
+                lang.and_then(|l| highlight_code_to_styled_spans(visible_content, l));
+            for (i, raw) in visible_content.lines().enumerate() {
                 let syn = syntax_lines.as_ref().and_then(|sl| sl.get(i));
                 if let Some(spans) = syn {
                     out.extend(push_wrapped_diff_line_inner_with_theme_and_color_level(
@@ -523,9 +686,21 @@ fn render_change(
             }
         }
         FileChange::Delete { content } => {
-            let syntax_lines = lang.and_then(|l| highlight_code_to_styled_spans(content, l));
             let line_number_width = line_number_width(content.lines().count());
-            for (i, raw) in content.lines().enumerate() {
+            let end = if max_rows == usize::MAX {
+                content.len()
+            } else {
+                preview::visible_byte_count(
+                    content.split_inclusive('\n'),
+                    width.saturating_sub(line_number_width + 2),
+                    max_rows,
+                )
+            };
+            let visible_content = &content[..end];
+            omitted = visible_content.len() < content.len();
+            let syntax_lines =
+                lang.and_then(|l| highlight_code_to_styled_spans(visible_content, l));
+            for (i, raw) in visible_content.lines().enumerate() {
                 let syn = syntax_lines.as_ref().and_then(|sl| sl.get(i));
                 if let Some(spans) = syn {
                     out.extend(push_wrapped_diff_line_inner_with_theme_and_color_level(
@@ -554,8 +729,16 @@ fn render_change(
                 }
             }
         }
-        FileChange::Update { unified_diff, .. } => {
-            if let Ok(patch) = diffy::Patch::from_str(unified_diff) {
+        FileChange::Update {
+            unified_diff,
+            move_path,
+        } => {
+            let prepared = PreparedUpdateDiff::new(unified_diff, move_path.as_deref());
+            let patch = match prepared.mode() {
+                UpdateDiffMode::Unified => diffy::Patch::from_str(prepared.source()).ok(),
+                UpdateDiffMode::RawFallback => None,
+            };
+            if let Some(patch) = patch {
                 let mut max_line_number = 0;
                 let mut total_diff_bytes: usize = 0;
                 let mut total_diff_lines: usize = 0;
@@ -600,6 +783,9 @@ fn render_change(
                 let line_number_width = line_number_width(max_line_number);
                 let mut is_first_hunk = true;
                 for h in patch.hunks() {
+                    if out.len() >= max_rows {
+                        return true;
+                    }
                     if !is_first_hunk {
                         let spacer = format!("{:width$} ", "", width = line_number_width.max(1));
                         let spacer_span = RtSpan::styled(
@@ -614,11 +800,46 @@ fn render_change(
                     }
                     is_first_hunk = false;
 
+                    let visible_bytes = if max_rows == usize::MAX {
+                        usize::MAX
+                    } else {
+                        preview::visible_byte_count(
+                            h.lines().iter().map(|line| match line {
+                                diffy::Line::Insert(text)
+                                | diffy::Line::Delete(text)
+                                | diffy::Line::Context(text) => *text,
+                            }),
+                            width.saturating_sub(line_number_width + 2),
+                            max_rows.saturating_sub(out.len()),
+                        )
+                    };
+                    let visible_lines: Vec<_> = h
+                        .lines()
+                        .iter()
+                        .scan(visible_bytes, |remaining, line| {
+                            if *remaining == 0 {
+                                return None;
+                            }
+                            let text = match line {
+                                diffy::Line::Insert(text)
+                                | diffy::Line::Delete(text)
+                                | diffy::Line::Context(text) => *text,
+                            };
+                            let end = (*remaining).min(text.len());
+                            *remaining -= end;
+                            omitted |= end < text.len();
+                            Some(match line {
+                                diffy::Line::Insert(_) => diffy::Line::Insert(&text[..end]),
+                                diffy::Line::Delete(_) => diffy::Line::Delete(&text[..end]),
+                                diffy::Line::Context(_) => diffy::Line::Context(&text[..end]),
+                            })
+                        })
+                        .collect();
+
                     // Highlight each hunk as a single block so syntect parser
                     // state is preserved across consecutive lines.
                     let hunk_syntax_lines = diff_lang.and_then(|language| {
-                        let hunk_text: String = h
-                            .lines()
+                        let hunk_text: String = visible_lines
                             .iter()
                             .map(|line| match line {
                                 diffy::Line::Insert(text)
@@ -627,12 +848,12 @@ fn render_change(
                             })
                             .collect();
                         let syntax_lines = highlight_code_to_styled_spans(&hunk_text, language)?;
-                        (syntax_lines.len() == h.lines().len()).then_some(syntax_lines)
+                        (syntax_lines.len() == visible_lines.len()).then_some(syntax_lines)
                     });
 
                     let mut old_ln = h.old_range().start();
                     let mut new_ln = h.new_range().start();
-                    for (line_idx, l) in h.lines().iter().enumerate() {
+                    for (line_idx, l) in visible_lines.iter().enumerate() {
                         let syntax_spans = hunk_syntax_lines
                             .as_ref()
                             .and_then(|syntax_lines| syntax_lines.get(line_idx));
@@ -739,10 +960,47 @@ fn render_change(
                             }
                         }
                     }
+                    if omitted || visible_lines.len() < h.lines().len() {
+                        omitted = true;
+                        break;
+                    }
+                }
+            } else {
+                if !push_wrapped_text_line(
+                    out,
+                    RAW_FALLBACK_WARNING,
+                    width,
+                    max_rows,
+                    status_style(StatusTone::Attention),
+                ) {
+                    return true;
+                }
+                for raw in prepared.source().split_terminator('\n') {
+                    if !push_wrapped_text_line(out, raw, width, max_rows, Style::default()) {
+                        return true;
+                    }
                 }
             }
         }
     }
+    omitted
+}
+
+fn push_wrapped_text_line(
+    out: &mut Vec<RtLine<'static>>,
+    text: &str,
+    width: usize,
+    max_rows: usize,
+    style: Style,
+) -> bool {
+    let spans = [RtSpan::styled(text.to_string(), style)];
+    for wrapped in wrap_styled_spans(&spans, width.max(1)) {
+        if out.len() >= max_rows {
+            return false;
+        }
+        out.push(RtLine::from(wrapped));
+    }
+    true
 }
 
 /// Format a path for display relative to the current working directory when
@@ -771,21 +1029,8 @@ pub(crate) fn display_path_for(path: &Path, cwd: &Path) -> String {
     chosen.display().to_string()
 }
 
-pub(crate) fn calculate_add_remove_from_diff(diff: &str) -> (usize, usize) {
-    if let Ok(patch) = diffy::Patch::from_str(diff) {
-        patch
-            .hunks()
-            .iter()
-            .flat_map(Hunk::lines)
-            .fold((0, 0), |(a, d), l| match l {
-                diffy::Line::Insert(_) => (a + 1, d),
-                diffy::Line::Delete(_) => (a, d + 1),
-                diffy::Line::Context(_) => (a, d),
-            })
-    } else {
-        // For unparsable diffs, return 0 for both counts.
-        (0, 0)
-    }
+fn calculate_add_remove_from_diff(prepared: &PreparedUpdateDiff<'_>) -> (usize, usize) {
+    prepared.line_counts()
 }
 
 /// Render a single plain-text (non-syntax-highlighted) diff line, wrapped to
@@ -1065,7 +1310,7 @@ fn diff_theme() -> DiffTheme {
 /// [`diff_color_level_for_terminal`] stay pure and easy to unit test.
 fn diff_color_level() -> DiffColorLevel {
     diff_color_level_for_terminal(
-        stdout_color_level(),
+        effective_stdout_color_level(),
         terminal_info().name,
         std::env::var_os("WT_SESSION").is_some(),
         has_force_color_override(),
@@ -1612,6 +1857,17 @@ mod tests {
             lines,
             /*width*/ 80,
             /*height*/ 14,
+        );
+
+        snapshot_lines(
+            "apply_multiple_files_file_summary",
+            create_grouped_diff_file_summary(
+                std::iter::once(&changes),
+                &PathBuf::from("/"),
+                /*width*/ 80,
+            ),
+            /*width*/ 80,
+            /*height*/ 5,
         );
     }
 

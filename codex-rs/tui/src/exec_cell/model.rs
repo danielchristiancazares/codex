@@ -1,15 +1,16 @@
 //! Data model for grouped exec-call history cells in the TUI transcript.
 //!
-//! An `ExecCell` can represent either a single command or an "exploring" group of related read/
-//! list/search commands. The chat widget relies on stable `call_id` matching to route progress and
-//! end events into the right cell, and it treats "call id not found" as a real signal (for
-//! example, an orphan end that should render as a separate history entry).
+//! An `ExecCell` can represent overlapping commands, with contiguous read/list/search calls grouped
+//! by action under one "exploring" header. The chat widget relies on stable `call_id` matching to
+//! route progress and end events into the right cell, and it treats "call id not found" as a real
+//! signal (for example, an orphan end that should render as a separate history entry).
 
 use std::borrow::Cow;
 use std::time::Duration;
 use std::time::Instant;
 
 use super::live_output::LiveCommandOutput;
+use crate::exec_command::is_exploration_command;
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
 use codex_protocol::parse_command::ParsedCommand;
 use itertools::Either;
@@ -104,7 +105,10 @@ impl ExecCell {
             duration: None,
             interaction_input,
         };
-        if self.is_exploring_cell() && Self::is_exploring_call(&call) {
+        let continues_exploration = self.is_exploring_cell() && Self::is_exploring_call(&call);
+        // Keep overlapping calls in one mutable cell so their matching completion events update
+        // the original live action. Completed non-exploration calls render individually.
+        if self.is_active() || continues_exploration {
             self.calls.push(call);
             true
         } else {
@@ -141,7 +145,11 @@ impl ExecCell {
             return !self.is_active();
         }
 
-        !self.is_exploring_cell() && self.calls.iter().all(|c| c.duration.is_some())
+        !self.is_exploring_cell() && !self.is_active()
+    }
+
+    pub(crate) fn freeze_snapshot(&mut self) {
+        self.animations_enabled = false;
     }
 
     pub(crate) fn mark_failed(&mut self) {
@@ -168,19 +176,8 @@ impl ExecCell {
         self.calls.iter().any(|c| c.duration.is_none())
     }
 
-    pub(crate) fn active_start_time(&self) -> Option<Instant> {
-        self.calls
-            .iter()
-            .find(|c| c.duration.is_none())
-            .and_then(|c| c.start_time)
-    }
-
     pub(crate) fn animations_enabled(&self) -> bool {
         self.animations_enabled
-    }
-
-    pub(crate) fn freeze_snapshot(&mut self) {
-        self.animations_enabled = false;
     }
 
     pub(crate) fn iter_calls(&self) -> impl Iterator<Item = &ExecCall> {
@@ -205,14 +202,7 @@ impl ExecCell {
     pub(super) fn is_exploring_call(call: &ExecCall) -> bool {
         !matches!(call.source, ExecCommandSource::UserShell)
             && !call.parsed.is_empty()
-            && call.parsed.iter().all(|p| {
-                matches!(
-                    p,
-                    ParsedCommand::Read { .. }
-                        | ParsedCommand::ListFiles { .. }
-                        | ParsedCommand::Search { .. }
-                )
-            })
+            && call.parsed.iter().all(is_exploration_command)
     }
 }
 

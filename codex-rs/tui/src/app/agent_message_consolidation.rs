@@ -15,6 +15,7 @@ use color_eyre::eyre::Result;
 use super::App;
 use super::resize_reflow::trailing_run_start;
 use crate::app_event::ConsolidationScrollbackReflow;
+use crate::app_event::InlineCanonicalCorrection;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::inline_visualization::InlineVisualizationContext;
@@ -44,6 +45,20 @@ impl App {
 
         // Walk backward to find the contiguous run of streaming AgentMessageCells that
         // belong to the just-finalized stream.
+        let correction = match scrollback_reflow {
+            ConsolidationScrollbackReflow::InlinePreserve(
+                InlineCanonicalCorrection::AppendAuthoritativeSource,
+            ) => Some(history_cell::InlineCanonicalCorrectionCell::new(
+                source.clone(),
+                &cwd,
+                inline_visualization_context.clone(),
+            )),
+            ConsolidationScrollbackReflow::IfResizeReflowRan
+            | ConsolidationScrollbackReflow::Required
+            | ConsolidationScrollbackReflow::InlinePreserve(InlineCanonicalCorrection::None) => {
+                None
+            }
+        };
         let end = self.transcript_cells.len();
         tracing::debug!(
             "ConsolidateAgentMessage: transcript_cells.len()={end}, source_len={}",
@@ -69,7 +84,7 @@ impl App {
                 tui.frame_requester().schedule_frame();
             }
 
-            self.finish_agent_message_consolidation(tui, scrollback_reflow)?;
+            self.finish_agent_message_consolidation(tui, scrollback_reflow, correction)?;
         } else {
             tracing::debug!(
                 "ConsolidateAgentMessage: no cells to consolidate(start={start}, end={end})",
@@ -84,6 +99,7 @@ impl App {
         &mut self,
         tui: &mut tui::Tui,
         scrollback_reflow: ConsolidationScrollbackReflow,
+        correction: Option<history_cell::InlineCanonicalCorrectionCell>,
     ) -> Result<()> {
         match scrollback_reflow {
             ConsolidationScrollbackReflow::IfResizeReflowRan => {
@@ -91,6 +107,18 @@ impl App {
             }
             ConsolidationScrollbackReflow::Required => {
                 self.finish_required_stream_reflow(tui)?;
+            }
+            ConsolidationScrollbackReflow::InlinePreserve(
+                InlineCanonicalCorrection::None
+                | InlineCanonicalCorrection::AppendAuthoritativeSource,
+            ) => {
+                self.maybe_finish_stream_reflow(tui)?;
+                if let Some(correction) = correction {
+                    let width = self
+                        .chat_widget
+                        .history_wrap_width(tui.terminal.last_known_screen_size.width);
+                    self.insert_history_cell_lines(tui, &correction, width);
+                }
             }
         }
 

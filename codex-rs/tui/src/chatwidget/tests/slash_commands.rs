@@ -1717,13 +1717,7 @@ async fn pending_token_activity_refresh_keeps_composer_visible_in_short_viewport
     })
     .unwrap();
 
-    assert!(
-        term.backend()
-            .vt100()
-            .screen()
-            .contents()
-            .contains("Ask Codex to do anything")
-    );
+    assert!(term.backend().vt100().screen().contents().contains("┃ ›"));
 }
 
 #[tokio::test]
@@ -3732,7 +3726,6 @@ async fn raw_slash_command_toggles_and_accepts_on_off_args() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.dispatch_command(SlashCommand::Raw);
-    assert!(chat.raw_output_mode());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events
@@ -3740,8 +3733,10 @@ async fn raw_slash_command_toggles_and_accepts_on_off_args() {
             .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: true }))
     );
 
+    // App owns applying the request after checking the stream boundary.
+    chat.set_raw_output_mode(/*enabled*/ true);
+
     chat.dispatch_command_with_args(SlashCommand::Raw, "off".to_string(), Vec::new());
-    assert!(!chat.raw_output_mode());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events
@@ -3750,7 +3745,6 @@ async fn raw_slash_command_toggles_and_accepts_on_off_args() {
     );
 
     chat.dispatch_command_with_args(SlashCommand::Raw, "on".to_string(), Vec::new());
-    assert!(chat.raw_output_mode());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events

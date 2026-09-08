@@ -247,6 +247,8 @@ impl RequestUserInputOverlay {
     }
 
     pub(super) fn render_ui_at(&self, area: Rect, buf: &mut Buffer, now: Instant) {
+        self.freeform_input_visibility
+            .set(super::FreeformInputVisibility::ResizeRequired);
         if area.width == 0 || area.height == 0 {
             return;
         }
@@ -286,9 +288,9 @@ impl RequestUserInputOverlay {
                 break;
             }
             let question_line = if answered {
-                Line::from(line.clone())
+                Line::from(line.clone()).bold()
             } else {
-                Line::from(line.clone()).cyan()
+                Line::from(line.clone()).cyan().bold()
             };
             Paragraph::new(question_line).render(
                 Rect {
@@ -395,11 +397,19 @@ impl RequestUserInputOverlay {
             return None;
         }
         let content_area = menu_surface_inset(area);
+        self.freeform_input_visibility
+            .set(super::FreeformInputVisibility::ResizeRequired);
         if content_area.width == 0 || content_area.height == 0 {
             return None;
         }
         let sections = self.layout_sections(content_area);
         let input_area = sections.notes_area;
+        if !has_options
+            && self.freeform_input_visibility.get()
+                == super::FreeformInputVisibility::ResizeRequired
+        {
+            return None;
+        }
         if input_area.width == 0 || input_area.height == 0 {
             return None;
         }
@@ -409,6 +419,13 @@ impl RequestUserInputOverlay {
     /// Render the notes composer.
     fn render_notes_input(&self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+        if !self.has_options()
+            && self.freeform_input_visibility.get()
+                == super::FreeformInputVisibility::ResizeRequired
+        {
+            Paragraph::new(Line::from("Resize terminal to answer".dim())).render(area, buf);
             return;
         }
         let is_secret = self

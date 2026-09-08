@@ -346,12 +346,19 @@ use self::ide_context::IdeContextState;
 mod input_queue;
 mod reconnect;
 use self::input_queue::InputQueueState;
+mod history_render_mode;
 mod input_flow;
 mod input_restore;
 mod input_submission;
 mod interrupts;
+mod landing;
 mod questions;
+use self::history_render_mode::PendingHistoryRenderMode;
 use self::interrupts::InterruptManager;
+use self::interrupts::QueuedInterrupt;
+use crate::history_cell::McpToolCallGroupCell;
+use crate::streaming::controller::DeferredRowsReflow;
+use crate::transcript_reflow::TranscriptReplayPolicy;
 mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
@@ -382,6 +389,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod model_popup_state;
 mod model_popups;
 mod notifications;
+mod provider_popup;
 use self::notifications::Notification;
 mod permission_discovery;
 mod permission_popups;
@@ -544,6 +552,7 @@ pub(crate) struct ChatWidgetInit {
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     pub(crate) terminal_title_invalid_items_warned: Arc<AtomicBool>,
     pub(crate) session_telemetry: SessionTelemetry,
+    pub(crate) transcript_replay_policy: TranscriptReplayPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -575,6 +584,8 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     raw_output_mode: bool,
+    transcript_replay_policy: TranscriptReplayPolicy,
+    pending_history_render_mode: PendingHistoryRenderMode,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
     /// The unmasked collaboration mode settings (always Default mode).
@@ -697,6 +708,7 @@ pub(crate) struct ChatWidget {
     pet_picker_preview_state: crate::pets::PetPickerPreviewState,
     pet_picker_preview_pet: Option<crate::pets::AmbientPet>,
     pet_picker_preview_request_id: u64,
+    ambient_pet_image_visible: std::cell::Cell<bool>,
     pet_picker_preview_image_visible: std::cell::Cell<bool>,
     pet_selection_load_request_id: u64,
     #[cfg(test)]
@@ -767,14 +779,8 @@ pub(crate) struct ChatWidget {
     pub(crate) last_terminal_title: Option<String>,
     // Last visible "action required" state observed by the terminal-title renderer.
     last_terminal_title_requires_action: bool,
-    // Original terminal-title config captured when the setup UI opens.
-    //
-    // The outer `Option` tracks whether a setup session is active (`Some`)
-    // or not (`None`). The inner `Option<Vec<String>>` mirrors the shape
-    // of `config.tui_terminal_title` (which is `None` when using defaults).
-    // On cancel or persist-failure the inner value is restored to config;
-    // on confirm the outer is set to `None` to end the session.
-    terminal_title_setup_original_items: Option<Option<Vec<String>>>,
+    // Original terminal-title settings retained while previewing the setup UI.
+    terminal_title_setup_snapshot: status_controls::TerminalTitleSetupSnapshot,
     // Baseline instant used to animate spinner-prefixed title statuses.
     terminal_title_animation_origin: Instant,
     // The foreground loop refreshes the title at this deadline without drawing a frame.
@@ -1215,6 +1221,9 @@ impl ChatWidget {
     }
 
     fn flush_active_cell(&mut self) {
+        if self.active_mcp_group_has_incomplete_members() {
+            return;
+        }
         if let Some(active) = self.transcript.take_active_cell() {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
             self.request_pending_usage_output_insertion();
@@ -1273,9 +1282,20 @@ impl ChatWidget {
                         || active_cell
                             .as_any()
                             .is::<history_cell::ComputerActivityCell>()
+                        || active_cell.as_any().is::<history_cell::PatchHistoryCell>()
                 })
             && !cell.transcript_lines(history_width).is_empty()
         {
+            if let Some(patches) = self.transcript.active_cell.as_mut().and_then(|active| {
+                active
+                    .as_any_mut()
+                    .downcast_mut::<history_cell::PatchHistoryCell>()
+            }) {
+                patches.append_transcript(cell);
+                self.bump_active_cell_revision();
+                self.request_redraw();
+                return;
+            }
             self.flush_completed_tool_activity();
         }
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
@@ -1433,6 +1453,8 @@ impl ChatWidget {
                 .downcast_mut::<history_cell::ComputerActivityCell>()
             {
                 computer.mark_failed();
+            } else if let Some(group) = cell.as_any_mut().downcast_mut::<McpToolCallGroupCell>() {
+                group.mark_all_incomplete_failed();
             }
             self.add_boxed_history(cell);
             self.request_pending_usage_output_insertion();
@@ -1643,53 +1665,6 @@ impl ChatWidget {
         })
     }
 
-    pub(crate) fn raw_output_mode(&self) -> bool {
-        self.raw_output_mode
-    }
-
-    pub(crate) fn history_render_mode(&self) -> HistoryRenderMode {
-        if self.raw_output_mode {
-            HistoryRenderMode::Raw
-        } else {
-            HistoryRenderMode::Rich
-        }
-    }
-
-    pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
-        self.raw_output_mode = enabled;
-        self.local_settings.tui.raw_output_mode = enabled;
-        let render_mode = self.history_render_mode();
-        if let Some(controller) = self.stream_controller.as_mut() {
-            controller.set_render_mode(render_mode);
-        }
-        if let Some(controller) = self.plan_stream_controller.as_mut() {
-            controller.set_render_mode(render_mode);
-        }
-        self.refresh_status_surfaces();
-    }
-
-    pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
-        if enabled {
-            "Raw output mode on: transcript text is shown for clean terminal selection."
-        } else {
-            "Raw output mode off: rich transcript rendering restored."
-        }
-    }
-
-    pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
-        self.set_raw_output_mode(enabled);
-        self.add_info_message(
-            Self::raw_output_mode_notice(enabled).to_string(),
-            /*hint*/ None,
-        );
-    }
-
-    pub(crate) fn toggle_raw_output_mode_and_notify(&mut self) -> bool {
-        let enabled = !self.raw_output_mode;
-        self.set_raw_output_mode_and_notify(enabled);
-        enabled
-    }
-
     /// Update resize-sensitive chat widget state after the terminal width changes.
     ///
     /// Live stream wrapping stays consistent with the current viewport while finalized transcript
@@ -1803,6 +1778,8 @@ impl ChatWidget {
                 exec.freeze_snapshot();
             } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
                 tool.freeze_snapshot();
+            } else if let Some(group) = cell.as_any_mut().downcast_mut::<McpToolCallGroupCell>() {
+                group.freeze_snapshot();
             }
         }
         self.bottom_pane
@@ -2067,7 +2044,7 @@ impl Drop for ChatWidget {
     }
 }
 
-const PLACEHOLDER: &str = "Ask Codex to do anything";
+const PLACEHOLDER: &str = "";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 
 // Extract the first bold (Markdown) element in the form **...** from `s`.

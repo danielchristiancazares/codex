@@ -1,0 +1,11 @@
+---
+source: tui/src/bottom_pane/pending_input_preview/compact_tests.rs
+expression: text
+---
+• 1 retry · 1 steer · 10 queued
+  ! Retry: Retry first
+  ↳ Steer: Steer second
+  Latest: Follow-up 10
+        · Follow-up 9
+        · Follow-up 8
+… 7 hidden · esc steers · ⌥ + ↑ edit queue

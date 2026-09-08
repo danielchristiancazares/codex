@@ -158,6 +158,42 @@ pub(crate) enum StatusLineItem {
 }
 
 impl StatusLineItem {
+    /// Human-facing label shown in the status-line picker.
+    fn display_name(self) -> &'static str {
+        match self {
+            StatusLineItem::ModelName => "Model",
+            StatusLineItem::ModelWithReasoning => "Model + reasoning",
+            StatusLineItem::Reasoning => "Reasoning",
+            StatusLineItem::CurrentDir => "Current directory",
+            StatusLineItem::ProjectRoot => "Project name",
+            StatusLineItem::Hostname => "Hostname",
+            StatusLineItem::GitBranch => "Git branch",
+            StatusLineItem::PullRequestNumber => "Pull request",
+            StatusLineItem::BranchChanges => "Branch changes",
+            StatusLineItem::Status => "Run state",
+            StatusLineItem::Permissions => "Permissions",
+            StatusLineItem::ApprovalMode => "Approval mode",
+            StatusLineItem::ContextRemaining => "Context remaining",
+            StatusLineItem::ContextUsed => "Context used",
+            StatusLineItem::FiveHourLimit => "Primary usage limit",
+            StatusLineItem::WeeklyLimit => "Secondary usage limit",
+            StatusLineItem::CodexVersion => "Codex version",
+            StatusLineItem::ContextWindowSize => "Context window",
+            StatusLineItem::UsedTokens => "Tokens used",
+            StatusLineItem::TotalInputTokens => "Input tokens",
+            StatusLineItem::TotalOutputTokens => "Output tokens",
+            StatusLineItem::ThreadCredits => "Thread credits",
+            StatusLineItem::EstimatedThreadCost => "Estimated thread cost",
+            StatusLineItem::SessionId => "Thread ID",
+            StatusLineItem::FastMode => "Fast mode",
+            StatusLineItem::RawOutput => "Raw output",
+            StatusLineItem::ThreadName => "Thread name",
+            StatusLineItem::ThreadTitle => "Thread title",
+            StatusLineItem::WorkspaceHeadline => "Workspace headline",
+            StatusLineItem::TaskProgress => "Task progress",
+        }
+    }
+
     /// User-visible description shown in the popup.
     pub(crate) fn description(self) -> &'static str {
         match self {
@@ -183,12 +219,8 @@ impl StatusLineItem {
             StatusLineItem::ContextUsed => {
                 "Percentage of context window used (omitted when unknown)"
             }
-            StatusLineItem::FiveHourLimit => {
-                "Remaining usage on the primary usage limit (omitted when unavailable)"
-            }
-            StatusLineItem::WeeklyLimit => {
-                "Remaining usage on the secondary usage limit (omitted when unavailable)"
-            }
+            StatusLineItem::FiveHourLimit => "Primary usage remaining; hidden when unavailable",
+            StatusLineItem::WeeklyLimit => "Secondary usage remaining; hidden when unavailable",
             StatusLineItem::CodexVersion => "Codex application version",
             StatusLineItem::ContextWindowSize => {
                 "Total context window size in tokens (omitted when unknown)"
@@ -305,11 +337,7 @@ impl StatusLineSetupView {
                 if !used_ids.insert(item_id.clone()) {
                     continue;
                 }
-                items.push(Self::status_line_select_item(
-                    item,
-                    /*enabled*/ true,
-                    &preview_data,
-                ));
+                items.push(Self::status_line_select_item(item, /*enabled*/ true));
             }
         }
 
@@ -318,11 +346,7 @@ impl StatusLineSetupView {
             if used_ids.contains(&item_id) {
                 continue;
             }
-            items.push(Self::status_line_select_item(
-                item,
-                /*enabled*/ false,
-                &preview_data,
-            ));
+            items.push(Self::status_line_select_item(item, /*enabled*/ false));
         }
 
         Self {
@@ -369,25 +393,11 @@ impl StatusLineSetupView {
     }
 
     /// Converts a [`StatusLineItem`] into a [`MultiSelectItem`] for the picker.
-    fn status_line_select_item(
-        item: StatusLineItem,
-        enabled: bool,
-        preview_data: &StatusSurfacePreviewData,
-    ) -> MultiSelectItem {
-        let default_name = item.to_string();
-        let default_description = item.description();
-        let (name, description) = match item {
-            StatusLineItem::FiveHourLimit | StatusLineItem::WeeklyLimit => (
-                preview_data.rate_limit_item_name(item.preview_item(), &default_name),
-                preview_data.rate_limit_item_description(item.preview_item(), default_description),
-            ),
-            _ => (default_name, default_description.to_string()),
-        };
-
+    fn status_line_select_item(item: StatusLineItem, enabled: bool) -> MultiSelectItem {
         MultiSelectItem {
             id: item.to_string(),
-            name,
-            description: Some(description),
+            name: item.display_name().to_string(),
+            description: Some(item.description().to_string()),
             enabled,
             orderable: true,
             section_break_after: false,
@@ -416,7 +426,7 @@ impl BottomPaneView for StatusLineSetupView {
 
 impl Renderable for StatusLineSetupView {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.picker.render(area, buf)
+        self.picker.render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -701,14 +711,19 @@ mod tests {
                 ),
                 (
                     StatusLineItem::WeeklyLimit.preview_item(),
-                    "weekly 82% left".to_string(),
+                    "Weekly 82% left".to_string(),
                 ),
             ]),
             AppEventSender::new(tx_raw),
             crate::keymap::RuntimeKeymap::defaults().list,
         );
 
-        assert_snapshot!(render_lines(&view, /*width*/ 72));
+        let rendered = render_lines(&view, /*width*/ 72);
+        let footer = rendered.lines().last().unwrap_or_default();
+
+        assert!(footer.contains("enter confirm"), "{footer:?}");
+        assert!(footer.contains("esc close"), "{footer:?}");
+        assert_snapshot!(rendered);
     }
 
     #[test]
@@ -767,6 +782,32 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+    }
+
+    #[test]
+    fn setup_view_footer_uses_resolved_list_keymap() {
+        let mut list_keymap = crate::keymap::RuntimeKeymap::defaults().list;
+        list_keymap.move_left = vec![crate::key_hint::ctrl(crossterm::event::KeyCode::Char('z'))];
+        list_keymap.move_right = vec![crate::key_hint::ctrl(crossterm::event::KeyCode::Char('x'))];
+        list_keymap.accept = vec![crate::key_hint::plain(crossterm::event::KeyCode::F(12))];
+        list_keymap.cancel.clear();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let view = StatusLineSetupView::new(
+            Some(&[StatusLineItem::ModelName.to_string()]),
+            /*use_theme_colors*/ true,
+            StatusSurfacePreviewData::default(),
+            AppEventSender::new(tx_raw),
+            list_keymap,
+        );
+
+        let rendered = render_lines(&view, /*width*/ 100);
+        let footer = rendered.lines().last().unwrap_or_default().trim_end();
+
+        insta::assert_snapshot!("status_line_setup_custom_keymap_footer", footer);
+        assert!(footer.contains("ctrl + z/ctrl + x"), "{footer:?}");
+        assert!(footer.contains("f12"), "{footer:?}");
+        assert!(!footer.contains("Enter"), "{footer:?}");
+        assert!(!footer.contains("Esc"), "{footer:?}");
     }
 
     fn render_lines(view: &StatusLineSetupView, width: u16) -> String {

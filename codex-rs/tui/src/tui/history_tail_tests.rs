@@ -1,3 +1,4 @@
+use super::replace_visible_terminal_history_rows;
 use super::replace_visible_terminal_history_tail;
 use crate::custom_terminal::Terminal;
 use crate::insert_history::HistoryLineWrapPolicy;
@@ -59,6 +60,7 @@ fn replacing_visible_history_tail_preserves_existing_terminal_scrollback() {
         )
         .expect("replace status-card tail")
     );
+    assert_eq!(terminal.visible_history_rows(), 4);
 
     let contents = terminal.backend().vt100().screen().contents();
     assert!(contents.contains("/status"), "{contents}");
@@ -143,4 +145,59 @@ fn replacing_soft_wrapped_history_counts_physical_terminal_rows() {
     assert!(contents.contains("new billing"), "{contents}");
     assert!(!contents.contains("old-long"), "{contents}");
     assert!(!contents.contains("spanning"), "{contents}");
+}
+
+#[test]
+fn refilling_released_viewport_rows_preserves_shell_output() {
+    for mode in [InsertHistoryMode::Standard, InsertHistoryMode::FullScreen] {
+        let width = 40;
+        let height = 8;
+        let backend = VT100Backend::with_scrollback(width, height, /*scrollback_len*/ 32);
+        let mut terminal = Terminal::with_options(backend).expect("terminal");
+        writeln!(terminal.backend_mut(), "shell history before Codex\r").unwrap();
+        for index in 1..=8 {
+            writeln!(terminal.backend_mut(), "shell output {index}\r").unwrap();
+        }
+        write!(
+            terminal.backend_mut(),
+            "\x1b[3;1H\x1b[KFirst body line\x1b[4;1H\x1b[KLast body line"
+        )
+        .unwrap();
+        terminal.set_viewport_area(Rect::new(
+            /*x*/ 0, /*y*/ 4, width, /*height*/ 4,
+        ));
+        terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
+        let before = terminal.backend().vt100().screen().contents();
+        let prefix = before.lines().take(2).collect::<Vec<_>>().join("\n");
+        terminal.set_viewport_area(Rect::new(
+            /*x*/ 0, /*y*/ 4, width, /*height*/ 2,
+        ));
+        let replacement = plain_hyperlink_lines(vec![
+            Line::from("## Restored heading"),
+            Line::default(),
+            Line::from("First body line"),
+            Line::from("Last body line"),
+        ]);
+        assert!(
+            replace_visible_terminal_history_rows(
+                &mut terminal,
+                /*previous_rows*/ 2,
+                &replacement,
+                mode,
+                HistoryLineWrapPolicy::PreWrap,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            terminal.backend().vt100().screen().contents(),
+            format!("{prefix}\n## Restored heading\n\nFirst body line\nLast body line")
+        );
+        assert_eq!(
+            terminal.viewport_area,
+            Rect::new(/*x*/ 0, /*y*/ 6, width, /*height*/ 2)
+        );
+        let mut scrollback = terminal.backend().vt100().screen().clone();
+        scrollback.set_scrollback(/*rows*/ usize::MAX);
+        assert!(scrollback.contents().contains("shell history before Codex"));
+    }
 }

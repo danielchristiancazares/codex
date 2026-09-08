@@ -1254,6 +1254,24 @@ impl App {
                 return Ok(AppRunControl::Continue);
             }
         };
+        let mut available_models = self.model_catalog.try_list_models().unwrap_or_default();
+        if let Err(err) = super::provider_switch::reconcile_session_model_environment(
+            &mut resume_config,
+            app_server,
+            &resumed.session,
+            &mut available_models,
+        )
+        .await
+        {
+            self.add_session_picker_error(format!(
+                "Failed to load the resumed session's model provider: {err}"
+            ));
+            return Ok(AppRunControl::Continue);
+        }
+        self.model_catalog = Arc::new(
+            ModelCatalog::new(available_models)
+                .with_collaboration_modes(self.model_catalog.collaboration_modes.clone()),
+        );
         let resumed_thread_id = resumed.session.thread_id;
         let retained_input = (self.chat_widget.is_external_writer_view()
             && self.chat_widget.thread_id() == Some(resumed_thread_id))

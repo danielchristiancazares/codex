@@ -1,0 +1,31 @@
+---
+source: tui/src/bottom_pane/chat_composer/chrome_tests.rs
+expression: "format!(\"{buffer:?}\")"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 6 },
+    content: [
+        "╭ Unavailable ─────────────────────────────────────────────────────────────────╮",
+        "│ › Input disabled.                                                            │",
+        "│                                                                              │",
+        "│                                                                              │",
+        "╰──────────────────────────────────────────────────────────────────────────────╯",
+        "                                                             100% context left  ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 1, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 14, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 1, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 3, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 79, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 1, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 79, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 1, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 79, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 61, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 78, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

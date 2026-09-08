@@ -241,6 +241,17 @@ impl ChatWidget {
         turn_id: String,
         replay_kind: ReplayKind,
     ) {
+        // Historical patches have no start notification to create their file summary.
+        if let ThreadItem::FileChange {
+            changes,
+            status:
+                codex_app_server_protocol::PatchApplyStatus::Completed
+                | codex_app_server_protocol::PatchApplyStatus::Failed,
+            ..
+        } = &item
+        {
+            self.on_patch_apply_begin(file_update_changes_to_display(changes.clone()));
+        }
         self.handle_thread_item(item, turn_id, ThreadItemRenderSource::Replay(replay_kind));
     }
 

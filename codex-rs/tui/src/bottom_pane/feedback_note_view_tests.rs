@@ -47,6 +47,32 @@ fn make_view(category: FeedbackCategory) -> FeedbackNoteView {
 }
 
 #[test]
+fn constrained_multiline_feedback_clips_render_and_cursor_to_area() {
+    let mut view = make_view(FeedbackCategory::Bug);
+    view.textarea
+        .insert_str("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 32, /*height*/ 3,
+    );
+    let mut buf = Buffer::empty(area);
+
+    view.render(area, &mut buf);
+
+    insta::assert_snapshot!(
+        "feedback_view_constrained_multiline",
+        render_buffer(area, &buf)
+    );
+    let (cursor_x, cursor_y) = view.cursor_pos(area).expect("visible textarea cursor");
+    assert!(
+        cursor_x >= area.x
+            && cursor_x < area.right()
+            && cursor_y >= area.y
+            && cursor_y < area.bottom(),
+        "cursor ({cursor_x}, {cursor_y}) escaped render area {area:?}",
+    );
+}
+
+#[test]
 fn feedback_view_bad_result() {
     let view = make_view(FeedbackCategory::BadResult);
     let rendered = render(&view, /*width*/ 60);

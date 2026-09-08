@@ -44,6 +44,7 @@ pub(super) async fn make_test_app() -> App {
         deferred_history_lines: Vec::new(),
         has_emitted_history_lines: false,
         transcript_reflow: TranscriptReflowState::default(),
+        transcript_replay_policy: TranscriptReplayPolicy::OwnedBufferReplay,
         initial_history_replay_buffer: None,
         pending_thread_switch_resets: 0,
         scrollback_has_older_history: false,
@@ -99,6 +100,7 @@ pub(super) async fn make_test_app() -> App {
         rate_limit_refresh_state: Default::default(),
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        pending_provider_switch: None,
         recap: recap::RecapState::default(),
     }
 }

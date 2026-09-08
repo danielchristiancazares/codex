@@ -1,7 +1,9 @@
 //! Streaming transcript updates for `ChatWidget`.
 //!
 //! This module owns assistant, plan, and reasoning deltas, including stream-tail
-//! cells, commit ticks, and interrupt deferral.
+//! cells, commit ticks, and interrupt deferral. The live turn's status row stays
+//! visible through streamed output so elapsed time and the interrupt key remain
+//! available until the turn lifecycle reports completion.
 
 use super::*;
 
@@ -69,7 +71,8 @@ impl ChatWidget {
         if let Some(mut controller) = self.stream_controller.take() {
             let had_live_tail = controller.has_live_tail();
             self.clear_active_stream_tail();
-            let (cell, streamed_source) = controller.finalize();
+            let finalization = controller.finalize();
+            let streamed_source = finalization.canonical_source;
             let completed_message_differs = completed_message.is_some_and(|completed| {
                 let Some(streamed) = streamed_source.as_deref() else {
                     return true;
@@ -77,25 +80,41 @@ impl ChatWidget {
                 // Stream finalization supplies one trailing newline when the last delta omitted it.
                 streamed != completed && streamed.strip_suffix('\n') != Some(completed)
             });
-            let scrollback_reflow = if had_live_tail || completed_message_differs {
-                crate::app_event::ConsolidationScrollbackReflow::Required
-            } else {
-                crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
+            let scrollback_reflow = match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay
+                    if had_live_tail
+                        || completed_message_differs
+                        || finalization.canonical_reflow == DeferredRowsReflow::Required =>
+                {
+                    crate::app_event::ConsolidationScrollbackReflow::Required
+                }
+                TranscriptReplayPolicy::OwnedBufferReplay => {
+                    crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
+                }
+                TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    let correction = if completed_message_differs {
+                        crate::app_event::InlineCanonicalCorrection::AppendAuthoritativeSource
+                    } else {
+                        crate::app_event::InlineCanonicalCorrection::None
+                    };
+                    crate::app_event::ConsolidationScrollbackReflow::InlinePreserve(correction)
+                }
             };
-            // Match newline-committed streaming behavior: once assistant output is ready to be
-            // committed into history, hide the inline status row so transcript content replaces it.
-            if cell.is_some() {
-                self.bottom_pane.hide_status_indicator();
-            }
-            let deferred_history_cell =
-                if scrollback_reflow == crate::app_event::ConsolidationScrollbackReflow::Required {
-                    cell
-                } else {
-                    if let Some(cell) = cell {
+            let deferred_history_cell = match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay
+                    if scrollback_reflow
+                        == crate::app_event::ConsolidationScrollbackReflow::Required =>
+                {
+                    finalization.unobserved_cell
+                }
+                TranscriptReplayPolicy::OwnedBufferReplay
+                | TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    if let Some(cell) = finalization.unobserved_cell {
                         self.add_boxed_history(cell);
                     }
                     None
-                };
+                }
+            };
             // Consolidate the run of streaming AgentMessageCells into a single AgentMarkdownCell
             // that can re-render from source on resize.
             let source = completed_message.map(str::to_owned).or_else(|| {
@@ -144,9 +163,8 @@ impl ChatWidget {
     /// Restore the status indicator only after commentary completion is pending,
     /// the turn is still running, and all stream queues have drained.
     ///
-    /// This gate prevents flicker while normal output is still actively
-    /// streaming, but still restores a visible "working" affordance when a
-    /// commentary block ends before the turn itself has completed.
+    /// Live streaming preserves the row. This gate also restores it after a
+    /// replay or another temporary status owner yields at a message boundary.
     pub(super) fn maybe_restore_status_indicator_after_stream_idle(&mut self) {
         if !self.status_state.pending_status_indicator_restore
             || !self.bottom_pane.is_task_running()
@@ -193,7 +211,10 @@ impl ChatWidget {
         }
         self.transcript.plan_delta_buffer.push_str(&delta);
         if self.plan_stream_controller.is_none() {
-            // Before starting a plan stream, flush any active exec cell group.
+            // Protocol ordering settles tool calls before plan output begins, so an incomplete MCP
+            // group cannot be the active cell here. Lifecycle callbacks are queued to enforce that
+            // invariant; refusing to flush the group is the final safety net.
+            debug_assert!(!self.active_mcp_group_has_incomplete_members());
             self.flush_unified_exec_wait_streak();
             self.flush_active_cell();
             self.plan_stream_controller = Some(PlanStreamController::new(
@@ -228,40 +249,35 @@ impl ChatWidget {
                 .record_agent_markdown(plan_text.clone(), source);
             self.transcript.latest_proposed_plan_markdown = Some(plan_text.clone());
         }
-        // Plan commit ticks can hide the status row; remember whether we streamed plan output so
-        // completion can restore it once stream queues are idle.
+        // Streaming completion also releases deferred status and usage output.
         let should_restore_after_stream = self.plan_stream_controller.is_some();
         self.transcript.plan_delta_buffer.clear();
         self.transcript.plan_item_active = false;
         self.transcript.saw_plan_item_this_turn = true;
-        let (finalized_streamed_cell, consolidated_plan_source) =
-            if let Some(mut controller) = self.plan_stream_controller.take() {
-                let had_live_tail = controller.has_live_tail();
-                self.clear_active_stream_tail();
-                let (cell, source) = controller.finalize();
-                if had_live_tail {
-                    (None, source)
-                } else {
-                    (cell, source)
+        if let Some(mut controller) = self.plan_stream_controller.take() {
+            self.clear_active_stream_tail();
+            let finalization = controller.finalize();
+            match self.transcript_replay_policy {
+                TranscriptReplayPolicy::OwnedBufferReplay => {
+                    // Owned replay reconstructs from the canonical plan cell. Suppress every
+                    // provisional finalization row so stale layout never reaches scrollback first.
+                    let _canonical_reflow = finalization.canonical_reflow;
                 }
-            } else {
-                (None, None)
-            };
-        if let Some(cell) = finalized_streamed_cell {
-            self.add_boxed_history(cell);
-            // TODO: Replace streamed output with the final plan item text if plan streaming is
-            // removed or if we need to reconcile mismatches between streamed and final content.
-            if let Some(source) = consolidated_plan_source {
+                TranscriptReplayPolicy::InlinePreserveScrollback => {
+                    if let Some(cell) = finalization.unobserved_cell {
+                        self.add_boxed_history(cell);
+                    }
+                }
+            }
+            if let Some(source) = finalization.canonical_source {
                 self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
+            } else if !plan_text.is_empty() {
+                self.add_to_history(history_cell::new_proposed_plan(plan_text, &self.config.cwd));
             }
         } else if !plan_text.is_empty() {
             self.add_to_history(history_cell::new_proposed_plan(plan_text, &self.config.cwd));
-        } else if let Some(source) = consolidated_plan_source {
-            self.note_stream_consolidation_queued();
-            self.app_event_tx
-                .send(AppEvent::ConsolidateProposedPlan(source));
         }
         if should_restore_after_stream {
             self.status_state.pending_status_indicator_restore = true;
@@ -437,6 +453,13 @@ impl ChatWidget {
                 }
                 Some(MessagePhase::Commentary) => true,
             };
+        if !from_replay
+            && self.turn_lifecycle.agent_turn_running
+            && matches!(item.phase, Some(MessagePhase::FinalAnswer) | None)
+            && !self.status_state.pending_status_indicator_restore
+        {
+            self.set_status_header("Finishing".to_string());
+        }
         self.maybe_restore_status_indicator_after_stream_idle();
     }
 
@@ -459,9 +482,8 @@ impl ChatWidget {
     /// Runs a commit tick for the current stream queue snapshot.
     ///
     /// `scope` controls whether this call may commit in smooth mode or only when catch-up
-    /// is currently active. While lines are actively streaming we hide the status row to avoid
-    /// duplicate "in progress" affordances. Restoration is gated separately so we only re-show
-    /// the row after commentary completion once stream queues are idle.
+    /// is currently active. Committing output preserves the live status row;
+    /// only turn completion removes the elapsed-time and interrupt affordance.
     pub(super) fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
         let now = Instant::now();
         let outcome = run_commit_tick(
@@ -472,11 +494,22 @@ impl ChatWidget {
             now,
         );
         for cell in outcome.cells {
-            self.bottom_pane.hide_status_indicator();
             self.add_boxed_history(cell);
         }
-        if scope == CommitTickScope::AnyMode || outcome.has_controller {
-            self.sync_active_stream_tail();
+        if scope == CommitTickScope::AnyMode
+            && self.active_cell_is_stream_tail()
+            && self
+                .stream_controller
+                .as_ref()
+                .is_none_or(|controller| !controller.has_live_tail())
+            && self
+                .plan_stream_controller
+                .as_ref()
+                .is_none_or(|controller| !controller.has_live_tail())
+        {
+            // Deltas and resize/render-mode changes synchronize live tails at the mutation site.
+            // Regular ticks only need to clear an orphaned tail after its controller disappears.
+            self.clear_active_stream_tail();
         }
 
         if outcome.has_controller && outcome.all_idle {
@@ -490,9 +523,29 @@ impl ChatWidget {
     }
 
     pub(super) fn flush_interrupt_queue(&mut self) {
-        let mut mgr = std::mem::take(&mut self.interrupts);
-        mgr.flush_all(self);
-        self.interrupts = mgr;
+        loop {
+            let Some(interrupt) = self.interrupts.pop_front() else {
+                break;
+            };
+            if !self.can_handle_queued_interrupt_now(&interrupt) {
+                self.interrupts.push_front(interrupt);
+                break;
+            }
+            interrupt.handle_now(self);
+        }
+    }
+
+    fn can_handle_queued_interrupt_now(&self, interrupt: &QueuedInterrupt) -> bool {
+        if self.stream_controller.is_some() || self.plan_stream_controller.is_some() {
+            return false;
+        }
+        if !self.active_mcp_group_has_incomplete_members() {
+            return true;
+        }
+        interrupt.starts_groupable_mcp_call()
+            || interrupt
+                .mcp_completion_call_id()
+                .is_some_and(|call_id| self.active_mcp_group_owns_call(call_id))
     }
 
     /// Move a lifecycle payload into the interrupt queue or its immediate handler.
@@ -506,7 +559,11 @@ impl ChatWidget {
         // Preserve deterministic FIFO across queued interrupts: once anything
         // is queued due to an active write cycle, continue queueing until the
         // queue is flushed to avoid reordering (e.g., ExecEnd before ExecBegin).
-        if self.stream_controller.is_some() || !self.interrupts.is_empty() {
+        if self.stream_controller.is_some()
+            || self.plan_stream_controller.is_some()
+            || !self.interrupts.is_empty()
+            || self.active_mcp_group_has_incomplete_members()
+        {
             push(&mut self.interrupts, payload);
         } else {
             handle(self, payload);
@@ -528,7 +585,15 @@ impl ChatWidget {
             self.mark_safety_buffering_agent_message_started();
         }
         if self.stream_controller.is_none() {
-            self.prepare_assistant_message();
+            if !delta.is_empty() && self.turn_lifecycle.agent_turn_running {
+                self.set_status_header("Responding".to_string());
+            }
+            // Protocol ordering settles tool calls before assistant output resumes, so an
+            // incomplete MCP group cannot be the active cell here. Lifecycle callbacks are queued
+            // to enforce that invariant; refusing to flush the group is the final safety net.
+            debug_assert!(!self.active_mcp_group_has_incomplete_members());
+            self.flush_unified_exec_wait_streak();
+            self.flush_active_cell();
             let inline_visualization_context = self.thread_id.and_then(|thread_id| {
                 crate::inline_visualization::InlineVisualizationContext::from_config(
                     &self.config,
@@ -573,7 +638,6 @@ impl ChatWidget {
                 return self.clear_active_stream_tail();
             }
 
-            self.bottom_pane.hide_status_indicator();
             let cell = history_cell::StreamingAgentTailCell::new(
                 tail_lines,
                 controller.tail_starts_stream(),
@@ -602,7 +666,6 @@ impl ChatWidget {
                 return self.clear_active_stream_tail();
             }
 
-            self.bottom_pane.hide_status_indicator();
             let cell = history_cell::StreamingPlanTailCell::new(
                 tail_lines,
                 !controller.tail_starts_stream(),

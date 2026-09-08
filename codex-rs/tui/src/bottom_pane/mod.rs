@@ -73,6 +73,7 @@ mod multi_select_picker;
 mod question_tests;
 mod questions;
 mod request_user_input;
+mod status_line_layout;
 mod status_line_setup;
 mod status_line_style;
 mod status_surface_preview;
@@ -127,6 +128,8 @@ mod command_popup;
 pub(crate) mod custom_prompt_view;
 mod effort_status_line;
 mod experimental_features_view;
+mod feedback_note_view;
+mod feedback_view;
 mod file_search_popup;
 mod footer;
 mod list_selection_view;
@@ -136,6 +139,13 @@ pub(crate) mod prompt_args;
 mod skill_popup;
 mod skills_toggle_view;
 pub(crate) mod slash_commands;
+pub(crate) use feedback_view::FeedbackAudience;
+pub(crate) use feedback_view::feedback_classification;
+pub(crate) use feedback_view::feedback_disabled_params;
+pub(crate) use feedback_view::feedback_selection_params;
+pub(crate) use feedback_view::feedback_success_cell;
+pub(crate) use feedback_view::feedback_upload_consent_params;
+pub(crate) use footer::ActiveGoalDetail;
 pub(crate) use footer::CollaborationModeIndicator;
 pub(crate) use footer::GoalStatusIndicator;
 #[cfg(test)]
@@ -152,15 +162,7 @@ pub(crate) use list_selection_view::popup_content_width;
 pub(crate) use list_selection_view::side_by_side_layout_widths;
 pub(crate) use memories_settings_view::MemoriesSettingsView;
 use slash_commands::ServiceTierCommand;
-mod feedback_note_view;
-mod feedback_view;
 mod hooks_browser_view;
-pub(crate) use feedback_view::FeedbackAudience;
-pub(crate) use feedback_view::feedback_classification;
-pub(crate) use feedback_view::feedback_disabled_params;
-pub(crate) use feedback_view::feedback_selection_params;
-pub(crate) use feedback_view::feedback_success_cell;
-pub(crate) use feedback_view::feedback_upload_consent_params;
 pub(crate) use skills_toggle_view::SkillsToggleItem;
 pub(crate) use skills_toggle_view::SkillsToggleView;
 pub(crate) use status_line_setup::StatusLineItem;
@@ -298,6 +300,16 @@ pub(crate) struct BottomPaneParams {
 }
 
 impl BottomPane {
+    pub fn set_worktrees_enabled(&mut self, enabled: bool) {
+        self.composer.set_worktrees_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub(crate) fn transcript_shortcut_hint(&self) -> Option<crate::key_hint::ShortcutHint> {
+        self.keymap
+            .primary_hint(KeymapContext::Global, "open_transcript")
+    }
+
     pub fn new(params: BottomPaneParams) -> Self {
         Self::new_with_composer_config(params, ChatComposerConfig::default())
     }
@@ -479,11 +491,6 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn transcript_shortcut_hint(&self) -> Option<crate::key_hint::ShortcutHint> {
-        self.keymap
-            .primary_hint(KeymapContext::Global, "open_transcript")
-    }
-
     /// Clear pending attachments and mention bindings e.g. when a slash command doesn't submit text.
     pub(crate) fn drain_pending_submission_state(&mut self) {
         let _ = self.take_recent_submission_images_with_placeholders();
@@ -522,11 +529,6 @@ impl BottomPane {
 
     pub fn set_ide_context_active(&mut self, active: bool) {
         self.composer.set_ide_context_active(active);
-        self.request_redraw();
-    }
-
-    pub fn set_worktrees_enabled(&mut self, enabled: bool) {
-        self.composer.set_worktrees_enabled(enabled);
         self.request_redraw();
     }
 
@@ -1439,6 +1441,12 @@ impl BottomPane {
             .and_then(|view| view.selected_index())
     }
 
+    pub(crate) fn has_view(&self, view_id: &str) -> bool {
+        self.view_stack
+            .iter()
+            .any(|view| view.view_id() == Some(view_id))
+    }
+
     pub(crate) fn active_tab_id_for_active_view(&self, view_id: &'static str) -> Option<&str> {
         self.view_stack
             .last()
@@ -1614,6 +1622,13 @@ impl BottomPane {
     #[cfg(test)]
     pub(crate) fn active_view_id(&self) -> Option<&'static str> {
         self.view_stack.last().and_then(|view| view.view_id())
+    }
+
+    pub(crate) fn active_view_is(&self, view_id: &str) -> bool {
+        self.view_stack
+            .last()
+            .and_then(|view| view.view_id())
+            .is_some_and(|active_view_id| active_view_id == view_id)
     }
 
     /// Return true when the pane is in the regular composer state without any
@@ -1915,7 +1930,7 @@ impl BottomPane {
         for composer in std::iter::once(&mut self.composer)
             .chain(self.questions.iter_mut().map(|q| &mut q.composer))
         {
-            updated |= match response.clone() {
+            let composer_updated = match response.clone() {
                 HistoryLookupResponse::Entry {
                     offset,
                     log_id,
@@ -1931,6 +1946,10 @@ impl BottomPane {
                     composer.on_history_batch_error(log_id, cursor)
                 }
             };
+            if composer_updated {
+                composer.sync_popups();
+                updated = true;
+            }
         }
         if updated {
             self.request_redraw();
@@ -2231,7 +2250,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2288,6 +2307,11 @@ mod tests {
             /*disable_paste_burst*/ false,
             RuntimeKeymap::defaults(),
         );
+        // The fork admits freeform input only after its editor has been rendered visibly.
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 76, /*height*/ 6,
+        );
+        covering.render(area, &mut Buffer::empty(area));
         for ch in "modal".chars() {
             covering.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
         }
@@ -2463,7 +2487,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: true,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2483,7 +2507,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: true,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2811,7 +2835,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2851,14 +2875,14 @@ mod tests {
             "expected Working header after denial on row 0: {row0:?}"
         );
 
-        // Composer placeholder should be visible somewhere below.
+        // Composer input row should be visible somewhere below.
         let mut found_composer = false;
         for y in 1..area.height {
             let mut row = String::new();
             for x in 0..area.width {
                 row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
             }
-            if row.contains("Ask Codex") {
+            if row.contains("┃ ›") {
                 found_composer = true;
                 break;
             }
@@ -2878,7 +2902,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2893,7 +2917,7 @@ mod tests {
         pane.render(area, &mut buf);
 
         let bufs = snapshot_buffer(&buf);
-        assert!(bufs.contains("• Working"), "expected Working header");
+        assert!(bufs.contains("✦ Working"), "expected Working header");
 
         pane.reset_status_timer(Duration::from_secs(/*secs*/ 42));
         pane.hide_status_indicator();
@@ -2952,7 +2976,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2983,7 +3007,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -2998,7 +3022,7 @@ mod tests {
     }
 
     #[test]
-    fn unified_exec_summary_does_not_increase_height_when_status_visible() {
+    fn unified_exec_summary_joins_status_as_a_subordinate_row() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
@@ -3006,7 +3030,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3019,11 +3043,11 @@ mod tests {
         pane.set_unified_exec_processes(vec!["sleep 5".to_string()]);
         let after = pane.desired_height(width);
 
-        assert_eq!(after, before);
+        assert_eq!(after, before + 1);
 
         let area = Rect::new(0, 0, width, after);
         let rendered = render_snapshot(&pane, area);
-        assert!(rendered.contains("background terminal running · /ps to view"));
+        assert!(rendered.contains("Terminal running · /ps inspect · /stop terminate"));
     }
 
     #[test]
@@ -3035,7 +3059,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3072,7 +3096,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3104,7 +3128,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3135,7 +3159,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3164,7 +3188,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3187,7 +3211,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(vec![SkillMetadata {
@@ -3235,7 +3259,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3282,7 +3306,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3318,7 +3342,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3366,7 +3390,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3491,7 +3515,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3539,7 +3563,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
@@ -3617,7 +3641,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
-            placeholder_text: "Ask Codex to do anything".to_string(),
+            placeholder_text: String::new(),
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),

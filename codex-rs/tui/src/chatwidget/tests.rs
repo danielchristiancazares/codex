@@ -289,3 +289,11 @@ pub(super) use helpers::*;
 
 #[path = "tests/questions_tests.rs"]
 mod questions_tests;
+
+#[path = "tests/exploration_commands.rs"]
+mod exploration_commands;
+#[path = "tests/patch_grouping.rs"]
+mod patch_grouping;
+
+#[path = "tests/history_render_mode_tests.rs"]
+mod history_render_mode_tests;

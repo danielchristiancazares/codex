@@ -3,6 +3,8 @@
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
 use codex_protocol::parse_command::ParsedCommand;
 
+use crate::exec_command::expand_command_summaries;
+use crate::exec_command::is_exploration_command;
 use crate::exec_command::split_command_string;
 
 pub(super) struct RunningCommand {
@@ -62,10 +64,7 @@ pub(super) fn is_unified_exec_source(source: ExecCommandSource) -> bool {
 }
 
 pub(super) fn is_standard_tool_call(parsed_cmd: &[ParsedCommand]) -> bool {
-    !parsed_cmd.is_empty()
-        && parsed_cmd
-            .iter()
-            .all(|parsed| !matches!(parsed, ParsedCommand::Unknown { .. }))
+    !parsed_cmd.is_empty() && parsed_cmd.iter().all(is_exploration_command)
 }
 
 pub(super) fn command_execution_command_and_parsed(
@@ -74,10 +73,12 @@ pub(super) fn command_execution_command_and_parsed(
 ) -> (Vec<String>, Vec<ParsedCommand>) {
     (
         split_command_string(command),
-        command_actions
-            .iter()
-            .cloned()
-            .map(codex_app_server_protocol::CommandAction::into_core)
-            .collect(),
+        expand_command_summaries(
+            command_actions
+                .iter()
+                .cloned()
+                .map(codex_app_server_protocol::CommandAction::into_core)
+                .collect(),
+        ),
     )
 }

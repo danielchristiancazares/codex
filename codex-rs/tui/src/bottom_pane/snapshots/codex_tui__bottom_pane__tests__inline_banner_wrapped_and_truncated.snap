@@ -14,8 +14,8 @@ expression: "render_snapshot(&pane, area)"
 › 1. Open usage settings                    
   2. Notify owner                           
                                             
-  Press a number to choose · esc to dismiss 
-                                            
-› Ask Codex to do anything                  
-                                            
-  ? for shortcuts        100% context left
+  ↵ ok · esc back                           
+╭──────────────────────────────────────────╮
+┃ ›                                        │
+╰ ctrl + t transcript ─────────────────────╯
+  ? shortcuts            100% context left

@@ -1,0 +1,7 @@
+---
+source: tui/src/bottom_pane/feedback_note_view_tests.rs
+expression: "render_buffer(area, &buf)"
+---
+▌
+▌ ten
+enter to submit · esc to cancel

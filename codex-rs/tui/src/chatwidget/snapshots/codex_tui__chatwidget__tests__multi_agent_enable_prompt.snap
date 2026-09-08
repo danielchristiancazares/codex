@@ -9,4 +9,4 @@ expression: "render_bottom_popup(&chat, 80)"
                   unchanged.
   2. Not now      Keep subagents disabled.
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

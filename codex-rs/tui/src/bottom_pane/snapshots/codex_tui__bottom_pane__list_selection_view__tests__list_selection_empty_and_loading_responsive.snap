@@ -1,0 +1,276 @@
+---
+source: tui/src/bottom_pane/list_selection_view.rs
+expression: "format!(\"loading:\\n{}\\n\\nempty:\\n{}\\n\\nzero result:\\n{}\\n\\ndisabled:\\n{}\",\nrender_responsive_matrix(&loading), render_responsive_matrix(&empty),\nrender_responsive_matrix(&zero_result), render_responsive_matrix(&disabled),)"
+---
+loading:
+24x4:
+  ·  Local provider     
+     Loading…           
+  ·  Cloud catalog      
+  esc back              
+
+24x6:
+  ·  Local provider     
+     Loading…           
+  ·  Cloud catalog      
+     Unavailable:       
+     Account offline    
+  esc back              
+
+24x9:
+                        
+                        
+  ·  Local provider     
+     Loading…           
+  ·  Cloud catalog      
+     Unavailable:       
+     Account offline    
+                        
+  esc back              
+
+40x4:
+  ·  Local provider                     
+     Loading…                           
+  ·  Cloud catalog                      
+  esc back                              
+
+40x6:
+                                        
+  ·  Local provider                     
+     Loading…                           
+  ·  Cloud catalog                      
+     Unavailable: Account offline       
+  esc back                              
+
+40x8:
+                                        
+                                        
+  ·  Local provider                     
+     Loading…                           
+  ·  Cloud catalog                      
+     Unavailable: Account offline       
+                                        
+  esc back                              
+
+80x4:
+                                                                                
+  ·  Local provider  Loading…                                                   
+  ·  Cloud catalog   Unavailable: Account offline                               
+  esc back                                                                      
+
+80x6:
+                                                                                
+                                                                                
+  ·  Local provider  Loading…                                                   
+  ·  Cloud catalog   Unavailable: Account offline                               
+                                                                                
+  esc back                                                                      
+
+80x6:
+                                                                                
+                                                                                
+  ·  Local provider  Loading…                                                   
+  ·  Cloud catalog   Unavailable: Account offline                               
+                                                                                
+  esc back                                                                      
+
+empty:
+24x4:
+                        
+  / ▏ Search…           
+  No options available  
+  Press esc to go back  
+
+24x6:
+                        
+                        
+  / ▏ Search…           
+  No options available  
+                        
+  Press esc to go back  
+
+24x6:
+                        
+                        
+  / ▏ Search…           
+  No options available  
+                        
+  Press esc to go back  
+
+40x4:
+                                        
+  / ▏ Search workspaces                 
+  No options available                  
+  Press esc to go back                  
+
+40x6:
+                                        
+                                        
+  / ▏ Search workspaces                 
+  No options available                  
+                                        
+  Press esc to go back                  
+
+40x6:
+                                        
+                                        
+  / ▏ Search workspaces                 
+  No options available                  
+                                        
+  Press esc to go back                  
+
+80x4:
+                                                                                
+  / ▏ Search workspaces                                                         
+  No options available                                                          
+  Press esc to go back                                                          
+
+80x6:
+                                                                                
+                                                                                
+  / ▏ Search workspaces                                                         
+  No options available                                                          
+                                                                                
+  Press esc to go back                                                          
+
+80x6:
+                                                                                
+                                                                                
+  / ▏ Search workspaces                                                         
+  No options available                                                          
+                                                                                
+  Press esc to go back                                                          
+
+zero result:
+24x4:
+                        
+  / no-result▏          
+  No matching options   
+  Press esc to go back  
+
+24x6:
+                        
+                        
+  / no-result▏          
+  No matching options   
+                        
+  Press esc to go back  
+
+24x6:
+                        
+                        
+  / no-result▏          
+  No matching options   
+                        
+  Press esc to go back  
+
+40x4:
+                                        
+  / no-result▏                          
+  No matching options                   
+  Press esc to go back                  
+
+40x6:
+                                        
+                                        
+  / no-result▏                          
+  No matching options                   
+                                        
+  Press esc to go back                  
+
+40x6:
+                                        
+                                        
+  / no-result▏                          
+  No matching options                   
+                                        
+  Press esc to go back                  
+
+80x4:
+                                                                                
+  / no-result▏                                                                  
+  No matching options                                                           
+  Press esc to go back                                                          
+
+80x6:
+                                                                                
+                                                                                
+  / no-result▏                                                                  
+  No matching options                                                           
+                                                                                
+  Press esc to go back                                                          
+
+80x6:
+                                                                                
+                                                                                
+  / no-result▏                                                                  
+  No matching options                                                           
+                                                                                
+  Press esc to go back                                                          
+
+disabled:
+24x4:
+     Cloud catalog      
+     Unavailable:       
+     Access required    
+  esc back              
+
+24x6:
+                        
+                        
+     Cloud catalog      
+     Unavailable:       
+     Access required    
+  esc back              
+
+24x7:
+                        
+                        
+     Cloud catalog      
+     Unavailable:       
+     Access required    
+                        
+  esc back              
+
+40x4:
+                                        
+     Cloud catalog                      
+     Unavailable: Access required       
+  esc back                              
+
+40x6:
+                                        
+                                        
+     Cloud catalog                      
+     Unavailable: Access required       
+                                        
+  esc back                              
+
+40x6:
+                                        
+                                        
+     Cloud catalog                      
+     Unavailable: Access required       
+                                        
+  esc back                              
+
+80x4:
+                                                                                
+                                                                                
+     Cloud catalog  Unavailable: Access required                                
+  esc back                                                                      
+
+80x6:
+                                                                                
+                                                                                
+     Cloud catalog  Unavailable: Access required                                
+                                                                                
+                                                                                
+  esc back                                                                      
+
+80x5:
+                                                                                
+                                                                                
+     Cloud catalog  Unavailable: Access required                                
+                                                                                
+  esc back

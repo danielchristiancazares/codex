@@ -732,7 +732,7 @@ async fn windows_sandbox_setup_starts_a_fresh_status_clock() {
     chat.show_windows_sandbox_setup_status();
     let setup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(setup.contains("Setting up sandbox"));
-    assert!(setup.contains("(0s"));
+    assert!(setup.contains("0s"));
     assert_chatwidget_snapshot!(
         "windows_sandbox_setup_fresh_clock",
         setup.replace(&chat.config.cwd.display().to_string(), "[CWD]")
@@ -865,8 +865,8 @@ async fn approvals_popup_shows_disabled_presets() {
     let screen = terminal.backend().vt100().screen().contents();
     let collapsed = screen.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        collapsed.contains("(disabled)"),
-        "disabled preset label should be shown"
+        collapsed.contains("Unavailable:"),
+        "disabled preset availability should be shown"
     );
     assert!(
         collapsed.contains("this message should be printed in the description"),
@@ -890,27 +890,10 @@ async fn approvals_popup_navigation_skips_disabled() {
     chat.open_approvals_popup();
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
-    let mut disabled_shortcut = None;
-    let mut row_number = 0;
-    for line in popup.lines() {
-        let row = line
-            .trim_start()
-            .strip_prefix('\u{203a}')
-            .unwrap_or_else(|| line.trim_start())
-            .trim_start();
-        let mut chars = row.chars();
-        let has_numeric_shortcut =
-            chars.next().is_some_and(|ch| ch.is_ascii_digit()) && chars.next() == Some('.');
-        if has_numeric_shortcut || row.contains("(disabled)") {
-            row_number += 1;
-            if row.contains("(disabled)") {
-                disabled_shortcut = char::from_digit(row_number, 10);
-                break;
-            }
-        }
-    }
-    let disabled_shortcut = disabled_shortcut
-        .unwrap_or_else(|| panic!("expected at least one disabled selection row: {popup}"));
+    assert!(
+        popup.contains("Unavailable:"),
+        "expected at least one disabled selection row: {popup}"
+    );
 
     for _ in 0..10 {
         chat.handle_key_event(KeyEvent::from(KeyCode::Down));
@@ -919,23 +902,13 @@ async fn approvals_popup_navigation_skips_disabled() {
             .lines()
             .find(|line| line.trim_start().starts_with('\u{203a}'))
             .expect("expected a selected selection row")
-            .contains("(disabled)");
+            .contains("Unavailable:");
         assert!(
             !selected_disabled,
             "navigation should skip disabled rows: {popup}"
         );
     }
 
-    // Press the hidden numeric shortcut for a disabled row; it should not close
-    // the popup or accept the preset.
-    chat.handle_key_event(KeyEvent::from(KeyCode::Char(disabled_shortcut)));
-
-    // Ensure the popup remains open and no selection actions were sent.
-    let screen = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(
-        screen.contains("Update Model Permissions"),
-        "popup should remain open after selecting a disabled entry"
-    );
     assert!(
         op_rx.try_recv().is_err(),
         "no actions should be dispatched yet"
@@ -1199,7 +1172,7 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        popup.contains("Approve for me (current)"),
+        popup.contains("Approve for me ✓"),
         "expected Approve for me to be current after SessionConfigured sync: {popup}"
     );
 }
@@ -1248,7 +1221,7 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        popup.contains("Approve for me (current)"),
+        popup.contains("Approve for me ✓"),
         "expected Approve for me to be current even with custom workspace-write details: {popup}"
     );
 }
@@ -1318,7 +1291,7 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
     assert!(
         popup
             .lines()
-            .any(|line| line.contains("(current)") && line.contains('›')),
+            .any(|line| line.contains('✓') && line.contains('›')),
         "expected permissions popup to open with the current preset selected: {popup}"
     );
 

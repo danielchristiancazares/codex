@@ -1,10 +1,10 @@
-//! Tracks when Codex-owned transcript scrollback must be repaired after terminal resize.
+//! Tracks resize handling for owned transcript buffers and terminal-owned inline history.
 //!
 //! Terminal scrollback is not a retained widget tree: once Codex writes wrapped lines into the
-//! terminal, the terminal owns those rows. Width resize reflow treats the in-memory transcript cells
-//! as the source of truth, clears Codex-owned history, and re-emits the cells at the current width.
-//! Height-only growth also schedules a rebuild so rows exposed above the inline viewport are
-//! restored from the same source of truth.
+//! normal screen, the terminal owns those rows and Codex must leave them unchanged. Source-backed
+//! clear-and-reinsert replay is reserved for launch modes where Codex owns the complete alternate
+//! screen buffer. Inline resize handling updates live geometry prospectively and acknowledges the
+//! observed width without claiming ownership of previously emitted scrollback.
 //!
 //! This module owns only scheduling and stream-time repair state. It does not know how to render
 //! cells or clear terminal output; `app::resize_reflow` consumes this state and performs the
@@ -16,6 +16,16 @@ use std::time::Duration;
 use std::time::Instant;
 
 pub(crate) const TRANSCRIPT_REFLOW_DEBOUNCE: Duration = Duration::from_millis(75);
+
+/// Launch-time ownership policy for the main transcript surface.
+///
+/// Temporary alternate-screen overlays do not change this policy: they render from transcript
+/// cells independently of the underlying main-screen scrollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TranscriptReplayPolicy {
+    OwnedBufferReplay,
+    InlinePreserveScrollback,
+}
 
 /// Tracks pending terminal-scrollback repair after a terminal resize.
 ///
@@ -124,6 +134,20 @@ impl TranscriptReflowState {
     pub(crate) fn clear_pending_reflow(&mut self) {
         self.pending_until = None;
         self.pending_reflow_width = None;
+    }
+
+    /// Acknowledge an inline resize without rebuilding terminal-owned history.
+    ///
+    /// This is the sole transition that settles inline resize work. It records the width as both
+    /// observed and reconciled, clears pending replay and stream-repair state, and deliberately
+    /// preserves the cached visible-history budget computed for the new geometry.
+    pub(crate) fn acknowledge_inline_resize(&mut self, width: u16) {
+        self.last_observed_width = Some(width);
+        self.last_reflow_width = Some(width);
+        self.pending_reflow_width = None;
+        self.pending_until = None;
+        self.ran_during_stream = false;
+        self.resize_requested_during_stream = false;
     }
 
     /// Remember the terminal width that actually rebuilt transcript scrollback.
@@ -327,5 +351,24 @@ mod tests {
         state.clear();
 
         assert!(!state.take_stream_finish_reflow_needed());
+    }
+
+    #[test]
+    fn acknowledge_inline_resize_preserves_visible_history_budget() {
+        let mut state = TranscriptReflowState::default();
+        state.set_visible_history_rows(/*rows*/ 17);
+        state.note_width(/*width*/ 80);
+        state.schedule_debounced(/*target_width*/ Some(100));
+        state.mark_ran_during_stream();
+        state.mark_resize_requested_during_stream();
+
+        state.acknowledge_inline_resize(/*width*/ 100);
+
+        assert_eq!(state.visible_history_rows(), Some(17));
+        assert_eq!(state.last_observed_width, Some(100));
+        assert_eq!(state.last_reflow_width, Some(100));
+        assert!(!state.has_pending_reflow());
+        assert!(!state.take_stream_finish_reflow_needed());
+        assert!(!state.reflow_needed_for_width(/*width*/ 100));
     }
 }
