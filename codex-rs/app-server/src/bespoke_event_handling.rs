@@ -149,13 +149,13 @@ struct CommandExecutionCompletionItem {
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
     conversation_id: ThreadId,
-    conversation: Arc<CodexThread>,
-    thread_manager: Arc<ThreadManager>,
+    conversation: &Arc<CodexThread>,
+    thread_manager: &Arc<ThreadManager>,
     outgoing: ThreadScopedOutgoingMessageSender,
-    thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
-    thread_watch_manager: ThreadWatchManager,
-    thread_list_state_permit: Arc<tokio::sync::Semaphore>,
-    fallback_model_provider: String,
+    thread_state: &Arc<tokio::sync::Mutex<ThreadState>>,
+    thread_watch_manager: &ThreadWatchManager,
+    thread_list_state_permit: &Arc<tokio::sync::Semaphore>,
+    fallback_model_provider: &str,
 ) {
     let Event {
         id: event_turn_id,
@@ -195,7 +195,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::TurnComplete(turn_complete_event) => {
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
-            respond_to_pending_interrupts(&thread_state, &outgoing).await;
+            respond_to_pending_interrupts(thread_state, &outgoing).await;
             let turn_failed = thread_state.lock().await.turn_summary.last_error.is_some();
             thread_watch_manager
                 .note_turn_completed(&conversation_id.to_string(), turn_failed)
@@ -205,7 +205,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 event_turn_id,
                 turn_complete_event,
                 &outgoing,
-                &thread_state,
+                thread_state,
             )
             .await;
         }
@@ -343,7 +343,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     completion_item.command_actions.clone(),
                     CommandExecutionSource::Agent,
                     &outgoing,
-                    &thread_state,
+                    thread_state,
                 )
                 .await;
             }
@@ -398,7 +398,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     CommandExecutionSource::Agent,
                     completion_status,
                     &outgoing,
-                    &thread_state,
+                    thread_state,
                 )
                 .await;
             }
@@ -659,13 +659,15 @@ pub(crate) async fn apply_bespoke_event_handling(
             let (pending_request_id, rx) = outgoing
                 .send_request(ServerRequestPayload::FileChangeRequestApproval(params))
                 .await;
+            let conversation = Arc::clone(conversation);
+            let thread_state = Arc::clone(thread_state);
             tokio::spawn(async move {
                 on_file_change_request_approval_response(
                     item_id,
                     pending_request_id,
                     rx,
                     conversation,
-                    thread_state.clone(),
+                    thread_state,
                     permission_guard,
                 )
                 .await;
@@ -770,7 +772,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     completion_item.command_actions.clone(),
                     CommandExecutionSource::Agent,
                     &outgoing,
-                    &thread_state,
+                    thread_state,
                 )
                 .await;
             }
@@ -809,6 +811,8 @@ pub(crate) async fn apply_bespoke_event_handling(
                     params,
                 ))
                 .await;
+            let conversation = Arc::clone(conversation);
+            let thread_state = Arc::clone(thread_state);
             tokio::spawn(async move {
                 on_command_execution_request_approval_response(
                     event_turn_id,
@@ -820,7 +824,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     rx,
                     conversation,
                     outgoing,
-                    thread_state.clone(),
+                    thread_state,
                     permission_guard,
                 )
                 .await;
@@ -861,6 +865,8 @@ pub(crate) async fn apply_bespoke_event_handling(
             let (pending_request_id, rx) = outgoing
                 .send_request(ServerRequestPayload::ToolRequestUserInput(params))
                 .await;
+            let conversation = Arc::clone(conversation);
+            let thread_state = Arc::clone(thread_state);
             tokio::spawn(async move {
                 on_request_user_input_response(
                     event_turn_id,
@@ -922,6 +928,8 @@ pub(crate) async fn apply_bespoke_event_handling(
             let (pending_request_id, rx) = outgoing
                 .send_request(ServerRequestPayload::McpServerElicitationRequest(params))
                 .await;
+            let conversation = Arc::clone(conversation);
+            let thread_state = Arc::clone(thread_state);
             tokio::spawn(async move {
                 on_mcp_server_elicitation_response(
                     request.server_name,
@@ -970,6 +978,8 @@ pub(crate) async fn apply_bespoke_event_handling(
                 receiver: rx,
                 request_permissions_guard: permission_guard,
             };
+            let conversation = Arc::clone(conversation);
+            let thread_state = Arc::clone(thread_state);
             tokio::spawn(async move {
                 on_request_permissions_response(pending_response, conversation, thread_state).await;
             });
@@ -1049,7 +1059,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 return handle_thread_rollback_failed(
                     conversation_id,
                     message,
-                    &thread_state,
+                    thread_state,
                     &outgoing,
                 )
                 .await;
@@ -1070,7 +1080,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &event_turn_id,
                 turn_error,
                 &outgoing,
-                &thread_state,
+                thread_state,
             )
             .await;
         }
@@ -1132,6 +1142,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 let (_pending_request_id, rx) = outgoing
                     .send_request(ServerRequestPayload::DynamicToolCall(params))
                     .await;
+                let conversation = Arc::clone(conversation);
                 tokio::spawn(async move {
                     crate::dynamic_tools::on_call_response(call_id, rx, conversation).await;
                 });
@@ -1139,9 +1150,9 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         EventMsg::ItemCompleted(event) => {
             apply_canonical_item_completed_side_effects(
-                &thread_manager,
-                &thread_watch_manager,
-                &thread_state,
+                thread_manager,
+                thread_watch_manager,
+                thread_state,
                 &event.item,
             )
             .await;
@@ -1225,7 +1236,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::TurnAborted(turn_aborted_event) => {
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
-            respond_to_pending_interrupts(&thread_state, &outgoing).await;
+            respond_to_pending_interrupts(thread_state, &outgoing).await;
 
             thread_watch_manager
                 .note_turn_interrupted(&conversation_id.to_string())
@@ -1235,7 +1246,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 event_turn_id,
                 turn_aborted_event,
                 &outgoing,
-                &thread_state,
+                thread_state,
             )
             .await;
         }
@@ -1286,7 +1297,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 let mut response = match thread_rollback_response_from_stored_thread(
                     stored_thread,
                     conversation.session_configured().session_id.to_string(),
-                    fallback_model_provider.as_str(),
+                    fallback_model_provider,
                     config_snapshot.cwd(),
                     loaded_status,
                 ) {
@@ -2474,19 +2485,21 @@ mod tests {
     impl GuardianAssessmentTestContext {
         async fn apply_guardian_assessment_event(&self, assessment: GuardianAssessmentEvent) {
             let event_turn_id = assessment.turn_id.clone();
+            let thread_list_state_permit =
+                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1));
             apply_bespoke_event_handling(
                 Event {
                     id: event_turn_id,
                     msg: EventMsg::GuardianAssessment(assessment),
                 },
                 self.conversation_id,
-                self.conversation.clone(),
-                self.thread_manager.clone(),
+                &self.conversation,
+                &self.thread_manager,
                 self.outgoing.clone(),
-                self.thread_state.clone(),
-                self.thread_watch_manager.clone(),
-                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-                "test-provider".to_string(),
+                &self.thread_state,
+                &self.thread_watch_manager,
+                &thread_list_state_permit,
+                "test-provider",
             )
             .await;
         }
@@ -3311,6 +3324,7 @@ mod tests {
             vec![ConnectionId(1)],
             conversation_id,
         );
+        let thread_list_state_permit = Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1));
 
         apply_bespoke_event_handling(
             Event {
@@ -3325,13 +3339,13 @@ mod tests {
                 }),
             },
             conversation_id,
-            Arc::clone(&conversation),
-            Arc::clone(&thread_manager),
+            &conversation,
+            &thread_manager,
             outgoing.clone(),
-            Arc::clone(&thread_state),
-            thread_watch_manager.clone(),
-            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-            "test-provider".to_string(),
+            &thread_state,
+            &thread_watch_manager,
+            &thread_list_state_permit,
+            "test-provider",
         )
         .await;
 
@@ -3345,6 +3359,7 @@ mod tests {
             other => bail!("unexpected message: {other:?}"),
         }
 
+        let thread_list_state_permit = Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1));
         for (phase, method, event) in [
             (
                 "started",
@@ -3367,13 +3382,13 @@ mod tests {
                     }),
                 },
                 conversation_id,
-                Arc::clone(&conversation),
-                Arc::clone(&thread_manager),
+                &conversation,
+                &thread_manager,
                 outgoing.clone(),
-                Arc::clone(&thread_state),
-                thread_watch_manager.clone(),
-                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-                "test-provider".to_string(),
+                &thread_state,
+                &thread_watch_manager,
+                &thread_list_state_permit,
+                "test-provider",
             )
             .await;
 
@@ -3429,6 +3444,8 @@ mod tests {
             vec![ConnectionId(1)],
             conversation_id,
         );
+        let thread_state = new_thread_state();
+        let thread_list_state_permit = Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1));
 
         apply_bespoke_event_handling(
             Event {
@@ -3448,13 +3465,13 @@ mod tests {
                 }),
             },
             conversation_id,
-            conversation,
-            thread_manager,
+            &conversation,
+            &thread_manager,
             outgoing,
-            new_thread_state(),
-            thread_watch_manager.clone(),
-            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-            "test-provider".to_string(),
+            &thread_state,
+            &thread_watch_manager,
+            &thread_list_state_permit,
+            "test-provider",
         )
         .await;
 
@@ -3515,6 +3532,9 @@ mod tests {
             vec![ConnectionId(1)],
             conversation_id,
         );
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let thread_list_state_permit = Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1));
 
         apply_bespoke_event_handling(
             Event {
@@ -3537,13 +3557,13 @@ mod tests {
                 }),
             },
             conversation_id,
-            conversation,
-            thread_manager,
+            &conversation,
+            &thread_manager,
             outgoing,
-            new_thread_state(),
-            ThreadWatchManager::new(),
-            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
-            "test-provider".to_string(),
+            &thread_state,
+            &thread_watch_manager,
+            &thread_list_state_permit,
+            "test-provider",
         )
         .await;
 

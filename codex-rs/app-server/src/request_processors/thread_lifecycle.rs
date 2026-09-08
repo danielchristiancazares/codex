@@ -21,7 +21,8 @@ pub(super) struct ListenerTaskContext {
 
 struct UnloadingState {
     delay: Duration,
-    has_subscribers_rx: watch::Receiver<bool>,
+    subscribed_connection_ids_rx: watch::Receiver<Arc<Vec<ConnectionId>>>,
+    subscribed_connection_ids: Arc<Vec<ConnectionId>>,
     has_subscribers: (bool, Instant),
     thread_status_rx: watch::Receiver<ThreadStatus>,
     is_active: (bool, Instant),
@@ -33,22 +34,25 @@ impl UnloadingState {
         thread_id: ThreadId,
         delay: Duration,
     ) -> Option<Self> {
-        let has_subscribers_rx = listener_task_context
+        let mut subscribed_connection_ids_rx = listener_task_context
             .thread_state_manager
-            .subscribe_to_has_connections(thread_id)
+            .subscribe_to_connection_ids(thread_id)
             .await?;
         let thread_status_rx = listener_task_context
             .thread_watch_manager
             .subscribe(thread_id)
             .await?;
-        let has_subscribers = (*has_subscribers_rx.borrow(), Instant::now());
+        let subscribed_connection_ids =
+            Arc::clone(&subscribed_connection_ids_rx.borrow_and_update());
+        let has_subscribers = (!subscribed_connection_ids.is_empty(), Instant::now());
         let is_active = (
             matches!(*thread_status_rx.borrow(), ThreadStatus::Active { .. }),
             Instant::now(),
         );
         Some(Self {
             delay,
-            has_subscribers_rx,
+            subscribed_connection_ids_rx,
+            subscribed_connection_ids,
             has_subscribers,
             thread_status_rx,
             is_active,
@@ -65,7 +69,8 @@ impl UnloadingState {
     }
 
     fn sync_receiver_values(&mut self) {
-        let has_subscribers = *self.has_subscribers_rx.borrow();
+        self.sync_subscribed_connection_ids();
+        let has_subscribers = !self.subscribed_connection_ids.is_empty();
         if self.has_subscribers.0 != has_subscribers {
             self.has_subscribers = (has_subscribers, Instant::now());
         }
@@ -88,6 +93,26 @@ impl UnloadingState {
         }
     }
 
+    fn refresh_subscribed_connection_ids(&mut self) {
+        self.subscribed_connection_ids =
+            Arc::clone(&self.subscribed_connection_ids_rx.borrow_and_update());
+    }
+
+    fn sync_subscribed_connection_ids(&mut self) {
+        if self
+            .subscribed_connection_ids_rx
+            .has_changed()
+            .unwrap_or(true)
+        {
+            self.refresh_subscribed_connection_ids();
+        }
+    }
+
+    fn subscribed_connection_ids(&mut self) -> Arc<Vec<ConnectionId>> {
+        self.sync_subscribed_connection_ids();
+        Arc::clone(&self.subscribed_connection_ids)
+    }
+
     async fn wait_for_unloading_trigger(&mut self) -> bool {
         loop {
             self.sync_receiver_values();
@@ -106,10 +131,11 @@ impl UnloadingState {
             };
             tokio::select! {
                 _ = unloading_sleep => return true,
-                changed = self.has_subscribers_rx.changed() => {
+                changed = self.subscribed_connection_ids_rx.changed() => {
                     if changed.is_err() {
                         return false;
                     }
+                    self.refresh_subscribed_connection_ids();
                     self.sync_receiver_values();
                 },
                 changed = self.thread_status_rx.changed() => {
@@ -336,28 +362,27 @@ pub(super) async fn ensure_listener_task_running(
                     {
                         continue;
                     }
-                    let subscribed_connection_ids = thread_state_manager
-                        .subscribed_connection_ids(conversation_id)
-                        .await;
+                    let subscribed_connection_ids = unloading_state.subscribed_connection_ids();
                     let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
                         outgoing_for_task.clone(),
                         subscribed_connection_ids,
                         conversation_id,
                     );
 
+                    let shutdown_complete = matches!(&event.msg, EventMsg::ShutdownComplete);
                     apply_bespoke_event_handling(
-                        event.clone(),
+                        event,
                         conversation_id,
-                        conversation.clone(),
-                        thread_manager.clone(),
+                        &conversation,
+                        &thread_manager,
                         thread_outgoing,
-                        thread_state.clone(),
-                        thread_watch_manager.clone(),
-                        thread_list_state_permit.clone(),
-                        fallback_model_provider.clone(),
+                        &thread_state,
+                        &thread_watch_manager,
+                        &thread_list_state_permit,
+                        fallback_model_provider.as_str(),
                     )
                     .await;
-                    if matches!(event.msg, EventMsg::ShutdownComplete)
+                    if shutdown_complete
                         && let Some(completion_tx) = thread_state
                             .lock()
                             .await
