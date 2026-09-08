@@ -38,6 +38,7 @@ use crate::tool_result::emit_tool_result;
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
+use codex_api::WebsocketEventMetadata;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::ToolName;
@@ -56,6 +57,7 @@ use eventsource_stream::EventStreamError as StreamError;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use reqwest::Error;
 use reqwest::Response;
+use std::borrow::Cow;
 use std::future::Future;
 use std::time::Duration;
 use std::time::Instant;
@@ -538,7 +540,12 @@ impl SessionTelemetry {
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {
-        handle_responses_span.record("otel.name", SessionTelemetry::responses_type(event));
+        if handle_responses_span.is_disabled() {
+            return;
+        }
+
+        let response_type = SessionTelemetry::responses_type(event);
+        handle_responses_span.record("otel.name", response_type.as_ref());
 
         match event {
             ResponseEvent::OutputItemDone(item) => {
@@ -859,6 +866,10 @@ impl SessionTelemetry {
         >,
         duration: Duration,
     ) {
+        if self.metrics.is_none() {
+            return;
+        }
+
         let mut kind = None;
         let mut success = true;
 
@@ -871,8 +882,11 @@ impl SessionTelemetry {
                                 .get("type")
                                 .and_then(|value| value.as_str())
                                 .map(std::string::ToString::to_string);
-                            if kind.as_deref() == Some(RESPONSES_WEBSOCKET_TIMING_KIND) {
-                                self.record_responses_websocket_timing_metrics(&value);
+                            if kind.as_deref() == Some(RESPONSES_WEBSOCKET_TIMING_KIND)
+                                && let Some(timing_metrics) =
+                                    value.get(RESPONSES_WEBSOCKET_TIMING_METRICS_FIELD)
+                            {
+                                self.record_responses_websocket_timing_metrics(timing_metrics);
                             }
                             if kind.as_deref() == Some("response.failed") {
                                 success = false;
@@ -899,9 +913,35 @@ impl SessionTelemetry {
             }
         }
 
-        let kind_str = kind.as_deref().unwrap_or(WEBSOCKET_UNKNOWN_KIND);
+        let kind = kind.as_deref().unwrap_or(WEBSOCKET_UNKNOWN_KIND);
+        self.record_websocket_event_metrics(kind, success, duration);
+    }
+
+    pub fn record_parsed_websocket_event(
+        &self,
+        metadata: WebsocketEventMetadata<'_>,
+        duration: Duration,
+    ) {
+        if self.metrics.is_none() {
+            return;
+        }
+
+        if metadata.kind == RESPONSES_WEBSOCKET_TIMING_KIND
+            && let Ok(value) = serde_json::from_str::<serde_json::Value>(metadata.payload)
+            && let Some(timing_metrics) = value.get(RESPONSES_WEBSOCKET_TIMING_METRICS_FIELD)
+        {
+            self.record_responses_websocket_timing_metrics(timing_metrics);
+        }
+        self.record_websocket_event_metrics(
+            metadata.kind,
+            metadata.kind != "response.failed",
+            duration,
+        );
+    }
+
+    fn record_websocket_event_metrics(&self, kind: &str, success: bool, duration: Duration) {
         let success_str = if success { "true" } else { "false" };
-        let tags = [("kind", kind_str), ("success", success_str)];
+        let tags = [("kind", kind), ("success", success_str)];
         self.counter(WEBSOCKET_EVENT_COUNT_METRIC, /*inc*/ 1, &tags);
         self.record_duration(WEBSOCKET_EVENT_DURATION_METRIC, duration, &tags);
     }
@@ -1235,23 +1275,18 @@ impl SessionTelemetry {
         );
     }
 
-    fn record_responses_websocket_timing_metrics(&self, value: &serde_json::Value) {
-        let timing_metrics = value.get(RESPONSES_WEBSOCKET_TIMING_METRICS_FIELD);
-
-        let overhead_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_OVERHEAD_FIELD));
+    fn record_responses_websocket_timing_metrics(&self, timing_metrics: &serde_json::Value) {
+        let overhead_value = timing_metrics.get(RESPONSES_API_OVERHEAD_FIELD);
         if let Some(duration) = duration_from_ms_value(overhead_value) {
             self.record_duration(RESPONSES_API_OVERHEAD_DURATION_METRIC, duration, &[]);
         }
 
-        let inference_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_INFERENCE_FIELD));
+        let inference_value = timing_metrics.get(RESPONSES_API_INFERENCE_FIELD);
         if let Some(duration) = duration_from_ms_value(inference_value) {
             self.record_duration(RESPONSES_API_INFERENCE_TIME_DURATION_METRIC, duration, &[]);
         }
 
-        let engine_iapi_ttft_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_ENGINE_IAPI_TTFT_FIELD));
+        let engine_iapi_ttft_value = timing_metrics.get(RESPONSES_API_ENGINE_IAPI_TTFT_FIELD);
         if let Some(duration) = duration_from_ms_value(engine_iapi_ttft_value) {
             self.record_duration(
                 RESPONSES_API_ENGINE_IAPI_TTFT_DURATION_METRIC,
@@ -1260,8 +1295,7 @@ impl SessionTelemetry {
             );
         }
 
-        let engine_service_ttft_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_ENGINE_SERVICE_TTFT_FIELD));
+        let engine_service_ttft_value = timing_metrics.get(RESPONSES_API_ENGINE_SERVICE_TTFT_FIELD);
         if let Some(duration) = duration_from_ms_value(engine_service_ttft_value) {
             self.record_duration(
                 RESPONSES_API_ENGINE_SERVICE_TTFT_DURATION_METRIC,
@@ -1270,8 +1304,7 @@ impl SessionTelemetry {
             );
         }
 
-        let engine_iapi_tbt_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_ENGINE_IAPI_TBT_FIELD));
+        let engine_iapi_tbt_value = timing_metrics.get(RESPONSES_API_ENGINE_IAPI_TBT_FIELD);
         if let Some(duration_ms) = f64_ms_value(engine_iapi_tbt_value) {
             self.record_duration_ms_f64(
                 RESPONSES_API_ENGINE_IAPI_TBT_DURATION_METRIC,
@@ -1280,8 +1313,7 @@ impl SessionTelemetry {
             );
         }
 
-        let engine_service_tbt_value =
-            timing_metrics.and_then(|value| value.get(RESPONSES_API_ENGINE_SERVICE_TBT_FIELD));
+        let engine_service_tbt_value = timing_metrics.get(RESPONSES_API_ENGINE_SERVICE_TBT_FIELD);
         if let Some(duration_ms) = f64_ms_value(engine_service_tbt_value) {
             self.record_duration_ms_f64(
                 RESPONSES_API_ENGINE_SERVICE_TBT_DURATION_METRIC,
@@ -1291,7 +1323,7 @@ impl SessionTelemetry {
         }
     }
 
-    fn responses_type(event: &ResponseEvent) -> String {
+    fn responses_type(event: &ResponseEvent) -> Cow<'static, str> {
         match event {
             ResponseEvent::Created { .. } => "created".into(),
             ResponseEvent::OutputItemDone(item) | ResponseEvent::OutputItemAdded(item) => {
@@ -1316,10 +1348,10 @@ impl SessionTelemetry {
         }
     }
 
-    fn responses_item_type(item: &ResponseItem) -> String {
+    fn responses_item_type(item: &ResponseItem) -> Cow<'static, str> {
         match item {
             ResponseItem::AdditionalTools { .. } => "additional_tools".into(),
-            ResponseItem::Message { role, .. } => format!("message_from_{role}"),
+            ResponseItem::Message { role, .. } => format!("message_from_{role}").into(),
             ResponseItem::AgentMessage { .. } => "agent_message".into(),
             ResponseItem::Reasoning { .. } => "reasoning".into(),
             ResponseItem::LocalShellCall { .. } => "local_shell_call".into(),
