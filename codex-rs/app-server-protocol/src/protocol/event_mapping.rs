@@ -22,6 +22,14 @@ use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynam
 use codex_protocol::protocol::EventMsg;
 use std::collections::HashMap;
 
+fn reuse_matching_id(event_id: String, expected_id: &str) -> String {
+    if event_id == expected_id {
+        event_id
+    } else {
+        expected_id.to_string()
+    }
+}
+
 /// Build the v2 app-server notification that directly corresponds to a single core event.
 ///
 /// This only covers the stateless event-to-notification projections that have a one-to-one
@@ -32,6 +40,45 @@ pub fn item_event_to_server_notification(
     thread_id: &str,
     turn_id: &str,
 ) -> ServerNotification {
+    let msg = match msg {
+        EventMsg::AgentMessageContentDelta(event) => {
+            return ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
+                thread_id: reuse_matching_id(event.thread_id, thread_id),
+                turn_id: reuse_matching_id(event.turn_id, turn_id),
+                item_id: event.item_id,
+                delta: event.delta,
+            });
+        }
+        EventMsg::PlanDelta(event) => {
+            return ServerNotification::PlanDelta(PlanDeltaNotification {
+                thread_id: reuse_matching_id(event.thread_id, thread_id),
+                turn_id: reuse_matching_id(event.turn_id, turn_id),
+                item_id: event.item_id,
+                delta: event.delta,
+            });
+        }
+        EventMsg::ReasoningContentDelta(event) => {
+            return ServerNotification::ReasoningSummaryTextDelta(
+                ReasoningSummaryTextDeltaNotification {
+                    thread_id: reuse_matching_id(event.thread_id, thread_id),
+                    turn_id: reuse_matching_id(event.turn_id, turn_id),
+                    item_id: event.item_id,
+                    delta: event.delta,
+                    summary_index: event.summary_index,
+                },
+            );
+        }
+        EventMsg::ReasoningRawContentDelta(event) => {
+            return ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
+                thread_id: reuse_matching_id(event.thread_id, thread_id),
+                turn_id: reuse_matching_id(event.turn_id, turn_id),
+                item_id: event.item_id,
+                delta: event.delta,
+                content_index: event.content_index,
+            });
+        }
+        msg => msg,
+    };
     let thread_id = thread_id.to_string();
     let turn_id = turn_id.to_string();
     match msg {
@@ -359,39 +406,11 @@ pub fn item_event_to_server_notification(
                 completed_at_ms: end_event.completed_at_ms,
             })
         }
-        EventMsg::AgentMessageContentDelta(event) => {
-            let codex_protocol::protocol::AgentMessageContentDeltaEvent { item_id, delta, .. } =
-                event;
-            ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
-                thread_id,
-                turn_id,
-                item_id,
-                delta,
-            })
-        }
-        EventMsg::PlanDelta(event) => ServerNotification::PlanDelta(PlanDeltaNotification {
-            thread_id,
-            turn_id,
-            item_id: event.item_id,
-            delta: event.delta,
-        }),
-        EventMsg::ReasoningContentDelta(event) => {
-            ServerNotification::ReasoningSummaryTextDelta(ReasoningSummaryTextDeltaNotification {
-                thread_id,
-                turn_id,
-                item_id: event.item_id,
-                delta: event.delta,
-                summary_index: event.summary_index,
-            })
-        }
-        EventMsg::ReasoningRawContentDelta(event) => {
-            ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
-                thread_id,
-                turn_id,
-                item_id: event.item_id,
-                delta: event.delta,
-                content_index: event.content_index,
-            })
+        EventMsg::AgentMessageContentDelta(_)
+        | EventMsg::PlanDelta(_)
+        | EventMsg::ReasoningContentDelta(_)
+        | EventMsg::ReasoningRawContentDelta(_) => {
+            unreachable!("delta events are mapped before fallback IDs are allocated")
         }
         EventMsg::AgentReasoningSectionBreak(event) => {
             ServerNotification::ReasoningSummaryPartAdded(ReasoningSummaryPartAddedNotification {
@@ -470,10 +489,14 @@ pub fn item_event_to_server_notification(
 mod tests {
     use super::*;
     use codex_protocol::ThreadId;
+    use codex_protocol::protocol::AgentMessageContentDeltaEvent;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_protocol::protocol::PlanDeltaEvent;
+    use codex_protocol::protocol::ReasoningContentDeltaEvent;
+    use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
     use pretty_assertions::assert_eq;
 
     fn assert_item_started_server_notification(
@@ -609,6 +632,128 @@ mod tests {
                 item_id: "call-1".to_string(),
                 delta: "hello".to_string(),
             },
+        );
+    }
+
+    #[test]
+    fn delta_events_preserve_payloads_and_authoritative_ids() {
+        let notification = item_event_to_server_notification(
+            EventMsg::AgentMessageContentDelta(AgentMessageContentDeltaEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "message-1".to_string(),
+                delta: "agent delta".to_string(),
+            }),
+            "thread-1",
+            "turn-1",
+        );
+        let ServerNotification::AgentMessageDelta(payload) = notification else {
+            panic!("expected agent message delta notification");
+        };
+        assert_eq!(
+            payload,
+            AgentMessageDeltaNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "message-1".to_string(),
+                delta: "agent delta".to_string(),
+            }
+        );
+
+        let notification = item_event_to_server_notification(
+            EventMsg::AgentMessageContentDelta(AgentMessageContentDeltaEvent {
+                thread_id: "stale-thread".to_string(),
+                turn_id: "stale-turn".to_string(),
+                item_id: "message-2".to_string(),
+                delta: "fallback delta".to_string(),
+            }),
+            "thread-2",
+            "turn-2",
+        );
+        let ServerNotification::AgentMessageDelta(payload) = notification else {
+            panic!("expected agent message delta notification");
+        };
+        assert_eq!(
+            payload,
+            AgentMessageDeltaNotification {
+                thread_id: "thread-2".to_string(),
+                turn_id: "turn-2".to_string(),
+                item_id: "message-2".to_string(),
+                delta: "fallback delta".to_string(),
+            }
+        );
+
+        let notification = item_event_to_server_notification(
+            EventMsg::PlanDelta(PlanDeltaEvent {
+                thread_id: "thread-3".to_string(),
+                turn_id: "turn-3".to_string(),
+                item_id: "plan-1".to_string(),
+                delta: "plan delta".to_string(),
+            }),
+            "thread-3",
+            "turn-3",
+        );
+        let ServerNotification::PlanDelta(payload) = notification else {
+            panic!("expected plan delta notification");
+        };
+        assert_eq!(
+            payload,
+            PlanDeltaNotification {
+                thread_id: "thread-3".to_string(),
+                turn_id: "turn-3".to_string(),
+                item_id: "plan-1".to_string(),
+                delta: "plan delta".to_string(),
+            }
+        );
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ReasoningContentDelta(ReasoningContentDeltaEvent {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                item_id: "reasoning-1".to_string(),
+                delta: "summary delta".to_string(),
+                summary_index: 2,
+            }),
+            "thread-4",
+            "turn-4",
+        );
+        let ServerNotification::ReasoningSummaryTextDelta(payload) = notification else {
+            panic!("expected reasoning summary delta notification");
+        };
+        assert_eq!(
+            payload,
+            ReasoningSummaryTextDeltaNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                item_id: "reasoning-1".to_string(),
+                delta: "summary delta".to_string(),
+                summary_index: 2,
+            }
+        );
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ReasoningRawContentDelta(ReasoningRawContentDeltaEvent {
+                thread_id: "thread-5".to_string(),
+                turn_id: "turn-5".to_string(),
+                item_id: "reasoning-2".to_string(),
+                delta: "content delta".to_string(),
+                content_index: 3,
+            }),
+            "thread-5",
+            "turn-5",
+        );
+        let ServerNotification::ReasoningTextDelta(payload) = notification else {
+            panic!("expected reasoning content delta notification");
+        };
+        assert_eq!(
+            payload,
+            ReasoningTextDeltaNotification {
+                thread_id: "thread-5".to_string(),
+                turn_id: "turn-5".to_string(),
+                item_id: "reasoning-2".to_string(),
+                delta: "content delta".to_string(),
+                content_index: 3,
+            }
         );
     }
 }
