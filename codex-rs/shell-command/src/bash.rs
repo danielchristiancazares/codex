@@ -159,7 +159,11 @@ pub(crate) fn parse_shell_lc_literal_commands(command: &[String]) -> Option<Vec<
     Some(commands)
 }
 
-fn parse_plain_command_from_node(cmd: tree_sitter::Node, src: &str) -> Option<Vec<String>> {
+/// Extract syntactic words for display. Safety callers must validate the complete tree first.
+pub(crate) fn parse_plain_command_from_node(
+    cmd: tree_sitter::Node,
+    src: &str,
+) -> Option<Vec<String>> {
     if cmd.kind() != "command" {
         return None;
     }

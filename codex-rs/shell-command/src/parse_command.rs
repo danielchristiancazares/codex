@@ -7,6 +7,10 @@ use shlex::split as shlex_split;
 use shlex::try_join as shlex_try_join;
 use std::path::PathBuf;
 
+mod display;
+
+pub use display::parse_shell_script_for_display;
+
 pub fn shlex_join(tokens: &[String]) -> String {
     shlex_try_join(tokens.iter().map(String::as_str))
         .unwrap_or_else(|_| "<command included NUL byte>".to_string())
