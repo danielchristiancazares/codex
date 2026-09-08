@@ -26,6 +26,21 @@ The original fork tip and migration boundaries are recorded in
 personal GitHub repository's default branch so new work and repository browsing
 start from the maintained product.
 
+## Installing this checkout
+
+`just install` builds a release package for the current host with
+`scripts/build_codex_package.py`, then updates the native payload of the existing
+global npm `@openai/codex` installation. It includes the code-mode host, bundled
+`rg`, and platform resources. The npm launcher remains in place.
+
+The installer verifies the package before replacing the payload and restores the
+previous payload if the replacement or launcher check fails. The global npm
+package directory must be writable. On Windows, close processes using the
+installed executables before updating. V8 versions and artifact selection follow
+the package builder; explicit V8 archive/binding overrides remain available.
+
+Use `just assemble-codex-package` when only a package artifact is needed.
+
 ## Daily work
 
 1. Inspect `git status --short --branch`, the diff, and relevant instructions.

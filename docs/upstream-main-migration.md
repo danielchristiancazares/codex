@@ -54,8 +54,11 @@ Upstream already contains the archive filename filtering optimization. The
 fork's older raw-WebSocket-payload retention fix is also unnecessary on this base.
 Performance changes requiring fork-only realtime-history effects or context-token
 projection are excluded. The broad token-audit overlay, separate reasoning-mode
-API, dependency/default-feature churn, and platform packaging changes are outside
+API, dependency/default-feature churn, and release packaging changes are outside
 this migration. They should be evaluated as separate product changes if needed.
+The local `just install` workflow is retained through a small npm installation
+wrapper around the current upstream package builder; see
+[fork-workflow.md](fork-workflow.md#installing-this-checkout).
 
 ## Keeping future rebases manageable
 
@@ -127,3 +130,10 @@ All intentional snapshot updates were reviewed. The full suite ran before the
 final resume-hook adjustment; the six focused tests and argument-comment lint
 then validated that adjustment. Tests precede the final Clippy/formatting pass,
 as required by this repository's instructions.
+
+The local installation follow-up passed ten filesystem tests for npm discovery,
+complete package replacement, and failure recovery. `just install` completed a
+release build and npm payload replacement on arm64 macOS. The installed Codex
+and code-mode host matched the Cargo outputs byte for byte; package architecture
+checks and the npm launcher's version and Copilot login-help checks passed.
+Linux and Windows installation were not exercised.

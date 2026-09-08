@@ -60,11 +60,12 @@ fix *args:
 clippy *args:
     cargo clippy --tests {args}
 
+# Build a release package and update the existing global npm installation.
 [unix]
 install:
-    rustup show active-toolchain
-    cargo fetch
+    {{ python }} ../scripts/install_local.py
 
+# Build a release package and update the existing global npm installation.
 [windows]
 install:
     #!powershell.exe -File
@@ -73,9 +74,7 @@ install:
         winget install --exact --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
-    rustup show active-toolchain
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    cargo fetch
+    python ../scripts/install_local.py
     exit $LASTEXITCODE
 
 # Run nextest with --no-fail-fast so all tests are run.
