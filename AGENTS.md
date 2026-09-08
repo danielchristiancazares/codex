@@ -1,3 +1,29 @@
+# Personal fork workflow
+
+This is a single-maintainer fork, developed by the operator and an AI collaborator.
+The operator directs product behavior, validation, commits, pushes, and releases.
+Read [docs/fork-workflow.md](docs/fork-workflow.md) for branch ownership, task
+coordination, and upstream synchronization. This fork policy takes precedence
+over inherited workflow guidance below; nested `AGENTS.md` files add local
+technical requirements.
+
+- `origin` is the personal repository; `upstream` is OpenAI's synchronization source.
+  Product work belongs on `main`, which tracks `origin/main`. Rebase the fork
+  commits onto the fetched `upstream/main`; a separate mirror branch is unnecessary.
+- Inspect branch, worktree, and staged/unstaged/untracked state before editing.
+  Preserve existing work and use one writer per worktree.
+- Complete authorized implementation, proportionate validation, and diff review
+  without repeated permission requests. Commit and push when requested. Pull
+  requests are optional for ordinary fork work.
+- Run root `just` recipes from the repository root. Start with affected crates or
+  test filters and broaden when shared behavior or unresolved risk warrants it.
+  Before finalizing a large Rust change, run scoped `just fix` and `just fmt`;
+  do not rerun tests after that final pass.
+- Keep durable fork decisions and runbooks in `docs/`. Keep upstream integration
+  edits small and put independent behavior in focused modules.
+- Treat existing sandbox environment checks as test-environment guards;
+  understand their behavior before changing them.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
