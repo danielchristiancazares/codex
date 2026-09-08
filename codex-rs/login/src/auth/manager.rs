@@ -1,3 +1,6 @@
+#[path = "copilot_manager.rs"]
+mod copilot;
+
 use chrono::Utc;
 use http::StatusCode;
 use serde::Deserialize;

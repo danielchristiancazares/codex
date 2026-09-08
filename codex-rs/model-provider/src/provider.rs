@@ -9,6 +9,7 @@ use codex_api::Provider;
 use codex_api::SharedAuthProvider;
 use codex_api::TransportError;
 use codex_api::is_azure_responses_provider;
+use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::RESIDENCY_HEADER_NAME;
@@ -22,6 +23,7 @@ use codex_models_manager::manager::StaticModelsManager;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::CodexErr;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::protocol::RateLimitSnapshot;
 use http::HeaderValue;
 
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
@@ -30,6 +32,7 @@ use crate::auth::ResolvedProviderAuth;
 use crate::auth::auth_manager_for_provider;
 use crate::auth::resolve_provider_auth;
 use crate::auth::resolve_provider_auth_for_scope;
+use crate::copilot::CopilotModelProvider;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
 pub(crate) fn enforce_managed_residency(provider: &mut Provider) {
@@ -217,6 +220,15 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     /// Returns the current app-visible account state for this provider.
     fn account_state(&self) -> ProviderAccountResult;
 
+    /// Reads provider-owned account rate limits when the provider exposes them.
+    fn read_rate_limits(
+        &self,
+        _http_client_factory: HttpClientFactory,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<Option<Vec<RateLimitSnapshot>>>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Maps an API client error into the provider's user-facing error representation.
     fn map_api_error(&self, error: ApiError) -> CodexErr {
         codex_api::map_api_error(error)
@@ -323,6 +335,8 @@ pub fn create_model_provider(
 ) -> SharedModelProvider {
     if provider_info.is_amazon_bedrock() {
         Arc::new(AmazonBedrockModelProvider::new(provider_info, auth_manager))
+    } else if provider_info.is_copilot() {
+        Arc::new(CopilotModelProvider::new(provider_info, auth_manager))
     } else {
         Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
     }
@@ -636,6 +650,7 @@ mod tests {
                 agent_identity_policy: AgentIdentityAuthPolicy::JwtOnly,
                 session_source: SessionSource::Cli,
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: crate::ProviderRequestContext::Unscoped,
             })
             .await
             .expect("auth should resolve");

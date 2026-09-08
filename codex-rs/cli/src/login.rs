@@ -52,7 +52,7 @@ const LOGIN_SUCCESS_MESSAGE: &str = "Successfully logged in";
 /// runs but unnecessary for a one-shot login command. Keeping the direct CLI path local lets this
 /// command produce a durable `codex-login.log` artifact without coupling it to the TUI's broader
 /// telemetry and feedback initialization.
-fn init_login_file_logging(config: &Config) -> Option<WorkerGuard> {
+pub(crate) fn init_login_file_logging(config: &Config) -> Option<WorkerGuard> {
     let log_dir = match codex_core::config::log_dir(config) {
         Ok(log_dir) => log_dir,
         Err(err) => {
@@ -552,7 +552,7 @@ pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
     std::process::exit(0);
 }
 
-async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
+pub(crate) async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
     let cli_overrides = match cli_config_overrides.parse_overrides() {
         Ok(v) => v,
         Err(e) => {

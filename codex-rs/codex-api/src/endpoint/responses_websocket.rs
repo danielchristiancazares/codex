@@ -1,3 +1,4 @@
+use crate::auth::AuthProvider;
 use crate::auth::SharedAuthProvider;
 use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
@@ -184,6 +185,7 @@ struct ResponsesWebsocketTimingLogContext {
 
 pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
+    auth: SharedAuthProvider,
     endpoint: ResponsesEndpoint,
     // TODO (pakrym): is this the right place for timeout?
     idle_timeout: Duration,
@@ -208,6 +210,7 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
 impl ResponsesWebsocketConnection {
     fn new(
         stream: WsStream,
+        auth: SharedAuthProvider,
         idle_timeout: Duration,
         server_reasoning_included: bool,
         server_model: Option<String>,
@@ -216,6 +219,7 @@ impl ResponsesWebsocketConnection {
     ) -> Self {
         Self {
             stream: Arc::new(Mutex::new(Some(stream))),
+            auth,
             endpoint,
             idle_timeout,
             server_reasoning_included,
@@ -247,6 +251,7 @@ impl ResponsesWebsocketConnection {
         let server_reasoning_included = self.server_reasoning_included;
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
+        let auth = Arc::clone(&self.auth);
         let ResponsesWsRequest::ResponseCreate(ws_request) = &request;
         let client_metadata = ws_request.client_metadata.as_ref();
         let timing_log_context = ResponsesWebsocketTimingLogContext {
@@ -272,7 +277,7 @@ impl ResponsesWebsocketConnection {
             warmup: ws_request.generate == Some(false),
             connection_reused,
         };
-        let request_text = serialize_websocket_request(&request)?;
+        let request_text = prepare_websocket_request(&auth, &request)?;
 
         let current_span = Span::current();
         tokio::spawn(
@@ -315,6 +320,7 @@ impl ResponsesWebsocketConnection {
                             request_text,
                             idle_timeout,
                             telemetry,
+                            auth.as_ref(),
                             turn_state.as_deref(),
                             &timing_log_context,
                         ) => result,
@@ -413,10 +419,15 @@ impl ResponsesWebsocketClient {
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
         self.auth.add_auth_headers(&mut headers);
 
-        let (stream, _status, server_reasoning_included, server_model) =
-            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await?;
+        let result =
+            connect_websocket(ws_url, headers, http_client_factory, turn_state.clone()).await;
+        if let Err(error) = &result {
+            reject_responses_websocket_auth(&self.auth, error);
+        }
+        let (stream, _status, server_reasoning_included, server_model) = result?;
         Ok(ResponsesWebsocketConnection::new(
             stream,
+            Arc::clone(&self.auth),
             self.provider.stream_idle_timeout,
             server_reasoning_included,
             server_model,
@@ -690,6 +701,7 @@ async fn run_websocket_response_stream(
     request_text: String,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+    auth: &dyn AuthProvider,
     turn_state: Option<&OnceLock<String>>,
     timing_log_context: &ResponsesWebsocketTimingLogContext,
 ) -> Result<(), ApiError> {
@@ -771,6 +783,9 @@ async fn run_websocket_response_stream(
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
                 {
+                    if is_responses_websocket_auth_rejection(&error) {
+                        auth.on_responses_websocket_auth_rejected();
+                    }
                     return Err(error);
                 }
 
@@ -960,6 +975,30 @@ async fn send_websocket_request(
 fn serialize_websocket_request(request: &ResponsesWsRequest<'_>) -> Result<String, ApiError> {
     serde_json::to_string(request)
         .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))
+}
+
+fn prepare_websocket_request(
+    auth: &SharedAuthProvider,
+    request: &ResponsesWsRequest<'_>,
+) -> Result<String, ApiError> {
+    let request = serialize_websocket_request(request)?;
+    auth.prepare_responses_websocket_request(request)
+        .map_err(TransportError::from)
+        .map_err(ApiError::from)
+}
+
+fn is_responses_websocket_auth_rejection(error: &ApiError) -> bool {
+    matches!(
+        error,
+        ApiError::Transport(TransportError::Http { status, .. })
+            if matches!(*status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+    )
+}
+
+fn reject_responses_websocket_auth(auth: &SharedAuthProvider, error: &ApiError) {
+    if is_responses_websocket_auth_rejection(error) {
+        auth.on_responses_websocket_auth_rejected();
+    }
 }
 
 #[cfg(test)]

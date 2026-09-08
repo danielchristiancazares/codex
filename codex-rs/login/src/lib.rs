@@ -4,6 +4,7 @@ pub mod test_support;
 pub mod token_data;
 
 mod callback_params;
+mod copilot;
 mod device_code_auth;
 mod outbound_proxy;
 mod pkce;
@@ -14,6 +15,9 @@ pub use callback_params::LoginCallbackResult;
 pub use callback_params::LoginOnboardingEntrypoint;
 pub use codex_config::types::AuthCredentialsStoreMode;
 pub use codex_http_client::BuildCustomCaTransportError as BuildLoginHttpClientError;
+pub use copilot::GitHubCopilotAuth;
+pub use copilot::GitHubCopilotAuthError;
+pub use copilot::GitHubCopilotCredential;
 pub use device_code_auth::DeviceCode;
 pub use device_code_auth::complete_device_code_login;
 pub use device_code_auth::request_device_code;

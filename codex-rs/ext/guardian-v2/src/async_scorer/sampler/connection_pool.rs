@@ -28,6 +28,7 @@ use codex_login::default_client::create_client_for_route_async;
 use codex_login::default_client::default_headers;
 use codex_model_provider::AgentIdentitySessionFallback;
 use codex_model_provider::ProviderAuthScope;
+use codex_model_provider::ProviderRequestContext;
 use codex_protocol::ThreadId;
 use http::HeaderMap;
 use http::HeaderValue;
@@ -254,6 +255,7 @@ impl ConnectionPool {
                 agent_identity_policy: self.config.agent_identity_policy,
                 session_source: self.config.session_source.clone(),
                 agent_identity_session_fallback: AgentIdentitySessionFallback::default(),
+                request_context: ProviderRequestContext::Unscoped,
             })
             .await
             .map_err(LunaSamplerError::Provider)?
