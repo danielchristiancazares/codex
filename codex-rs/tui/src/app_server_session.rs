@@ -194,6 +194,29 @@ fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> col
     color_eyre::Report::new(err).wrap_err(message)
 }
 
+pub(crate) async fn list_models_for_provider_with_request_handle(
+    request_handle: AppServerRequestHandle,
+    model_provider: String,
+) -> Result<Vec<ModelPreset>> {
+    let response = request_handle
+        .request_typed::<ModelListResponse>(ClientRequest::ModelList {
+            request_id: RequestId::String(format!("provider-model-list-{}", Uuid::new_v4())),
+            params: ModelListParams {
+                model_provider: Some(model_provider),
+                cursor: None,
+                limit: None,
+                include_hidden: Some(true),
+            },
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("provider model/list failed", err))?;
+    Ok(response
+        .data
+        .into_iter()
+        .map(model_preset_from_api_model)
+        .collect())
+}
+
 pub(crate) fn is_history_pagination_unsupported(source: &JSONRPCErrorError) -> bool {
     if source.code == JSONRPC_METHOD_NOT_FOUND {
         return true;
@@ -590,6 +613,7 @@ impl AppServerSession {
                     .request_typed::<ModelListResponse>(ClientRequest::ModelList {
                         request_id: model_request_id,
                         params: ModelListParams {
+                            model_provider: None,
                             cursor: None,
                             limit: None,
                             include_hidden: Some(true),
@@ -700,6 +724,22 @@ impl AppServerSession {
 
     pub(crate) fn managed_new_thread_defaults(&self) -> Option<&NewThreadModelDefaults> {
         self.managed_new_thread_defaults.as_ref()
+    }
+
+    pub(crate) async fn list_models_for_provider(
+        &mut self,
+        model_provider: String,
+    ) -> Result<Vec<ModelPreset>> {
+        list_models_for_provider_with_request_handle(self.request_handle(), model_provider).await
+    }
+
+    pub(crate) fn set_active_model_catalog(
+        &mut self,
+        default_model: String,
+        available_models: Vec<ModelPreset>,
+    ) {
+        self.default_model = Some(default_model);
+        self.available_models = available_models;
     }
 
     pub(crate) fn supports_paginated_history(&self) -> bool {

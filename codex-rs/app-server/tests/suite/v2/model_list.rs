@@ -37,6 +37,7 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const INTERNAL_ERROR_CODE: i64 = -32603;
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 #[test_case(None, false; "default off")]
@@ -110,6 +111,7 @@ async fn api_key_model_discovery_startup_enablement_respects_user_config(
                 limit: Some(100),
                 include_hidden: Some(true),
                 cursor: None,
+                ..Default::default()
             },
         })
         .await?;
@@ -225,6 +227,7 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
         .request(|request_id| ClientRequest::ModelList {
             request_id,
             params: ModelListParams {
+                model_provider: None,
                 limit: Some(100),
                 cursor: None,
                 include_hidden: None,
@@ -255,6 +258,7 @@ async fn list_models_includes_hidden_models() -> Result<()> {
         .request(|request_id| ClientRequest::ModelList {
             request_id,
             params: ModelListParams {
+                model_provider: None,
                 limit: Some(100),
                 cursor: None,
                 include_hidden: Some(true),
@@ -363,6 +367,7 @@ api_key_model_discovery = true
         .await?;
     let request_id = mcp
         .send_list_models_request(ModelListParams {
+            model_provider: None,
             limit: Some(100),
             cursor: None,
             include_hidden: None,
@@ -411,6 +416,182 @@ api_key_model_discovery = true
 }
 
 #[tokio::test]
+async fn list_models_uses_requested_provider_catalog() -> Result<()> {
+    let server = MockServer::start().await;
+    let mut selected_model = codex_models_manager::bundled_models_response()?
+        .models
+        .into_iter()
+        .find(|model| model.supported_in_api)
+        .expect("bundled API model");
+    selected_model.slug = "provider-selected-model".to_string();
+    selected_model.display_name = "Provider Selected Model".to_string();
+    selected_model.description = Some("Only returned by the selected provider".to_string());
+    selected_model.priority = 0;
+    let models_mock = mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![selected_model.clone()],
+        },
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("startup-models.json"),
+        serde_json::to_vec(&codex_models_manager::bundled_models_response()?)?,
+    )?;
+    let server_uri = server.uri();
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model_catalog_json = "startup-models.json"
+
+[model_providers.picker]
+name = "Picker"
+base_url = "{server_uri}/v1"
+wire_api = "responses"
+"#
+        ),
+    )?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-access-token").plan_type("pro"),
+        AuthCredentialsStoreMode::File,
+    )?;
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .build_initialized()
+        .await?;
+    let ModelListResponse {
+        data: items,
+        next_cursor,
+    } = mcp
+        .request(|request_id| ClientRequest::ModelList {
+            request_id,
+            params: ModelListParams {
+                model_provider: Some("picker".to_string()),
+                limit: Some(100),
+                cursor: None,
+                include_hidden: Some(true),
+            },
+        })
+        .await?;
+
+    let mut expected_presets = vec![ModelPreset::from(selected_model)];
+    ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
+    let expected = expected_presets
+        .iter()
+        .map(model_from_preset)
+        .collect::<Vec<_>>();
+    assert_eq!(items, expected);
+    assert_eq!(next_cursor, None);
+    assert_eq!(models_mock.requests().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_reports_authoritative_provider_refresh_failure() -> Result<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("catalog unavailable"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let codex_home = TempDir::new()?;
+    let copilot_api_url = server.uri();
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .with_env_overrides(&[
+            ("GITHUB_COPILOT_API_TOKEN", Some("test-copilot-api-token")),
+            ("COPILOT_API_URL", Some(copilot_api_url.as_str())),
+            ("COPILOT_GITHUB_TOKEN", None),
+            ("GH_TOKEN", None),
+            ("GITHUB_TOKEN", None),
+        ])
+        .build_initialized()
+        .await?;
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            model_provider: Some("copilot".to_string()),
+            limit: None,
+            cursor: None,
+            include_hidden: Some(true),
+        })
+        .await?;
+    let error: JSONRPCError = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    assert_eq!(
+        error,
+        JSONRPCError {
+            id: RequestId::Integer(request_id),
+            error: codex_app_server_protocol::JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: "failed to list models: Fatal error: Copilot models request returned 500 Internal Server Error".to_string(),
+                data: None,
+            },
+        }
+    );
+    assert_eq!(
+        server
+            .received_requests()
+            .await
+            .expect("recorded model requests")
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_rejects_unconfigured_provider() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .build_initialized()
+        .await?;
+
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            model_provider: Some("missing".to_string()),
+            limit: None,
+            cursor: None,
+            include_hidden: None,
+        })
+        .await?;
+    let error: JSONRPCError = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    assert_eq!(
+        error,
+        JSONRPCError {
+            id: RequestId::Integer(request_id),
+            error: codex_app_server_protocol::JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: "model provider `missing` is not configured".to_string(),
+                data: None,
+            },
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_models_pagination_works() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path()).await?;
@@ -432,6 +613,7 @@ async fn list_models_pagination_works() -> Result<()> {
             .request(|request_id| ClientRequest::ModelList {
                 request_id,
                 params: ModelListParams {
+                    model_provider: None,
                     limit: Some(1),
                     cursor: cursor.clone(),
                     include_hidden: None,
@@ -468,6 +650,7 @@ async fn list_models_rejects_invalid_cursor() -> Result<()> {
 
     let request_id = mcp
         .send_list_models_request(ModelListParams {
+            model_provider: None,
             limit: None,
             cursor: Some("invalid".to_string()),
             include_hidden: None,
