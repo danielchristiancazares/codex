@@ -371,7 +371,8 @@ impl App {
             self.recap.seed_from_turns(&snapshot.turns, Instant::now());
             self.render_thread_snapshot(
                 tui, app_server, id, snapshot, /*resume_restored_queue*/ false,
-            )?;
+            )
+            .await?;
             self.config = self.chat_widget.config_ref().clone();
             self.refresh_pending_thread_approvals().await;
             if self.thread_unavailable(id) && !self.chat_widget.is_external_writer_view() {

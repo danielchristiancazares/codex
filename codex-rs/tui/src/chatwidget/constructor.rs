@@ -137,6 +137,7 @@ impl ChatWidget {
             initial_user_message,
             status_account_display,
             remote_connection: None,
+            runtime_provider_status: crate::status::RuntimeProviderStatus::default(),
             local_worktree_operations: true,
             token_info: None,
             token_usage_pending: false,

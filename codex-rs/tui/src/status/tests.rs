@@ -58,6 +58,9 @@ use ratatui::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+#[path = "provider_presentation_tests.rs"]
+mod provider_presentation_tests;
+
 #[test]
 fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
     let now = Local::now();
@@ -743,6 +746,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         &config,
         /*requires_openai_auth*/ false,
         Some("server-ollama"),
+        &super::RuntimeProviderStatus::default(),
         /*remote_connection*/ None,
         test_status_account_display().as_ref(),
         /*token_info*/ None,
@@ -774,6 +778,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         &config,
         /*requires_openai_auth*/ true,
         Some("server-openai"),
+        &super::RuntimeProviderStatus::default(),
         /*remote_connection*/ None,
         test_status_account_display().as_ref(),
         /*token_info*/ None,
@@ -1626,6 +1631,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
         &config,
         /*requires_openai_auth*/ true,
         /*model_provider_id*/ None,
+        &super::RuntimeProviderStatus::default(),
         Some(&remote_connection),
         account_display.as_ref(),
         Some(&token_info),
@@ -1737,6 +1743,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
         &config,
         /*requires_openai_auth*/ true,
         /*model_provider_id*/ None,
+        &super::RuntimeProviderStatus::default(),
         /*remote_connection*/ None,
         /*account_display*/ None,
         /*token_info*/ None,

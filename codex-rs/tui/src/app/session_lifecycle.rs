@@ -673,7 +673,8 @@ impl App {
         // Transfer replay state before stopping its backend voice session.
         self.retain_realtime_replay_state_before_replace();
         self.stop_realtime_conversation(app_server).await;
-        self.render_thread_snapshot(tui, app_server, thread_id, snapshot, !is_replay_only)?;
+        self.render_thread_snapshot(tui, app_server, thread_id, snapshot, !is_replay_only)
+            .await?;
         if is_replay_only
             && self
                 .thread_event_channels
@@ -695,7 +696,7 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn render_thread_snapshot(
+    pub(super) async fn render_thread_snapshot(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &AppServerSession,
@@ -709,6 +710,9 @@ impl App {
             /*initial_user_message*/ None,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
+        self.chat_widget.runtime_provider_status =
+            crate::status::RuntimeProviderStatus::resolve(&self.config, &self.app_server_target)
+                .await;
         self.chat_widget
             .set_task_mentions_enabled(app_server.task_tools_available(thread_id));
         self.chat_widget
@@ -1032,6 +1036,9 @@ impl App {
             initial_user_message,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
+        self.chat_widget.runtime_provider_status =
+            crate::status::RuntimeProviderStatus::resolve(&self.config, &self.app_server_target)
+                .await;
         self.chat_widget
             .set_task_mentions_enabled(started.task_tools_available);
         self.chat_widget

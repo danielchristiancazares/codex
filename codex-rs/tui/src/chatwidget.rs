@@ -608,6 +608,7 @@ pub(crate) struct ChatWidget {
     initial_user_message: Option<UserMessage>,
     status_account_display: Option<StatusAccountDisplay>,
     pub(crate) remote_connection: Option<RemoteConnectionStatus>,
+    pub(crate) runtime_provider_status: crate::status::RuntimeProviderStatus,
     pub(crate) local_worktree_operations: bool,
     token_info: Option<TokenUsageInfo>,
     token_usage_pending: bool,

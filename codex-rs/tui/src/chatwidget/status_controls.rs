@@ -266,6 +266,7 @@ impl ChatWidget {
             self.requires_openai_auth,
             self.thread_id
                 .map(|_| self.config.model_provider_id.as_str()),
+            &self.runtime_provider_status,
             self.remote_connection.as_ref(),
             self.status_account_display.as_ref(),
             token_info,

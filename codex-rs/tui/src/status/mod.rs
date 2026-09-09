@@ -10,6 +10,7 @@ mod account;
 mod card;
 mod format;
 mod helpers;
+mod provider_endpoint;
 mod rate_limit_block;
 mod rate_limits;
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub(crate) use helpers::format_directory_display;
 pub(crate) use helpers::format_reset_timestamp;
 pub(crate) use helpers::format_tokens_compact;
 pub(crate) use helpers::plan_type_display_name;
+pub(crate) use provider_endpoint::RuntimeProviderStatus;
 pub(crate) use rate_limits::RateLimitSnapshotDisplay;
 pub(crate) use rate_limits::RateLimitWindowDisplay;
 #[cfg(test)]

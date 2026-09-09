@@ -1,3 +1,4 @@
+use super::RuntimeProviderStatus;
 use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
@@ -203,6 +204,7 @@ pub(crate) fn new_status_output_with_rate_limits(
         config,
         config.model_provider.requires_openai_auth,
         /*model_provider_id*/ None,
+        &RuntimeProviderStatus::default(),
         /*remote_connection*/ None,
         account_display,
         token_info,
@@ -227,6 +229,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     config: &Config,
     requires_openai_auth: bool,
     model_provider_id: Option<&str>,
+    runtime_provider_status: &RuntimeProviderStatus,
     remote_connection: Option<&RemoteConnectionStatus>,
     account_display: Option<&StatusAccountDisplay>,
     token_info: Option<&TokenUsageInfo>,
@@ -248,6 +251,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
         config,
         requires_openai_auth,
         model_provider_id,
+        runtime_provider_status,
         remote_connection,
         account_display,
         token_info,
@@ -280,6 +284,7 @@ impl StatusHistoryCell {
         config: &Config,
         requires_openai_auth: bool,
         model_provider_id: Option<&str>,
+        runtime_provider_status: &RuntimeProviderStatus,
         remote_connection: Option<&RemoteConnectionStatus>,
         account_display: Option<&StatusAccountDisplay>,
         token_info: Option<&TokenUsageInfo>,
@@ -301,7 +306,7 @@ impl StatusHistoryCell {
         let workspace_roots = config.effective_workspace_roots();
         let model_provider = model_provider_id
             .filter(|id| !id.trim().is_empty())
-            .map(str::to_string);
+            .map(|id| runtime_provider_status.render(id));
         let mut config_entries = vec![
             ("workdir", config.cwd.display().to_string()),
             ("model", model_name.to_string()),
