@@ -445,7 +445,7 @@ async fn list_models_uses_requested_provider_catalog() -> Result<()> {
     .await;
 
     let codex_home = TempDir::new()?;
-    write_models_cache(codex_home.path())?;
+    write_models_cache(codex_home.path()).await?;
     std::fs::write(
         codex_home.path().join("startup-models.json"),
         serde_json::to_vec(&codex_models_manager::bundled_models_response()?)?,
@@ -566,7 +566,7 @@ async fn list_models_reports_authoritative_provider_refresh_failure() -> Result<
 #[tokio::test]
 async fn list_models_rejects_unconfigured_provider() -> Result<()> {
     let codex_home = TempDir::new()?;
-    write_models_cache(codex_home.path())?;
+    write_models_cache(codex_home.path()).await?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
