@@ -41,6 +41,8 @@ use tokio::sync::broadcast;
 use tokio_stream::Stream;
 
 pub use self::frame_requester::FrameRequester;
+use self::inline_viewport::InlineViewportFrame;
+use self::inline_viewport::ViewportRepaint;
 use self::input_boundary::TerminalInitializationGuard;
 pub(crate) use self::input_boundary::discard_pending_terminal_input;
 #[cfg(all(test, unix))]
@@ -68,6 +70,7 @@ mod event_stream;
 mod frame_rate_limiter;
 mod frame_requester;
 mod history_tail;
+mod inline_viewport;
 mod input_boundary;
 #[cfg(unix)]
 mod job_control;
@@ -600,7 +603,7 @@ pub enum InlineViewportPlacement {
 pub enum InlineViewportRole {
     /// A durable surface such as the composer or startup draft that owns transcript docking.
     Persistent,
-    /// A popup or modal that defers history-tail docking until persistent layout resumes.
+    /// A popup or modal that keeps history docked throughout its intermediate layouts.
     Transient,
 }
 
@@ -968,7 +971,7 @@ impl Tui {
         placement: InlineViewportPlacement,
         scrollback: ScrollbackStrategy,
         history_tail_dock: HistoryTailDock,
-    ) -> Result<bool>
+    ) -> Result<ViewportRepaint>
     where
         B: Backend<Error = io::Error> + Write,
     {
@@ -988,7 +991,7 @@ impl Tui {
         let mut area = terminal.viewport_area;
         area.height = height.min(screen_size.height);
         area.width = screen_size.width;
-        let mut needs_full_repaint = false;
+        let mut repaint = ViewportRepaint::ReuseDiff;
 
         if area.bottom() > screen_size.height {
             let scroll_by = area.bottom() - screen_size.height;
@@ -1013,9 +1016,7 @@ impl Tui {
         }
 
         if area != terminal.viewport_area {
-            let history_tail_moved = if terminal_size_changed
-                || history_tail_dock == HistoryTailDock::PreservePosition
-            {
+            let history_tail_moved = if terminal_size_changed {
                 false
             } else {
                 scrollback.dock_sparse_history_tail(terminal, previous_area.top(), area.top())?
@@ -1028,19 +1029,22 @@ impl Tui {
             let clear_position = Position::new(/*x*/ 0, clear_y);
             terminal.set_viewport_area(area);
             terminal.clear_after_position(clear_position)?;
-            needs_full_repaint = true;
+            repaint = ViewportRepaint::InvalidateDiff;
         }
 
-        Ok(needs_full_repaint)
+        Ok(repaint)
     }
 
     /// Write any buffered history lines above the viewport and clear the buffer.
-    fn flush_pending_history_lines(
-        terminal: &mut Terminal,
+    fn flush_pending_history_lines<B>(
+        terminal: &mut CustomTerminal<B>,
         pending_history_lines: &mut Vec<PendingHistoryLines>,
         scrollback: ScrollbackStrategy,
         screen_size: Size,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        B: Backend<Error = io::Error> + Write,
+    {
         if pending_history_lines.is_empty() {
             return Ok(());
         }
@@ -1216,24 +1220,12 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
-        // A full-screen history batch advances from the viewport origin by its own row count.
-        // Restore the persistent bottom anchor before flushing a batch queued under a transient
-        // view, including batches shorter than the height vacated by that view.
-        let has_pending_history = !self.pending_history_lines.is_empty();
-        let resumes_persistent_layout_with_pending_history = self.scrollback
-            == ScrollbackStrategy::FullScreen
-            && placement == InlineViewportPlacement::FollowExisting
-            && role == InlineViewportRole::Persistent
-            && self.last_resize_reflow_role == InlineViewportRole::Transient
-            && has_pending_history;
-        let history_tail_dock = if role == InlineViewportRole::Transient
-            || resumes_persistent_layout_with_pending_history
-        {
-            HistoryTailDock::PreservePosition
-        } else if self.scrollback == ScrollbackStrategy::FullScreen && has_pending_history {
-            HistoryTailDock::DeferToPendingHistory
-        } else {
-            HistoryTailDock::Immediate
+        let viewport = InlineViewportFrame {
+            height,
+            screen_size,
+            placement,
+            role,
+            previous_role: self.last_resize_reflow_role,
         };
 
         stdout().sync_update(|_| {
@@ -1243,24 +1235,7 @@ impl Tui {
             }
 
             let terminal = &mut self.terminal;
-            let needs_full_repaint = Self::update_inline_viewport_for_resize_reflow(
-                terminal,
-                height,
-                screen_size,
-                placement,
-                self.scrollback,
-                history_tail_dock,
-            )?;
-            Self::flush_pending_history_lines(
-                terminal,
-                &mut self.pending_history_lines,
-                self.scrollback,
-                screen_size,
-            )?;
-
-            if needs_full_repaint {
-                terminal.invalidate_viewport();
-            }
+            viewport.prepare(terminal, &mut self.pending_history_lines, self.scrollback)?;
 
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.
             #[cfg(unix)]

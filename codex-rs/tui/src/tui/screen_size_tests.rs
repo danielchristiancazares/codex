@@ -19,6 +19,7 @@ use crate::test_backend::VT100Backend;
 use crate::tui::InlineViewportPlacement;
 use crate::tui::InlineViewportRole;
 use crate::tui::TuiEvent;
+use crate::tui::ViewportRepaint;
 use crate::tui::scrollback::HistoryTailDock;
 use crate::tui::scrollback::ScrollbackStrategy;
 
@@ -325,7 +326,7 @@ fn full_screen_popup_close_restores_history_position() {
     }
     terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
 
-    let needs_full_repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+    let repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
         &mut terminal,
         /*height*/ 4,
         screen_size,
@@ -334,7 +335,7 @@ fn full_screen_popup_close_restores_history_position() {
         HistoryTailDock::Immediate,
     )
     .expect("shrink provider popup viewport");
-    assert!(needs_full_repaint);
+    assert_eq!(repaint, ViewportRepaint::InvalidateDiff);
     assert_eq!(
         terminal.viewport_area,
         Rect::new(
@@ -406,7 +407,7 @@ fn full_screen_popup_close_restores_history_position() {
             .render(composer_area, frame.buffer_mut());
         })
         .expect("redraw composer after history insert");
-    let needs_full_repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+    let repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
         &mut terminal,
         /*height*/ 4,
         screen_size,
@@ -415,7 +416,7 @@ fn full_screen_popup_close_restores_history_position() {
         HistoryTailDock::Immediate,
     )
     .expect("repeat same-size viewport update");
-    assert!(!needs_full_repaint);
+    assert_eq!(repaint, ViewportRepaint::ReuseDiff);
     assert_eq!(
         terminal.viewport_area,
         Rect::new(0, 8, screen_size.width, 4)
@@ -665,7 +666,7 @@ fn pending_full_screen_history_refills_vacated_rows_before_bottom_dock() {
     }
     terminal.note_history_rows_inserted(/*inserted_rows*/ 2);
 
-    let needs_full_repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
+    let repaint = crate::tui::Tui::update_inline_viewport_for_resize_reflow(
         &mut terminal,
         /*height*/ 2,
         screen_size,
@@ -674,7 +675,7 @@ fn pending_full_screen_history_refills_vacated_rows_before_bottom_dock() {
         HistoryTailDock::DeferToPendingHistory,
     )
     .expect("defer bottom docking");
-    assert!(needs_full_repaint);
+    assert_eq!(repaint, ViewportRepaint::InvalidateDiff);
     assert_eq!(terminal.viewport_area, Rect::new(0, 8, width, 2));
 
     insert_history_lines_with_mode_and_wrap_policy(

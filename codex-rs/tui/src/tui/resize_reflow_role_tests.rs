@@ -64,7 +64,7 @@ async fn queued_history_keeps_composer_bottom_docked_after_transient_popup() {
                 /*height*/ 4,
             ),
             visible_history_rows: 3,
-            docked_history_gap_rows: 0,
+            docked_history_gap_rows: 3,
         }
     );
 }

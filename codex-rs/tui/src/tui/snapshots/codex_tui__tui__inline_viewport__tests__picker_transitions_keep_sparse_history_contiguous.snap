@@ -1,0 +1,62 @@
+---
+source: tui/src/tui/inline_viewport_tests.rs
+assertion_line: 117
+expression: "snapshots.join(\"\\n\\n\")"
+---
+Standard
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>_ Codex
+GPT 6 Astra max  /model to change
+project/codex-rs
+Unrestricted access  /permissions to change
+
+Tip: Start with a task.
+
+Current working directory: project/codex-rs
+
+╭──────────────────╮
+│ › draft          │
+╰──────────────────╯
+GPT 6 Astra · Max
+
+FullScreen
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>_ Codex
+GPT 6 Astra max  /model to change
+project/codex-rs
+Unrestricted access  /permissions to change
+
+Tip: Start with a task.
+
+Current working directory: project/codex-rs
+
+╭──────────────────╮
+│ › draft          │
+╰──────────────────╯
+GPT 6 Astra · Max
