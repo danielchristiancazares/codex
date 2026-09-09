@@ -5,14 +5,14 @@ expression: "format!(\"empty query:\\n{empty_query}\\n\\nunicode query:\\n{unico
 empty query:
 24x4:
                         
-  / ▏ Type a branch…    
+  › Type a branch…      
 › 東 京 /修 正 -🦀           
   ↵ ok · esc back       
 
 24x6:
                         
                         
-  / ▏ Type a branch…    
+  › Type a branch…      
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
@@ -20,21 +20,21 @@ empty query:
 24x6:
                         
                         
-  / ▏ Type a branch…    
+  › Type a branch…      
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
 
 40x4:
                                         
-  / ▏ Type a branch name                
+  › Type a branch name                  
 › 東 京 /修 正 -🦀                           
   ↵ ok · esc back                       
 
 40x6:
                                         
                                         
-  / ▏ Type a branch name                
+  › Type a branch name                  
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
@@ -42,21 +42,21 @@ empty query:
 40x6:
                                         
                                         
-  / ▏ Type a branch name                
+  › Type a branch name                  
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
 
 80x4:
                                                                                 
-  / ▏ Type a branch name                                                        
+  › Type a branch name                                                          
 › 東 京 /修 正 -🦀                                                                   
   ↵ ok · esc back                                                               
 
 80x6:
                                                                                 
                                                                                 
-  / ▏ Type a branch name                                                        
+  › Type a branch name                                                          
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               
@@ -64,7 +64,7 @@ empty query:
 80x6:
                                                                                 
                                                                                 
-  / ▏ Type a branch name                                                        
+  › Type a branch name                                                          
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               
@@ -72,14 +72,14 @@ empty query:
 unicode query:
 24x4:
                         
-  / 東 京 /修 正 -🦀 ▏       
+  › 東 京 /修 正 -🦀         
 › 東 京 /修 正 -🦀           
   ↵ ok · esc back       
 
 24x6:
                         
                         
-  / 東 京 /修 正 -🦀 ▏       
+  › 東 京 /修 正 -🦀         
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
@@ -87,21 +87,21 @@ unicode query:
 24x6:
                         
                         
-  / 東 京 /修 正 -🦀 ▏       
+  › 東 京 /修 正 -🦀         
 › 東 京 /修 正 -🦀           
                         
   ↵ ok · esc back       
 
 40x4:
                                         
-  / 東 京 /修 正 -🦀 ▏                       
+  › 東 京 /修 正 -🦀                         
 › 東 京 /修 正 -🦀                           
   ↵ ok · esc back                       
 
 40x6:
                                         
                                         
-  / 東 京 /修 正 -🦀 ▏                       
+  › 東 京 /修 正 -🦀                         
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
@@ -109,21 +109,21 @@ unicode query:
 40x6:
                                         
                                         
-  / 東 京 /修 正 -🦀 ▏                       
+  › 東 京 /修 正 -🦀                         
 › 東 京 /修 正 -🦀                           
                                         
   ↵ ok · esc back                       
 
 80x4:
                                                                                 
-  / 東 京 /修 正 -🦀 ▏                                                               
+  › 東 京 /修 正 -🦀                                                                 
 › 東 京 /修 正 -🦀                                                                   
   ↵ ok · esc back                                                               
 
 80x6:
                                                                                 
                                                                                 
-  / 東 京 /修 正 -🦀 ▏                                                               
+  › 東 京 /修 正 -🦀                                                                 
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               
@@ -131,7 +131,7 @@ unicode query:
 80x6:
                                                                                 
                                                                                 
-  / 東 京 /修 正 -🦀 ▏                                                               
+  › 東 京 /修 正 -🦀                                                                 
 › 東 京 /修 正 -🦀                                                                   
                                                                                 
   ↵ ok · esc back                                                               

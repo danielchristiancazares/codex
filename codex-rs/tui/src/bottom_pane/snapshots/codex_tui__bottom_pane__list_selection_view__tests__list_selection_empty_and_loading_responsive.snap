@@ -77,14 +77,14 @@ loading:
 empty:
 24x4:
                         
-  / ▏ Search…           
+  › Search workspaces   
   No options available  
   Press esc to go back  
 
 24x6:
                         
                         
-  / ▏ Search…           
+  › Search workspaces   
   No options available  
                         
   Press esc to go back  
@@ -92,21 +92,21 @@ empty:
 24x6:
                         
                         
-  / ▏ Search…           
+  › Search workspaces   
   No options available  
                         
   Press esc to go back  
 
 40x4:
                                         
-  / ▏ Search workspaces                 
+  › Search workspaces                   
   No options available                  
   Press esc to go back                  
 
 40x6:
                                         
                                         
-  / ▏ Search workspaces                 
+  › Search workspaces                   
   No options available                  
                                         
   Press esc to go back                  
@@ -114,21 +114,21 @@ empty:
 40x6:
                                         
                                         
-  / ▏ Search workspaces                 
+  › Search workspaces                   
   No options available                  
                                         
   Press esc to go back                  
 
 80x4:
                                                                                 
-  / ▏ Search workspaces                                                         
+  › Search workspaces                                                           
   No options available                                                          
   Press esc to go back                                                          
 
 80x6:
                                                                                 
                                                                                 
-  / ▏ Search workspaces                                                         
+  › Search workspaces                                                           
   No options available                                                          
                                                                                 
   Press esc to go back                                                          
@@ -136,7 +136,7 @@ empty:
 80x6:
                                                                                 
                                                                                 
-  / ▏ Search workspaces                                                         
+  › Search workspaces                                                           
   No options available                                                          
                                                                                 
   Press esc to go back                                                          
@@ -144,14 +144,14 @@ empty:
 zero result:
 24x4:
                         
-  / no-result▏          
+  › no-result           
   No matching options   
   Press esc to go back  
 
 24x6:
                         
                         
-  / no-result▏          
+  › no-result           
   No matching options   
                         
   Press esc to go back  
@@ -159,21 +159,21 @@ zero result:
 24x6:
                         
                         
-  / no-result▏          
+  › no-result           
   No matching options   
                         
   Press esc to go back  
 
 40x4:
                                         
-  / no-result▏                          
+  › no-result                           
   No matching options                   
   Press esc to go back                  
 
 40x6:
                                         
                                         
-  / no-result▏                          
+  › no-result                           
   No matching options                   
                                         
   Press esc to go back                  
@@ -181,21 +181,21 @@ zero result:
 40x6:
                                         
                                         
-  / no-result▏                          
+  › no-result                           
   No matching options                   
                                         
   Press esc to go back                  
 
 80x4:
                                                                                 
-  / no-result▏                                                                  
+  › no-result                                                                   
   No matching options                                                           
   Press esc to go back                                                          
 
 80x6:
                                                                                 
                                                                                 
-  / no-result▏                                                                  
+  › no-result                                                                   
   No matching options                                                           
                                                                                 
   Press esc to go back                                                          
@@ -203,7 +203,7 @@ zero result:
 80x6:
                                                                                 
                                                                                 
-  / no-result▏                                                                  
+  › no-result                                                                   
   No matching options                                                           
                                                                                 
   Press esc to go back                                                          

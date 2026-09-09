@@ -1239,7 +1239,7 @@ async fn plugins_popup_remote_section_fallback_states_when_remote_plugin_disable
             .expect("expected remote section header");
         let item = popup
             .lines()
-            .skip_while(|line| !line.trim_start().starts_with("/ "))
+            .skip_while(|line| !line.trim_start().starts_with('›'))
             .skip(/*n*/ 1)
             .find(|line| !line.trim().is_empty())
             .expect("expected remote section item")

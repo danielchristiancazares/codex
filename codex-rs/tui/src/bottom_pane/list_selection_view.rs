@@ -627,23 +627,20 @@ impl ListSelectionView {
     fn search_line(&self, width: u16) -> Line<'static> {
         match width {
             0 => return Line::default(),
-            1 => return Line::from("▏".cyan()),
-            2 => return vec!["/".cyan(), "▏".cyan()].into(),
+            1 => return Line::from("›".cyan()),
             _ => {}
         }
 
-        let mut spans = vec!["/ ".cyan()];
+        let mut spans = vec!["› ".cyan()];
         if self.search_query.is_empty() {
-            spans.push("▏".cyan());
-            let placeholder_width = width.saturating_sub(4) as usize;
+            let placeholder_width = width.saturating_sub(2) as usize;
             if placeholder_width > 0
                 && let Some(placeholder) = &self.search_placeholder
             {
-                spans.push(" ".into());
                 spans.push(word_ellipsis(placeholder, placeholder_width).dim());
             }
         } else {
-            let query_width = width.saturating_sub(3) as usize;
+            let query_width = width.saturating_sub(2) as usize;
             let query = if display_width(&self.search_query) <= query_width {
                 self.search_query.clone()
             } else if query_width == 0 {
@@ -662,7 +659,7 @@ impl ListSelectionView {
                 suffix.reverse();
                 format!("…{}", suffix.concat())
             };
-            spans.extend([query.into(), "▏".cyan()]);
+            spans.push(query.into());
         }
         Line::from(spans)
     }

@@ -9,7 +9,7 @@ expression: "render_picker(params, 120)"
 
   [All]  Common  Customized (0)  Unbound (5)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
-  / ▏ Type to search shortcuts
+  › Type to search shortcuts
   Chat           Interrupt Turn             esc
   Chat           Decrease Reasoning Effort  alt-,, shift-down
   Chat           Increase Reasoning Effort  alt-., shift-up
