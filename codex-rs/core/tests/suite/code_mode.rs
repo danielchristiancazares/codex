@@ -1,5 +1,8 @@
 #![allow(clippy::unwrap_used)]
 
+#[path = "code_mode_recovery_tests.rs"]
+mod recovery_tests;
+
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -165,10 +168,14 @@ fn function_tool_output_items(req: &ResponsesRequest, call_id: &str) -> Vec<Valu
 }
 
 fn text_item(items: &[Value], index: usize) -> &str {
-    items[index]
+    let text = items[index]
         .get("text")
         .and_then(Value::as_str)
-        .expect("content item should be input_text")
+        .expect("content item should be input_text");
+    match text.strip_prefix("Captured output ") {
+        Some(receipt) => receipt.split_once('\n').expect("capture receipt header").1,
+        None => text,
+    }
 }
 
 fn extract_running_cell_id(text: &str) -> String {

@@ -9,10 +9,11 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
+use crate::tools::runtime_wait::ExecutionScope;
+use crate::tools::runtime_wait::WaitPolicy;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 
-use super::DEFAULT_WAIT_YIELD_TIME_MS;
 use super::ExecContext;
 use super::WAIT_TOOL_NAME;
 use super::handle_runtime_response;
@@ -25,16 +26,12 @@ pub struct CodeModeWaitHandler;
 #[derive(Debug, Deserialize)]
 struct ExecWaitArgs {
     cell_id: String,
-    #[serde(default = "default_wait_yield_time_ms")]
-    yield_time_ms: u64,
+    #[serde(default)]
+    yield_time_ms: WaitPolicy,
     #[serde(default)]
     max_tokens: Option<usize>,
     #[serde(default)]
     terminate: bool,
-}
-
-fn default_wait_yield_time_ms() -> u64 {
-    DEFAULT_WAIT_YIELD_TIME_MS
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
@@ -120,19 +117,14 @@ impl CodeModeWaitHandler {
                         .code_mode_service
                         .terminate(cell_id)
                         .await
+                        .map_err(FunctionCallError::RespondToModel)
                 } else {
-                    exec.session
-                        .services
-                        .code_mode_service
-                        .wait(codex_code_mode::WaitRequest {
-                            cell_id,
-                            yield_time_ms: args.yield_time_ms,
-                        })
+                    args.yield_time_ms
+                        .wait_for_cell(&exec.session, &exec.turn, cell_id)
                         .await
                 }
-                .map_err(|error| {
+                .inspect_err(|_error| {
                     telemetry.finish(/*success*/ false);
-                    FunctionCallError::RespondToModel(error)
                 })?;
                 if let codex_code_mode::WaitOutcome::LiveCell(response) = &wait_response {
                     let runtime_cell_id = match response {
@@ -202,6 +194,10 @@ impl CodeModeWaitHandler {
 }
 
 impl CoreToolRuntime for CodeModeWaitHandler {
+    fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::Coordination
+    }
+
     fn pre_tool_use_payload(&self, _invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
         // Code-mode `wait` is runtime control for an existing code cell, not a
         // standalone user action. Tool calls made from code mode still flow
