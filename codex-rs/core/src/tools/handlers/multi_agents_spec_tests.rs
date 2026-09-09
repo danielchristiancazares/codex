@@ -413,7 +413,9 @@ fn wait_agent_tool_v2_uses_timeout_only_summary_output() {
         properties
             .get("timeout_ms")
             .and_then(|schema| schema.description.as_deref()),
-        Some("Timeout in milliseconds. Defaults to 30000, min 10000, max 3600000.")
+        Some(
+            "Explicit decision deadline in milliseconds, min 10000, max 3600000. Omit to remain suspended until agent activity, completion, or new user input."
+        )
     );
     assert_eq!(parameters.required.as_ref(), None);
     assert_eq!(
