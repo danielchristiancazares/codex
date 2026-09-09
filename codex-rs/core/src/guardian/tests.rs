@@ -2122,6 +2122,7 @@ async fn guardian_review_records_missing_auto_review_model_in_analytics_metadata
 async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
 -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    test_support::enable_responses_sse_for_tests();
 
     let server = start_mock_server().await;
     let guardian_assessment = serde_json::json!({
@@ -2147,6 +2148,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     let mut config = (*turn.config).clone();
     config.cwd = temp_cwd.abs();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+    config.model_provider.supports_websockets = false;
     config.memories.use_memories = true;
     config
         .features
@@ -2236,7 +2238,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     )
     .await;
     let (GuardianReviewOutcome::Completed(assessment), metadata) = outcome else {
-        panic!("expected guardian assessment");
+        panic!("expected guardian assessment, got {outcome:?}");
     };
     let guardian_thread_id = metadata
         .guardian_thread_id
