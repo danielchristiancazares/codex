@@ -173,7 +173,13 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
     fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
         remote_models.sort_by_key(|model| model.priority);
 
-        let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
+        let mut presets = Vec::with_capacity(remote_models.len());
+        for model in remote_models {
+            match ModelPreset::try_from(model) {
+                Ok(preset) => presets.push(preset),
+                Err(error) => tracing::warn!(%error, "rejecting invalid model catalog capacity"),
+            }
+        }
         let uses_codex_backend = self
             .auth_manager()
             .is_some_and(AuthManager::current_auth_uses_codex_backend);

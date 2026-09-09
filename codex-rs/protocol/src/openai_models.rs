@@ -2,6 +2,11 @@
 //!
 //! These types are serialized across core, TUI, app-server, and SDK boundaries, so field defaults
 //! are used to preserve compatibility when older payloads omit newly introduced attributes.
+#[path = "openai_models/context_window.rs"]
+mod context_window;
+pub use context_window::ContextWindowCapacity;
+pub use context_window::InvalidContextWindow;
+pub use context_window::ModelContextWindow;
 
 use std::fmt;
 use std::str::FromStr;
@@ -276,6 +281,14 @@ pub struct ModelPreset {
     /// Input modalities accepted when composing user turns for this preset.
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    /// Curated normal context capacity, or a provider-managed default.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub context_window: ModelContextWindow,
+    /// Maximum catalog capacity, or a provider-managed default.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub max_context_window: ModelContextWindow,
 }
 
 /// Visibility of a model in the picker or APIs.
@@ -866,10 +879,11 @@ where
 }
 
 // convert ModelInfo to ModelPreset
-impl From<ModelInfo> for ModelPreset {
-    fn from(info: ModelInfo) -> Self {
+impl TryFrom<ModelInfo> for ModelPreset {
+    type Error = InvalidContextWindow;
+    fn try_from(info: ModelInfo) -> Result<Self, Self::Error> {
         let supports_personality = info.supports_personality();
-        ModelPreset {
+        Ok(ModelPreset {
             id: info.slug.clone(),
             model: info.slug.clone(),
             display_name: info.display_name,
@@ -898,7 +912,15 @@ impl From<ModelInfo> for ModelPreset {
             availability_nux: info.availability_nux,
             supported_in_api: info.supported_in_api,
             input_modalities: info.input_modalities,
-        }
+            context_window: match info.context_window {
+                Some(tokens) => ModelContextWindow::try_from(tokens)?,
+                None => ModelContextWindow::default(),
+            },
+            max_context_window: match info.max_context_window {
+                Some(tokens) => ModelContextWindow::try_from(tokens)?,
+                None => ModelContextWindow::default(),
+            },
+        })
     }
 }
 
@@ -2012,7 +2034,7 @@ mod tests {
 
     #[test]
     fn model_preset_preserves_availability_nux() {
-        let preset = ModelPreset::from(ModelInfo {
+        let preset = ModelPreset::try_from(ModelInfo {
             availability_nux: Some(ModelAvailabilityNux {
                 message: "Try Spark.".to_string(),
             }),
@@ -2020,7 +2042,8 @@ mod tests {
             default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
             service_tiers: Vec::new(),
             ..test_model(/*spec*/ None)
-        });
+        })
+        .expect("valid model capacity");
 
         assert_eq!(
             preset.availability_nux,
@@ -2037,14 +2060,15 @@ mod tests {
 
     #[test]
     fn model_preset_supports_fast_mode_from_service_tiers() {
-        let preset = ModelPreset::from(ModelInfo {
+        let preset = ModelPreset::try_from(ModelInfo {
             service_tiers: vec![ModelServiceTier {
                 id: ServiceTier::Fast.request_value().to_string(),
                 name: "Fast".to_string(),
                 description: "Priority processing.".to_string(),
             }],
             ..test_model(/*spec*/ None)
-        });
+        })
+        .expect("valid model capacity");
 
         assert!(preset.supports_fast_mode());
     }

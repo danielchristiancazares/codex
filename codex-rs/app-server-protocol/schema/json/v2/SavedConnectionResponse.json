@@ -1,6 +1,65 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "ConnectionLoginChallenge": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "browser"
+              ],
+              "title": "BrowserConnectionLoginChallengeType",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "title": "BrowserConnectionLoginChallenge",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "type": {
+              "enum": [
+                "deviceCode"
+              ],
+              "title": "DeviceCodeConnectionLoginChallengeType",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "code",
+            "type",
+            "url"
+          ],
+          "title": "DeviceCodeConnectionLoginChallenge",
+          "type": "object"
+        }
+      ]
+    },
+    "ConnectionSelection": {
+      "enum": [
+        "retain",
+        "switch"
+      ],
+      "type": "string"
+    },
+    "ConnectionText": {
+      "description": "Bounded printable connection metadata, validated when decoding a request.",
+      "type": "string"
+    },
     "InputModality": {
       "description": "Canonical user-input modality tags advertised by a model.",
       "oneOf": [
@@ -265,26 +324,145 @@
         "reasoningEffort"
       ],
       "type": "object"
-    }
-  },
-  "properties": {
-    "data": {
-      "items": {
-        "$ref": "#/definitions/Model"
-      },
-      "type": "array"
     },
-    "nextCursor": {
-      "description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
-      "type": [
-        "string",
-        "null"
-      ]
+    "SavedConnectionInfo": {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "name": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "provider": {
+          "$ref": "#/definitions/SavedConnectionProvider"
+        },
+        "selection": {
+          "$ref": "#/definitions/ConnectionSelection"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "selection"
+      ],
+      "type": "object"
+    },
+    "SavedConnectionProvider": {
+      "enum": [
+        "openai",
+        "copilot"
+      ],
+      "type": "string"
     }
   },
-  "required": [
-    "data"
+  "oneOf": [
+    {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/definitions/SavedConnectionInfo"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "connections"
+          ],
+          "title": "Connectionsv2::SavedConnectionResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "title": "Connectionsv2::SavedConnectionResponse",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/definitions/Model"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "prepared"
+          ],
+          "title": "Preparedv2::SavedConnectionResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "title": "Preparedv2::SavedConnectionResponse",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "switchId": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "type": {
+          "enum": [
+            "selected"
+          ],
+          "title": "Selectedv2::SavedConnectionResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "switchId",
+        "type"
+      ],
+      "title": "Selectedv2::SavedConnectionResponse",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "challenge": {
+          "$ref": "#/definitions/ConnectionLoginChallenge"
+        },
+        "loginId": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "type": {
+          "enum": [
+            "loginStarted"
+          ],
+          "title": "LoginStartedv2::SavedConnectionResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "challenge",
+        "loginId",
+        "type"
+      ],
+      "title": "LoginStartedv2::SavedConnectionResponse",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "enum": [
+            "settled"
+          ],
+          "title": "Settledv2::SavedConnectionResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Settledv2::SavedConnectionResponse",
+      "type": "object"
+    }
   ],
-  "title": "ModelListResponse",
-  "type": "object"
+  "title": "SavedConnectionResponse"
 }

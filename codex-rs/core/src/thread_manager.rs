@@ -375,7 +375,7 @@ pub(crate) struct ThreadManagerState {
     thread_created_tx: broadcast::Sender<ThreadId>,
     thread_id_generator: ThreadIdGenerator,
     auth_manager: Arc<AuthManager>,
-    models_manager: SharedModelsManager,
+    models_manager: codex_model_provider::ScopedModelCatalog,
     git_root_discovery: Arc<GitRootDiscovery>,
     environment_manager: Arc<EnvironmentManager>,
     starting_mcp_runtimes: std::sync::Mutex<Vec<std::sync::Weak<AtomicBool>>>,
@@ -401,11 +401,9 @@ pub fn build_models_manager(
     config: &Config,
     auth_manager: Arc<AuthManager>,
 ) -> SharedModelsManager {
+    let credential_home = auth_manager.connection_credential_home();
     let provider = create_model_provider(config.model_provider.clone(), Some(auth_manager));
-    let manager = provider.models_manager(
-        config.codex_home.to_path_buf(),
-        config.model_catalog.clone(),
-    );
+    let manager = provider.models_manager(credential_home, config.model_catalog.clone());
     manager.set_api_key_model_discovery_enabled(
         config.features.enabled(Feature::ApiKeyModelDiscovery),
     );
@@ -516,7 +514,11 @@ impl ThreadManager {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
-                models_manager,
+                models_manager: codex_model_provider::ScopedModelCatalog::new(
+                    config.model_provider.clone(),
+                    &auth_manager,
+                    models_manager,
+                ),
                 git_root_discovery: Arc::default(),
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
@@ -664,8 +666,12 @@ impl ThreadManager {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
-                models_manager: create_model_provider(provider, Some(auth_manager.clone()))
-                    .models_manager(codex_home, /*config_model_catalog*/ None),
+                models_manager: codex_model_provider::ScopedModelCatalog::new(
+                    provider.clone(),
+                    &auth_manager,
+                    create_model_provider(provider, Some(auth_manager.clone()))
+                        .models_manager(codex_home, /*config_model_catalog*/ None),
+                ),
                 git_root_discovery: Arc::default(),
                 environment_manager,
                 starting_mcp_runtimes: std::sync::Mutex::new(Vec::new()),
@@ -837,7 +843,15 @@ impl ThreadManager {
     }
 
     pub fn get_models_manager(&self) -> SharedModelsManager {
-        self.state.models_manager.clone()
+        self.state.models_manager.current()
+    }
+
+    pub fn get_models_manager_for_config(&self, config: &Config) -> SharedModelsManager {
+        self.state.models_manager.for_provider(
+            &config.model_provider,
+            &self.state.auth_manager,
+            || build_models_manager(config, self.state.auth_manager.clone()),
+        )
     }
 
     pub async fn list_models(
@@ -847,12 +861,16 @@ impl ThreadManager {
     ) -> Vec<ModelPreset> {
         self.state
             .models_manager
+            .current()
             .list_models(refresh_strategy, http_client_factory)
             .await
     }
 
     pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
-        self.state.models_manager.list_collaboration_modes()
+        self.state
+            .models_manager
+            .current()
+            .list_collaboration_modes()
     }
 
     pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
@@ -2105,13 +2123,18 @@ impl ThreadManagerState {
         } else {
             codex_sandboxing::WindowsSandboxProxySettingsMode::Reconcile
         };
+        let models_manager =
+            self.models_manager
+                .for_provider(&config.model_provider, &auth_manager, || {
+                    build_models_manager(&config, auth_manager.clone())
+                });
         let (session, io) = Session::spawn(SessionSpawnArgs {
             config,
             allow_provider_model_fallback,
             instructions,
             installation_id: self.installation_id.clone(),
             auth_manager,
-            models_manager: Arc::clone(&self.models_manager),
+            models_manager,
             git_root_discovery: Arc::clone(&self.git_root_discovery),
             environment_manager: Arc::clone(&self.environment_manager),
             skills_service: Arc::clone(&self.skills_service),

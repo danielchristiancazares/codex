@@ -17,7 +17,11 @@ pub(crate) static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new
     let mut response = bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
     response.models.sort_by_key(|model| model.priority);
-    let mut presets: Vec<ModelPreset> = response.models.into_iter().map(Into::into).collect();
+    let mut presets: Vec<ModelPreset> = response
+        .models
+        .into_iter()
+        .map(|model| ModelPreset::try_from(model).expect("valid model capacity"))
+        .collect();
     ModelPreset::mark_default_by_picker_visibility(&mut presets);
     presets
 });

@@ -15,7 +15,11 @@ pub fn get_model_offline_for_tests(model: Option<&str>) -> String {
     }
     let mut response = bundled_models_response().unwrap_or_default();
     response.models.sort_by_key(|model| model.priority);
-    let presets: Vec<ModelPreset> = response.models.into_iter().map(Into::into).collect();
+    let presets: Vec<ModelPreset> = response
+        .models
+        .into_iter()
+        .map(|model| ModelPreset::try_from(model).expect("valid model capacity"))
+        .collect();
     presets
         .iter()
         .find(|preset| preset.show_in_picker)

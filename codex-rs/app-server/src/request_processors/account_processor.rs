@@ -13,6 +13,7 @@ use codex_login::login_with_bedrock_access_keys;
 use codex_model_provider::is_supported_amazon_bedrock_region;
 
 mod bedrock_setup;
+mod connections;
 mod rate_limit_resets;
 
 // Duration before a browser ChatGPT login attempt is abandoned.
@@ -91,6 +92,7 @@ pub(crate) struct AccountRequestProcessor {
     config: Arc<Config>,
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
+    connection_switches: Arc<Mutex<connections::ConnectionSwitches>>,
 }
 
 impl AccountRequestProcessor {
@@ -108,6 +110,7 @@ impl AccountRequestProcessor {
             config,
             config_manager,
             active_login: Arc::new(Mutex::new(None)),
+            connection_switches: Arc::new(Mutex::new(connections::ConnectionSwitches::new())),
         }
     }
 
@@ -116,6 +119,7 @@ impl AccountRequestProcessor {
         request_id: ConnectionRequestId,
         params: LoginAccountParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.connection_switches.lock().await.require_ready()?;
         self.login_v2(request_id, params).await.map(|()| None)
     }
 
@@ -123,6 +127,7 @@ impl AccountRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.connection_switches.lock().await.require_ready()?;
         self.logout_v2(request_id).await.map(|()| None)
     }
 
@@ -430,7 +435,10 @@ impl AccountRequestProcessor {
             self.config.auth_keyring_backend_kind(),
         ) {
             Ok(()) => {
-                self.auth_manager.reload().await;
+                self.auth_manager
+                    .reload_configured_login()
+                    .await
+                    .map_err(|error| internal_error(error.to_string()))?;
                 self.config_manager.clear_cloud_config_bundle_loader();
                 Ok(())
             }
@@ -526,7 +534,10 @@ impl AccountRequestProcessor {
                 }
             }
             .map_err(|err| internal_error(format!("failed to save Amazon Bedrock auth: {err}")))?;
-            self.auth_manager.reload().await;
+            self.auth_manager
+                .reload_configured_login()
+                .await
+                .map_err(|error| internal_error(error.to_string()))?;
             self.config_manager.clear_cloud_config_bundle_loader();
             Ok(LoginAccountResponse::AmazonBedrock {})
         }
@@ -918,7 +929,10 @@ impl AccountRequestProcessor {
 
         if success {
             let auth_manager = thread_manager.auth_manager();
-            auth_manager.reload().await;
+            if let Err(error) = auth_manager.reload_configured_login().await {
+                tracing::warn!(%error, "failed to activate the completed login");
+                return;
+            }
             config_manager.replace_cloud_config_bundle_loader(
                 auth_manager.clone(),
                 config.chatgpt_base_url.clone(),

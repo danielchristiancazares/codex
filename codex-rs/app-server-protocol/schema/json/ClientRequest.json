@@ -618,6 +618,10 @@
       ],
       "type": "object"
     },
+    "ConnectionText": {
+      "description": "Bounded printable connection metadata, validated when decoding a request.",
+      "type": "string"
+    },
     "ConsumeAccountRateLimitResetCreditParams": {
       "properties": {
         "creditId": {
@@ -3906,6 +3910,133 @@
           "type": "object"
         }
       ]
+    },
+    "SavedConnectionParams": {
+      "oneOf": [
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "list"
+              ],
+              "type": "string"
+            },
+            "activeProvider": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "activeProvider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "add"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "provider": {
+              "$ref": "#/definitions/SavedConnectionProvider"
+            }
+          },
+          "required": [
+            "action",
+            "name",
+            "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "prepare"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "select"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "id",
+            "switchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "commit"
+              ],
+              "type": "string"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "switchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "restore"
+              ],
+              "type": "string"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "switchId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SavedConnectionProvider": {
+      "enum": [
+        "openai",
+        "copilot"
+      ],
+      "type": "string"
     },
     "SelectedCapabilityRoot": {
       "description": "A user-selected root that can expose one or more runtime capabilities.",
@@ -7735,6 +7866,30 @@
         "method"
       ],
       "title": "WindowsSandbox/readinessRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "savedConnection/manage"
+          ],
+          "title": "SavedConnection/manageRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/SavedConnectionParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "SavedConnection/manageRequest",
       "type": "object"
     },
     {

@@ -885,6 +885,9 @@ impl MessageProcessor {
             .connection_closed(connection_id)
             .await;
         self.thread_processor.connection_closed(connection_id).await;
+        self.account_processor
+            .connection_switch_closed(connection_id)
+            .await;
     }
 
     pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
@@ -1731,6 +1734,11 @@ impl MessageProcessor {
                     .login_account(request_id.clone(), params)
                     .await
             }
+            ClientRequest::SavedConnection { params, .. } => self
+                .account_processor
+                .saved_connection(request_id.connection_id, params)
+                .await
+                .map(|response| Some(response.into())),
             ClientRequest::BedrockDiscover { params, .. } => {
                 self.account_processor.bedrock_discover(params).await
             }

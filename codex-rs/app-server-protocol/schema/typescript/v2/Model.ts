@@ -21,4 +21,12 @@ additionalSpeedTiers: Array<string>, serviceTiers: Array<ModelServiceTier>,
 /**
  * Catalog default service tier id for this model, when one is configured.
  */
-defaultServiceTier: string | null, isDefault: boolean, };
+defaultServiceTier: string | null, isDefault: boolean,
+/**
+ * Curated normal context capacity; null selects the provider default.
+ */
+contextWindow: number | null,
+/**
+ * Maximum catalog capacity; null selects the provider default.
+ */
+maxContextWindow: number | null, };

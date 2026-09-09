@@ -98,6 +98,8 @@ mod residency;
 mod review;
 mod rollout_migration;
 mod safety_check_downgrade;
+#[path = "saved_connection_tests.rs"]
+mod saved_connection_tests;
 #[cfg(not(target_os = "windows"))]
 mod selected_capability_stack;
 mod selected_environment;

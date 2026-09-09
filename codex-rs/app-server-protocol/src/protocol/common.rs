@@ -1265,6 +1265,11 @@ client_request_definitions! {
         response: v2::WindowsSandboxReadinessResponse,
     },
 
+    SavedConnection => "savedConnection/manage" {
+        params: v2::SavedConnectionParams,
+        serialization: global("account-auth"),
+        response: v2::SavedConnectionResponse,
+    },
     LoginAccount => "account/login/start" {
         params: v2::LoginAccountParams,
         inspect_params: true,

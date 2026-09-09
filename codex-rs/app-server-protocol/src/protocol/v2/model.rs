@@ -121,6 +121,14 @@ pub struct Model {
     pub default_service_tier: Option<String>,
     // Only one model should be marked as default.
     pub is_default: bool,
+    /// Curated normal context capacity; null selects the provider default.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub context_window: codex_protocol::openai_models::ModelContextWindow,
+    /// Maximum catalog capacity; null selects the provider default.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub max_context_window: codex_protocol::openai_models::ModelContextWindow,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

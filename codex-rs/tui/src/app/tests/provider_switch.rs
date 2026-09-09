@@ -171,7 +171,8 @@ requires_openai_auth = true
             base_url = server.uri(),
         ),
     )?;
-    let mut source_presets = vec![ModelPreset::from(source_model)];
+    let mut source_presets =
+        vec![ModelPreset::try_from(source_model).expect("valid model capacity")];
     ModelPreset::mark_default_by_picker_visibility(&mut source_presets);
     app.model_catalog = Arc::new(ModelCatalog::new(source_presets.clone()));
 

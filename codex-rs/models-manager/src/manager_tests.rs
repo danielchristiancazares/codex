@@ -1475,8 +1475,10 @@ fn build_available_models_picks_default_after_hiding_hidden_models() {
     let visible_model =
         remote_model_with_visibility("visible", "Visible", /*priority*/ 1, "list");
 
-    let expected_hidden = ModelPreset::from(hidden_model.clone());
-    let mut expected_visible = ModelPreset::from(visible_model.clone());
+    let expected_hidden =
+        ModelPreset::try_from(hidden_model.clone()).expect("valid model capacity");
+    let mut expected_visible =
+        ModelPreset::try_from(visible_model.clone()).expect("valid model capacity");
     expected_visible.is_default = true;
 
     let available = manager.build_available_models(vec![hidden_model, visible_model]);

@@ -260,7 +260,7 @@ impl CatalogRequestProcessor {
         let models_manager = match model_provider {
             Some(model_provider) => {
                 if model_provider == config.model_provider_id {
-                    thread_manager.get_models_manager()
+                    thread_manager.get_models_manager_for_config(&config)
                 } else {
                     let provider_info = config
                         .model_providers
@@ -277,7 +277,7 @@ impl CatalogRequestProcessor {
                         create_model_provider(provider_info, Some(thread_manager.auth_manager()));
                     if use_provider_cache {
                         provider.models_manager(
-                            config.codex_home.to_path_buf(),
+                            thread_manager.auth_manager().connection_credential_home(),
                             /*config_model_catalog*/ None,
                         )
                     } else {
@@ -285,7 +285,7 @@ impl CatalogRequestProcessor {
                     }
                 }
             }
-            None => thread_manager.get_models_manager(),
+            None => thread_manager.get_models_manager_for_config(&config),
         };
         let models = supported_models(
             models_manager,

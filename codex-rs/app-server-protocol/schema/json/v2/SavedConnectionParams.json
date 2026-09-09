@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ConnectionText": {
+      "description": "Bounded printable connection metadata, validated when decoding a request.",
+      "type": "string"
+    },
+    "SavedConnectionProvider": {
+      "enum": [
+        "openai",
+        "copilot"
+      ],
+      "type": "string"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "list"
+          ],
+          "type": "string"
+        },
+        "activeProvider": {
+          "$ref": "#/definitions/ConnectionText"
+        }
+      },
+      "required": [
+        "action",
+        "activeProvider"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "add"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "provider": {
+          "$ref": "#/definitions/SavedConnectionProvider"
+        }
+      },
+      "required": [
+        "action",
+        "name",
+        "provider"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "prepare"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ConnectionText"
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "select"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "switchId": {
+          "$ref": "#/definitions/ConnectionText"
+        }
+      },
+      "required": [
+        "action",
+        "id",
+        "switchId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "commit"
+          ],
+          "type": "string"
+        },
+        "switchId": {
+          "$ref": "#/definitions/ConnectionText"
+        }
+      },
+      "required": [
+        "action",
+        "switchId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "restore"
+          ],
+          "type": "string"
+        },
+        "switchId": {
+          "$ref": "#/definitions/ConnectionText"
+        }
+      },
+      "required": [
+        "action",
+        "switchId"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "SavedConnectionParams"
+}

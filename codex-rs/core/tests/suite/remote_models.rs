@@ -1093,7 +1093,8 @@ async fn remote_models_do_not_append_removed_builtin_presets() -> Result<()> {
         .iter()
         .find(|model| model.model == "remote-alpha")
         .expect("remote model should be listed");
-    let mut expected_remote: ModelPreset = remote_model.into();
+    let mut expected_remote =
+        ModelPreset::try_from(remote_model).expect("valid remote model preset");
     expected_remote.is_default = remote.is_default;
     assert_eq!(*remote, expected_remote);
     let default_model = available

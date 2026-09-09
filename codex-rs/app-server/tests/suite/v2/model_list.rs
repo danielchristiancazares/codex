@@ -191,6 +191,8 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
             .collect(),
         default_service_tier: preset.default_service_tier.clone(),
         is_default: preset.is_default,
+        context_window: preset.context_window,
+        max_context_window: preset.max_context_window,
     }
 }
 
@@ -207,7 +209,12 @@ fn expected_visible_models() -> Vec<Model> {
     presets
         .iter()
         .filter(|preset| preset.show_in_picker)
-        .map(model_from_preset)
+        .map(|preset| {
+            let mut model = model_from_preset(preset);
+            // The simplified cache fixture leaves the maximum provider-managed.
+            model.max_context_window = Default::default();
+            model
+        })
         .collect()
 }
 
@@ -388,8 +395,10 @@ api_key_model_discovery = true
         data: items,
         next_cursor,
     } = serde_json::from_value(response.result)?;
-    let mut expected_presets: Vec<ModelPreset> =
-        remote_models.into_iter().map(Into::into).collect();
+    let mut expected_presets: Vec<ModelPreset> = remote_models
+        .into_iter()
+        .map(|model| ModelPreset::try_from(model).expect("valid model capacity"))
+        .collect();
     ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
     let mut expected_items = expected_presets
         .iter()
@@ -481,7 +490,8 @@ wire_api = "responses"
         })
         .await?;
 
-    let mut expected_presets = vec![ModelPreset::from(selected_model)];
+    let mut expected_presets =
+        vec![ModelPreset::try_from(selected_model).expect("valid model capacity")];
     ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
     let expected = expected_presets
         .iter()

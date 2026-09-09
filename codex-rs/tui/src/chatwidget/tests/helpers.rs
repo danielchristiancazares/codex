@@ -322,7 +322,7 @@ pub(crate) fn set_fast_mode_test_catalog_for_models(
     }
     .models
     .into_iter()
-    .map(Into::into)
+    .map(|model| ModelPreset::try_from(model).expect("valid model capacity"))
     .collect();
 
     Arc::make_mut(&mut chat.model_catalog).models = models;

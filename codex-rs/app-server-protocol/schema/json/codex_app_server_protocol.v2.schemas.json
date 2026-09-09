@@ -3636,6 +3636,30 @@
             },
             "method": {
               "enum": [
+                "savedConnection/manage"
+              ],
+              "title": "SavedConnection/manageRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/SavedConnectionParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "SavedConnection/manageRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "account/login/start"
               ],
               "title": "Account/login/startRequestMethod",
@@ -6205,6 +6229,65 @@
         "hooks"
       ],
       "type": "object"
+    },
+    "ConnectionLoginChallenge": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "browser"
+              ],
+              "title": "BrowserConnectionLoginChallengeType",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "title": "BrowserConnectionLoginChallenge",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "type": {
+              "enum": [
+                "deviceCode"
+              ],
+              "title": "DeviceCodeConnectionLoginChallengeType",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "code",
+            "type",
+            "url"
+          ],
+          "title": "DeviceCodeConnectionLoginChallenge",
+          "type": "object"
+        }
+      ]
+    },
+    "ConnectionSelection": {
+      "enum": [
+        "retain",
+        "switch"
+      ],
+      "type": "string"
+    },
+    "ConnectionText": {
+      "description": "Bounded printable connection metadata, validated when decoding a request.",
+      "type": "string"
     },
     "ConnectorMetadata": {
       "description": "EXPERIMENTAL - metadata returned by app/read.",
@@ -11159,6 +11242,16 @@
             }
           ]
         },
+        "contextWindow": {
+          "default": null,
+          "description": "Curated normal context capacity; null selects the provider default.",
+          "format": "int64",
+          "minimum": 1.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "defaultReasoningEffort": {
           "$ref": "#/definitions/ReasoningEffort"
         },
@@ -11194,6 +11287,16 @@
         },
         "isDefault": {
           "type": "boolean"
+        },
+        "maxContextWindow": {
+          "default": null,
+          "description": "Maximum catalog capacity; null selects the provider default.",
+          "format": "int64",
+          "minimum": 1.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "model": {
           "type": "string"
@@ -15476,6 +15579,270 @@
         }
       },
       "type": "object"
+    },
+    "SavedConnectionInfo": {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "name": {
+          "$ref": "#/definitions/ConnectionText"
+        },
+        "provider": {
+          "$ref": "#/definitions/SavedConnectionProvider"
+        },
+        "selection": {
+          "$ref": "#/definitions/ConnectionSelection"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "selection"
+      ],
+      "type": "object"
+    },
+    "SavedConnectionParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "oneOf": [
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "list"
+              ],
+              "type": "string"
+            },
+            "activeProvider": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "activeProvider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "add"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "provider": {
+              "$ref": "#/definitions/SavedConnectionProvider"
+            }
+          },
+          "required": [
+            "action",
+            "name",
+            "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "prepare"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "select"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "id",
+            "switchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "commit"
+              ],
+              "type": "string"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "switchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "restore"
+              ],
+              "type": "string"
+            },
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            }
+          },
+          "required": [
+            "action",
+            "switchId"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "SavedConnectionParams"
+    },
+    "SavedConnectionProvider": {
+      "enum": [
+        "openai",
+        "copilot"
+      ],
+      "type": "string"
+    },
+    "SavedConnectionResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "oneOf": [
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/definitions/SavedConnectionInfo"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "connections"
+              ],
+              "title": "Connectionsv2::SavedConnectionResponseType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "data",
+            "type"
+          ],
+          "title": "Connectionsv2::SavedConnectionResponse",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "prepared"
+              ],
+              "title": "Preparedv2::SavedConnectionResponseType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "data",
+            "type"
+          ],
+          "title": "Preparedv2::SavedConnectionResponse",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "switchId": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "type": {
+              "enum": [
+                "selected"
+              ],
+              "title": "Selectedv2::SavedConnectionResponseType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "switchId",
+            "type"
+          ],
+          "title": "Selectedv2::SavedConnectionResponse",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "challenge": {
+              "$ref": "#/definitions/ConnectionLoginChallenge"
+            },
+            "loginId": {
+              "$ref": "#/definitions/ConnectionText"
+            },
+            "type": {
+              "enum": [
+                "loginStarted"
+              ],
+              "title": "LoginStartedv2::SavedConnectionResponseType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "challenge",
+            "loginId",
+            "type"
+          ],
+          "title": "LoginStartedv2::SavedConnectionResponse",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "settled"
+              ],
+              "title": "Settledv2::SavedConnectionResponseType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Settledv2::SavedConnectionResponse",
+          "type": "object"
+        }
+      ],
+      "title": "SavedConnectionResponse"
     },
     "ScheduledTaskSchedule": {
       "oneOf": [

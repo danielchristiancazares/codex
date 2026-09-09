@@ -120,7 +120,7 @@ impl ModelsManager for SequenceModelsManager {
 
 fn one_model_preset() -> Vec<ModelPreset> {
     let mut catalog = bundled_models_response().expect("bundled models");
-    vec![catalog.models.remove(0).into()]
+    vec![ModelPreset::try_from(catalog.models.remove(0)).expect("valid bundled model preset")]
 }
 
 #[tokio::test]

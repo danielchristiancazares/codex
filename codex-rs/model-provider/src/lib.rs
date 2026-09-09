@@ -34,3 +34,5 @@ pub use provider::ProviderUnauthorizedRecovery;
 pub use provider::RemoteCompactionSupport;
 pub use provider::SharedModelProvider;
 pub use provider::create_model_provider;
+mod scoped_catalog;
+pub use scoped_catalog::ScopedModelCatalog;
