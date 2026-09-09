@@ -12,6 +12,7 @@ use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEnt
 use codex_protocol::protocol::AdditionalContextKind as CoreAdditionalContextKind;
 use codex_protocol::protocol::TurnSettingsUpdate;
 use codex_protocol::protocol::TurnSettingsUpdateOutcome;
+use codex_protocol::turn_input::AdditionalContextAction;
 use codex_skills::system_cache_root_dir;
 
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
@@ -91,10 +92,9 @@ pub(crate) struct TurnRequestProcessor {
 }
 
 fn map_additional_context(
-    additional_context: Option<HashMap<String, AdditionalContextEntry>>,
+    additional_context: HashMap<String, AdditionalContextEntry>,
 ) -> BTreeMap<String, CoreAdditionalContextEntry> {
     additional_context
-        .unwrap_or_default()
         .into_iter()
         .map(|(key, entry)| {
             (
@@ -587,7 +587,13 @@ impl TurnRequestProcessor {
         let environment_selections =
             resolve_turn_environment_selections(self.thread_manager.as_ref(), params.environments)?;
 
-        let additional_context = map_additional_context(params.additional_context);
+        let additional_context = match params.additional_context {
+            None => AdditionalContextAction::KeepSourceState,
+            Some(values) if values.is_empty() => AdditionalContextAction::ClearSourceState,
+            Some(values) => {
+                AdditionalContextAction::PublishSnapshot(map_additional_context(values))
+            }
+        };
         let turn_has_input = !params.input.is_empty();
         let input = if let Some(tool_output) = params.tool_output {
             let item = ResponseItem::FunctionCallOutput {
@@ -653,7 +659,7 @@ impl TurnRequestProcessor {
                         cyber_access_program: params.cyber_access_program.map(Into::into),
                         ..Default::default()
                     })
-                    .with_additional_context(additional_context)
+                    .with_additional_context_action(additional_context)
                     .with_responses_metadata(params.responsesapi_client_metadata)
                     .with_trace(self.request_trace_context(&request_id).await),
             )
@@ -1051,7 +1057,13 @@ impl TurnRequestProcessor {
             .into_iter()
             .map(V2UserInput::into_core)
             .collect();
-        let additional_context = map_additional_context(params.additional_context);
+        let additional_context = match params.additional_context {
+            None => AdditionalContextAction::KeepSourceState,
+            Some(values) if values.is_empty() => AdditionalContextAction::ClearSourceState,
+            Some(values) => {
+                AdditionalContextAction::PublishSnapshot(map_additional_context(values))
+            }
+        };
 
         let submission = thread
             .steer_turn(
@@ -1059,7 +1071,7 @@ impl TurnRequestProcessor {
                     content: mapped_items,
                     client_id: params.client_user_message_id,
                 })
-                .with_additional_context(additional_context)
+                .with_additional_context_action(additional_context)
                 .with_responses_metadata(params.responsesapi_client_metadata),
                 params.expected_turn_id,
             )

@@ -1,11 +1,13 @@
 mod additional_context;
 mod auto_compact_window;
+mod context_fingerprint;
 mod service;
 mod session;
 mod turn;
 mod turn_token_usage;
 
 pub(crate) use crate::tools::ExecutedToolCalls;
+pub(crate) use additional_context::AdditionalContextSnapshot;
 pub(crate) use additional_context::AdditionalContextStore;
 pub(crate) use auto_compact_window::AutoCompactWindowIds;
 pub(crate) use auto_compact_window::AutoCompactWindowSnapshot;
