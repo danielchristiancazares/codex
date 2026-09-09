@@ -3,6 +3,7 @@
 //! checkpoint replay and source-call rollback share their live lifecycle.
 //! Oversized instructions keep an incomplete excerpt for bounded root review, including
 //! sources recovered from legacy Guardian checkpoints before their raw history is dropped.
+use super::tool_discovery::ToolDiscoveryState;
 
 #[path = "history_user_authorization.rs"]
 mod user_authorization;
@@ -96,6 +97,7 @@ pub(crate) struct ContextManager {
     reference_context_item: Option<TurnContextItem>,
     /// World state most recently appended to model-visible history.
     world_state_baseline: Option<WorldStateSnapshot>,
+    tool_discovery: ToolDiscoveryState,
 }
 
 struct SharedConversationHistory {
@@ -184,6 +186,7 @@ impl ContextManager {
             ),
             reference_context_item: None,
             world_state_baseline: None,
+            tool_discovery: ToolDiscoveryState::default(),
         }
     }
 
@@ -372,6 +375,7 @@ impl ContextManager {
                     .unwrap_or_else(|| with_serialization_allowance(policy));
                 truncate_function_output_payload(output, policy, estimate_audio_token_count);
             }
+            self.tool_discovery.observe(&mut processed.item);
             if let Some(review_history) = &mut self.review_history
                 && !matches!(item, ResponseItem::Message { role, content, .. }
                 if role == "user" && is_contextual_user_message_content(content))
@@ -416,6 +420,10 @@ impl ContextManager {
     /// Returns annotated history items without cloning their response payloads.
     pub(crate) fn annotated_items(&self) -> &[ResponseItemEnvelope] {
         &self.items
+    }
+
+    pub(crate) fn pending_tool_search_exchange(&self) -> Vec<ResponseItemEnvelope> {
+        self.tool_discovery.pending_exchange(&self.items)
     }
 
     /// Returns raw items in the history and consumes the snapshot.
@@ -485,6 +493,7 @@ impl ContextManager {
     }
 
     pub(crate) fn replace_annotated(&mut self, items: Vec<ResponseItemEnvelope>) {
+        self.tool_discovery.rebuild(&items);
         self.retained_context = Arc::default();
         self.user_message_revision = self.user_message_revision.saturating_add(1);
         if let Some(review_history) = &mut self.review_history {
@@ -500,6 +509,7 @@ impl ContextManager {
 
     /// Compaction changes the model's history without changing the user's authorization.
     pub(crate) fn replace_compacted(&mut self, items: Vec<ResponseItemEnvelope>) {
+        self.tool_discovery.rebuild(&items);
         if self.guardian_context_mode == GuardianContextMode::Legacy
             && self.review_history.is_none()
         {

@@ -14,6 +14,7 @@ use bm25::SearchEngine;
 use bm25::SearchEngineBuilder;
 use codex_tools::LoadableToolSpec;
 use codex_tools::TOOL_SEARCH_DEFAULT_LIMIT;
+use codex_tools::TOOL_SEARCH_MAX_RESULTS;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolName;
 use codex_tools::ToolSearchEntry;
@@ -209,7 +210,10 @@ impl ToolSearchHandler {
                 "query must not be empty".to_string(),
             ));
         }
-        let limit = args.limit.unwrap_or(TOOL_SEARCH_DEFAULT_LIMIT);
+        let limit = args
+            .limit
+            .unwrap_or(TOOL_SEARCH_DEFAULT_LIMIT)
+            .min(TOOL_SEARCH_MAX_RESULTS);
 
         if limit == 0 {
             return Err(FunctionCallError::RespondToModel(
