@@ -6,9 +6,10 @@ and ports selected behavior from the personal fork's
 `3b2d9a69e62745d4e1ebfda84cfc6134c529b7c4`. The source fork is preserved by
 `backup/main-before-rebase-20260907-a925b5b3c3`.
 
-The maintained product branch is `main`, with the fork commits rebased onto
-OpenAI's fetched `upstream/main`. `origin/main` publishes the product; the original
-fork history remains available through the dated backup ref above.
+The maintained product branch is `main`. This initial migration used the exact
+OpenAI snapshot above; future syncs target published stable Codex release tags.
+`origin/main` publishes the product, and the original fork history remains
+available through the dated backup ref above.
 See [fork-workflow.md](fork-workflow.md) for the current working agreement,
 repository-local Git setup, and rebase procedure.
 
@@ -62,8 +63,9 @@ wrapper around the current upstream package builder; see
 
 ## Keeping future rebases manageable
 
-Keep product work on `main` and use `upstream/main` as the upstream reference.
-Before rebasing, preserve local work and verify the intended upstream commit.
+Keep product work on `main` and select published stable OpenAI release tags for
+future rebases. Preserve local work and use the recorded upstream base to replay
+only fork commits onto the selected release.
 The initial commit series isolates storage, first-token timing, request metadata,
 delta identifiers, notification names, listener/subscriber reuse, telemetry, and
 release LTO policy. Copilot authentication and transport stay together so their
@@ -92,7 +94,8 @@ These are areas for a patch series, not a requirement to combine each entire are
 into one commit. Keep independent fixes separate so a future rebase can drop or
 adapt the particular behavior that overlaps an upstream change.
 
-Rebase regularly and inspect semantic changes even when a patch applies cleanly.
+Rebase when adopting a selected stable release, and inspect semantic changes even
+when a patch applies cleanly.
 Remove a local patch when upstream provides equivalent behavior. Repository-local
 resolution reuse is enabled with automatic staging disabled. Review reused
 resolutions before staging, validate affected crates, and review UI snapshots

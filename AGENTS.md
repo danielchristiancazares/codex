@@ -9,7 +9,10 @@ technical requirements.
 
 - `origin` is the personal repository; `upstream` is OpenAI's synchronization source.
   Product work belongs on `main`, which tracks `origin/main`. Rebase the fork
-  commits onto the fetched `upstream/main`; a separate mirror branch is unnecessary.
+  commits only onto published stable OpenAI release tags (`rust-vX.Y.Z`).
+  `upstream/main` is for reference. Exclude alpha, beta, and RC tags from routine
+  syncs. Use the recorded upstream base and explicit `git rebase --onto` procedure
+  in `docs/fork-workflow.md` so only fork commits are replayed.
 - Inspect branch, worktree, and staged/unstaged/untracked state before editing.
   Preserve existing work and use one writer per worktree.
 - Complete authorized implementation, proportionate validation, and diff review

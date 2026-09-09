@@ -9,17 +9,24 @@ product branch is the normal path.
 
 ## Branch ownership
 
-| Name            | Purpose                                                  |
-| --------------- | -------------------------------------------------------- |
-| `upstream/main` | Fetched OpenAI source; the base for fork rebases         |
-| `main`          | Maintained product, with a small series of fork commits  |
-| `origin/main`   | Published product history                                |
-| `backup/*`      | Recovery refs created before substantial history changes |
+| Name                    | Purpose                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `upstream/main`         | OpenAI development reference                             |
+| `refs/tags/rust-vX.Y.Z` | Selected stable OpenAI release used as the rebase target |
+| `main`                  | Maintained product, with a small series of fork commits  |
+| `origin/main`           | Published product history                                |
+| `backup/*`              | Recovery refs created before substantial history changes |
 
 Local `main` tracks `origin/main`. Ordinary pushes publish to `origin`, and
 `git pull` only fast-forwards from the published fork. Integrate OpenAI changes
-with an explicit `git rebase upstream/main`. The remote-tracking ref already
-provides the upstream baseline; keep the fork commits on `main`.
+only when adopting a selected, published stable Codex release tag of the form
+`rust-vX.Y.Z`. Alpha, beta, and release-candidate tags are excluded from routine
+syncs. Fetching development commits or discovering a new tag does not trigger a
+rebase.
+
+Select the tag from OpenAI's [published releases](https://github.com/openai/codex/releases).
+Confirm it is a completed stable release, then use the explicit `--onto` procedure
+below. Release branches can have different ancestry from `upstream/main`.
 
 The original fork tip and migration boundaries are recorded in
 [upstream-main-migration.md](upstream-main-migration.md). Keep `main` as the
@@ -101,26 +108,51 @@ published with commits. The setup commands above are the reproducible record.
 
 ## Updating from OpenAI
 
+The recorded upstream base is currently:
+
+| Field  | Value                                         |
+| ------ | --------------------------------------------- |
+| Source | Initial migration snapshot of `upstream/main` |
+| Commit | `b4373e53ab79df7baadc6805dea54a060b820307`    |
+
+This initial migration predates the release-tag policy. For the first tagged
+sync, wait for a stable release whose history includes this snapshot. After each
+successful sync, update this table with the selected release tag and its resolved
+commit SHA. That commit is `OLD_UPSTREAM_BASE` for the next sync; do not infer it
+from the moving `upstream/main` ref.
+
 Start on `main` with committed work and a clean index/worktree. If unrelated
 changes are present, preserve them explicitly before continuing.
+Replace `RELEASE_TAG` below with the selected tag, and `OLD_UPSTREAM_BASE` with
+the commit recorded above.
 
 ```sh
-git fetch upstream
 git fetch origin
+git fetch upstream tag RELEASE_TAG
 git log --oneline main..origin/main
 ```
 
-If the log shows remote commits absent from the local branch, inspect and reconcile them before
-the upstream rebase. Then record the old merge base, remote tip, and backup ref
-in task notes:
+If the log shows remote commits absent from the local branch, inspect and
+reconcile them before the rebase. Verify the recorded base is an ancestor of
+`main`, review the fork commits to replay, and record the release tag's commit,
+the current remote tip, and the backup ref in task notes:
 
 ```sh
-git merge-base main upstream/main
+git merge-base --is-ancestor OLD_UPSTREAM_BASE main
+git log --oneline OLD_UPSTREAM_BASE..main
+git rev-parse 'refs/tags/RELEASE_TAG^{commit}'
 git rev-parse origin/main
 git branch "backup/main-$(date +%Y%m%d-%H%M%S)" main
 ```
 
-Start the rebase with `git rebase upstream/main`.
+Replay only the fork commits onto the selected release:
+
+```sh
+git rebase --onto refs/tags/RELEASE_TAG OLD_UPSTREAM_BASE main
+```
+
+The explicit old base is required: a plain rebase onto a release tag can also
+replay upstream commits from a different development or release branch.
 
 Review every conflict against both behaviors, including reused resolutions.
 `git rerere diff` shows the recorded resolution changes. Stage reviewed paths
@@ -130,13 +162,14 @@ in-progress rebase to its starting state.
 Afterward, compare the old and new commit series with:
 
 ```sh
-git range-diff OLD_BASE..BACKUP_REF upstream/main..main
+git range-diff OLD_UPSTREAM_BASE..BACKUP_REF refs/tags/RELEASE_TAG..main
 ```
 
 Replace the uppercase placeholders with the recorded values. Drop fork patches once
 upstream supplies equivalent behavior, and check that surviving integration
 points still control the relevant code paths. Validate affected crates and UI
 snapshots before the final lint/format pass.
+Update and commit the recorded upstream base after the sync passes validation.
 
 When publication of the rewritten branch is authorized, pin the lease to the
 remote tip recorded before the rebase:
