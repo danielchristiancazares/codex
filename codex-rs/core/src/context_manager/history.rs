@@ -1091,7 +1091,7 @@ fn encrypted_function_output_estimate_adjustment(item: &ResponseItem) -> (i64, i
     (payload_bytes, replacement_bytes)
 }
 
-fn is_model_generated_item(item: &ResponseItem) -> bool {
+pub(super) fn is_model_generated_item(item: &ResponseItem) -> bool {
     match item {
         ResponseItem::Message { role, .. } => role == "assistant",
         ResponseItem::Reasoning { .. }
