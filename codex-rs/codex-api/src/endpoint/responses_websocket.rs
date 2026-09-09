@@ -34,6 +34,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
@@ -49,10 +50,15 @@ use tungstenite::extensions::compression::deflate::DeflateConfig;
 use tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
+#[path = "responses_websocket_liveness.rs"]
+mod liveness;
+use liveness::ResponseLiveness;
+
 struct WsStream {
     tx_command: mpsc::Sender<WsCommand>,
     rx_message: mpsc::UnboundedReceiver<Result<Message, WsError>>,
     pump_task: tokio::task::JoinHandle<()>,
+    transport_activity: watch::Receiver<Instant>,
 }
 
 enum WsCommand {
@@ -66,6 +72,7 @@ impl WsStream {
     fn new(inner: WebSocketConnection) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
         let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
+        let (activity_tx, transport_activity) = watch::channel(Instant::now());
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
@@ -90,6 +97,7 @@ impl WsStream {
                         let Some(message) = message else {
                             break;
                         };
+                        activity_tx.send_replace(Instant::now());
                         match message {
                             Ok(Message::Ping(payload)) => {
                                 if let Err(err) = inner.send(Message::Pong(payload)).await {
@@ -124,6 +132,7 @@ impl WsStream {
             tx_command,
             rx_message,
             pump_task,
+            transport_activity,
         }
     }
 
@@ -716,11 +725,13 @@ async fn run_websocket_response_stream(
     )
     .await?;
 
+    let mut liveness = ResponseLiveness::new(idle_timeout);
     loop {
         let poll_start = Instant::now();
-        let response = tokio::time::timeout(idle_timeout, ws_stream.next())
+        let response = liveness
+            .next_message(&mut ws_stream.rx_message, &mut ws_stream.transport_activity)
             .await
-            .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()));
+            .map(|message| Some(Ok(message)));
         let poll_duration = poll_start.elapsed();
         let parsed_event = match &response {
             Ok(Some(Ok(Message::Text(text)))) => {
@@ -799,6 +810,7 @@ async fn run_websocket_response_stream(
                         ));
                     }
                 };
+                liveness.record_event(&event);
                 emit_responses_websocket_timing_event(
                     event.kind(),
                     text.as_str(),
@@ -1007,6 +1019,10 @@ fn reject_responses_websocket_auth(auth: &SharedAuthProvider, error: &ApiError) 
         auth.on_responses_websocket_auth_rejected();
     }
 }
+
+#[cfg(test)]
+#[path = "responses_websocket_liveness_tests.rs"]
+mod liveness_tests;
 
 #[cfg(test)]
 mod tests {
