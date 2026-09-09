@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/switch_tests.rs
+expression: "render_bottom_popup(&chat, 80)"
+---
+  Add account
+  Enter code ABCD-1234 to authorize this account.
+
+› 1. Open sign-in page  https://github.com/login/device
+  2. Cancel login
+
+  Esc hides this view; login continues

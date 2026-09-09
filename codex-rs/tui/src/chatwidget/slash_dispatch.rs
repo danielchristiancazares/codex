@@ -315,8 +315,10 @@ impl ChatWidget {
                 self.open_model_popup();
                 self.defer_input_until_settings_applied();
             }
-            SlashCommand::Provider => {
-                self.open_provider_popup();
+            SlashCommand::Switch => {
+                self.app_event_tx.send(AppEvent::ConnectionSwitch(
+                    crate::connection_switch::SwitchAction::Show,
+                ));
                 self.defer_input_until_settings_applied();
             }
             SlashCommand::Personality => {
@@ -741,6 +743,7 @@ impl ChatWidget {
         } = prepared;
         let trimmed = args.trim();
         match cmd {
+            SlashCommand::Switch => self.handle_switch_args(trimmed),
             SlashCommand::Export if trimmed.is_empty() => self.show_transcript_export_popup(),
             SlashCommand::Export => {
                 self.set_queue_autosend_suppressed(/*suppressed*/ true);
@@ -1219,7 +1222,7 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
-            | SlashCommand::Provider
+            | SlashCommand::Switch
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal

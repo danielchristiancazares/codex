@@ -3331,18 +3331,21 @@ async fn model_selection_popup_snapshot() {
 async fn provider_selection_popup_snapshot_and_selection_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.thread_id = Some(ThreadId::new());
-    chat.open_provider_popup();
+    chat.open_provider_popup(super::switch_tests::saved_accounts());
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("provider_selection_popup", popup);
 
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),
         Ok(AppEvent::SwitchModelProvider(provider_id))
-            if provider_id == codex_model_provider_info::COPILOT_PROVIDER_ID
+            if provider_id.provider_id() == codex_model_provider_info::COPILOT_PROVIDER_ID
     );
 }
 
@@ -3350,11 +3353,18 @@ async fn provider_selection_popup_snapshot_and_selection_event() {
 async fn provider_selection_popup_compact_padding_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.thread_id = Some(ThreadId::new());
-    chat.open_provider_popup();
+    chat.open_provider_popup(super::switch_tests::saved_accounts());
 
     let compact_area = Rect::new(0, 0, /*width*/ 80, /*height*/ 6);
     let mut compact_buf = Buffer::empty(compact_area);
-    chat.bottom_pane.render(compact_area, &mut compact_buf);
+    crate::terminal_palette::with_test_terminal_palette(
+        crate::terminal_probe::DefaultColors {
+            fg: (220, 220, 216),
+            bg: (32, 32, 32),
+        },
+        crate::terminal_palette::StdoutColorLevel::Ansi16,
+        || chat.bottom_pane.render(compact_area, &mut compact_buf),
+    );
     assert_chatwidget_snapshot!(
         "provider_selection_popup_compact",
         format!("{compact_buf:?}")

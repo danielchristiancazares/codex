@@ -101,6 +101,7 @@ pub(super) async fn make_test_app() -> App {
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
         pending_provider_switch: None,
+        connection_login: crate::connection_switch::LoginTracker::new(),
         recap: recap::RecapState::default(),
     }
 }

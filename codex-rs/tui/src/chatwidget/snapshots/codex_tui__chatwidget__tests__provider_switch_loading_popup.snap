@@ -2,7 +2,7 @@
 source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
-  Switching Provider
+  Switching account or provider
   Preparing GitHub Copilot for this conversation.
 
      Loading models and session state...

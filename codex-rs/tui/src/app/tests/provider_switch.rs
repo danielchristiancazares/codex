@@ -15,7 +15,7 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 
 const SOURCE_PROVIDER: &str = "provider-switch-source";
-const TARGET_PROVIDER: &str = "provider-switch-target";
+const TARGET_PROVIDER: &str = "openai";
 const SOURCE_MODEL: &str = "source-only-model";
 const TARGET_MODEL: &str = "target-only-model";
 
@@ -155,6 +155,7 @@ async fn switching_provider_preserves_draft_and_separate_plan_effort() -> Result
 model = "{SOURCE_MODEL}"
 model_provider = "{SOURCE_PROVIDER}"
 model_catalog_json = "source-models.json"
+openai_base_url = "{base_url}/v1"
 
 [model_providers.{SOURCE_PROVIDER}]
 name = "Source provider"
@@ -162,11 +163,6 @@ base_url = "{base_url}/v1"
 wire_api = "responses"
 requires_openai_auth = true
 
-[model_providers.{TARGET_PROVIDER}]
-name = "OpenAI"
-base_url = "{base_url}/v1"
-wire_api = "responses"
-requires_openai_auth = true
 "#,
             base_url = server.uri(),
         ),
@@ -246,7 +242,12 @@ requires_openai_auth = true
     app.chat_widget
         .apply_external_edit("preserve this draft".to_string());
 
-    app.start_model_provider_switch(&app_server, TARGET_PROVIDER.to_string());
+    app.start_model_provider_switch(
+        &app_server,
+        crate::connection_switch::SwitchTarget::ConfiguredProvider(
+            codex_app_server_protocol::SavedConnectionProvider::Openai,
+        ),
+    );
     let prepared = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 10), async {
         loop {
             let event = app_event_rx.recv().await.ok_or_else(|| {

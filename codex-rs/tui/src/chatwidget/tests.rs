@@ -277,6 +277,8 @@ mod slash_commands;
 mod status_and_layout;
 mod status_command_tests;
 mod status_surface_previews;
+#[path = "tests/switch_tests.rs"]
+mod switch_tests;
 mod terminal_title;
 mod usage;
 #[path = "tests/worktree_picker_tests.rs"]

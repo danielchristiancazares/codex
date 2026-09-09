@@ -13,7 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
-    Provider,
+    Switch,
     Ide,
     Permissions,
     Keymap,
@@ -125,7 +125,7 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Provider => "choose which model provider to use",
+            SlashCommand::Switch => "switch provider or saved account",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
             }
@@ -165,6 +165,7 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Review
+                | SlashCommand::Switch
                 | SlashCommand::Rename
                 | SlashCommand::New
                 | SlashCommand::Clear
@@ -224,7 +225,7 @@ impl SlashCommand {
             | SlashCommand::Import
             | SlashCommand::Review
             | SlashCommand::Plan
-            | SlashCommand::Provider
+            | SlashCommand::Switch
             | SlashCommand::Cd
             | SlashCommand::Clear
             | SlashCommand::Logout

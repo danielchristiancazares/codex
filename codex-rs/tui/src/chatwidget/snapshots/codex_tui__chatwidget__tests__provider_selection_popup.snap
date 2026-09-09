@@ -2,9 +2,16 @@
 source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
-  Select Provider
+  Switch account or provider
+  Saved logins are reused. Add each account once.
 
-› 1. OpenAI ✓        Use your OpenAI account
-  2. GitHub Copilot  Use your GitHub account
+  ›
+› Personal ✓                   OpenAI
+  Work                         OpenAI
+  Family                       OpenAI
+  Alternate                    OpenAI
+  GitHub Copilot               GitHub Copilot
+  Add OpenAI account…
+  Add GitHub Copilot account…
 
   ↑/↓ choose · enter confirm · esc back

@@ -1737,6 +1737,9 @@ impl App {
             AppEvent::SwitchModelProvider(provider_id) => {
                 self.start_model_provider_switch(app_server, provider_id);
             }
+            AppEvent::ConnectionSwitch(action) => {
+                self.handle_connection_switch(app_server, action).await;
+            }
             AppEvent::ModelProviderSwitchPrepared(
                 request_id,
                 thread_id,

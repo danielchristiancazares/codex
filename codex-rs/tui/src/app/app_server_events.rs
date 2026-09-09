@@ -262,6 +262,10 @@ impl App {
                 }
                 return;
             }
+            ServerNotification::AccountLoginCompleted(notification) => {
+                self.on_connection_login_completed(notification);
+                return;
+            }
             ServerNotification::ExternalAgentConfigImportCompleted(notification) => {
                 let should_report_completion =
                     app_server_client.consume_external_agent_config_import_completion();

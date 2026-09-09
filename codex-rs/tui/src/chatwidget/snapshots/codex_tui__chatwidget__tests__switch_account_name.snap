@@ -1,0 +1,9 @@
+---
+source: tui/src/chatwidget/tests/switch_tests.rs
+expression: "render_bottom_popup(&chat, 80)"
+---
+▌ Name this OpenAI account
+▌
+▌ Use a short nickname, such as work or personal
+
+enter confirm · esc back

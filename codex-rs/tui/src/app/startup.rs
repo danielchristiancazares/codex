@@ -842,6 +842,7 @@ See the Codex keymap documentation for supported actions and examples."
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
             pending_provider_switch: None,
+            connection_login: crate::connection_switch::LoginTracker::new(),
             recap: recap::RecapState::default(),
         };
         if !tui.is_terminal_focused() {

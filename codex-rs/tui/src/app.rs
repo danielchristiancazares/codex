@@ -218,6 +218,7 @@ pub(crate) mod app_server_requests;
 mod backend_banner_fallback;
 mod background_requests;
 mod config_persistence;
+mod connections;
 mod connector_mentions;
 mod event_dispatch;
 mod exit_summary;
@@ -688,6 +689,7 @@ pub(crate) struct App {
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
     pending_provider_switch: Option<Uuid>,
+    connection_login: crate::connection_switch::LoginTracker,
     recap: recap::RecapState,
 }
 

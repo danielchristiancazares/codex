@@ -1114,10 +1114,17 @@ pub(crate) enum AppEvent {
     UpdateModel(String),
 
     /// Continue the active conversation with another model provider.
-    SwitchModelProvider(String),
+    SwitchModelProvider(crate::connection_switch::SwitchTarget),
+
+    ConnectionSwitch(crate::connection_switch::SwitchAction),
 
     /// Provider discovery completed without occupying the TUI event loop.
-    ModelProviderSwitchPrepared(Uuid, ThreadId, String, Result<Vec<ModelPreset>, String>),
+    ModelProviderSwitchPrepared(
+        Uuid,
+        ThreadId,
+        crate::connection_switch::SwitchTarget,
+        Result<Vec<ModelPreset>, String>,
+    ),
 
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),

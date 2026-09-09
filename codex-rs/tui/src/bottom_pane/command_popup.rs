@@ -406,6 +406,30 @@ mod tests {
         insta::assert_snapshot!("command_popup_voice", format!("{buf:?}"));
     }
 
+    #[test]
+    fn switch_command_prefix_snapshot() {
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        popup.on_composer_text_change("/sw".to_owned());
+        let commands: Vec<_> = popup
+            .filtered_items()
+            .into_iter()
+            .map(|item| item.command().to_owned())
+            .collect();
+        assert_eq!(commands, vec!["switch"]);
+        let width = 72;
+        let area = Rect::new(0, 0, width, popup.calculate_required_height(width));
+        let mut buf = Buffer::empty(area);
+        crate::terminal_palette::with_test_terminal_palette(
+            crate::terminal_probe::DefaultColors {
+                fg: (220, 220, 216),
+                bg: (32, 32, 32),
+            },
+            crate::terminal_palette::StdoutColorLevel::Ansi16,
+            || popup.render_ref(area, &mut buf),
+        );
+        insta::assert_snapshot!("command_popup_switch", format!("{buf:?}"));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn default_command_popup_items_snapshot() {

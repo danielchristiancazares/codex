@@ -1,0 +1,15 @@
+---
+source: tui/src/bottom_pane/command_popup.rs
+expression: "format!(\"{buf:?}\")"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 72, height: 1 },
+    content: [
+        "› /switch  switch provider or saved account                             ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 9, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 11, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

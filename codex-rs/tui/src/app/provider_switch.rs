@@ -3,10 +3,12 @@
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
 use crate::app_server_session::ForkGoalContinuation::DeferUntilNextTurn;
-use crate::app_server_session::list_models_for_provider_with_request_handle;
 use crate::chatwidget::ThreadInputStateRestoreMode;
+use crate::connection_switch::SwitchHandoff;
+use crate::connection_switch::SwitchTarget;
 use crate::history_cell::McpInventoryLoadingCell as LoadingCell;
 use codex_app_server_client::AppServerRequestHandle;
+use codex_app_server_protocol::ConnectionSelection;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadBackgroundTerminalsListParams;
 use codex_app_server_protocol::ThreadBackgroundTerminalsListResponse;
@@ -18,7 +20,7 @@ const PROVIDER_SWITCH_PREPARATION_TIMEOUT: Duration = Duration::from_secs(30);
 async fn prepare_model_provider_switch(
     request_handle: AppServerRequestHandle,
     tracked_thread_ids: Vec<ThreadId>,
-    provider_id: String,
+    target: SwitchTarget,
 ) -> std::result::Result<Vec<ModelPreset>, String> {
     let terminal_request_handle = request_handle.clone();
     let background_terminal_check = async move {
@@ -51,9 +53,10 @@ async fn prepare_model_provider_switch(
         Ok(())
     };
     let models_request = async move {
-        list_models_for_provider_with_request_handle(request_handle, provider_id.clone())
+        target
+            .prepare(request_handle)
             .await
-            .map_err(|error| format!("Could not load models for `{provider_id}`: {error}"))
+            .map_err(|error| format!("Could not load models for `{}`: {error}", target.name()))
     };
     let ((), models) = tokio::try_join!(background_terminal_check, models_request)?;
     Ok(models)
@@ -128,11 +131,16 @@ impl App {
     pub(super) fn start_model_provider_switch(
         &mut self,
         app_server: &AppServerSession,
-        provider_id: String,
+        target: SwitchTarget,
     ) {
-        if self.config.model_provider_id == provider_id {
+        if matches!(
+            target.selection(&self.config.model_provider_id),
+            ConnectionSelection::Retain
+        ) {
+            self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             return;
         }
+        let provider_id = target.provider_id().to_owned();
         if self.pending_provider_switch.is_some() {
             self.chat_widget.add_info_message(
                 "A provider switch is already in progress.".to_string(),
@@ -166,14 +174,11 @@ impl App {
                 .add_error_message("MCP inventory is still loading.".to_string());
             return;
         }
-        let provider = match self.config.model_providers.get(&provider_id).cloned() {
-            Some(provider) => provider,
-            None => {
-                self.chat_widget
-                    .add_error_message(format!("Model provider `{provider_id}` is unavailable."));
-                return;
-            }
-        };
+        if !self.config.model_providers.contains_key(&provider_id) {
+            self.chat_widget
+                .add_error_message(format!("Model provider `{provider_id}` is unavailable."));
+            return;
+        }
 
         let agents = self.agent_navigation.ordered_threads();
         let another_thread_is_active = self.thread_event_channels.iter().any(|(id, channel)| {
@@ -227,24 +232,14 @@ impl App {
             .collect::<Vec<_>>();
         let tracked_thread_ids = std::iter::once(thread_id).chain(descendants).collect();
         let request_id = Uuid::new_v4();
-        let provider_name = provider.name.trim();
-        let provider_name = if provider_name.is_empty() {
-            provider_id.as_str()
-        } else {
-            provider_name
-        };
         self.pending_provider_switch = Some(request_id);
-        self.chat_widget.show_provider_switch_loading(provider_name);
+        self.chat_widget.show_provider_switch_loading(target.name());
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = tokio::time::timeout(
                 PROVIDER_SWITCH_PREPARATION_TIMEOUT,
-                prepare_model_provider_switch(
-                    request_handle,
-                    tracked_thread_ids,
-                    provider_id.clone(),
-                ),
+                prepare_model_provider_switch(request_handle, tracked_thread_ids, target.clone()),
             )
             .await
             .unwrap_or_else(|_| {
@@ -253,10 +248,7 @@ impl App {
                 ))
             });
             app_event_tx.send(AppEvent::ModelProviderSwitchPrepared(
-                request_id,
-                thread_id,
-                provider_id,
-                result,
+                request_id, thread_id, target, result,
             ));
         });
     }
@@ -267,12 +259,13 @@ impl App {
         app_server: &mut AppServerSession,
         request_id: Uuid,
         thread_id: ThreadId,
-        provider_id: String,
+        target: SwitchTarget,
         result: std::result::Result<Vec<ModelPreset>, String>,
     ) {
         if self.pending_provider_switch != Some(request_id) {
             return;
         }
+        let provider_id = target.provider_id().to_owned();
         if self.chat_widget.thread_id() != Some(thread_id)
             || self.primary_thread_id != Some(thread_id)
             || !self.chat_widget.can_switch_model_provider(thread_id)
@@ -366,6 +359,17 @@ impl App {
         config.service_tier = None;
         config.notices.fast_default_opt_out = Some(true);
 
+        let handoff = match target.activate(app_server.request_handle()).await {
+            Ok(handoff) => handoff,
+            Err(error) => {
+                self.fail_model_provider_switch(format!(
+                    "Could not select {}: {error}",
+                    target.name()
+                ));
+                return;
+            }
+        };
+
         let transitioned = if has_rollout {
             app_server
                 .fork_thread_at(
@@ -392,9 +396,11 @@ impl App {
         let transitioned = match transitioned {
             Ok(transitioned) => transitioned,
             Err(error) => {
-                self.fail_model_provider_switch(format!(
-                    "Failed to change model provider: {error}"
-                ));
+                self.fail_connection_handoff(
+                    handoff,
+                    format!("Failed to change model provider: {error}"),
+                )
+                .await;
                 return;
             }
         };
@@ -408,18 +414,22 @@ impl App {
         if !valid_replacement {
             let _ = app_server.thread_unsubscribe(replacement_id).await;
             let _ = app_server.thread_archive(replacement_id).await;
-            self.fail_model_provider_switch(
+            self.fail_connection_handoff(
+                handoff,
                 "The replacement session did not apply the requested provider and model."
                     .to_string(),
-            );
+            )
+            .await;
             return;
         }
         if let Err(error) = app_server.thread_unsubscribe(thread_id).await {
             let _ = app_server.thread_unsubscribe(replacement_id).await;
             let _ = app_server.thread_archive(replacement_id).await;
-            self.fail_model_provider_switch(format!(
-                "Could not detach the previous provider session: {error}"
-            ));
+            self.fail_connection_handoff(
+                handoff,
+                format!("Could not detach the previous provider session: {error}"),
+            )
+            .await;
             return;
         }
         for tracked_id in tracked_ids
@@ -431,6 +441,11 @@ impl App {
             }
         }
 
+        // The server-side replacement is now usable and the source detached.
+        // Finish credential ownership before changing presentation state.
+        if let Err(error) = handoff.commit().await {
+            self.chat_widget.add_warning_message(format!("The replacement session is ready. Account-switch confirmation failed: {error}. Check /switch before continuing."));
+        }
         config.model = Some(actual_model.clone());
         config.model_reasoning_effort = transitioned.session.reasoning_effort.clone();
         self.config = config;
@@ -449,8 +464,14 @@ impl App {
             )
             .await
         {
+            self.chat_widget.restore_thread_input_state(
+                input_state,
+                ThreadInputStateRestoreMode {
+                    preserve_in_flight_turn: false,
+                },
+            );
             self.fail_model_provider_switch(format!(
-                "Could not attach the replacement provider session: {error}"
+                "The account changed. Could not display session {replacement_id}: {error}. Use /resume to reopen it."
             ));
             return;
         }
@@ -512,14 +533,8 @@ impl App {
                 Some(format!("The provider default could not be saved: {error}"))
             }
         };
-        let provider_name = provider.name.trim();
-        let provider_name = if provider_name.is_empty() {
-            provider_id.as_str()
-        } else {
-            provider_name
-        };
         self.chat_widget.add_info_message(
-            format!("Provider changed to {provider_name} using {actual_model}."),
+            format!("Switched to {} using {actual_model}.", target.name()),
             /*hint*/ None,
         );
         if let Some(warning) = persistence_warning {
@@ -533,5 +548,12 @@ impl App {
         self.chat_widget.finish_provider_switch_loading();
         self.chat_widget.add_error_message(message);
         self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
+    }
+
+    async fn fail_connection_handoff(&mut self, handoff: SwitchHandoff, message: String) {
+        match handoff.restore().await {
+            Ok(()) => self.fail_model_provider_switch(message),
+            Err(error) => self.fail_model_provider_switch(format!("{message} Account restoration also failed: {error}. Use /switch to select the account again.")),
+        }
     }
 }

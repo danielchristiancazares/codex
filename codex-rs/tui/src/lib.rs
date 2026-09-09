@@ -124,6 +124,7 @@ mod clipboard_paste;
 mod collaboration_modes;
 mod color;
 mod config_update;
+mod connection_switch;
 pub(crate) mod custom_terminal;
 mod daybreak;
 mod experimental_features;
