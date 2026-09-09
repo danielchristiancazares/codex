@@ -134,7 +134,7 @@ fn write_stdin_tool_matches_expected_spec() {
         (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
-                "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.".to_string(),
+                "Explicit deadline before yielding output. Omit for empty writes to wait until output, completion, or new input. Non-empty writes default to 250 ms and cap at 30000 ms.".to_string(),
             )),
         ),
         (

@@ -53,6 +53,11 @@ pub use codex_tools::ToolExposure;
 /// Implementers provide the shared `ToolExecutor` behavior plus optional
 /// core-owned metadata for hooks, telemetry, tool search, and argument diffs.
 pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
+    /// Coordination waits own per-resource synchronization and leave execution admission open.
+    fn execution_scope(&self) -> super::runtime_wait::ExecutionScope {
+        super::runtime_wait::ExecutionScope::Serialized
+    }
+
     /// Whether this built-in control tool needs a structured tool-call event.
     fn is_builtin_control_tool(&self) -> bool {
         false

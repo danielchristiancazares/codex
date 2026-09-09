@@ -48,6 +48,7 @@ use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::unified_exec::MIN_YIELD_TIME_MS;
+use crate::unified_exec::PollCollection;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
@@ -962,7 +963,10 @@ impl UnifiedExecProcessManager {
             }
         };
         let start = Instant::now();
-        let deadline = start + Duration::from_millis(yield_time_ms);
+        let deadline = match request.collection {
+            PollCollection::Available => start,
+            PollCollection::UntilDeadline => start + Duration::from_millis(yield_time_ms),
+        };
         let collected_output =
             Self::collect_output_until_deadline(&output, pause_state, deadline).await;
         let wall_time = Instant::now().saturating_duration_since(start);

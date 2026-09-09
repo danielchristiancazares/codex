@@ -6,7 +6,6 @@ use std::time::Instant;
 
 use tokio::sync::RwLock;
 use tokio::task::JoinError;
-use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::Instrument;
@@ -26,6 +25,8 @@ use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
+use crate::tools::runtime_wait::ExecutionScope;
+use crate::tools::runtime_wait::ParallelExecution;
 use codex_history::ResponseItemEnvelope;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ResponseInputItem;
@@ -104,8 +105,16 @@ impl ToolCallRuntime {
             &self.step_context,
         );
         let router = &self.step_context.tool_router;
-        let supports_parallel = router.tool_supports_parallel(&call);
+        let parallel = match router.tool_supports_parallel(&call) {
+            true => ParallelExecution::Shared,
+            false => ParallelExecution::Exclusive,
+        };
         let tool_runtime = router.tool_runtime(&call.tool_name);
+        let execution_scope = tool_runtime
+            .as_ref()
+            .map_or(ExecutionScope::Serialized, |runtime| {
+                runtime.execution_scope()
+            });
         let router = Arc::clone(router);
         let session = Arc::clone(&self.session);
         let step_context = Arc::clone(&self.step_context);
@@ -154,11 +163,7 @@ impl ToolCallRuntime {
                     readiness.await;
                 }
 
-                let guard = if supports_parallel {
-                    Either::Left(lock.read().await)
-                } else {
-                    Either::Right(lock.write().await)
-                };
+                let guard = execution_scope.acquire(&lock, parallel).await;
                 // Admission through the parallel-execution gate marks the end
                 // of dispatch waiting and the start of handler execution.
                 if let Some(execution_started_at) = execution_started_at {

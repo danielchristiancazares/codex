@@ -150,6 +150,7 @@ pub(crate) struct WriteStdinRequest<'a> {
     pub process_id: i32,
     pub input: &'a str,
     pub yield_time_ms: u64,
+    pub collection: PollCollection,
     pub max_output_tokens: Option<usize>,
     pub truncation_policy: TruncationPolicy,
     pub interaction_event: Option<WriteStdinInteractionEvent<'a>>,
