@@ -1,5 +1,6 @@
 ---
 source: tui/src/keymap_setup.rs
+assertion_line: 1164
 expression: "render_picker(params, 120)"
 ---
 
@@ -19,4 +20,4 @@ expression: "render_picker(params, 120)"
   Chat           Prompt Stack Back          alt-down, shift-right
 › Chat           Skip Question              ctrl-]
 
-  left/right group · enter edit shortcut · * custom · - unbound · esc close · 16/141 · ↑8 · 125↓
+  left/right group · enter edit shortcut · * custom · - unbound · esc close · 16/142 · ↑8 · 126↓
