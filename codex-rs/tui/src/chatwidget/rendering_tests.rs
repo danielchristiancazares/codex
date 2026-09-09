@@ -192,6 +192,9 @@ fn active_transcript_preserves_clipped_markdown_hyperlinks() {
         .draw_with_size(size, |frame| renderable.render(area, frame.buffer_mut()))
         .expect("render terminal frame");
     let output = String::from_utf8(terminal.backend().writer().clone()).expect("UTF-8 output");
+    // Windows explicitly positions each cell, including cells inside an open hyperlink.
+    let cursor_moves = regex_lite::Regex::new(r"\x1b\[\d+;\d+H").expect("valid cursor-move regex");
+    let output = cursor_moves.replace_all(&output, "");
     assert!(output.contains("\x1b]8;;https://example.com/\x07OSC8 label\x1b]8;;\x07"));
     assert!(output.contains("\x1b]8;;https://example.com/\x07https://example.com/\x1b]8;;\x07"));
 }
@@ -219,9 +222,8 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
         .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
 
     let cwd = widget.config.cwd.as_path().display().to_string();
-    let normalized_cwd = format!("{:<width$}", "/tmp/project", width = cwd.len());
 
-    insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @"
+    insta::assert_snapshot!(header.replace(&cwd, "/tmp/project"), @"
     >_ Codex v<VERSION>
     loading  /model to change
     /tmp/project
