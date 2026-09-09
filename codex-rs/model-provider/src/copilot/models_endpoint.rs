@@ -9,6 +9,7 @@ use codex_http_client::HttpResponse;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::manager::ModelsEndpointClient;
 use codex_models_manager::manager::ModelsEndpointFuture;
+use codex_models_manager::manager::ModelsEndpointResponse;
 use codex_models_manager::model_info::model_info_from_slug;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
@@ -119,7 +120,7 @@ impl CopilotModelsEndpoint {
     async fn list_models(
         &self,
         http_client_factory: HttpClientFactory,
-    ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
+    ) -> CoreResult<ModelsEndpointResponse> {
         let mut endpoint = self.endpoint_manager.endpoint().await?;
         let mut url = format!("{}/models", endpoint.base_url);
         let client = HttpClientBuilder::new()
@@ -202,11 +203,19 @@ impl CopilotModelsEndpoint {
                 "Copilot models response contained {raw_model_count} model entries, but none were enabled for Responses-over-WebSocket"
             )));
         }
-        Ok((models, etag))
+        Ok(ModelsEndpointResponse {
+            models,
+            etag,
+            identity: endpoint.catalog_identity.to_string(),
+        })
     }
 }
 
 impl ModelsEndpointClient for CopilotModelsEndpoint {
+    fn identity(&self) -> Option<String> {
+        self.endpoint_manager.catalog_cache_policy().into()
+    }
+
     fn has_command_auth(&self) -> bool {
         true
     }
@@ -223,7 +232,7 @@ impl ModelsEndpointClient for CopilotModelsEndpoint {
         &'a self,
         _client_version: &'a str,
         http_client_factory: HttpClientFactory,
-    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+    ) -> ModelsEndpointFuture<'a, CoreResult<ModelsEndpointResponse>> {
         Box::pin(self.list_models(http_client_factory))
     }
 }

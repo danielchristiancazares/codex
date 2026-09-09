@@ -17,6 +17,8 @@ use http::header::AUTHORIZATION;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 
+use super::catalog_identity::CatalogCachePolicy;
+use super::catalog_identity::CatalogIdentity;
 use super::credentials::CopilotCredential;
 use super::credentials::CopilotCredentialSource;
 use super::credentials::CredentialLoadError;
@@ -28,6 +30,7 @@ type CredentialLoader =
 #[derive(Clone)]
 pub(super) struct EndpointSnapshot {
     pub(super) generation: u64,
+    pub(super) catalog_identity: CatalogIdentity,
     pub(super) base_url: String,
     pub(super) headers: HeaderMap,
     pub(super) machine_id: Option<String>,
@@ -105,6 +108,21 @@ impl fmt::Debug for CopilotEndpointManager {
 }
 
 impl CopilotEndpointManager {
+    /// Observe installed auth without blocking on credential storage or an active refresh.
+    ///
+    /// A cold or rejected endpoint must authenticate before its disk catalog can be reused.
+    pub(super) fn catalog_cache_policy(&self) -> CatalogCachePolicy {
+        match self.state.try_lock() {
+            Ok(state) => match self.cached_snapshot(&state) {
+                Some(snapshot) => {
+                    CatalogCachePolicy::ReuseAuthenticatedCatalog(snapshot.catalog_identity.clone())
+                }
+                None => CatalogCachePolicy::FetchAuthenticatedCatalog,
+            },
+            Err(_) => CatalogCachePolicy::FetchAuthenticatedCatalog,
+        }
+    }
+
     pub(super) async fn endpoint(&self) -> codex_protocol::error::Result<Arc<EndpointSnapshot>> {
         loop {
             let refresh = {
@@ -174,6 +192,7 @@ impl CopilotEndpointManager {
         state.generation = state.generation.saturating_add(1);
         let snapshot = Arc::new(EndpointSnapshot {
             generation: state.generation,
+            catalog_identity: CatalogIdentity::for_credential(&credential),
             base_url: resolved.base_url,
             headers: resolved.headers,
             machine_id: resolved.machine_id,

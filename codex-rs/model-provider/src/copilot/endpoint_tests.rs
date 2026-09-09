@@ -5,6 +5,10 @@ use std::sync::atomic::Ordering;
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
 use codex_models_manager::manager::ModelsEndpointClient;
+use codex_models_manager::manager::ModelsEndpointResponse;
+use codex_models_manager::manager::ModelsManager;
+use codex_models_manager::manager::OpenAiModelsManager;
+use codex_models_manager::manager::RefreshStrategy;
 use http::header::AUTHORIZATION;
 use pretty_assertions::assert_eq;
 use wiremock::Mock;
@@ -65,10 +69,7 @@ fn manager_with_credential_error(error: CredentialLoadError) -> CopilotEndpointM
 
 async fn request_models(
     body: serde_json::Value,
-) -> codex_protocol::error::Result<(
-    Vec<codex_protocol::openai_models::ModelInfo>,
-    Option<String>,
-)> {
+) -> codex_protocol::error::Result<ModelsEndpointResponse> {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/models"))
@@ -216,7 +217,10 @@ async fn changed_credential_recovers_and_delayed_rejection_is_harmless() {
             .clone())
     });
     let first = manager.endpoint().await.expect("initial endpoint");
+    let first_identity: Option<String> = manager.catalog_cache_policy().into();
+    assert_eq!(first_identity, Some(first.catalog_identity.to_string()));
     manager.reject_generation(first.generation);
+    assert_eq!(Option::<String>::from(manager.catalog_cache_policy()), None);
     *current
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -230,6 +234,11 @@ async fn changed_credential_recovers_and_delayed_rejection_is_harmless() {
         .expect("current endpoint remains valid");
 
     assert_eq!(second.generation, first.generation + 1);
+    assert_ne!(second.catalog_identity, first.catalog_identity);
+    assert_eq!(
+        Option::<String>::from(manager.catalog_cache_policy()),
+        Some(second.catalog_identity.to_string())
+    );
     assert!(Arc::ptr_eq(&second, &current));
     assert!(!manager.is_generation_rejected(first.generation));
     assert!(!manager.is_generation_rejected(second.generation));
@@ -279,7 +288,7 @@ async fn models_request_retries_once_after_credential_changes() {
     }));
     let endpoint = CopilotModelsEndpoint::new(manager);
 
-    let (models, etag) = ModelsEndpointClient::list_models(
+    let response = ModelsEndpointClient::list_models(
         &endpoint,
         "test-client",
         HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
@@ -287,9 +296,112 @@ async fn models_request_retries_once_after_credential_changes() {
     .await
     .expect("changed credential retries model discovery");
 
-    assert_eq!(models.len(), 1);
-    assert_eq!(models[0].slug, "gpt-5.6-sol");
-    assert_eq!(etag, None);
+    assert_eq!(response.models.len(), 1);
+    assert_eq!(response.models[0].slug, "gpt-5.6-sol");
+    assert_eq!(response.etag, None);
+    assert_eq!(Some(response.identity), endpoint.identity());
+}
+
+#[tokio::test]
+async fn authenticated_catalog_cache_survives_endpoint_recreation() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{
+                "id": "gpt-5.6-sol",
+                "model_picker_enabled": true,
+                "supported_endpoints": ["ws:/responses"]
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let cache_home = tempfile::tempdir().expect("catalog cache directory");
+    let cache_path = cache_home.path().join("copilot_models_cache.json");
+    let first_endpoint = Arc::new(manager_with_credential(credential(
+        "copilot-secret",
+        &server.uri(),
+    )));
+    let first = OpenAiModelsManager::new_with_cache_path(
+        cache_path.clone(),
+        Arc::new(CopilotModelsEndpoint::new(first_endpoint)),
+        /*auth_manager*/ None,
+    );
+    let factory = HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault);
+    let expected = first
+        .raw_model_catalog(RefreshStrategy::Online, factory.clone())
+        .await;
+    assert_eq!(expected.models.len(), 1);
+
+    let restarted_endpoint = Arc::new(manager_with_credential(credential(
+        "copilot-secret",
+        &server.uri(),
+    )));
+    restarted_endpoint
+        .endpoint()
+        .await
+        .expect("resolve restarted provider auth");
+    let restarted = OpenAiModelsManager::new_with_cache_path(
+        cache_path.clone(),
+        Arc::new(CopilotModelsEndpoint::new(restarted_endpoint)),
+        /*auth_manager*/ None,
+    );
+    assert_eq!(
+        restarted
+            .raw_model_catalog(RefreshStrategy::OnlineIfUncached, factory)
+            .await,
+        expected
+    );
+    assert!(
+        !std::fs::read_to_string(cache_path)
+            .expect("persisted catalog")
+            .contains("copilot-secret")
+    );
+}
+
+#[tokio::test]
+async fn rejected_in_flight_credentials_cannot_publish_a_catalog() {
+    let server = MockServer::start().await;
+    let endpoint_manager = Arc::new(manager_with_credential(credential(
+        "copilot-secret",
+        &server.uri(),
+    )));
+    let snapshot = endpoint_manager.endpoint().await.expect("initial endpoint");
+    let rejecting_manager = Arc::clone(&endpoint_manager);
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(move |_: &wiremock::Request| {
+            rejecting_manager.reject_generation(snapshot.generation);
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{
+                    "id": "gpt-5.6-sol",
+                    "model_picker_enabled": true,
+                    "supported_endpoints": ["ws:/responses"]
+                }]
+            }))
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+    let cache_home = tempfile::tempdir().expect("catalog cache directory");
+    let cache_path = cache_home.path().join("copilot_models_cache.json");
+    let manager = OpenAiModelsManager::new_with_cache_path(
+        cache_path.clone(),
+        Arc::new(CopilotModelsEndpoint::new(endpoint_manager)),
+        /*auth_manager*/ None,
+    );
+
+    assert_eq!(
+        manager
+            .raw_model_catalog(
+                RefreshStrategy::Online,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await,
+        codex_protocol::openai_models::ModelsResponse { models: Vec::new() }
+    );
+    assert!(!cache_path.exists());
 }
 
 #[tokio::test]
@@ -365,7 +477,7 @@ async fn models_request_does_not_follow_redirects() {
 
 #[tokio::test]
 async fn models_request_uses_http_path_and_returns_eligible_catalog() {
-    let (models, etag) = request_models(serde_json::json!({
+    let response = request_models(serde_json::json!({
         "data": [{
             "id": "gpt-5.6-sol",
             "name": "GPT-5.6 Sol",
@@ -379,13 +491,14 @@ async fn models_request_uses_http_path_and_returns_eligible_catalog() {
     .expect("list Copilot models");
 
     assert_eq!(
-        models
+        response
+            .models
             .iter()
             .map(|model| model.slug.as_str())
             .collect::<Vec<_>>(),
         vec!["gpt-5.6-sol"]
     );
-    assert_eq!(etag.as_deref(), Some("catalog-v1"));
+    assert_eq!(response.etag.as_deref(), Some("catalog-v1"));
 }
 
 #[tokio::test]

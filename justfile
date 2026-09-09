@@ -2,6 +2,10 @@ set working-directory := "codex-rs"
 set positional-arguments := true
 
 export CODEX_REPO_ROOT := justfile_directory()
+
+# Keep snapshot reads and generated drafts in the invoking checkout.
+
+export INSTA_WORKSPACE_ROOT := justfile_directory() / "codex-rs"
 export JUST_SHELL := justfile_directory() / "scripts/just-shell.py"
 
 set shell := ["python3", "-c", 'import os, runpy; runpy.run_path(os.environ["JUST_SHELL"], run_name="__main__")']

@@ -414,6 +414,8 @@ impl ModelsManager for OpenAiModelsManager {
             let entry = self.remote_models.read().await;
             if entry.identity.is_some() && entry.identity == self.endpoint_client.identity() {
                 entry.models.clone()
+            } else if self.endpoint_client.remote_catalog_is_authoritative() {
+                Vec::new()
             } else {
                 load_remote_models_from_file().unwrap_or_default()
             }
@@ -425,6 +427,8 @@ impl ModelsManager for OpenAiModelsManager {
         Ok(
             if entry.identity.is_some() && entry.identity == self.endpoint_client.identity() {
                 entry.models.clone()
+            } else if self.endpoint_client.remote_catalog_is_authoritative() {
+                Vec::new()
             } else {
                 load_remote_models_from_file().unwrap_or_default()
             },

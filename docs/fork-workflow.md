@@ -61,8 +61,11 @@ Use `just assemble-codex-package` when only a package artifact is needed.
    formatting or refactoring in the same patch.
 4. Run the smallest useful validation from the repository root, for example
    `just test -p codex-tui <filter>`. Broaden for shared behavior or unresolved
-   failures. Preserve required integration and snapshot coverage. Check required
-   tools before long runs. Finish large Rust changes with scoped `just fix` and
+   failures. Keep the selected package set stable across filtered reruns when
+   practical; changing it can rebuild shared dependencies through Cargo feature
+   unification. Root recipes bind snapshot paths to the invoking checkout.
+   Preserve required integration and snapshot coverage. Check required tools
+   before long runs. Finish large Rust changes with scoped `just fix` and
    `just fmt`, without rerunning tests afterward.
 5. Before an authorized commit, classify every staged, unstaged, and untracked
    path. Stage explicit paths and review the staged patch, stat, and
@@ -112,14 +115,16 @@ The recorded upstream base is currently:
 
 | Field  | Value                                         |
 | ------ | --------------------------------------------- |
-| Source | Initial migration snapshot of `upstream/main` |
-| Commit | `b4373e53ab79df7baadc6805dea54a060b820307`    |
+| Source | Operator-selected `upstream/main` snapshot, 2026-09-08 |
+| Commit | `5e3f0ee94b0719ab3d0d05cffaa75163e87668f6` |
 
-This initial migration predates the release-tag policy. For the first tagged
-sync, wait for a stable release whose history includes this snapshot. After each
-successful sync, update this table with the selected release tag and its resolved
-commit SHA. That commit is `OLD_UPSTREAM_BASE` for the next sync; do not infer it
-from the moving `upstream/main` ref.
+The operator explicitly selected this development commit for the 2026-09-08
+sync, as a one-off exception to the stable-release policy. Routine syncs continue
+to select published stable release tags. For the next tagged sync, wait for a
+stable release whose history includes this snapshot. After each successful sync,
+update this table with the selected release tag and its resolved commit SHA.
+That commit is `OLD_UPSTREAM_BASE` for the next sync; do not infer it from the
+moving `upstream/main` ref.
 
 Start on `main` with committed work and a clean index/worktree. If unrelated
 changes are present, preserve them explicitly before continuing.

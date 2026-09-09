@@ -8,6 +8,9 @@ use serde_json::json;
 
 use super::*;
 use crate::ProviderRequestContext;
+use crate::copilot::catalog_identity::CatalogIdentity;
+use crate::copilot::credentials::CopilotCredential;
+use crate::copilot::credentials::CopilotCredentialSource;
 
 const TEST_MACHINE_ID: &str = "4f8c2f5df054b1e465c8f9d9af3b391a4718b02ad7c3d0f8e83d4f6978de1451";
 
@@ -40,6 +43,12 @@ fn endpoint() -> Arc<EndpointSnapshot> {
     );
     Arc::new(EndpointSnapshot {
         generation: 7,
+        catalog_identity: CatalogIdentity::for_credential(&CopilotCredential {
+            token: "endpoint-secret".to_string(),
+            base_url: "https://api.githubcopilot.com".to_string(),
+            machine_id: Some(TEST_MACHINE_ID.to_string()),
+            source: CopilotCredentialSource::StoredOAuth,
+        }),
         base_url: "https://api.githubcopilot.com".to_string(),
         headers,
         machine_id: Some(TEST_MACHINE_ID.to_string()),

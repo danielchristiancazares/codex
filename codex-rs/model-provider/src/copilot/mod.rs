@@ -1,4 +1,5 @@
 mod auth_provider;
+mod catalog_identity;
 mod credentials;
 mod endpoint;
 mod identity;

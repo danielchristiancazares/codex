@@ -6521,6 +6521,7 @@ async fn responses_metadata_uses_selected_harness_analytics_client() {
 
 // todo: use online model info
 pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+    crate::test_support::enable_responses_sse_for_tests();
     let (tx_event, _rx_event) = async_channel::unbounded();
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let config = build_test_config(codex_home.path()).await;
@@ -8691,6 +8692,7 @@ async fn make_session_and_context_with_auth_config_home_and_rx<F>(
 where
     F: FnOnce(&mut Config),
 {
+    crate::test_support::enable_responses_sse_for_tests();
     let (tx_event, rx_event) = async_channel::unbounded();
     let mut config = build_test_config(codex_home).await;
     configure_config(&mut config);
