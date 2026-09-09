@@ -490,10 +490,18 @@ async fn thread_revert_replaces_paginated_history_before_turn() -> Result<()> {
         .expect("third turn response request")
         .body_json::<serde_json::Value>()?["input"]
         .clone();
-    let model_input = serde_json::to_string(&model_input)?;
-    assert!(model_input.contains("first"));
-    assert!(!model_input.contains("second"));
-    assert!(model_input.contains("third"));
+    // Inspect the fixture's user messages: host skill descriptions can also contain
+    // words such as "second" without retaining the reverted turn.
+    let fixture_user_messages = model_input
+        .as_array()
+        .expect("model input")
+        .iter()
+        .filter(|item| item["role"] == "user")
+        .flat_map(|item| item["content"].as_array().expect("user message content"))
+        .filter_map(|part| part["text"].as_str())
+        .filter(|text| ["first", "second", "third"].contains(text))
+        .collect::<Vec<_>>();
+    assert_eq!(fixture_user_messages, vec!["first", "third"]);
     assert_eq!(
         turn_ids_from_cursor(
             &mut mcp,

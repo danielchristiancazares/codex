@@ -44,6 +44,10 @@ use codex_app_server_protocol::RawResponseCompletedNotification;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerRequestResolvedNotification;
+use codex_app_server_protocol::SkillsConfigWriteParams;
+use codex_app_server_protocol::SkillsConfigWriteResponse;
+use codex_app_server_protocol::SkillsListParams;
+use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::SubAgentActivityKind;
 use codex_app_server_protocol::TextElement;
 use codex_app_server_protocol::ThreadDeleteParams;
@@ -796,7 +800,8 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
         .as_str()
         .expect("model slug should be present")
         .to_string();
-    entry["context_window"] = serde_json::Value::from(100);
+    // Keep the skills budget below either fixture's names-only entry.
+    entry["context_window"] = serde_json::Value::from(10);
     std::fs::write(&cache_path, serde_json::to_string_pretty(&cache)?)?;
     let config_path = codex_home.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path)?;
@@ -807,15 +812,45 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     write_test_skill(codex_home.path(), "alpha-skill")?;
     write_test_skill(codex_home.path(), "beta-skill")?;
 
-    let isolated_home = codex_home.path().to_string_lossy();
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[
-            ("HOME", Some(isolated_home.as_ref())),
-            ("USERPROFILE", Some(isolated_home.as_ref())),
-        ])
         .build_initialized()
         .await?;
+
+    // Windows home discovery uses the profile known folder, so environment
+    // overrides cannot isolate installed skills. Disable non-fixture skills in
+    // this temporary Codex config, including bundled skills.
+    let SkillsListResponse { data } = mcp
+        .request(|request_id| ClientRequest::SkillsList {
+            request_id,
+            params: SkillsListParams {
+                cwds: Vec::new(),
+                force_reload: true,
+            },
+        })
+        .await?;
+    let fixture_skills_root = codex_home.path().join("skills").abs().canonicalize()?;
+    let fixture_skill_paths =
+        ["alpha-skill", "beta-skill"].map(|name| fixture_skills_root.join(name).join("SKILL.md"));
+    let mut fixture_skill_names = Vec::new();
+    for skill in data.into_iter().flat_map(|entry| entry.skills) {
+        if fixture_skill_paths.contains(&skill.path) {
+            fixture_skill_names.push(skill.name);
+        } else {
+            let _: SkillsConfigWriteResponse = mcp
+                .request(|request_id| ClientRequest::SkillsConfigWrite {
+                    request_id,
+                    params: SkillsConfigWriteParams {
+                        path: Some(skill.path),
+                        name: None,
+                        enabled: false,
+                    },
+                })
+                .await?;
+        }
+    }
+    fixture_skill_names.sort();
+    assert_eq!(fixture_skill_names, vec!["alpha-skill", "beta-skill"]);
 
     let ThreadStartResponse { thread, .. } = mcp.start_thread(ThreadStartParams::default()).await?;
 
@@ -839,7 +874,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     assert_eq!(warning.thread_id.as_deref(), Some(thread.id.as_str()));
     assert_eq!(
         warning.message,
-        "Exceeded skills context budget. All skill descriptions were removed and 7 additional skills were not included in the model-visible skills list."
+        "Exceeded skills context budget. All skill descriptions were removed and 2 additional skills were not included in the model-visible skills list."
     );
 
     timeout(
