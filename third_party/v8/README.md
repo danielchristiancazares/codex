@@ -6,11 +6,15 @@ Bazel consumer builds use:
 - upstream `denoland/rusty_v8` release archives on Windows MSVC
 - source-built V8 archives on Darwin, GNU Linux, musl Linux, and Windows GNU
 
-Local Cargo builds still use upstream prebuilt `rusty_v8` archives by default.
-Selected Cargo CI, release, and package builds override
-`RUSTY_V8_ARCHIVE`/`RUSTY_V8_SRC_BINDING_PATH` with Codex release assets. Bazel
-sets those variables independently in `MODULE.bazel` to select source-built
-local archives and bindings for its consumer builds.
+`just fix` and `just clippy` use the same checksum-verified Codex release assets
+as package builds, through `scripts/cargo_with_v8.py`. They select the active
+Rust toolchain's host, or an explicit `--target`/`CARGO_BUILD_TARGET`, and preserve
+explicit archive/binding overrides and `V8_FROM_SOURCE=1`.
+Other direct Cargo builds still use upstream prebuilt `rusty_v8` archives by
+default. Selected Cargo CI, release, and package builds override
+`RUSTY_V8_ARCHIVE`/`RUSTY_V8_SRC_BINDING_PATH` with Codex release assets. Bazel sets
+those variables independently in `MODULE.bazel` to select source-built local
+archives and bindings for its consumer builds.
 
 The Bazel `v8` crate feature selection enables V8's in-process sandbox for
 Darwin, Linux, and Windows GNU. Windows MSVC remains on upstream non-sandboxed
