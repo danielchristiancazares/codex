@@ -1621,6 +1621,14 @@ async fn run_sampling_request(
                     }
                     return Err(err);
                 }
+                CodexErrorDetails::IncompleteResponse(failure) => {
+                    failure
+                        .record_usage(|usage| {
+                            sess.update_token_usage_info(&turn_context, Some(usage))
+                        })
+                        .await;
+                    return Err(err);
+                }
                 _ => err,
             },
         };

@@ -2943,3 +2943,55 @@ async fn stream_until_complete_with_metadata(
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_preserves_terminal_incomplete_error() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-incomplete"),
+        json!({
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp-incomplete",
+                "incomplete_details": { "reason": "max_output_tokens" },
+                "usage": null
+            }
+        }),
+    ]]])
+    .await;
+    let harness = websocket_harness_for_codex_backend(&server).await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = turn_metadata(&harness, /*turn_id*/ None);
+    let mut stream = client_session
+        .stream(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ None,
+            &responses_metadata,
+            &InferenceTraceContext::disabled(),
+        )
+        .await
+        .expect("websocket stream");
+
+    assert!(matches!(
+        stream.next().await,
+        Some(Ok(ResponseEvent::Created { .. }))
+    ));
+    let error = stream
+        .next()
+        .await
+        .expect("terminal event")
+        .expect_err("incomplete response should fail");
+    assert!(matches!(
+        error.details(),
+        codex_protocol::error::CodexErrorDetails::IncompleteResponse(failure)
+            if failure.to_string().contains("max_output_tokens")
+    ));
+
+    server.shutdown().await;
+}

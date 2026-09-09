@@ -1,7 +1,12 @@
 pub mod account;
 mod agent_path;
 pub mod auth;
+mod response_failure;
 mod response_item_id;
+pub use response_failure::IncompleteResponse;
+pub use response_failure::RequiredResponseField;
+pub use response_failure::ResponseProtocolFailure;
+pub use response_failure::TerminalResponseUsage;
 mod response_usage;
 mod sanitized_git_url;
 mod session_id;
