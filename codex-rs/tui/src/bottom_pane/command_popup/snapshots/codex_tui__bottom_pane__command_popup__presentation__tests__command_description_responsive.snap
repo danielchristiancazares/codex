@@ -14,7 +14,7 @@ Buffer {
         "  your IDE              ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
@@ -29,7 +29,7 @@ Buffer {
         "  other context from your IDE                   ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
@@ -41,8 +41,8 @@ Buffer {
         "› /ide  include current selection, open files, and other context from your IDE  ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
         x: 8, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
@@ -54,8 +54,8 @@ Buffer {
         "› /ide  include current selection, open files, and other context from your IDE                                          ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 6, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
         x: 8, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

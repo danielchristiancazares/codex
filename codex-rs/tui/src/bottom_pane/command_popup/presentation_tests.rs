@@ -9,7 +9,14 @@ fn selected_description_reflows_when_the_list_cannot_show_it() {
         let height = popup.calculate_required_height(width);
         let area = Rect::new(/*x*/ 0, /*y*/ 0, width, height);
         let mut buffer = Buffer::empty(area);
-        popup.render_ref(area, &mut buffer);
+        crate::terminal_palette::with_test_terminal_palette(
+            crate::terminal_probe::DefaultColors {
+                fg: (220, 220, 216),
+                bg: (32, 32, 32),
+            },
+            crate::terminal_palette::StdoutColorLevel::Ansi16,
+            || popup.render_ref(area, &mut buffer),
+        );
         let text = (0..height)
             .map(|y| {
                 (0..width)

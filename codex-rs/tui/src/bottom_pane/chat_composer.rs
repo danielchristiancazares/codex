@@ -9537,7 +9537,14 @@ mod tests {
         composer.attach_image(PathBuf::from("/tmp/image1.png"));
         let area = Rect::new(0, 0, 40, 3);
         let mut buf = Buffer::empty(area);
-        composer.render(area, &mut buf);
+        crate::terminal_palette::with_test_terminal_palette(
+            crate::terminal_probe::DefaultColors {
+                fg: (220, 220, 216),
+                bg: (32, 32, 32),
+            },
+            crate::terminal_palette::StdoutColorLevel::Ansi16,
+            || composer.render(area, &mut buf),
+        );
         insta::assert_debug_snapshot!("image_placeholder_chip_style", buf[(2, 1)].style());
     }
 

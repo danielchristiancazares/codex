@@ -376,7 +376,14 @@ mod tests {
             popup.calculate_required_height(width),
         );
         let mut buf = Buffer::empty(area);
-        popup.render_ref(area, &mut buf);
+        crate::terminal_palette::with_test_terminal_palette(
+            crate::terminal_probe::DefaultColors {
+                fg: (220, 220, 216),
+                bg: (32, 32, 32),
+            },
+            crate::terminal_palette::StdoutColorLevel::Ansi16,
+            || popup.render_ref(area, &mut buf),
+        );
 
         insta::assert_snapshot!("command_popup_app", format!("{buf:?}"));
     }
@@ -494,7 +501,14 @@ mod tests {
             popup.calculate_required_height(width),
         );
         let mut buf = Buffer::empty(area);
-        popup.render_ref(area, &mut buf);
+        crate::terminal_palette::with_test_terminal_palette(
+            crate::terminal_probe::DefaultColors {
+                fg: (220, 220, 216),
+                bg: (32, 32, 32),
+            },
+            crate::terminal_palette::StdoutColorLevel::Ansi16,
+            || popup.render_ref(area, &mut buf),
+        );
         insta::assert_snapshot!(
             "command_popup_filter_reset_after_scroll",
             format!("{buf:?}")
