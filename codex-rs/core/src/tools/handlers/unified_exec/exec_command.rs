@@ -6,6 +6,7 @@ use crate::exec::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
 use crate::exec_policy::prompt_is_rejected_by_policy;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
+use crate::tools::captured_output::CapturedOutput;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -402,7 +403,7 @@ impl ExecCommandHandler {
         }
         if let Some(output) = intercepted_patch? {
             manager.release_process_id(process_id).await;
-            return Ok(boxed_tool_output(ExecCommandToolOutput {
+            let response = ExecCommandToolOutput {
                 event_call_id: String::new(),
                 chunk_id: String::new(),
                 wall_time: std::time::Duration::ZERO,
@@ -414,7 +415,10 @@ impl ExecCommandHandler {
                 original_token_count: None,
                 output_omitted_bytes: None,
                 hook_command: None,
-            }));
+            };
+            return Ok(boxed_tool_output(
+                CapturedOutput::terminal(&session, response).await,
+            ));
         }
 
         emit_unified_exec_tty_metric(&step_context.session_telemetry, tty);
@@ -445,8 +449,8 @@ impl ExecCommandHandler {
             }
             None => manager.exec_command(request, &context).await,
         };
-        match result {
-            Ok(response) => Ok(boxed_tool_output(response)),
+        let response = match result {
+            Ok(response) => response,
             Err(UnifiedExecError::SandboxDenied {
                 output,
                 original_token_count,
@@ -456,7 +460,7 @@ impl ExecCommandHandler {
                 let output_text = output.aggregated_output.text;
                 let original_token_count =
                     original_token_count.unwrap_or_else(|| approx_token_count(&output_text));
-                Ok(boxed_tool_output(ExecCommandToolOutput {
+                ExecCommandToolOutput {
                     event_call_id: context.call_id.clone(),
                     chunk_id: generate_chunk_id(),
                     wall_time: output.duration,
@@ -470,16 +474,19 @@ impl ExecCommandHandler {
                     original_token_count: Some(original_token_count),
                     output_omitted_bytes,
                     hook_command: Some(hook_command),
-                }))
+                }
             }
             Err(err) => {
                 let message = format!("exec_command failed: {err:?}");
-                Err(FunctionCallError::RespondToModel(truncate_middle_chars(
+                return Err(FunctionCallError::RespondToModel(truncate_middle_chars(
                     &message,
                     EXEC_COMMAND_REJECTION_MAX_BYTES,
-                )))
+                )));
             }
-        }
+        };
+        Ok(boxed_tool_output(
+            CapturedOutput::terminal(&session, response).await,
+        ))
     }
 }
 

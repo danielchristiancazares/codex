@@ -6726,6 +6726,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             executed_tool_calls,
         ),
         tool_search_handler_cache: Default::default(),
+        captured_output: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
     };
 
@@ -8901,6 +8902,7 @@ where
             executed_tool_calls,
         ),
         tool_search_handler_cache: Default::default(),
+        captured_output: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
     };
 

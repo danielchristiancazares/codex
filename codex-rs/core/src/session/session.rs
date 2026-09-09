@@ -1591,6 +1591,7 @@ impl Session {
                     executed_tool_calls,
                 ),
                 tool_search_handler_cache: Default::default(),
+                captured_output: Default::default(),
                 turn_environments: Arc::clone(&turn_environments),
             };
             let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);

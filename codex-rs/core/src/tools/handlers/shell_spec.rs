@@ -199,6 +199,14 @@ fn unified_exec_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "output_id": {
+                "type": "string",
+                "description": "Session-local captured output ID for read_output range or search retrieval."
+            },
+            "output_capture": {
+                "type": "string",
+                "description": "Capture completeness and retention information."
+            },
             "chunk_id": {
                 "type": "string",
                 "description": "Chunk identifier included when the response reports one."
