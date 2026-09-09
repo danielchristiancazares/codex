@@ -221,6 +221,7 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 
+mod additional_context;
 mod code_mode_warning;
 pub(crate) mod context_window;
 mod environment;
@@ -1656,7 +1657,11 @@ impl Session {
             state
                 .history
                 .restore_review_context(Some(&retained_context), guardian_history.as_ref());
+            state
+                .additional_context
+                .restore(crate::state::AdditionalContextSnapshot::default());
             if let Some(world_state) = world_state_baseline {
+                world_state.restore_additional_context(&mut state.additional_context);
                 state.history.set_world_state_baseline(world_state);
             }
             let fallback_ids = state.auto_compact_window_ids();
@@ -3937,6 +3942,19 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
+        let (replacement, additional_context_snapshot) = self
+            .rehydrate_additional_context_for_compaction(items)
+            .await;
+        items = replacement;
+        let mut additional_context_baseline = WorldState::default();
+        additional_context_baseline.add_section(
+            crate::context::world_state::AdditionalContextState::new(additional_context_snapshot),
+        );
+        let mut persisted_baseline = match world_state_baseline {
+            Some(world_state) => world_state.snapshot(),
+            None => crate::context::world_state::WorldStateSnapshot::default(),
+        };
+        persisted_baseline.apply_merge_patch(&additional_context_baseline.snapshot().into_object());
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }
@@ -3973,7 +3991,7 @@ impl Session {
         // overtaking the current settings snapshot while its checkpoint is written.
         let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
         // Compaction starts a new history window, so its WorldState baseline must be full.
-        let mut world_state_item = None;
+        let world_state_item = WorldStateItem::full(persisted_baseline.clone().into_object());
         {
             let mut state = self.state.lock().await;
             state.replace_annotated_history(
@@ -3984,18 +4002,12 @@ impl Session {
             compacted_item.guardian_history = state.history.guardian_history_checkpoint();
             compacted_item.retained_context = Some(state.history.retained_context().clone());
             state.reasoning_effort_pin = ReasoningEffortPin::Compacted;
-            if let Some(world_state) = world_state_baseline {
-                let snapshot = world_state.snapshot();
-                world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
-                state.history.set_world_state_baseline(snapshot);
-            }
+            state.history.set_world_state_baseline(persisted_baseline);
         }
 
         let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
         // Persist the baseline after the replacement history that established it.
-        if let Some(world_state_item) = world_state_item {
-            rollout_items.push(RolloutItem::WorldState(world_state_item));
-        }
+        rollout_items.push(RolloutItem::WorldState(world_state_item));
         if let Some(turn_context_item) = reference_context_item {
             rollout_items.push(RolloutItem::TurnContext(turn_context_item));
         }

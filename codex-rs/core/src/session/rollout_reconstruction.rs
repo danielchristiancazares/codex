@@ -1,3 +1,4 @@
+mod prefix_baseline;
 use super::*;
 use crate::context::GuardianContextMode;
 use crate::context::world_state::WorldStateSnapshot;
@@ -93,7 +94,10 @@ fn finalize_active_segment<'a>(
     // count these context-only segments as user turns for rollback, or use a snapshot from
     // before the segment's latest compaction.
     let has_context_baseline = active_segment.counts_as_user_turn
-        || active_segment
+        || matches!(
+            &active_segment.reference_context_item,
+            TurnReferenceContextItem::Latest(_)
+        ) && active_segment
             .world_state_replay
             .iter()
             .take_while(|item| !matches!(item, RolloutItem::Compacted(_)))
@@ -423,6 +427,11 @@ impl Session {
             }
         }
 
+        reference_context_item.restore_retained_prefix(
+            rollout_items,
+            history.annotated_items(),
+            &mut world_state_replay,
+        );
         let reference_context_item = match reference_context_item {
             TurnReferenceContextItem::NeverSet | TurnReferenceContextItem::Cleared => None,
             TurnReferenceContextItem::Latest(turn_reference_context_item) => {

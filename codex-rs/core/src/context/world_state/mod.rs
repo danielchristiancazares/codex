@@ -1,4 +1,6 @@
+mod additional_context;
 mod agents_md;
+pub(crate) use additional_context::AdditionalContextState;
 mod apps_instructions;
 mod collaboration_mode;
 mod compact_permissions;

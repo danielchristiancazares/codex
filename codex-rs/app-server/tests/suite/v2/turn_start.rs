@@ -565,12 +565,25 @@ async fn turn_start_steers_active_turn_and_returns_active_turn_id() -> Result<()
 }
 
 #[tokio::test]
-async fn turn_start_additional_context_flows_to_model_input() -> Result<()> {
-    let responses = vec![create_final_assistant_message_sse_response("Done")?];
-    let server = create_mock_responses_server_sequence_unchecked(responses).await;
+async fn turn_start_additional_context_survives_omitted_updates_without_duplicates() -> Result<()> {
+    let mut turns = vec![vec![
+        responses::ev_response_created("context-warmup"),
+        responses::ev_completed("context-warmup"),
+    ]];
+    for index in 1..=3 {
+        let response_id = format!("context-{index}");
+        turns.push(vec![
+            responses::ev_response_created(&response_id),
+            responses::ev_assistant_message(&format!("message-{index}"), "Done"),
+            responses::ev_completed(&response_id),
+        ]);
+    }
+    let server = responses::start_websocket_server(vec![turns]).await;
 
     let codex_home = TempDir::new()?;
-    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+    MockResponsesConfig::new(&server.uri().replacen("ws://", "http://", 1))
+        .with_provider_config("supports_websockets = true")
+        .write(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -584,49 +597,63 @@ async fn turn_start_additional_context_flows_to_model_input() -> Result<()> {
         })
         .await?;
 
-    let _: TurnStartResponse = mcp
-        .request(|request_id| ClientRequest::TurnStart {
-            request_id,
-            params: TurnStartParams {
-                thread_id: thread.id,
-                client_user_message_id: None,
-                input: vec![V2UserInput::Text {
-                    text: "inspect tab".to_string(),
-                    text_elements: Vec::new(),
-                }],
-                additional_context: Some(HashMap::from([(
-                    "custom_source".to_string(),
-                    AdditionalContextEntry {
-                        value: "source value".to_string(),
-                        kind: AdditionalContextKind::Untrusted,
-                    },
-                )])),
-                ..Default::default()
-            },
-        })
-        .await?;
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
+    let context = HashMap::from([(
+        "custom_source".to_string(),
+        AdditionalContextEntry {
+            value: "source value".to_string(),
+            kind: AdditionalContextKind::Untrusted,
+        },
+    )]);
+    for additional_context in [Some(context.clone()), None, Some(context)] {
+        let _: TurnStartResponse = mcp
+            .request(|request_id| ClientRequest::TurnStart {
+                request_id,
+                params: TurnStartParams {
+                    thread_id: thread.id.clone(),
+                    client_user_message_id: None,
+                    input: vec![V2UserInput::Text {
+                        text: "inspect tab".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    additional_context,
+                    ..Default::default()
+                },
+            })
+            .await?;
+        let completed = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+        let completed: TurnCompletedNotification =
+            serde_json::from_value(completed.params.context("turn completion payload")?)?;
+        assert_eq!(completed.turn.status, TurnStatus::Completed);
+    }
 
-    let requests = server
-        .received_requests()
-        .await
-        .context("failed to fetch received requests")?;
-    let request = requests
-        .iter()
-        .find(|request| request.url.path().ends_with("/responses"))
-        .context("expected model request")?;
-    let body = request
-        .body_json::<Value>()
-        .context("request body should be JSON")?;
-    assert!(
-        body.to_string()
-            .contains("<external_custom_source>source value</external_custom_source>")
-    );
+    let requests = server.single_connection();
+    assert_eq!(requests.len(), 4);
+    let mut retained_copies = HashMap::new();
+    for (index, request) in requests.iter().enumerate() {
+        let body = request.body_json();
+        let inherited_copies = body["previous_response_id"]
+            .as_str()
+            .map(|id| *retained_copies.get(id).expect("known previous response"))
+            .unwrap_or(0);
+        let copies = inherited_copies
+            + body["input"]
+                .to_string()
+                .matches("<external_custom_source>source value</external_custom_source>")
+                .count();
+        let response_id = if index == 0 {
+            "context-warmup".to_string()
+        } else {
+            assert_eq!(copies, 1);
+            format!("context-{index}")
+        };
+        retained_copies.insert(response_id, copies);
+    }
 
+    server.shutdown().await;
     Ok(())
 }
 
