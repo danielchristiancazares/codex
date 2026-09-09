@@ -243,17 +243,21 @@ async fn review_op_emits_lifecycle_and_review_output() {
     let mut saw_header = false;
     let mut saw_finding_line = false;
     let expected_assistant_text = render_review_output_text(&expected);
-    let mut saw_assistant_plain = false;
-    let mut saw_assistant_xml = false;
+    let mut presentation_contents = Vec::new();
+    let mut retained_finding_copies = 0;
     for line in text.lines() {
         if line.trim().is_empty() {
             continue;
         }
         let v: serde_json::Value = serde_json::from_str(line).expect("jsonl line");
         let rl = codex_rollout::decode_rollout_line(v).expect("rollout line");
-        if let RolloutItem::ResponseItem(envelope) = rl.item
-            && let ResponseItem::Message { role, content, .. } = envelope.item
+        if let RolloutItem::ResponseItem(envelope) = &rl.item
+            && let ResponseItem::Message { role, content, .. } = &envelope.item
         {
+            retained_finding_copies += content.iter().filter(|item| {
+                matches!(item, ContentItem::InputText { text } | ContentItem::OutputText { text }
+                    if text.contains("Prefer Stylize helpers"))
+            }).count();
             if role == "user" {
                 for c in content {
                     if let ContentItem::InputText { text } = c {
@@ -265,18 +269,22 @@ async fn review_op_emits_lifecycle_and_review_output() {
                         }
                     }
                 }
-            } else if role == "assistant" {
-                for c in content {
-                    if let ContentItem::OutputText { text } = c {
-                        if text.contains("<user_action>") {
-                            saw_assistant_xml = true;
-                        }
-                        if text == expected_assistant_text {
-                            saw_assistant_plain = true;
-                        }
-                    }
+            }
+        }
+        match rl.item {
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => {
+                if let TurnItem::AgentMessage(message) = event.item {
+                    presentation_contents.push(message.content);
                 }
             }
+            RolloutItem::EventMsg(EventMsg::AgentMessage(message)) => {
+                presentation_contents.push(vec![
+                    codex_protocol::items::AgentMessageContent::Text {
+                        text: message.message,
+                    },
+                ]);
+            }
+            _ => {}
         }
     }
     assert!(saw_header, "user header missing from rollout");
@@ -284,13 +292,15 @@ async fn review_op_emits_lifecycle_and_review_output() {
         saw_finding_line,
         "formatted finding line missing from rollout"
     );
-    assert!(
-        saw_assistant_plain,
-        "assistant review output missing from rollout"
-    );
-    assert!(
-        !saw_assistant_xml,
-        "assistant review output contains user_action markup"
+    assert_eq!(retained_finding_copies, 1);
+    assert_eq!(
+        serde_json::to_value(presentation_contents).expect("serialized presentation"),
+        serde_json::to_value(vec![vec![
+            codex_protocol::items::AgentMessageContent::Text {
+                text: expected_assistant_text,
+            }
+        ]])
+        .expect("serialized expected presentation"),
     );
 
     let _codex_home_guard = codex_home;
@@ -1329,19 +1339,24 @@ async fn review_history_surfaces_in_parent_session() {
             .unwrap_or_default()
             .contains("User initiated a review task.")
     });
-    let contains_review_assistant = input.iter().any(|msg| {
-        msg["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("review assistant output")
-    });
+    let findings_copies = input
+        .iter()
+        .flat_map(|item| item["content"].as_array().into_iter().flatten())
+        .map(|content| {
+            content["text"]
+                .as_str()
+                .unwrap_or_default()
+                .matches("review assistant output")
+                .count()
+        })
+        .sum::<usize>();
     assert!(
         contains_review_rollout_user,
         "review rollout user message missing from parent turn input"
     );
-    assert!(
-        contains_review_assistant,
-        "review assistant output missing from parent turn input"
+    assert_eq!(
+        findings_copies, 1,
+        "parent requests should contain one findings copy"
     );
 
     let _codex_home_guard = codex_home;
