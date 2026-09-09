@@ -4,7 +4,6 @@
 use super::*;
 use crate::color::blend;
 use crate::style::accent_style;
-use crate::style::key_hint_style;
 use crate::style::secondary_style;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::best_color_for_level;
@@ -60,19 +59,6 @@ impl ChatComposer {
         }
         if normal_input && area.width >= 16 {
             let hint_style = Style::default().fg(Color::Reset).not_dim();
-            let label = if area.width >= 26 && self.draft.is_bash_mode {
-                " Shell "
-            } else {
-                ""
-            };
-            let title_style = if self.has_focus {
-                accent_style()
-            } else {
-                key_hint_style()
-            };
-            if !label.is_empty() {
-                frame = frame.title_top(Line::from(label).style(title_style.not_dim()));
-            }
             let popup_selection = match &self.popups.active {
                 ActivePopup::None => false,
                 ActivePopup::Command(popup) => popup.selected_item().is_some(),
@@ -104,7 +90,7 @@ impl ChatComposer {
                 ])
                 .style(hint_style)
                 .right_aligned();
-                if hint.width() + label.len() + 6 <= usize::from(area.width) {
+                if hint.width() + 6 <= usize::from(area.width) {
                     frame = frame.title_top(hint);
                 }
             }
@@ -117,11 +103,6 @@ impl ChatComposer {
                         key_hint::plain(KeyCode::Esc).into(),
                         Span::styled(" close ", secondary_style()),
                     ]))
-                } else if self.draft.is_bash_mode {
-                    Some(Line::from(Span::styled(
-                        " ! shell command ",
-                        secondary_style(),
-                    )))
                 } else if area.width < 60
                     && let Some(binding) = self.footer.show_transcript_key
                 {
