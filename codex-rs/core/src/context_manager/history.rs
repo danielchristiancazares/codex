@@ -66,6 +66,9 @@ use std::sync::LazyLock;
 
 use crate::context::GuardianContextMode;
 
+#[path = "history_token_projection.rs"]
+mod token_projection;
+
 /// Transcript of thread history
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContextManager {
@@ -679,7 +682,10 @@ impl ContextManager {
             .items
             .iter()
             .rposition(|envelope| is_model_generated_item(&envelope.item))
-            .map_or(self.items.len(), |index| index.saturating_add(1));
+            .map_or_else(
+                || self.token_info.as_ref().map_or(0, |_| self.items.len()),
+                |index| index.saturating_add(1),
+            );
         self.items[start..].iter().map(|envelope| &envelope.item)
     }
 
@@ -723,11 +729,7 @@ impl ContextManager {
         // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);
 
-        // strip images when model does not support them
-        normalize::strip_images_when_unsupported(input_modalities, items);
-
-        // strip audio when model does not support it
-        normalize::strip_audio_when_unsupported(input_modalities, items);
+        self.project_model_visible_content(input_modalities);
     }
 
     /// Walk backward from a rollback cut and trim contiguous pre-turn context-update items.

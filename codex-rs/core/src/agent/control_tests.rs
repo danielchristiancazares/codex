@@ -186,6 +186,9 @@ struct AgentControlHarness {
     control: AgentControl,
 }
 
+#[path = "control_token_recount_tests.rs"]
+mod token_recount_tests;
+
 impl AgentControlHarness {
     async fn new() -> Self {
         let (home, config) = test_config().await;
