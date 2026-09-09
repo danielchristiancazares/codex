@@ -582,17 +582,19 @@ ignored = [
 ]
 
 [profile.dev]
-# Keep line tables/backtraces while avoiding expensive full variable debug info
-# across local dev builds.
-debug = "limited"
-
-[profile.dev-small]
-inherits = "dev"
 opt-level = 0
 debug = "none"
 strip = "symbols"
 
+[profile.dev-small]
+inherits = "dev"
+# Keep line tables/backtraces while avoiding expensive full variable debug info.
+debug = "limited"
+strip = "none"
+
 [profile.release]
+# Keep release optimization while favoring build throughput. Whole-program
+# ThinLTO made the final CDX binary unit dominate release builds.
 lto = false
 debug = "line-tables-only"
 split-debuginfo = "off"
@@ -600,8 +602,10 @@ split-debuginfo = "off"
 # sidecar symbols and stripped the binaries.
 strip = false
 
-# Balance parallel release code generation against binary size.
-codegen-units = 4
+# Use Cargo's standard release parallelism and retain work between local
+# release builds.
+codegen-units = 16
+incremental = true
 
 [profile.profiling]
 inherits = "release"
