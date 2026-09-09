@@ -629,6 +629,7 @@ impl ChatComposer {
         )
     }
 
+    #[cfg(test)]
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
