@@ -1,5 +1,9 @@
+#[path = "connection_manager.rs"]
+mod connections;
 #[path = "copilot_manager.rs"]
 mod copilot;
+pub use connections::ActivatedConnection;
+pub use connections::PreparedConnection;
 
 use chrono::Utc;
 use http::StatusCode;
@@ -973,6 +977,33 @@ pub async fn logout_with_revoke(
     keyring_backend_kind: AuthKeyringBackendKind,
     auth_route_config: &AuthRouteConfig,
 ) -> std::io::Result<bool> {
+    let connections = crate::ConnectionStore::new(
+        codex_home.to_path_buf(),
+        auth_credentials_store_mode,
+        keyring_backend_kind,
+        auth_route_config.clone(),
+    );
+    let scope = connections::CredentialScope::startup(connections.startup()?, codex_home);
+    let _lease = connections::CredentialLease::acquire(
+        scope.home().to_path_buf(),
+        auth_credentials_store_mode,
+    )
+    .await?;
+    let codex_home = scope.home();
+    match scope.provider() {
+        crate::ConnectionProvider::Openai => {}
+        crate::ConnectionProvider::Copilot => {
+            let removed = crate::GitHubCopilotAuth::new_in(
+                codex_home,
+                auth_route_config.http_client_factory().clone(),
+                auth_credentials_store_mode,
+            )
+            .logout()
+            .map_err(std::io::Error::other)?;
+            connections.forget_logged_out_scope(codex_home)?;
+            return Ok(removed);
+        }
+    }
     let auth_dot_json = match load_auth_dot_json(
         codex_home,
         auth_credentials_store_mode,
@@ -987,11 +1018,13 @@ pub async fn logout_with_revoke(
     if let Err(err) = revoke_auth_tokens(auth_dot_json.as_ref(), auth_route_config).await {
         tracing::warn!("failed to revoke auth tokens during logout: {err}");
     }
-    logout_all_stores(
+    let removed = logout_all_stores(
         codex_home,
         auth_credentials_store_mode,
         keyring_backend_kind,
-    )
+    )?;
+    connections.forget_logged_out_scope(codex_home)?;
+    Ok(removed)
 }
 
 /// Writes an `auth.json` that contains only the API key.
@@ -1133,7 +1166,8 @@ pub fn save_auth(
         auth_credentials_store_mode,
         keyring_backend_kind,
     );
-    storage.save(auth)
+    storage.save(auth)?;
+    crate::connections::configured_login_saved(codex_home, auth_credentials_store_mode)
 }
 
 /// Load the raw stored auth payload without applying environment overrides.
@@ -2051,6 +2085,7 @@ impl UnauthorizedRecovery {
 /// different parts of the program seeing inconsistent auth data mid‑run.
 pub struct AuthManager {
     codex_home: PathBuf,
+    credential_home: RwLock<connections::CredentialScope>,
     inner: RwLock<CachedAuth>,
     auth_change_tx: watch::Sender<u64>,
     auth_change_state_tx: watch::Sender<AuthChangeState>,
@@ -2184,6 +2219,9 @@ impl AuthManager {
             agent_identity_authapi_base_url(chatgpt_base_url.as_deref()).ok();
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
         Self {
+            credential_home: RwLock::new(connections::CredentialScope::configured(
+                codex_home.clone(),
+            )),
             codex_home,
             inner: RwLock::new(CachedAuth {
                 auth: managed_auth,
@@ -2223,6 +2261,9 @@ impl AuthManager {
 
         Arc::new(Self {
             codex_home: PathBuf::from("non-existent"),
+            credential_home: RwLock::new(connections::CredentialScope::configured(PathBuf::from(
+                "non-existent",
+            ))),
             inner: RwLock::new(cached),
             auth_change_tx,
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
@@ -2251,6 +2292,9 @@ impl AuthManager {
         };
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
         Arc::new(Self {
+            credential_home: RwLock::new(connections::CredentialScope::configured(
+                codex_home.clone(),
+            )),
             codex_home,
             inner: RwLock::new(cached),
             auth_change_tx,
@@ -2285,6 +2329,9 @@ impl AuthManager {
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
         Arc::new(Self {
             codex_home: PathBuf::from("non-existent"),
+            credential_home: RwLock::new(connections::CredentialScope::configured(PathBuf::from(
+                "non-existent",
+            ))),
             inner: RwLock::new(cached),
             auth_change_tx,
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
@@ -2313,6 +2360,9 @@ impl AuthManager {
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
         Arc::new(Self {
             codex_home: PathBuf::from("non-existent"),
+            credential_home: RwLock::new(connections::CredentialScope::configured(PathBuf::from(
+                "non-existent",
+            ))),
             inner: RwLock::new(CachedAuth {
                 auth: None,
                 permanent_refresh_failure: None,
@@ -2576,7 +2626,7 @@ impl AuthManager {
         let allowed_login_methods = self.allowed_login_methods();
         let effective_chatgpt_workspaces = self.effective_chatgpt_workspaces();
         load_auth(
-            &self.codex_home,
+            &self.connection_credential_home(),
             self.enable_codex_api_key_env,
             self.auth_credentials_store_mode,
             Some(&allowed_login_methods),
@@ -2764,6 +2814,8 @@ impl AuthManager {
             manager
                 .install_external_auth(Arc::new(external_auth))
                 .await?;
+        } else {
+            manager.restore_saved_connection().await?;
         }
         Ok(manager)
     }
@@ -2903,19 +2955,57 @@ impl AuthManager {
     /// unauthenticated state.
     pub async fn logout(&self) -> std::io::Result<bool> {
         self.ensure_logout_allowed()?;
+        let _guard = self
+            .refresh_lock
+            .acquire()
+            .await
+            .map_err(std::io::Error::other)?;
+        let _lease = self.lock_credential_scope().await?;
+        match self.connection_logout_provider() {
+            crate::ConnectionProvider::Openai => {}
+            crate::ConnectionProvider::Copilot => {
+                let removed = self
+                    .copilot_auth()
+                    .logout()
+                    .map_err(std::io::Error::other)?;
+                self.connection_store()
+                    .forget_logged_out_scope(&self.connection_credential_home())?;
+                return Ok(removed);
+            }
+        }
         let removed = logout_all_stores(
-            &self.codex_home,
+            &self.connection_credential_home(),
             self.auth_credentials_store_mode,
             self.keyring_backend_kind,
         )?;
         // Always reload to clear any cached auth (even if file absent).
         self.clear_external_auth();
         self.reload().await;
+        self.connection_store()
+            .forget_logged_out_scope(&self.connection_credential_home())?;
         Ok(removed)
     }
 
     pub async fn logout_with_revoke(&self) -> std::io::Result<bool> {
         self.ensure_logout_allowed()?;
+        let _guard = self
+            .refresh_lock
+            .acquire()
+            .await
+            .map_err(std::io::Error::other)?;
+        let _lease = self.lock_credential_scope().await?;
+        match self.connection_logout_provider() {
+            crate::ConnectionProvider::Openai => {}
+            crate::ConnectionProvider::Copilot => {
+                let removed = self
+                    .copilot_auth()
+                    .logout()
+                    .map_err(std::io::Error::other)?;
+                self.connection_store()
+                    .forget_logged_out_scope(&self.connection_credential_home())?;
+                return Ok(removed);
+            }
+        }
         let auth_dot_json = self
             .auth_cached()
             .and_then(|auth| auth.get_current_auth_json());
@@ -2924,13 +3014,15 @@ impl AuthManager {
             tracing::warn!("failed to revoke auth tokens during logout: {err}");
         }
         let result = logout_all_stores(
-            &self.codex_home,
+            &self.connection_credential_home(),
             self.auth_credentials_store_mode,
             self.keyring_backend_kind,
         )?;
         // Always reload to clear any cached auth (even if file absent).
         self.clear_external_auth();
         self.reload().await;
+        self.connection_store()
+            .forget_logged_out_scope(&self.connection_credential_home())?;
         Ok(result)
     }
 
@@ -3052,6 +3144,19 @@ impl AuthManager {
         auth: &ChatgptAuth,
         refresh_token: String,
     ) -> Result<(), RefreshTokenError> {
+        let _credential_lease = self.lock_credential_scope().await?;
+        let stored = auth
+            .storage()
+            .load()?
+            .ok_or_else(|| std::io::Error::other("This account has been signed out."))?;
+        if stored
+            .tokens
+            .as_ref()
+            .is_some_and(|tokens| tokens.refresh_token != refresh_token)
+        {
+            self.reload().await;
+            return Ok(());
+        }
         let refresh_response = request_chatgpt_token_refresh(refresh_token, auth.client()).await?;
 
         persist_tokens(

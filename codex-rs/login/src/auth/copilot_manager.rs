@@ -6,7 +6,7 @@ impl AuthManager {
     /// A fresh instance lets unauthorized recovery observe credentials saved by another process.
     pub fn copilot_auth(&self) -> GitHubCopilotAuth {
         GitHubCopilotAuth::new_in(
-            &self.codex_home,
+            &self.connection_credential_home(),
             self.auth_route_config.http_client_factory().clone(),
             self.auth_credentials_store_mode,
         )

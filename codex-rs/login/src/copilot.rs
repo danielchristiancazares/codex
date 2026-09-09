@@ -1,6 +1,9 @@
 mod device_flow;
 mod file_storage;
+mod saved_login;
 mod storage;
+
+pub use saved_login::GitHubCopilotLogin;
 
 use std::fmt;
 use std::path::Path;

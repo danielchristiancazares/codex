@@ -7,11 +7,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -205,21 +201,7 @@ impl AuthStorageBackend for FileAuthStorage {
 
     fn save(&self, auth_dot_json: &AuthDotJson) -> std::io::Result<()> {
         let auth_file = get_auth_file(&self.codex_home);
-
-        if let Some(parent) = auth_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json_data = serde_json::to_string_pretty(auth_dot_json)?;
-        let mut options = OpenOptions::new();
-        options.truncate(true).write(true).create(true);
-        #[cfg(unix)]
-        {
-            options.mode(0o600);
-        }
-        let mut file = options.open(auth_file)?;
-        file.write_all(json_data.as_bytes())?;
-        file.flush()?;
-        Ok(())
+        crate::connections::atomic_write_json(&auth_file, auth_dot_json)
     }
 
     fn delete(&self) -> std::io::Result<bool> {
