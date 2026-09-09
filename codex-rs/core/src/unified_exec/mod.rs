@@ -125,6 +125,26 @@ pub(crate) struct ExecCommandRequest {
     pub prefix_rule: Option<Vec<String>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PollCollection {
+    Available,
+    UntilDeadline,
+}
+
+impl PollCollection {
+    pub(crate) fn finish(
+        self,
+        output: crate::tools::context::ExecCommandToolOutput,
+    ) -> std::ops::ControlFlow<crate::tools::context::ExecCommandToolOutput> {
+        match self {
+            Self::Available if output.raw_output.is_empty() && output.process_id.is_some() => {
+                std::ops::ControlFlow::Continue(())
+            }
+            Self::Available | Self::UntilDeadline => std::ops::ControlFlow::Break(output),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WriteStdinRequest<'a> {
     pub process_id: i32,
