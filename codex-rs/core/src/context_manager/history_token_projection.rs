@@ -2,6 +2,7 @@
 
 use super::ContextManager;
 use super::estimate_item_token_count;
+use crate::context_manager::citation_projection;
 use crate::context_manager::normalize;
 use codex_protocol::openai_models::InputModality;
 use std::sync::Arc;
@@ -27,6 +28,7 @@ impl ContextManager {
 
     pub(super) fn project_model_visible_content(&mut self, input_modalities: &[InputModality]) {
         let items = Arc::make_mut(&mut self.items);
+        citation_projection::strip_hidden_citations(items);
         normalize::strip_images_when_unsupported(input_modalities, items);
         normalize::strip_audio_when_unsupported(input_modalities, items);
     }

@@ -54,7 +54,16 @@ async fn context_window_token_status_with_config(
     config: &Config,
     model_info: &ModelInfo,
 ) -> ContextWindowTokenStatus {
-    let active_context_tokens = sess.get_total_token_usage().await;
+    let (active_context_tokens, history) = {
+        let state = sess.state.lock().await;
+        (
+            state.get_total_token_usage(state.server_reasoning_included()),
+            state.history.clone(),
+        )
+    };
+    let active_context_tokens = active_context_tokens
+        .saturating_add(history.model_visible_token_delta(&model_info.input_modalities))
+        .max(0);
 
     // Count either the full active context or only the tokens added after the initial prefix.
     let (auto_compact_scope_tokens, auto_compact_scope_limit, auto_compact_window_prefill_tokens) =

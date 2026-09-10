@@ -207,6 +207,21 @@ impl ToolDiscoveryState {
     }
 }
 
+pub(crate) fn strip_tool_search_schemas<'a>(
+    items: impl IntoIterator<Item = &'a mut ResponseItem>,
+) -> usize {
+    let mut stripped = 0;
+    for item in items {
+        if let ResponseItem::ToolSearchOutput { tools, .. } = item
+            && !tools.is_empty()
+        {
+            tools.clear();
+            stripped += 1;
+        }
+    }
+    stripped
+}
+
 #[cfg(test)]
 #[path = "tool_discovery_tests.rs"]
 mod tests;

@@ -26,6 +26,7 @@
 //! fails, normal stream retry logic handles recovery on the same turn.
 
 mod fixture_transport;
+mod request_fit;
 use fixture_transport::ResponsesSseFixture;
 pub(crate) use fixture_transport::enable_responses_sse_for_tests;
 
@@ -892,6 +893,7 @@ impl ModelClient {
             client_metadata: Some(responses_metadata.client_metadata()),
             access_programs: None,
         };
+        request_fit::check(&request, model_info)?;
         Ok(request)
     }
 

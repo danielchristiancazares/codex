@@ -193,3 +193,16 @@ fn pending_exchange_restores_the_full_latest_result_until_model_continuation() {
     state.restore_pending_output_from(&pending_state);
     assert_eq!(state.pending_exchange(&items), Vec::new());
 }
+
+#[test]
+fn compaction_projection_clears_schema_bodies_and_preserves_output_envelopes() {
+    let mut output = search_output(
+        "search-1",
+        vec![json!({"type": "function", "name": "calendar"})],
+    );
+    let expected = search_output("search-1", Vec::new());
+
+    assert_eq!(strip_tool_search_schemas(std::iter::once(&mut output)), 1);
+    assert_eq!(output, expected);
+    assert_eq!(strip_tool_search_schemas(std::iter::once(&mut output)), 0);
+}
