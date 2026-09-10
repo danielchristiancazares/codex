@@ -186,7 +186,7 @@ fn has_usable_workspace_credits(credits: &CreditsSnapshot) -> bool {
 }
 
 impl ChatWidget {
-    /// Poll more often near exhaustion for every ChatGPT account, independently of experiments.
+    /// Poll supported provider accounts more often near exhaustion.
     pub(crate) fn rate_limit_refresh_interval(&self) -> Option<std::time::Duration> {
         if !self.should_prefetch_rate_limits() {
             return None;
@@ -371,6 +371,8 @@ impl ChatWidget {
                     rate_limit_snapshot_display_for_limit(&snapshot, limit_label, Local::now());
                 self.rate_limit_snapshots_by_limit_id
                     .insert(limit_id, display);
+            } else if let Some(display) = self.rate_limit_snapshots_by_limit_id.get_mut(&limit_id) {
+                display.merge_rolling_metadata(&snapshot);
             }
 
             if !warnings.is_empty() {
@@ -394,9 +396,9 @@ impl ChatWidget {
         self.stop_rate_limit_poller();
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn should_prefetch_rate_limits(&self) -> bool {
-        self.requires_openai_auth && self.has_chatgpt_account
+    pub(crate) fn should_prefetch_rate_limits(&self) -> bool {
+        (self.requires_openai_auth && self.has_chatgpt_account)
+            || self.config.model_provider.is_copilot()
     }
 
     fn lower_cost_preset(&self) -> Option<ModelPreset> {

@@ -1015,6 +1015,9 @@ See the Codex keymap documentation for supported actions and examples."
                     reset_hint_request_id,
                 },
             );
+        } else if app.chat_widget.should_prefetch_rate_limits() {
+            // Provider usage reads do not require ChatGPT reset-credit metadata.
+            app.refresh_rate_limits(&app_server, RateLimitRefreshOrigin::Periodic);
         }
 
         let mut listen_for_app_server_events = true;

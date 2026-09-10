@@ -114,6 +114,20 @@ pub(crate) struct RateLimitSnapshotDisplay {
     pub workspace_access: WorkspaceAccessState,
 }
 
+impl RateLimitSnapshotDisplay {
+    /// Merges sparse metadata without refreshing authoritative windows, labels, or capture age.
+    pub(crate) fn merge_rolling_metadata(&mut self, snapshot: &RateLimitSnapshot) {
+        if let Some(credits) = snapshot.credits.as_ref() {
+            self.credits = Some(CreditsSnapshotDisplay::from(credits));
+        }
+        if let Some(limit) = snapshot.individual_limit.as_ref() {
+            self.individual_limit =
+                SpendControlLimitSnapshotDisplay::from_limit(limit, Local::now());
+        }
+        self.workspace_access = self.workspace_access.merge_rolling(snapshot);
+    }
+}
+
 /// Display-ready credits state extracted from protocol snapshots.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CreditsSnapshotDisplay {
