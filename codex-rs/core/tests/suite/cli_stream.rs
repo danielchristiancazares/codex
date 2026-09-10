@@ -25,6 +25,9 @@ use wiremock::matchers::header;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
+#[path = "cli_stream/sse_fallback_tests.rs"]
+mod sse_fallback_tests;
+
 const PERSONAL_ACCESS_TOKEN: &str = "at-cli-test";
 const PERSONAL_ACCESS_TOKEN_AUTHORIZATION: &str = "Bearer at-cli-test";
 const PERSONAL_ACCESS_TOKEN_ACCOUNT_ID: &str = "account-pat";

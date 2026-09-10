@@ -187,9 +187,12 @@ separate operations.
 
 Owner: [Responses SSE adapter](../codex-rs/codex-api/src/sse/responses.rs).
 
-The ordinary model client's pending WebSocket-only policy narrows SSE exposure
-in this fork. Released HTTP fallback and the Guardian classifier's separate HTTP
-path still make correct SSE behavior relevant.
+The ordinary model client prefers WebSockets and supports production HTTP/SSE,
+matching upstream: HTTP-only providers use SSE directly; HTTP 426 or exhaustion
+of the WebSocket retry budget activates SSE for the rest of the session. This
+retains the fork's request and telemetry metadata reuse, incremental requests,
+WebSocket liveness tracking, and SSE terminal-failure preservation. The Guardian
+classifier's separate HTTP path also benefits from correct SSE behavior.
 
 ### Proof of improvement
 

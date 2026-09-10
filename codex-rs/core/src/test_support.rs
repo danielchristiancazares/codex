@@ -82,11 +82,6 @@ pub fn set_thread_manager_test_mode(enabled: bool) {
     thread_manager::set_thread_manager_test_mode_for_tests(enabled);
 }
 
-/// Enables HTTP/SSE only for integration fixtures that explicitly request it.
-pub fn enable_responses_sse_for_tests() {
-    crate::client::enable_responses_sse_for_tests();
-}
-
 pub fn set_deterministic_process_ids(enabled: bool) {
     unified_exec::set_deterministic_process_ids_for_tests(enabled);
 }

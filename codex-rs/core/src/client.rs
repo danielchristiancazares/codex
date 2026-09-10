@@ -2,7 +2,7 @@
 //!
 //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
 //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
-//! and transport state).
+//! and transport fallback state).
 //!
 //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
 //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
@@ -23,12 +23,9 @@
 //! ## Retry-Budget Tradeoff
 //!
 //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
-//! fails, normal stream retry logic handles recovery on the same turn.
+//! fails, normal stream retry/fallback logic handles recovery on the same turn.
 
-mod fixture_transport;
 mod request_fit;
-use fixture_transport::ResponsesSseFixture;
-pub(crate) use fixture_transport::enable_responses_sse_for_tests;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -577,9 +574,6 @@ impl ModelClient {
         session_telemetry: &SessionTelemetry,
         _model_info: &ModelInfo,
     ) -> bool {
-        if ResponsesSseFixture::acquire().is_err() {
-            return false;
-        }
         let websocket_enabled = self.responses_websocket_enabled();
         let activated =
             websocket_enabled && !self.state.disable_websockets.swap(true, Ordering::Relaxed);
@@ -2006,7 +2000,6 @@ impl ModelClientSession {
                 ))
             }
             Ok(WebsocketStreamOutcome::FallbackToHttp) => {
-                let _fixture = ResponsesSseFixture::acquire()?;
                 self.try_switch_fallback_transport(session_telemetry, model_info);
                 Ok(())
             }
@@ -2018,9 +2011,10 @@ impl ModelClientSession {
     /// Streams a single model request within the current turn.
     ///
     /// The caller is responsible for passing per-turn settings explicitly (model selection,
-    /// reasoning settings, telemetry context, and turn metadata). Production requires Responses
-    /// WebSockets; HTTP/SSE requires explicit integration-fixture authority. The trace context
-    /// remains explicit for both transports.
+    /// reasoning settings, telemetry context, and turn metadata). This method prefers Responses
+    /// WebSockets when the provider supports them and falls back to HTTP/SSE when WebSockets are
+    /// unavailable or the retry budget is exhausted. The trace context remains explicit for both
+    /// transports.
     pub async fn stream(
         &mut self,
         prompt: &Prompt,
@@ -2059,7 +2053,6 @@ impl ModelClientSession {
                     }
                 }
 
-                let _fixture = ResponsesSseFixture::acquire()?;
                 self.stream_responses_api(
                     prompt,
                     model_info,

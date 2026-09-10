@@ -2122,7 +2122,6 @@ async fn guardian_review_records_missing_auto_review_model_in_analytics_metadata
 async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
 -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
-    test_support::enable_responses_sse_for_tests();
 
     let server = start_mock_server().await;
     let guardian_assessment = serde_json::json!({
