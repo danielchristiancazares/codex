@@ -29,6 +29,7 @@ use serde_json::Value;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const MIN_COMPLETED_TURNS: usize = 3;
@@ -394,6 +395,8 @@ impl App {
 
         let request_handle = app_server.request_handle();
         let event_sender = self.app_event_tx.clone();
+        let cancellation = CancellationToken::new();
+        self.recap.in_flight_cancellation = Some(cancellation.clone());
         let task = tokio::spawn(async move {
             let result = run_temporary_structured_turn(
                 request_handle,
@@ -402,6 +405,7 @@ impl App {
                 recap_output_schema(),
                 /*effort*/ None,
                 receiver,
+                cancellation,
             )
             .await
             .map_err(|error| error.to_string());
@@ -510,6 +514,7 @@ pub(super) struct RecapState {
     in_flight_trigger: Option<RecapTrigger>,
     in_flight_thread_id: Option<ThreadId>,
     in_flight_request: Option<JoinHandle<()>>,
+    in_flight_cancellation: Option<CancellationToken>,
 }
 
 impl RecapState {
@@ -517,6 +522,10 @@ impl RecapState {
         self.in_flight_request_id = None;
         self.in_flight_trigger = None;
         self.in_flight_thread_id = None;
+        if let Some(cancellation) = self.in_flight_cancellation.take() {
+            cancellation.cancel();
+        }
+        // The worker must finish its interrupt/unsubscribe cleanup and deliver its stale result.
         self.in_flight_request.take();
     }
 
@@ -633,7 +642,7 @@ impl Drop for RecapState {
             task.abort();
         }
 
-        // Let an in-flight request finish so it can unsubscribe its temporary thread.
+        self.clear_in_flight_request();
     }
 }
 

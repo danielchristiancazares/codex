@@ -27,6 +27,7 @@ use color_eyre::eyre::eyre;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const STRUCTURED_TURN_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 30);
@@ -39,6 +40,7 @@ struct TemporaryStructuredTurnRequest {
     output_schema: Value,
     effort: Option<ReasoningEffort>,
     notifications: UnboundedReceiver<ServerNotification>,
+    cancellation: CancellationToken,
 }
 
 struct TemporaryStructuredTurnCleanup {
@@ -382,24 +384,27 @@ async fn run_temporary_structured_turn_with_timeout(
         output_schema,
         effort,
         notifications,
+        cancellation,
     } = request;
     let mut cleanup =
         TemporaryStructuredTurnCleanup::new(request_handle.clone(), thread_id.clone());
-    let result = tokio::time::timeout(timeout, async {
-        let turn = start_structured_turn(
-            &request_handle,
-            thread_id.clone(),
-            prompt,
-            output_schema,
-            effort,
-        )
-        .await?;
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => Err(eyre!("temporary structured turn cancelled")),
+        result = tokio::time::timeout(timeout, async {
+            let turn = start_structured_turn(
+                &request_handle,
+                thread_id.clone(),
+                prompt,
+                output_schema,
+                effort,
+            )
+            .await?;
 
-        cleanup.turn_id = Some(turn.turn.id.clone());
-        collect_structured_response(notifications, &turn.turn.id).await
-    })
-    .await
-    .unwrap_or_else(|_| Err(eyre!("temporary structured turn timed out")));
+            cleanup.turn_id = Some(turn.turn.id.clone());
+            collect_structured_response(notifications, &turn.turn.id).await
+        }) => result.unwrap_or_else(|_| Err(eyre!("temporary structured turn timed out"))),
+    };
 
     cleanup.finish(result.is_err()).await;
     result
@@ -413,6 +418,7 @@ pub(crate) async fn run_temporary_structured_turn(
     output_schema: Value,
     effort: Option<ReasoningEffort>,
     notifications: UnboundedReceiver<ServerNotification>,
+    cancellation: CancellationToken,
 ) -> color_eyre::Result<String> {
     run_temporary_structured_turn_with_timeout(
         request_handle,
@@ -422,6 +428,7 @@ pub(crate) async fn run_temporary_structured_turn(
             output_schema,
             effort,
             notifications,
+            cancellation,
         },
         STRUCTURED_TURN_TIMEOUT,
     )

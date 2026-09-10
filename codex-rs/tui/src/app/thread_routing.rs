@@ -6,6 +6,7 @@
 
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
+use crate::app_event::RecapTrigger;
 use crate::app_event::ThreadTitleDestination;
 use crate::chatwidget::ThreadInputStateRestoreMode;
 use codex_app_server_protocol::ThreadStartedNotification;
@@ -1140,14 +1141,19 @@ impl App {
         if self.abandoned_side_threads.contains(&thread_id) {
             return Ok(());
         }
-        if self.current_displayed_thread_id() == Some(thread_id)
-            && let ServerNotification::TurnCompleted(notification) = &notification
-        {
-            let now = Instant::now();
-
-            self.recap
-                .note_turn_finished(&notification.turn.status, now);
-            self.schedule_recap_check(thread_id, now);
+        if self.current_displayed_thread_id() == Some(thread_id) {
+            match &notification {
+                ServerNotification::TurnStarted(_) => {
+                    self.clear_recap_request(RecapTrigger::Manual);
+                }
+                ServerNotification::TurnCompleted(notification) => {
+                    let now = Instant::now();
+                    self.recap
+                        .note_turn_finished(&notification.turn.status, now);
+                    self.schedule_recap_check(thread_id, now);
+                }
+                _ => {}
+            }
         }
         let misalignment_policy_violation =
             match &notification {

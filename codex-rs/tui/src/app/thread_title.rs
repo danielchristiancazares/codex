@@ -155,6 +155,7 @@ impl App {
                 thread_title_output_schema(),
                 effort,
                 receiver,
+                tokio_util::sync::CancellationToken::new(),
             )
             .await
             .map_err(|error| error.to_string());

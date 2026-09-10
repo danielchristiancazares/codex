@@ -14,6 +14,7 @@ use pretty_assertions::assert_eq;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde_json::Value;
+use tokio::sync::oneshot;
 
 const MODEL: &str = "gpt-5.2";
 const MODEL_PROVIDER_ID: &str = "recap-generation-test";
@@ -189,6 +190,204 @@ stream_max_retries = 0
 
     app_server.shutdown().await?;
     model_server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn focus_gain_interrupts_in_flight_automatic_recap() -> Result<()> {
+    assert_recap_cancellation(RecapCancellation::FocusGained).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replacing_thread_interrupts_in_flight_manual_recap() -> Result<()> {
+    assert_recap_cancellation(RecapCancellation::ThreadReplaced).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_turn_interrupts_in_flight_manual_recap() -> Result<()> {
+    assert_recap_cancellation(RecapCancellation::TurnStarted).await
+}
+
+enum RecapCancellation {
+    FocusGained,
+    ThreadReplaced,
+    TurnStarted,
+}
+
+async fn assert_recap_cancellation(cause: RecapCancellation) -> Result<()> {
+    let (release_tx, release_rx) = oneshot::channel();
+    let chunks = vec![
+        StreamingSseChunk {
+            gate: None,
+            body: responses::sse(vec![ev_response_created("recap-focus-gained")]),
+        },
+        StreamingSseChunk {
+            gate: Some(release_rx),
+            body: responses::sse(vec![ev_completed("recap-focus-gained")]),
+        },
+    ];
+    let (model_server, _completions) = start_streaming_sse_server(vec![chunks]).await;
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let codex_home = tempdir()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "{MODEL}"
+model_provider = "{MODEL_PROVIDER_ID}"
+
+[model_providers.{MODEL_PROVIDER_ID}]
+name = "Recap generation test"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            model_server.uri()
+        ),
+    )?;
+    app.config.codex_home = codex_home.path().to_path_buf().abs();
+    app.config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.path().abs());
+    app.config.model = Some(MODEL.to_string());
+    app.config.model_provider_id = MODEL_PROVIDER_ID.to_string();
+    app.config.model_provider = ModelProviderInfo {
+        name: "Recap generation test".to_string(),
+        base_url: Some(format!("{}/v1", model_server.uri())),
+        request_max_retries: Some(0),
+        stream_max_retries: Some(0),
+        ..ModelProviderInfo::default()
+    };
+
+    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+    let started = app_server.start_thread(&app.config).await?;
+    let thread_id = started.session.thread_id;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    app.replace_chat_widget_with_app_server_thread(
+        &mut tui,
+        started,
+        ThreadAttachPresentation::SessionLineage,
+        /*initial_user_message*/ None,
+    )
+    .await?;
+    while app_event_rx.try_recv().is_ok() {}
+
+    prepare_eligible_recap(&mut app, thread_id);
+    app.handle_event(
+        &mut tui,
+        &mut app_server,
+        match cause {
+            RecapCancellation::FocusGained => AppEvent::CheckRecap { thread_id },
+            RecapCancellation::ThreadReplaced | RecapCancellation::TurnStarted => {
+                AppEvent::GenerateRecap { thread_id }
+            }
+        },
+    )
+    .await?;
+    let started_event = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), app_event_rx.recv())
+        .await?
+        .expect("recap start event");
+    let temporary_thread_id = match &started_event {
+        AppEvent::RecapStarted {
+            result: Ok(thread_id),
+            ..
+        } => ThreadId::from_string(thread_id).expect("temporary recap thread ID"),
+        other => panic!("expected successful recap start, got {other:?}"),
+    };
+    app.handle_event(&mut tui, &mut app_server, started_event)
+        .await?;
+
+    tokio::time::timeout(
+        Duration::from_secs(/*secs*/ 5),
+        model_server.wait_for_request_count(/*count*/ 1),
+    )
+    .await?;
+
+    match cause {
+        RecapCancellation::FocusGained => {
+            app.handle_tui_event(&mut tui, &mut app_server, crate::tui::TuiEvent::FocusGained)
+                .await?;
+        }
+        RecapCancellation::ThreadReplaced => {
+            app.recap.reset_for_new_thread(Instant::now());
+        }
+        RecapCancellation::TurnStarted => {
+            app.enqueue_thread_notification(
+                thread_id,
+                turn_started_notification(thread_id, "new-user-turn"),
+            )
+            .await?;
+        }
+    }
+
+    let cleanup = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), async {
+        let mut status = None;
+        let mut generated = false;
+        while status.is_none() || !generated {
+            tokio::select! {
+                event = app_event_rx.recv() => {
+                    let event = event.expect("app event stream");
+                    generated |= matches!(&event, AppEvent::RecapGenerated { temporary_thread_id: id, .. }
+                        if *id == temporary_thread_id);
+                    app.handle_event(&mut tui, &mut app_server, event).await?;
+                }
+                event = app_server.next_event() => {
+                    let event = event.expect("app-server event stream");
+                    if let codex_app_server_client::AppServerEvent::ServerNotification(notification) = &event
+                        && let ServerNotification::TurnCompleted(completed) = notification.as_ref()
+                        && completed.thread_id == temporary_thread_id.to_string()
+                    {
+                        status = Some(completed.turn.status.clone());
+                    }
+                    app.handle_app_server_event(&app_server, event).await;
+                }
+            }
+        }
+        Ok::<_, color_eyre::Report>(status)
+    })
+    .await;
+
+    let requests = model_server.requests().await;
+    let _ = release_tx.send(());
+    app_server.shutdown().await?;
+    model_server.shutdown().await;
+    assert_eq!(cleanup??, Some(TurnStatus::Interrupted));
+    assert_eq!(requests.len(), 1);
+    assert!(app.temporary_structured_requests.is_empty());
+    assert!(!app.transcript_cells.iter().any(|cell| {
+        cell.as_any()
+            .is::<crate::history_cell::ThreadRecapHistoryCell>()
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_recap_worker_never_submits_a_turn() -> Result<()> {
+    let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+    let thread_id = ThreadId::new();
+    prepare_eligible_recap(&mut app, thread_id);
+    let (mut app_server, requests, proxy) = start_recording_remote_app_server(&app.config).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    app.request_recap(&app_server, thread_id, RecapTrigger::Automatic);
+    let started = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), events.recv())
+        .await?
+        .expect("recap start");
+    app.handle_event(&mut tui, &mut app_server, started).await?;
+    app.recap.note_focus_gained();
+
+    let generated = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), events.recv())
+        .await?
+        .expect("cancelled recap cleanup");
+    assert!(matches!(generated, AppEvent::RecapGenerated { .. }));
+    app.handle_event(&mut tui, &mut app_server, generated)
+        .await?;
+    assert_eq!(
+        recorded_params(&requests, "turn/start"),
+        Vec::<Value>::new()
+    );
+    assert_eq!(recorded_params(&requests, "thread/unsubscribe").len(), 1);
+    assert!(app.temporary_structured_requests.is_empty());
+    app_server.shutdown().await?;
+    proxy.await??;
     Ok(())
 }
 

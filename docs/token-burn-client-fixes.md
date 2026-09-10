@@ -17,12 +17,31 @@ source tracing and public reproductions; it does not claim new runtime tests.
 
 ## September 2026 cancellation follow-up
 
+The later cancellation sweep found that discarding an automatic recap's task
+handle did not stop its model turn. Recaps now carry cancellation through the
+temporary structured-request runner. Regaining focus cancels automatic recaps;
+replacing the displayed thread or starting a new user turn cancels obsolete
+recaps. A manual recap is not cancelled merely because focus returns.
+
+Cancellation and cleanup have separate owners: the recap state signals
+cancellation, while the worker remains alive long enough to interrupt the
+temporary turn, unsubscribe, and deliver its stale completion for routing
+cleanup. Cancellation before the worker's first poll must not submit a turn.
+Thread startup is allowed to return its ID so a stale startup can unsubscribe;
+aborting that future would lose the cleanup handle.
+
 The same sweep reproduced an unintended `read_output` schema in otherwise
 tool-less title and recap requests. `tools.read_output.enabled` now explicitly
 controls that registration and defaults to `true`. Temporary metadata threads
 set it to `false`; ordinary conversations retain output recovery, including when
 their execution tools are otherwise unavailable. No model, effort, service tier,
 or useful task scope is reduced by these fixes.
+
+Regression coverage drives the TUI and embedded app-server with gated Responses
+streams: it observes interruption, one original request, no cancelled pre-submit
+request, and removal of temporary routing. The existing structured-recap test
+checks the actual outbound request has no tools; the retained-output integration
+test checks recovery still works without another command execution.
 
 ## Prioritized result
 

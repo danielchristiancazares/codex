@@ -284,6 +284,7 @@ stream_max_retries = 0
             }),
             effort: None,
             notifications,
+            cancellation: tokio_util::sync::CancellationToken::new(),
         },
         std::time::Duration::from_millis(/*millis*/ 500),
     )
