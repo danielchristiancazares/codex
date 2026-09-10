@@ -92,4 +92,38 @@ impl Session {
         }
         (replacement, snapshot)
     }
+
+    /// Checks the replacement together with publications and pending tool exchanges.
+    /// The client also checks the final request after tool/envelope formatting.
+    pub(crate) async fn fit_compaction_replacement(
+        &self,
+        turn: &super::turn_context::TurnContext,
+        items: Vec<ResponseItemEnvelope>,
+    ) -> codex_protocol::error::Result<Vec<ResponseItemEnvelope>> {
+        let (items, _) = self
+            .rehydrate_additional_context_for_compaction(items)
+            .await;
+        let base = self.get_prompt_base_instructions().await;
+        let mut projected = crate::context_manager::ContextManager::new();
+        projected.replace_annotated(items.clone());
+        let tokens = projected
+            .for_prompt(&turn.model_info().input_modalities)
+            .iter()
+            .map(crate::context_manager::estimate_item_token_count)
+            .fold(
+                i64::try_from(codex_utils_output_truncation::approx_token_count(
+                    &base.text,
+                ))
+                .unwrap_or(i64::MAX),
+                i64::saturating_add,
+            );
+        crate::context_manager::RequestBudget::for_model(turn.model_info())
+            .check(tokens)
+            .map_err(|error| {
+                codex_protocol::error::CodexErr::Fatal(format!(
+                    "compaction replacement cannot fit: {error}"
+                ))
+            })?;
+        Ok(items)
+    }
 }

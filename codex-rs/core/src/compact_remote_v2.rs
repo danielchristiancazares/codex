@@ -335,6 +335,9 @@ async fn run_remote_compact_task_inner_impl(
             replacement_history: &replacement_history,
         });
     }
+    let new_history = sess
+        .fit_compaction_replacement(compaction_turn_context, new_history)
+        .await?;
     sess.replace_compacted_history(
         new_history,
         reference_context_item,
