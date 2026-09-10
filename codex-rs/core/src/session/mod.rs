@@ -235,6 +235,7 @@ mod mcp;
 mod mcp_prewarm;
 mod mcp_refresh;
 mod mcp_runtime;
+mod model_capacity_refresh;
 pub(crate) mod multi_agents;
 mod plugin_selection;
 mod realtime_history;
@@ -1978,6 +1979,12 @@ impl Session {
                 .with_user_layer_from(&next_config.config_layer_stack);
             config.tool_suggest =
                 resolve_tool_suggest_config_from_layer_stack(&config.config_layer_stack);
+            if let Err(error) = state
+                .session_configuration
+                .refresh_model_capacity(&mut config)
+            {
+                warn!(%error, "retaining the last valid numeric model capacity");
+            }
             config.mcp_servers = next_config.mcp_servers.clone();
             config.mcp_optional_startup_grace = next_config.mcp_optional_startup_grace;
             config.mcp_oauth_credentials_store_mode = next_config.mcp_oauth_credentials_store_mode;
