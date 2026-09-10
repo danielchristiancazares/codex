@@ -1,0 +1,21 @@
+---
+source: tui/src/chatwidget/tests/context_window_picker_tests.rs
+assertion_line: 13
+expression: "render_bottom_popup(&chat, 40)"
+---
+  Select Reasoning Level for gpt-5.4
+
+  1. Low
+     Fast responses with lighter
+     reasoning
+› 2. Medium (default)
+     Balances speed and reasoning
+     depth for everyday tasks
+  3. High
+     Greater reasoning depth for
+     complex problems
+  4. Extra high
+     Extra high reasoning depth for
+     complex problems
+
+  ↑/↓ choose · enter confirm · esc back

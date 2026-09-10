@@ -1157,7 +1157,12 @@ pub(crate) enum AppEvent {
     PersistModelSelection {
         model: String,
         effort: Option<ReasoningEffort>,
+        context_window: crate::app::model_selection::ContextWindowSelection,
+        scope: crate::app::model_selection::ModelSelectionScope,
     },
+
+    OpenContextWindowPicker(crate::app::model_selection::ModelSelection),
+    CommitModelSelection(crate::app::model_selection::ModelSelectionCommit),
 
     /// Show the cyber auto-review notice after the model selection confirmation.
     CyberModelAutoReviewNotice,

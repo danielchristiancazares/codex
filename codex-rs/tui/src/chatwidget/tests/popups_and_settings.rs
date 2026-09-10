@@ -3844,6 +3844,7 @@ async fn model_advanced_reasoning_selection_popup_snapshot() {
 #[tokio::test]
 async fn model_reasoning_selection_popup_applies_custom_effort() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
+    use_single_context_window_catalog(&mut chat);
     let custom_effort = ReasoningEffortConfig::Custom("future".to_string());
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
 
@@ -3863,7 +3864,7 @@ async fn model_reasoning_selection_popup_applies_custom_effort() {
     let selected_effort_events = std::iter::from_fn(|| rx.try_recv().ok())
         .filter_map(|event| match event {
             AppEvent::UpdateReasoningEffort(effort) => Some((None, effort)),
-            AppEvent::PersistModelSelection { model, effort } => Some((Some(model), effort)),
+            AppEvent::PersistModelSelection { model, effort, .. } => Some((Some(model), effort)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -3878,6 +3879,7 @@ async fn model_reasoning_selection_popup_applies_custom_effort() {
 
 async fn select_ultra_with_multi_agent_thread_limit(max_threads: usize) -> (bool, Vec<String>) {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
+    use_single_context_window_catalog(&mut chat);
     chat.config
         .multi_agent_v2
         .max_concurrent_threads_per_session = max_threads;
@@ -3951,6 +3953,7 @@ async fn ultra_reasoning_selection_skips_warning_below_threshold() {
 #[tokio::test]
 async fn max_reasoning_selection_persists_model_selection() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
+    use_single_context_window_catalog(&mut chat);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
 
     let mut preset = get_available_model(&chat, "gpt-5.5");
@@ -3971,6 +3974,7 @@ async fn max_reasoning_selection_persists_model_selection() {
         AppEvent::PersistModelSelection {
             model,
             effort: Some(ReasoningEffortConfig::Max),
+            ..
         } if model == "gpt-5.5"
     )));
     assert!(

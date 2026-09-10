@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/context_window_picker_tests.rs
+assertion_line: 21
+expression: "render_bottom_popup(&chat, 60)"
+---
+  Select Context Window for gpt-5.4
+
+› 1. Normal (default) ✓  272,000 token context window
+  2. Maximum             1,000,000 token context window
+
+  ↑/↓ choose · enter confirm · esc back

@@ -4,6 +4,8 @@
 //! into another, especially while Plan mode is active.
 
 use super::*;
+use crate::app::model_selection::ModelSelectionScope;
+use crate::bottom_pane::SelectionDescriptionLayout;
 use crate::bottom_pane::SelectionRowDisplay;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
 
@@ -177,6 +179,9 @@ impl ChatWidget {
         self.show_model_selection_view(SelectionViewParams {
             view_id: Some(MODEL_SELECTION_VIEW_ID),
             row_display: SelectionRowDisplay::SingleLine,
+            description_layout: SelectionDescriptionLayout::SelectedBelowWhenNarrow {
+                max_width: 56,
+            },
             footer_hint: Some(standard_popup_hint_line()),
             items,
             header,
@@ -261,6 +266,9 @@ impl ChatWidget {
         self.show_model_selection_view(SelectionViewParams {
             view_id: Some(view_id),
             row_display: SelectionRowDisplay::SingleLine,
+            description_layout: SelectionDescriptionLayout::SelectedBelowWhenNarrow {
+                max_width: 56,
+            },
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,
             header,
@@ -278,7 +286,9 @@ impl ChatWidget {
             .as_ref()
             .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
         let thread_id = self.thread_id();
-        vec![Box::new(move |tx| {
+        let selected_model = model_for_action.clone();
+        let selected_effort = effort_for_action.clone();
+        let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
             if model_for_action == LUNA_RESERVE_MODEL {
                 // Reserve is temporary: update the active task without persisting a model default.
                 if let Some(thread_id) = thread_id {
@@ -303,6 +313,8 @@ impl ChatWidget {
                 tx.send(AppEvent::PersistModelSelection {
                     model: model_for_action.clone(),
                     effort: effort_for_action.clone(),
+                    context_window: Default::default(),
+                    scope: Default::default(),
                 });
             }
             if let Some(warning) = warning.clone() {
@@ -310,7 +322,21 @@ impl ChatWidget {
                     history_cell::new_warning_event(warning),
                 )));
             }
-        })]
+        })];
+        if selected_model != LUNA_RESERVE_MODEL
+            && (!should_prompt_plan_mode_scope
+                || selected_effort == Some(ReasoningEffortConfig::Ultra))
+            && let Some(effort) = selected_effort.as_ref()
+        {
+            self.context_window_stage(
+                &selected_model,
+                effort,
+                ModelSelectionScope::Global,
+                actions,
+            )
+        } else {
+            actions
+        }
     }
 
     fn should_prompt_plan_mode_reasoning_scope(
@@ -396,6 +422,8 @@ impl ChatWidget {
                 }
             }
         })];
+        let selected_model = model.clone();
+        let selected_effort = effort.clone();
         let all_modes_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
             tx.send(AppEvent::UpdateModel(model.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(effort.clone()));
@@ -404,6 +432,8 @@ impl ChatWidget {
             tx.send(AppEvent::PersistModelSelection {
                 model: model.clone(),
                 effort: effort.clone(),
+                context_window: Default::default(),
+                scope: Default::default(),
             });
             if let Some(warning) = warning.clone() {
                 tx.send(AppEvent::InsertHistoryCell(Box::new(
@@ -411,6 +441,16 @@ impl ChatWidget {
                 )));
             }
         })];
+
+        let all_modes_actions = match selected_effort.as_ref() {
+            Some(effort) => self.context_window_stage(
+                &selected_model,
+                effort,
+                ModelSelectionScope::GlobalAndPlan,
+                all_modes_actions,
+            ),
+            None => all_modes_actions,
+        };
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(PLAN_MODE_REASONING_SCOPE_TITLE.to_string()),

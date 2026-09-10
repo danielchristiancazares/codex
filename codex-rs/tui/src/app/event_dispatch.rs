@@ -1866,6 +1866,12 @@ impl App {
             AppEvent::OpenAdvancedReasoningPopup { model } => {
                 self.chat_widget.open_advanced_reasoning_popup(model);
             }
+            AppEvent::OpenContextWindowPicker(selection) => {
+                self.chat_widget.open_context_window_picker(selection);
+            }
+            AppEvent::CommitModelSelection(selection) => {
+                self.commit_model_selection(app_server, selection).await;
+            }
             AppEvent::ApplyAdvancedReasoning { model, effort } => {
                 if self
                     .active_thread_model_setting_update_params(model.clone())
@@ -2367,13 +2373,16 @@ impl App {
                     let _ = (preset, mode, profile_selection);
                 }
             }
-            AppEvent::PersistModelSelection { model, effort } => {
+            AppEvent::PersistModelSelection { model, effort, context_window, scope } => {
+                let mut edits = crate::config_update::build_model_selection_edits(model.as_str(), effort.as_ref());
+                context_window.append_edits(&mut edits);
+                scope.append_plan_edit(&mut edits, match effort.as_ref() {
+                    Some(effort) => crate::config_update::replace_config_value("plan_mode_reasoning_effort", serde_json::json!(effort.to_string())),
+                    None => crate::config_update::clear_config_value("plan_mode_reasoning_effort"),
+                });
                 match self.persist_model_defaults(
                     app_server.request_handle(),
-                    crate::config_update::build_model_selection_edits(
-                        model.as_str(),
-                        effort.as_ref(),
-                    ),
+                    edits,
                     "default model and reasoning effort",
                 )
                 .await

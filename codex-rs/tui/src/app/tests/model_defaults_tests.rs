@@ -71,6 +71,10 @@ async fn model_default_saves_report_server_outcomes_and_target_server_profile() 
             AppEvent::PersistModelSelection {
                 model: "gpt-5.5".into(),
                 effort: Some(ReasoningEffortConfig::High),
+                context_window: crate::app::model_selection::ContextWindowSelection::capacity(
+                    codex_protocol::openai_models::ContextWindowCapacity::try_from(1_000_000)?,
+                ),
+                scope: Default::default(),
             },
             AppEvent::PersistPlanModeReasoningEffort(Some(ReasoningEffortConfig::High)),
             AppEvent::PersistServiceTierSelection {
@@ -113,6 +117,7 @@ async fn model_default_saves_report_server_outcomes_and_target_server_profile() 
                 toml::from_str::<toml::Value>(&persisted)?,
                 toml::Value::Table(toml::toml! {
                     model = "gpt-5.5"
+                    model_context_window = 1_000_000
                     model_reasoning_effort = "medium"
                     plan_mode_reasoning_effort = "high"
                     service_tier = "fast"

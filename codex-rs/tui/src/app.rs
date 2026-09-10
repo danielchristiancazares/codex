@@ -232,6 +232,7 @@ mod loaded_threads;
 mod managed_worktree_creation;
 mod misalignment_policy;
 mod model_defaults;
+pub(crate) mod model_selection;
 mod new_session;
 pub(crate) use new_session::has_launch_setting;
 mod pending_interactive_replay;

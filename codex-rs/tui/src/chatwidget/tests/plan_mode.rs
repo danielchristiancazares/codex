@@ -294,6 +294,7 @@ async fn reasoning_selection_in_plan_mode_without_effort_change_does_not_open_sc
     chat.set_collaboration_mask(plan_mask);
     let _ = drain_insert_history(&mut rx);
     set_chatgpt_auth(&mut chat);
+    use_single_context_window_catalog(&mut chat);
 
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::Medium));
 
@@ -399,6 +400,7 @@ async fn reasoning_shortcut_in_plan_mode_updates_plan_override_without_prompt_or
 async fn advanced_reasoning_selection_in_plan_mode_uses_expected_scope() {
     for effort in [ReasoningEffortConfig::Ultra, ReasoningEffortConfig::Max] {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
+        use_single_context_window_catalog(&mut chat);
         chat.thread_id = Some(ThreadId::new());
         chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
         let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
@@ -498,6 +500,7 @@ async fn reasoning_selection_in_plan_mode_model_switch_does_not_open_scope_promp
 #[tokio::test]
 async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
+    use_single_context_window_catalog(&mut chat);
     chat.open_plan_reasoning_scope_prompt("gpt-5.5".to_string(), Some(ReasoningEffortConfig::High));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
@@ -521,7 +524,7 @@ async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override(
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::PersistModelSelection { model, effort: Some(ReasoningEffortConfig::High) }
+            AppEvent::PersistModelSelection { model, effort: Some(ReasoningEffortConfig::High), .. }
                 if model == "gpt-5.5"
         )),
         "expected global model reasoning selection persistence; events: {events:?}"

@@ -47,6 +47,7 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
         }
     }
     text = text.replace("/tmp/project\\", "/tmp/project/");
+    text = text.replace("…\\project", "…/project");
 
     let platform_test_cwd = test_path_display("/tmp/project");
     if platform_test_cwd == "/tmp/project" {
@@ -1209,6 +1210,13 @@ pub(super) fn reveal_running_hooks_after_delayed_redraw(chat: &mut ChatWidget) {
         cell.reveal_running_runs_after_delayed_redraw_for_test();
     }
     chat.pre_draw_tick();
+}
+
+/// Isolates the reasoning-only workflow for catalogs that do not offer a capacity choice.
+pub(super) fn use_single_context_window_catalog(chat: &mut ChatWidget) {
+    for preset in &mut Arc::make_mut(&mut chat.model_catalog).models {
+        preset.max_context_window = Default::default();
+    }
 }
 
 pub(super) fn get_available_model(chat: &ChatWidget, model: &str) -> ModelPreset {
