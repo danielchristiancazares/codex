@@ -210,6 +210,25 @@ using `CodexConfig.codex_bin`, choose a compatible executable. Unversioned local
 builds are checked lazily against their experimental schema before these options
 are sent. A custom `launch_args_override` must report a supported version.
 
+### Cancelling an async submission
+
+Cancelling an awaited `AsyncThread.turn(...)`, or `AsyncThread.run(...)` while
+it is still starting the turn, withdraws requests queued behind another start
+on that thread or behind the transport write lock. Unrelated requests remain
+concurrent. The same protection applies to low-level
+`AsyncCodexClient.turn_start(...)`, `request("turn/start", ...)`, and the start
+of `stream_text(...)`.
+
+If the runtime accepts the turn before cancellation wins, the SDK observes the
+start response in the background, requests interruption of that exact turn,
+and releases its notification route. Cancellation does not wait for this
+cleanup. The transport must remain available; response and interruption
+failures are logged by `openai_codex._async_request`. A lost transport can
+prevent the SDK from learning the accepted turn ID or confirming interruption.
+
+After a turn handle has been returned, cancelling or closing an event consumer
+is not an interruption request. Use `await turn.interrupt()` to stop that turn.
+
 ## Sandbox
 
 Use `sandbox=` consistently on thread lifecycle methods and turns:
@@ -381,6 +400,12 @@ from openai_codex import (
 
 - `retry_on_overload(...)` retries transient overload errors with exponential backoff + jitter.
 - `is_retryable_error(exc)` checks if an exception is transient/overload-like.
+
+The low-level `AsyncCodexClient.request_with_retry_on_overload(...)` uses the
+same attempt limit and delay policy, but its backoff is asynchronous.
+Cancelling it stops further retry attempts. A `turn/start` acceptance racing
+with cancellation receives the cleanup described above. The synchronous retry
+helper's behavior is unchanged.
 
 ## Example
 

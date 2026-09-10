@@ -43,6 +43,14 @@ request, and removal of temporary routing. The existing structured-recap test
 checks the actual outbound request has no tools; the retained-output integration
 test checks recovery still works without another command execution.
 
+The Python async SDK also retains ownership of cancelled turn-start requests.
+Requests still waiting for a same-thread or transport lock are withdrawn;
+requests accepted during cancellation are interrupted by their exact returned
+turn ID, and notification routes are released. Async overload backoff now waits
+in the event loop, so cancelling it cannot leave a synchronous retry worker
+submitting another request. Cleanup failures are logged rather than reported as
+successful cancellation.
+
 ## Prioritized result
 
 | Candidate | Mechanism that wastes work | Client-side remedy | Current fork state |

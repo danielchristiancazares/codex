@@ -13,6 +13,7 @@ from typing import Callable, Iterator, TypeVar
 
 from pydantic import BaseModel
 
+from ._async_request import observe_response, request_lock
 from ._goal import _GoalOperationState
 from ._initialize_metadata import _split_user_agent
 from ._message_router import MessageRouter, _TurnSubscription
@@ -367,6 +368,8 @@ class CodexClient:
 
     def _request_raw(self, method: str, params: JsonObject | None = None) -> JsonValue:
         """Send a JSON-RPC request and wait for the reader thread to route its response."""
+        # Keep the submitted thread identity stable for cancellation cleanup.
+        params = params.copy() if params is not None else None
         request_id = str(uuid.uuid4())
         waiter = self._router.create_response_waiter(request_id)
 
@@ -382,6 +385,7 @@ class CodexClient:
         item = waiter.get()
         if isinstance(item, BaseException):
             raise item
+        observe_response(method, params, item)
         return item
 
     def notify(self, method: str, params: JsonObject | None = None) -> None:
@@ -690,7 +694,7 @@ class CodexClient:
                 self._thread_start_locks[thread_id] = entry
             entry.users += 1
         try:
-            with entry.lock:
+            with request_lock(entry.lock):
                 yield
         finally:
             with self._thread_start_locks_guard:
@@ -786,7 +790,9 @@ class CodexClient:
     ) -> Iterator[AgentMessageDeltaNotification]:
         """Start a text turn and yield only its agent-message delta payloads."""
         started = self.turn_start(thread_id, text, params=params)
-        turn_id = started.turn.id
+        yield from self._stream_turn_text(started.turn.id)
+
+    def _stream_turn_text(self, turn_id: str) -> Iterator[AgentMessageDeltaNotification]:
         self.register_turn_notifications(turn_id)
         try:
             while True:
@@ -894,9 +900,9 @@ class CodexClient:
         )
 
     def _write_message(self, payload: JsonObject) -> None:
-        if self._proc is None or self._proc.stdin is None:
-            raise TransportClosedError("Codex process is not running")
-        with self._lock:
+        with request_lock(self._lock):
+            if self._proc is None or self._proc.stdin is None:
+                raise TransportClosedError("Codex process is not running")
             self._proc.stdin.write(json.dumps(payload) + "\n")
             self._proc.stdin.flush()
 
