@@ -1,3 +1,4 @@
+use super::async_task_owner::AsyncTaskOwner;
 use std::path::Path;
 
 use futures::StreamExt;
@@ -169,18 +170,39 @@ pub(crate) async fn execute_handlers_with_metadata<T: 'static>(
             let input_json = input_json.clone();
             let cwd = cwd.to_path_buf();
             let metadata = metadata.cloned();
-            engine.command_runtime.schedule_async_task(async move {
-                let result =
-                    execute_handler(&task_engine, &handler, &input_json, &cwd, metadata.as_ref())
-                        .await;
-                if let Some(error) = result.error {
-                    tracing::warn!(
-                        source_path = %handler.source_path,
-                        %error,
-                        "executor-scoped hook failed"
-                    );
-                }
-            });
+            let owner = match scope_for_event(handler.event_name) {
+                HookScope::Thread => AsyncTaskOwner::Session,
+                HookScope::Turn => match turn_id
+                    .as_deref()
+                    .ok_or(super::async_task_owner::TurnIdentityRequired)
+                    .and_then(AsyncTaskOwner::for_turn)
+                {
+                    Ok(owner) => owner,
+                    Err(error) => {
+                        tracing::warn!(%error, "skipping unscoped asynchronous hook");
+                        continue;
+                    }
+                },
+            };
+            engine
+                .command_runtime
+                .schedule_async_task(owner, async move {
+                    let result = execute_handler(
+                        &task_engine,
+                        &handler,
+                        &input_json,
+                        &cwd,
+                        metadata.as_ref(),
+                    )
+                    .await;
+                    if let Some(error) = result.error {
+                        tracing::warn!(
+                            source_path = %handler.source_path,
+                            %error,
+                            "executor-scoped hook failed"
+                        );
+                    }
+                });
         }
     }
 

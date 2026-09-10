@@ -15,6 +15,7 @@ use crate::context::ContextualUserFragment;
 use crate::context::UserVerificationNotice;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::feedback_tags;
+use crate::hook_runtime::AsyncHookDelivery;
 use crate::hook_runtime::drain_async_hook_results;
 use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;
@@ -172,7 +173,7 @@ pub(crate) async fn run_turn(
         crate::guardian::check_pending_guardian_input(&sess, &turn_context).await?;
     }
     // Record results from hooks that finished after the previous turn before this turn's user prompt.
-    drain_async_hook_results(&sess, &turn_context, /*before_user_prompt*/ true).await;
+    drain_async_hook_results(&sess, &turn_context, AsyncHookDelivery::BeforeUserPrompt).await;
 
     let mut client_session =
         prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
@@ -549,7 +550,7 @@ pub(crate) async fn run_turn(
                 }
                 can_drain_pending_input = true;
                 // Process async hooks only after sampling and its tools have finished.
-                drain_async_hook_results(&sess, &turn_context, /*before_user_prompt*/ false).await;
+                drain_async_hook_results(&sess, &turn_context, AsyncHookDelivery::ActiveTurn).await;
                 let (has_pending_input, token_status) = async {
                     let has_pending_input =
                         sess.input_queue.has_pending_input(&sess.active_turn).await;

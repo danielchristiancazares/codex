@@ -1,4 +1,5 @@
-pub(crate) mod command_runner;
+pub(crate) mod async_task_owner;
+mod command_runner;
 pub(crate) mod discovery;
 pub(crate) mod dispatcher;
 pub(crate) mod mcp_runner;
@@ -47,7 +48,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use command_runner::CommandHookRuntime;
+pub(crate) use command_runner::CommandHookRuntime;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CommandShell {

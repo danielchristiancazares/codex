@@ -1,4 +1,8 @@
+use super::async_task_owner::AsyncTaskOwner;
+use super::async_task_owner::NonEmptyString;
+use codex_protocol::protocol::HookScope;
 use std::collections::HashMap;
+use std::collections::HashSet;
 #[cfg(not(windows))]
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -11,6 +15,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::time::Duration;
 use std::time::Instant;
+use tokio::task::AbortHandle;
 
 use async_channel::Sender;
 use codex_protocol::shell_environment::scrub_non_inheritable_env_vars;
@@ -58,6 +63,7 @@ pub(crate) struct CommandHookRuntime {
 struct CommandHookRuntimeState {
     concurrency_limit: Arc<Semaphore>,
     tasks: JoinSet<()>,
+    task_abort_handles_by_turn: HashMap<NonEmptyString, Vec<AbortHandle>>,
 }
 
 impl Default for CommandHookRuntimeState {
@@ -65,6 +71,7 @@ impl Default for CommandHookRuntimeState {
         Self {
             concurrency_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ASYNC_HOOKS)),
             tasks: JoinSet::new(),
+            task_abort_handles_by_turn: HashMap::new(),
         }
     }
 }
@@ -119,7 +126,21 @@ impl CommandHookRuntime {
 
         let result_sender = self.result_sender.clone();
         let runtime = self.clone();
-        self.schedule_async_task(async move {
+        let owner = match scope_for_event(handler.event_name) {
+            HookScope::Thread => AsyncTaskOwner::Session,
+            HookScope::Turn => match turn_id
+                .as_deref()
+                .ok_or(super::async_task_owner::TurnIdentityRequired)
+                .and_then(AsyncTaskOwner::for_turn)
+            {
+                Ok(owner) => owner,
+                Err(error) => {
+                    tracing::warn!(%error, "skipping unscoped asynchronous hook");
+                    return;
+                }
+            },
+        };
+        self.schedule_async_task(owner, async move {
             let result = match &handler.kind {
                 ConfiguredHandlerKind::Command { command, env, .. } => {
                     run_command(&runtime, &handler, command, env, &input_json, &cwd).await
@@ -161,26 +182,57 @@ impl CommandHookRuntime {
         });
     }
 
-    pub(crate) fn schedule_async_task(&self, task: impl Future<Output = ()> + Send + 'static) {
+    pub(super) fn schedule_async_task(
+        &self,
+        owner: AsyncTaskOwner,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) {
         let mut state = self.lock_state();
         if state.concurrency_limit.is_closed() {
             return;
         }
 
         while state.tasks.try_join_next().is_some() {}
+        for handles in state.task_abort_handles_by_turn.values_mut() {
+            handles.retain(|handle| !handle.is_finished());
+        }
+        state
+            .task_abort_handles_by_turn
+            .retain(|_, handles| !handles.is_empty());
         let concurrency_limit = Arc::clone(&state.concurrency_limit);
-        state.tasks.spawn(async move {
+        let abort_handle = state.tasks.spawn(async move {
             let Ok(_permit) = concurrency_limit.acquire_owned().await else {
                 return;
             };
             task.await;
         });
+        owner.retain_abort_handle(&mut state.task_abort_handles_by_turn, abort_handle);
+    }
+
+    pub(crate) async fn abort_turns(&self, turn_ids: &HashSet<String>) {
+        let abort_handles = {
+            let mut state = self.lock_state();
+            turn_ids
+                .iter()
+                .filter_map(|turn_id| state.task_abort_handles_by_turn.remove(turn_id.as_str()))
+                .flatten()
+                .collect::<Vec<_>>()
+        };
+        for handle in &abort_handles {
+            handle.abort();
+        }
+        while abort_handles.iter().any(|handle| !handle.is_finished()) {
+            tokio::task::yield_now().await;
+        }
+        let mut state = self.lock_state();
+        while state.tasks.try_join_next().is_some() {}
     }
 
     pub(crate) async fn shutdown(&self) {
         let mut tasks = {
             let mut state = self.lock_state();
             state.concurrency_limit.close();
+            state.task_abort_handles_by_turn.clear();
             std::mem::take(&mut state.tasks)
         };
         tasks.abort_all();

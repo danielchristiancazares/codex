@@ -1,7 +1,7 @@
 use crate::engine::ClaudeHooksEngine;
+use crate::engine::CommandHookRuntime;
 use crate::engine::CommandShell;
 use crate::engine::HookListEntry;
-use crate::engine::command_runner::CommandHookRuntime;
 use crate::events::compact::PostCompactRequest;
 use crate::events::compact::PreCompactOutcome;
 use crate::events::compact::PreCompactRequest;
@@ -152,6 +152,11 @@ impl Hooks {
     /// Abort and join outstanding async hooks during session shutdown.
     pub async fn shutdown(&self) {
         self.engine.command_runtime.shutdown().await;
+    }
+
+    /// Cancels asynchronous work owned by removed turns and waits for native cleanup.
+    pub async fn abort_turns(&self, turn_ids: &std::collections::HashSet<String>) {
+        self.engine.command_runtime.abort_turns(turn_ids).await;
     }
 
     pub fn startup_warnings(&self) -> &[String] {

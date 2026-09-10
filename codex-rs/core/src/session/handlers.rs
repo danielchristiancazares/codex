@@ -327,6 +327,12 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
         }
     };
 
+    let turn_ids_before_rollback = sess
+        .clone_history()
+        .await
+        .raw_items()
+        .filter_map(|item| item.turn_id().map(str::to_owned))
+        .collect::<std::collections::HashSet<_>>();
     let rollback_event = ThreadRolledBackEvent { num_turns };
     let rollback_msg = EventMsg::ThreadRolledBack(rollback_event.clone());
     let replay_items = stored_history
@@ -344,6 +350,23 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
             state.reasoning_effort_pin = ReasoningEffortPin::Unset;
         }
     }
+    let retained_turn_ids = sess
+        .clone_history()
+        .await
+        .raw_items()
+        .filter_map(|item| item.turn_id().map(str::to_owned))
+        .collect::<std::collections::HashSet<_>>();
+    let discarded_turn_ids = turn_ids_before_rollback
+        .difference(&retained_turn_ids)
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    sess.hooks().abort_turns(&discarded_turn_ids).await;
+    crate::hook_runtime::drain_async_hook_results(
+        sess,
+        &turn_context,
+        crate::hook_runtime::AsyncHookDelivery::AfterRollback(&discarded_turn_ids),
+    )
+    .await;
     sess.services
         .thread_extension_data
         .remove::<NodeReplReviewEvidence>();

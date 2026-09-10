@@ -424,6 +424,51 @@ fn fallback_shell_uses_snapshot() {
 
 const ASYNC_HOOK_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[tokio::test]
+async fn abort_turns_preserves_session_tasks_and_retained_turns() {
+    use super::super::async_task_owner::AsyncTaskOwner;
+
+    let (runtime, _results) = runtime();
+    let mut releases = Vec::new();
+    let (completed, mut completions) = tokio::sync::mpsc::unbounded_channel();
+    for (name, owner) in [
+        (
+            "removed",
+            AsyncTaskOwner::for_turn("removed").expect("turn id"),
+        ),
+        (
+            "retained",
+            AsyncTaskOwner::for_turn("retained").expect("turn id"),
+        ),
+        ("session", AsyncTaskOwner::Session),
+    ] {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let completed = completed.clone();
+        runtime.schedule_async_task(owner, async move {
+            let _ = started.send(());
+            let _ = wait.await;
+            let _ = completed.send(name);
+        });
+        ready.await.expect("task started");
+        releases.push((name, release));
+    }
+    runtime
+        .abort_turns(&std::collections::HashSet::from(["removed".to_owned()]))
+        .await;
+    for (name, release) in releases {
+        assert_eq!(release.send(()).is_ok(), name != "removed");
+    }
+    drop(completed);
+    let mut retained = Vec::new();
+    while let Some(name) = completions.recv().await {
+        retained.push(name);
+    }
+    retained.sort_unstable();
+    assert_eq!(retained, vec!["retained", "session"]);
+    runtime.shutdown().await;
+}
+
 fn runtime() -> (CommandHookRuntime, Receiver<HookCompletedEvent>) {
     runtime_with_environment(Arc::new(std::env::vars_os().collect()))
 }
