@@ -3321,8 +3321,12 @@ pub enum TruncationPolicy {
 impl From<crate::openai_models::TruncationPolicyConfig> for TruncationPolicy {
     fn from(config: crate::openai_models::TruncationPolicyConfig) -> Self {
         match config.mode {
-            crate::openai_models::TruncationMode::Bytes => Self::Bytes(config.limit as usize),
-            crate::openai_models::TruncationMode::Tokens => Self::Tokens(config.limit as usize),
+            crate::openai_models::TruncationMode::Bytes => {
+                Self::Bytes(usize::try_from(config.limit).unwrap_or(usize::MAX))
+            }
+            crate::openai_models::TruncationMode::Tokens => {
+                Self::Tokens(usize::try_from(config.limit).unwrap_or(usize::MAX))
+            }
         }
     }
 }

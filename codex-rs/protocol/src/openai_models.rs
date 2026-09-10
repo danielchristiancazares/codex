@@ -372,18 +372,18 @@ where
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, TS, JsonSchema)]
 pub struct TruncationPolicyConfig {
     pub mode: TruncationMode,
-    pub limit: i64,
+    pub limit: u64,
 }
 
 impl TruncationPolicyConfig {
-    pub const fn bytes(limit: i64) -> Self {
+    pub const fn bytes(limit: u64) -> Self {
         Self {
             mode: TruncationMode::Bytes,
             limit,
         }
     }
 
-    pub const fn tokens(limit: i64) -> Self {
+    pub const fn tokens(limit: u64) -> Self {
         Self {
             mode: TruncationMode::Tokens,
             limit,

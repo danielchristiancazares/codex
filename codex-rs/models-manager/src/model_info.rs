@@ -39,11 +39,11 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
         model.truncation_policy = match model.truncation_policy.mode {
             TruncationMode::Bytes => {
                 let byte_limit =
-                    i64::try_from(approx_bytes_for_tokens(token_limit)).unwrap_or(i64::MAX);
+                    u64::try_from(approx_bytes_for_tokens(token_limit)).unwrap_or(u64::MAX);
                 TruncationPolicyConfig::bytes(byte_limit)
             }
             TruncationMode::Tokens => {
-                let limit = i64::try_from(token_limit).unwrap_or(i64::MAX);
+                let limit = u64::try_from(token_limit).unwrap_or(u64::MAX);
                 TruncationPolicyConfig::tokens(limit)
             }
         };
