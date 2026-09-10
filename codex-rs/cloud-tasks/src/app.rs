@@ -331,8 +331,12 @@ pub enum AppEvent {
         id: TaskId,
         attempts: Vec<codex_cloud_tasks_client::TurnAttempt>,
     },
-    /// Background completion of new task submission
-    NewTaskSubmitted(Result<codex_cloud_tasks_client::CreatedTask, String>),
+    NewTaskSubmissionStarted,
+    /// Background completion tagged with the submission that owns the result.
+    NewTaskSubmitted {
+        submission: crate::new_task::submission::Submission,
+        result: Result<codex_cloud_tasks_client::CreatedTask, String>,
+    },
     /// Background completion of apply preflight when opening modal or on demand
     ApplyPreflightFinished {
         id: TaskId,

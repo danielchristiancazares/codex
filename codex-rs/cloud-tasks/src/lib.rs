@@ -1007,34 +1007,25 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                             needs_redraw = true;
                             let _ = frame_tx.send(Instant::now());
                         }
-                        app::AppEvent::NewTaskSubmitted(result) => {
-                            match result {
-                                Ok(created) => {
-                                    append_error_log(format!("new-task: created id={}", created.id.0));
-                                    app.status = format!("Submitted as {}", created.id.0);
-                                    app.new_task = None;
-                                    // Refresh tasks in background for current filter
-                                    app.status = format!("Submitted as {} — refreshing…", created.id.0);
-                                    app.refresh_inflight = true;
-                                    app.list_generation = app.list_generation.saturating_add(1);
-                                    needs_redraw = true;
-                                    let backend = Arc::clone(&backend);
-                                    let tx = tx.clone();
-                                    let env_sel = app.env_filter.clone();
-                                    tokio::spawn(async move {
-                                        let res = app::load_tasks(&*backend, env_sel.as_deref()).await;
-                                        let _ = tx.send(app::AppEvent::TasksLoaded { env: env_sel, result: res });
-                                    });
-                                    let _ = frame_tx.send(Instant::now());
-                                }
-                                Err(msg) => {
-                                    append_error_log(format!("new-task: submit failed: {msg}"));
-                                    if let Some(page) = app.new_task.as_mut() { page.submitting = false; }
-                                    app.status = format!("Submit failed: {msg}. See error.log for details.");
-                                    needs_redraw = true;
-                                    let _ = frame_tx.send(Instant::now());
-                                }
+                        app::AppEvent::NewTaskSubmissionStarted => {
+                            needs_redraw = true;
+                            let _ = frame_tx.send(Instant::now());
+                        }
+                        app::AppEvent::NewTaskSubmitted { submission, result } => {
+                            if new_task::submission::submitted(&mut app, submission, result) {
+                                // Refresh tasks in background for current filter
+                                app.refresh_inflight = true;
+                                app.list_generation = app.list_generation.saturating_add(1);
+                                let backend = Arc::clone(&backend);
+                                let tx = tx.clone();
+                                let env_sel = app.env_filter.clone();
+                                tokio::spawn(async move {
+                                    let res = app::load_tasks(&*backend, env_sel.as_deref()).await;
+                                    let _ = tx.send(app::AppEvent::TasksLoaded { env: env_sel, result: res });
+                                });
                             }
+                            needs_redraw = true;
+                            let _ = frame_tx.send(Instant::now());
                         }
                         // (removed TaskSummaryUpdated; unused in this prototype)
                         app::AppEvent::ApplyPreflightFinished { id, title, message, level, skipped, conflicts } => {
@@ -1349,7 +1340,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                             }
                             needs_redraw = true;
                         } else if let Some(page) = app.new_task.as_mut()
-                            && !page.submitting
+                            && page.submission.is_none()
                         {
                             if page.composer.handle_paste(pasted) {
                                 needs_redraw = true;
@@ -1358,6 +1349,12 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                         }
                     }
                     Some(Ok(Event::Key(key))) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+                        if app.new_task.as_ref().is_some_and(|page| page.submission.is_some()) {
+                            new_task::submission::handle_key(&mut app, key, &backend, &tx, RealGitInfo);
+                            needs_redraw = true;
+                            render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
+                            continue;
+                        }
                         // Treat Ctrl-C like pressing 'q' in the current context.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
@@ -1374,8 +1371,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 app.status = "Apply canceled".to_string();
                                 needs_redraw = true;
                             } else if app.new_task.is_some() {
-                                app.new_task = None;
-                                app.status = "Canceled new task".to_string();
+                                new_task::submission::handle_key(&mut app, key, &backend, &tx, RealGitInfo);
                                 needs_redraw = true;
                             } else if app.diff_overlay.is_some() {
                                 app.diff_overlay = None;
@@ -1493,64 +1489,19 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                         }
 
                         // New Task page has priority when active, unless an env modal is open.
-                        if let Some(page) = app.new_task.as_mut() {
-                            if app.env_modal.is_some() {
-                                // Defer handling to env-modal branch below.
-                            } else {
-                            match key.code {
-                                KeyCode::Esc => {
-                                    app.new_task = None;
-                                    app.status = "Canceled new task".to_string();
-                                    needs_redraw = true;
-                                }
-                                _ => {
-                                    if page.submitting {
-                                        // Ignore input while submitting
-                                    } else if let codex_tui::ComposerAction::Submitted(text) =
-                                        page.composer.input(key)
-                                    {
-                                            // Submit only if we have an env id
-                                            if let Some(env) = page.env_id.clone() {
-                                                append_error_log(format!(
-                                                    "new-task: submit env={} size={}",
-                                                    env,
-                                                    text.chars().count()
-                                                ));
-                                                page.submitting = true;
-                                                app.status = "Submitting new task…".to_string();
-                                                let tx = tx.clone();
-                                                let backend = Arc::clone(&backend);
-                                                let best_of_n = page.best_of_n;
-                                                tokio::spawn(async move {
-                                                    let git_ref = resolve_git_ref(/*branch_override*/ None).await;
-
-                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env, &text, &git_ref, /*qa_mode*/ false, best_of_n).await;
-                                                    let evt = match result {
-                                                        Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
-                                                        Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
-                                                    };
-                                                    let _ = tx.send(evt);
-                                                });
-                                            } else {
-                                                app.status = "No environment selected".to_string();
-                                            }
-                                    }
-                                    needs_redraw = true;
-                                    // If paste‑burst is active, schedule a micro‑flush frame.
-                                    if page.composer.is_in_paste_burst() {
-                                        let _ = frame_tx.send(
-                                            Instant::now()
-                                                + codex_tui::ComposerInput::recommended_flush_delay(),
-                                        );
-                                    }
-                                    // Always schedule an immediate redraw for key edits in the composer.
-                                    let _ = frame_tx.send(Instant::now());
-                                    // Draw now so non-char edits (e.g., Option+Delete) reflect instantly.
-                                    render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
-                                }
+                        if app.new_task.is_some() && app.env_modal.is_none() {
+                            new_task::submission::handle_key(&mut app, key, &backend, &tx, RealGitInfo);
+                            needs_redraw = true;
+                            // If paste-burst is active, schedule a micro-flush frame.
+                            if app.new_task.as_ref().is_some_and(|page| page.composer.is_in_paste_burst()) {
+                                let _ = frame_tx.send(
+                                    Instant::now()
+                                        + codex_tui::ComposerInput::recommended_flush_delay(),
+                                );
                             }
+                            let _ = frame_tx.send(Instant::now());
+                            render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
                             continue;
-                            }
                         }
                         // If a diff overlay is open, handle its keys first.
                         if app.apply_modal.is_some() {

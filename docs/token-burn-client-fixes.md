@@ -51,6 +51,20 @@ in the event loop, so cancelling it cannot leave a synchronous retry worker
 submitting another request. Cleanup failures are logged rather than reported as
 successful cancellation.
 
+Cloud task creation now has a shared preparation/commit boundary. Esc or Ctrl+C
+can revoke preparation before creation, preserving the draft. Once creation is
+committed, the UI keeps the pending submission and warns that the task may
+already be running; it does not promise server-side cancellation. Completion
+identity prevents an older result from clearing or unlocking a newer composer.
+An unconfirmed submission error retains the draft and asks the operator to check
+Cloud Tasks before retrying.
+
+These are three independently reviewable stages: TUI cancellation and helper
+tool isolation (including its core configuration/schema), Python SDK
+cancellation, and cloud-task submission ownership. Their regression harnesses
+make the combined patch larger than a single ordinary fork change; none requires
+landing either of the other two stages.
+
 ## Prioritized result
 
 | Candidate | Mechanism that wastes work | Client-side remedy | Current fork state |

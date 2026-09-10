@@ -102,6 +102,9 @@ fn overlay_content(area: Rect) -> Rect {
 }
 
 pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
+    if let Some(page) = app.new_task.as_mut() {
+        page.update_hints();
+    }
     let title_spans = {
         let mut spans: Vec<ratatui::text::Span> = vec!["New Task".magenta().bold()];
         if let Some(id) = app
@@ -167,6 +170,7 @@ pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Place cursor where composer wants it
     if let Some(page) = app.new_task.as_ref()
+        && page.submission.is_none()
         && let Some((x, y)) = page.composer.cursor_pos(composer_area)
     {
         frame.set_cursor_position((x, y));
@@ -270,6 +274,13 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
         help.push("n : New Task  ".dim());
     }
     help.extend(vec!["q".dim(), ": Quit  ".dim()]);
+    if let Some(submission) = app
+        .new_task
+        .as_ref()
+        .and_then(|page| page.submission.as_ref())
+    {
+        help = vec![submission.status().dim()];
+    }
     // Split footer area into two rows: help+spinner (top) and status (bottom)
     let rows = Layout::default()
         .direction(Direction::Vertical)
