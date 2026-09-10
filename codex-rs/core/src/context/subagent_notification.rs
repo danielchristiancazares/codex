@@ -13,7 +13,7 @@ impl SubagentNotification {
     pub(crate) fn new(agent_reference: impl Into<String>, status: AgentStatus) -> Self {
         Self {
             agent_reference: agent_reference.into(),
-            status,
+            status: crate::session_prefix::bounded_completion_status(&status),
         }
     }
 }
@@ -43,5 +43,9 @@ impl ContextualUserFragment for SubagentNotification {
                 "status": &self.status,
             })
         )
+    }
+    fn render(&self) -> String {
+        let (start_marker, end_marker) = self.markers();
+        crate::session_prefix::bounded_completion_fragment(self.body(), start_marker, end_marker)
     }
 }
