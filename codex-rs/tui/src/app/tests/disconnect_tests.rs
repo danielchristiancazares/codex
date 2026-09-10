@@ -160,7 +160,10 @@ async fn lost_mutation_reply_preserves_work_without_resubmitting() -> Result<()>
         .split("\n\n")
         .next()
         .unwrap();
-    assert_snapshot!("offline_expanded_paste", draft);
+    assert_snapshot!(
+        "offline_expanded_paste",
+        crate::chatwidget::tests::helpers::normalize_snapshot_paths(draft)
+    );
     assert!(ops.try_recv().is_err());
     for character in ['c', 'C', 'd', 'D'] {
         if character.eq_ignore_ascii_case(&'d') {

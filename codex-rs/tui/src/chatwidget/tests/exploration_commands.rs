@@ -29,14 +29,14 @@ async fn inspection_batch_merges_with_surrounding_exploration() {
 
         assert!(drain_insert_history_cells(&mut rx).is_empty());
         insta::allow_duplicates! {
-                            insta::assert_snapshot!(active_blob(&chat), @r"
+                                                                            insta::assert_snapshot!(active_blob(&chat), @r"
 • Explored
   ├ Read before.rs, turn_metadata.rs, guardian_tests.rs, after.rs
   ├ Searched root_turn|parent_turn in src, struct TurnStartOptions in src,
   │          required_entry_indices in src
   └ Ran git diff HEAD -- src/turn_metadata.rs
 ");
-                        }
+                                                                        }
         chat.flush_active_cell();
         let cells = drain_insert_history_cells(&mut rx);
         assert_eq!(cells.len(), 1);

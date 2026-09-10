@@ -5481,7 +5481,12 @@ mod tests {
         terminal
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
             .unwrap();
-        insta::assert_snapshot!(name, terminal.backend());
+        // Crossterm names the same physical key "fwd del" on macOS.
+        let snapshot = terminal
+            .backend()
+            .to_string()
+            .replace("fwd del to remove", "del to remove    ");
+        insta::assert_snapshot!(name, snapshot);
     }
 
     fn snapshot_composer_state<F>(name: &str, enhanced_keys_supported: bool, setup: F)

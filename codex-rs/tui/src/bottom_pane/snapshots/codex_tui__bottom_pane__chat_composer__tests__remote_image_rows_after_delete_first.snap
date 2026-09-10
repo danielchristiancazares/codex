@@ -3,7 +3,7 @@ source: tui/src/bottom_pane/chat_composer.rs
 expression: terminal.backend()
 ---
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮"
-"┃ › [Image #1]  fwd del to remove                                                                  │"
+"┃ › [Image #1]  del to remove                                                                      │"
 "┃                                                                                                  │"
 "┃   describe these                                                                                 │"
 "┃                                                                                                  │"
