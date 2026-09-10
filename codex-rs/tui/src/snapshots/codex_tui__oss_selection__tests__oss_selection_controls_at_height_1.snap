@@ -1,5 +1,6 @@
 ---
 source: tui/src/oss_selection.rs
+assertion_line: 518
 expression: "render(&widget, Rect::new(0, 0, 40, 1))"
 ---
 Buffer {
@@ -8,7 +9,7 @@ Buffer {
         " › 1. LM Studio     2. Ollama           ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 0, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 16, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 23, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
         x: 24, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

@@ -1,5 +1,6 @@
 ---
 source: tui/src/bottom_pane/skill_popup.rs
+assertion_line: 336
 expression: "render_popup(&popup, 72)"
 ---
 Buffer {
@@ -18,10 +19,10 @@ Buffer {
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 11, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 12, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 14, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 2, y: 7, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 11, y: 7, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 12, y: 7, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 14, y: 7, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
         x: 16, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 8, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 13, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

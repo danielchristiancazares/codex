@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
+assertion_line: 580
 expression: "format!(\"{buf:?}\")"
 ---
 Buffer {
@@ -23,7 +24,8 @@ Buffer {
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 2, y: 2, fg: Yellow, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 4, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 25, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 10, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,
         x: 73, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
@@ -31,13 +33,13 @@ Buffer {
         x: 7, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 4, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 20, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 0, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 10, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 11, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
-        x: 15, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 16, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 0, y: 9, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 10, y: 9, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 11, y: 9, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
+        x: 15, y: 9, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 16, y: 9, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD | UNDERLINED,
         x: 27, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 0, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 10, fg: Magenta, bg: Reset, underline: Reset, modifier: BOLD,
         x: 5, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 36, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 39, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
