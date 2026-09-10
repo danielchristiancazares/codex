@@ -631,6 +631,7 @@ pub struct ToolsToml {
     pub web_search: Option<WebSearchToolConfig>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
     pub update_plan: Option<UpdatePlanToolConfig>,
+    pub read_output: Option<ReadOutputToolConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
@@ -644,6 +645,14 @@ pub struct ExperimentalRequestUserInput {
 #[schemars(deny_unknown_fields)]
 pub struct UpdatePlanToolConfig {
     #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ReadOutputToolConfig {
+    /// Whether to expose retained-output retrieval to the model.
+    #[serde(default = "default_true")]
     pub enabled: bool,
 }
 

@@ -15,6 +15,15 @@ fork worktree. Existing implementation changes belong to their ongoing
 restoration stages. This assessment changes documentation only and reports
 source tracing and public reproductions; it does not claim new runtime tests.
 
+## September 2026 cancellation follow-up
+
+The same sweep reproduced an unintended `read_output` schema in otherwise
+tool-less title and recap requests. `tools.read_output.enabled` now explicitly
+controls that registration and defaults to `true`. Temporary metadata threads
+set it to `false`; ordinary conversations retain output recovery, including when
+their execution tools are otherwise unavailable. No model, effort, service tier,
+or useful task scope is reduced by these fixes.
+
 ## Prioritized result
 
 | Candidate | Mechanism that wastes work | Client-side remedy | Current fork state |

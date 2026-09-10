@@ -1030,7 +1030,9 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
     }
 
     add_shell_tools(context, registry);
-    registry.add(crate::tools::captured_output::ReadOutputHandler);
+    if context.turn_context.config.read_output_enabled {
+        registry.add(crate::tools::captured_output::ReadOutputHandler);
+    }
     add_mcp_resource_tools(context, registry);
     add_core_utility_tools(context, registry);
     add_collaboration_tools(context, registry);

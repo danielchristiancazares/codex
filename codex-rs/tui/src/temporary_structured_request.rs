@@ -152,6 +152,7 @@ pub(crate) async fn start_temporary_thread(
             false.into(),
         ),
         ("tools.update_plan.enabled".to_string(), false.into()),
+        ("tools.read_output.enabled".to_string(), false.into()),
         ("web_search".to_string(), "disabled".into()),
     ]);
     let response: ThreadStartResponse = tokio::time::timeout(STRUCTURED_TURN_TIMEOUT, async {

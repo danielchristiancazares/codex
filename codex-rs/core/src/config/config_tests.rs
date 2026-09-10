@@ -457,6 +457,7 @@ web_search = true
             web_search: None,
             experimental_request_user_input: None,
             update_plan: None,
+            read_output: None,
         })
     );
 }
@@ -477,6 +478,7 @@ web_search = false
             web_search: None,
             experimental_request_user_input: None,
             update_plan: None,
+            read_output: None,
         })
     );
 }
@@ -496,6 +498,7 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
             web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
             update_plan: None,
+            read_output: None,
         })
     );
 }
@@ -516,6 +519,7 @@ enabled = false
             web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
             update_plan: None,
+            read_output: None,
         })
     );
 }
@@ -531,6 +535,7 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
                     enabled: false,
                 }),
                 update_plan: None,
+                read_output: None,
             }),
             ..ConfigToml::default()
         },
