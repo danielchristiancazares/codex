@@ -3783,6 +3783,7 @@ async fn manual_compact_retries_after_context_window_error() {
         &server,
         vec![
             user_turn.clone(),
+            user_turn,
             compact_failed.clone(),
             compact_succeeds.clone(),
         ],
@@ -3796,16 +3797,18 @@ async fn manual_compact_retries_after_context_window_error() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().codex;
+    let codex = builder.build_with_auto_env(&server).await.unwrap().codex;
 
-    codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "first turn".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await
-        .unwrap();
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    for text in ["old turn ".repeat(/*n*/ 5_000), "newest turn".to_owned()] {
+        codex
+            .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+                text,
+                text_elements: Vec::new(),
+            }]))
+            .await
+            .unwrap();
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    }
 
     codex.submit(Op::Compact).await.unwrap();
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
@@ -3818,12 +3821,12 @@ async fn manual_compact_retries_after_context_window_error() {
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        3,
-        "expected user turn and two compact attempts"
+        4,
+        "expected two user turns and two compact attempts"
     );
 
-    let compact_attempt = requests[1].body_json();
-    let retry_attempt = requests[2].body_json();
+    let compact_attempt = requests[2].body_json();
+    let retry_attempt = requests[3].body_json();
 
     let compact_input = compact_attempt["input"]
         .as_array()
@@ -3839,21 +3842,11 @@ async fn manual_compact_retries_after_context_window_error() {
         compact_contains_prompt, retry_contains_prompt,
         "compact attempts should consistently include or omit the summarization prompt"
     );
+    assert!(retry_input.len() + 1 < compact_input.len());
     assert_eq!(
-        retry_input.len(),
-        compact_input.len().saturating_sub(1),
-        "retry should drop exactly one history item (before {} vs after {})",
-        compact_input.len(),
-        retry_input.len()
+        requests[3].message_input_texts("user"),
+        vec!["newest turn", SUMMARIZATION_PROMPT]
     );
-    if let (Some(first_before), Some(first_after)) = (compact_input.first(), retry_input.first()) {
-        assert_ne!(
-            first_before, first_after,
-            "retry should drop the oldest conversation item"
-        );
-    } else {
-        panic!("expected non-empty compact inputs");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
