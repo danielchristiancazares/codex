@@ -143,6 +143,7 @@ mod reasoning_effort_override;
 mod remote_env;
 mod remote_models;
 mod request_compression;
+mod request_estimate;
 #[cfg(not(target_os = "windows"))]
 mod request_permissions;
 #[cfg(not(target_os = "windows"))]

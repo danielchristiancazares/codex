@@ -94,7 +94,7 @@ impl Session {
     }
 
     /// Checks the replacement together with publications and pending tool exchanges.
-    /// The client also checks the final request after tool/envelope formatting.
+    /// An unusable replacement must stop the turn before installing it.
     pub(crate) async fn fit_compaction_replacement(
         &self,
         turn: &super::turn_context::TurnContext,
