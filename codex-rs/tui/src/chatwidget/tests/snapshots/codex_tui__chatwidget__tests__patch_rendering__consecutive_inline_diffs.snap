@@ -1,0 +1,16 @@
+---
+source: tui/src/chatwidget/tests/patch_rendering.rs
+expression: "rendered.iter().filter(|(display, _)|\n!display.is_empty()).map(|(display, _)|\nlines_to_single_string(display)).collect::<Vec<_>>().join(\"\\n\")"
+---
+• Edited src/first.rs (+1 -1)
+    1 -old
+    1 +first
+
+• Edited src/second.rs (+2 -1)
+    1 -old
+    1 +second
+    2 +third
+
+• Edited src/first.rs (+1 -1)
+    1 -first
+    1 +updated

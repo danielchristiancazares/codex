@@ -1,0 +1,12 @@
+---
+source: tui/src/history_cell/patches_tests.rs
+expression: "render_lines(&display).join(\"\\n\")"
+---
+• Edited 2 files (+3 -1)
+  └ src/added.rs (+2 -0)
+    1 +one
+    2 +two
+
+  └ src/example.rs (+1 -1)
+    1 -old
+    1 +new

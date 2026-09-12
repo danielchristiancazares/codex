@@ -1,0 +1,18 @@
+---
+source: tui/src/chatwidget/tests/patch_rendering.rs
+expression: "rendered.iter().map(|(_, transcript)|\nlines_to_single_string(transcript)).collect::<Vec<_>>().join(\"\\n\")"
+---
+• Edited src/first.rs (+1 -1)
+    1 -old
+    1 +first
+
+• Review the remaining edits.
+
+• Edited src/second.rs (+2 -1)
+    1 -old
+    1 +second
+    2 +third
+
+• Edited src/first.rs (+1 -1)
+    1 -first
+    1 +updated

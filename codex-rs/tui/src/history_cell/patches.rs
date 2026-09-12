@@ -1,59 +1,25 @@
 //! Patch summaries and image-tool transcript helpers.
 
 use super::*;
-use crate::diff_render::create_grouped_diff_file_summary;
 use codex_utils_path_uri::LegacyAppPathString;
 
-/// Consecutive patches share a file summary and retain their individual full diffs.
 #[derive(Debug)]
 pub(crate) struct PatchHistoryCell {
-    entries: Vec<PatchHistoryEntry>,
+    changes: HashMap<PathBuf, FileChange>,
     cwd: PathBuf,
-}
-
-#[derive(Debug)]
-enum PatchHistoryEntry {
-    Changes(HashMap<PathBuf, FileChange>),
-    Transcript(Box<dyn HistoryCell>),
-}
-
-impl PatchHistoryCell {
-    pub(crate) fn append_changes(&mut self, changes: HashMap<PathBuf, FileChange>) {
-        self.entries.push(PatchHistoryEntry::Changes(changes));
-    }
-
-    pub(crate) fn append_transcript(&mut self, cell: Box<dyn HistoryCell>) {
-        self.entries.push(PatchHistoryEntry::Transcript(cell));
-    }
 }
 
 impl HistoryCell for PatchHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let patches = self.entries.iter().filter_map(|entry| match entry {
-            PatchHistoryEntry::Changes(changes) => Some(changes),
-            PatchHistoryEntry::Transcript(_) => None,
-        });
-        create_grouped_diff_file_summary(patches, &self.cwd, usize::from(width))
-    }
-
-    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        for entry in &self.entries {
-            if !lines.is_empty() {
-                lines.push(Line::default());
-            }
-            lines.extend(match entry {
-                PatchHistoryEntry::Changes(changes) => {
-                    create_diff_summary(changes, &self.cwd, usize::from(width))
-                }
-                PatchHistoryEntry::Transcript(cell) => cell.transcript_lines(width),
-            });
-        }
-        lines
+        create_diff_summary(&self.changes, &self.cwd, width as usize)
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
-        plain_lines(self.transcript_lines(RAW_DIFF_SUMMARY_WIDTH as u16))
+        plain_lines(create_diff_summary(
+            &self.changes,
+            &self.cwd,
+            RAW_DIFF_SUMMARY_WIDTH,
+        ))
     }
 }
 /// Create a new `PendingPatch` cell that lists the file‑level summary of
@@ -64,7 +30,7 @@ pub(crate) fn new_patch_event(
     cwd: &Path,
 ) -> PatchHistoryCell {
     PatchHistoryCell {
-        entries: vec![PatchHistoryEntry::Changes(changes)],
+        changes,
         cwd: cwd.to_path_buf(),
     }
 }

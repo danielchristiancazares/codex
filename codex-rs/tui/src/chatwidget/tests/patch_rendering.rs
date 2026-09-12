@@ -2,7 +2,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
-async fn consecutive_edits_share_one_active_summary_until_turn_completion() {
+async fn consecutive_edits_render_individual_diffs_live_and_on_replay() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
     let mut items = Vec::new();
@@ -47,26 +47,43 @@ async fn consecutive_edits_share_one_active_summary_until_turn_completion() {
             });
         }
     }
-    assert!(drain_insert_history_cells(&mut rx).is_empty());
-    insta::assert_snapshot!(active_blob(&chat), @"
-    • Edited 2 files (+4 -3)
-      ├ M src/first.rs (+2 -2)
-      └ M src/second.rs (+2 -1)
-    ");
+    let cells = drain_insert_history_cells(&mut rx);
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|cell| cell.as_any().is::<history_cell::PatchHistoryCell>())
+            .count(),
+        3,
+    );
+    assert!(chat.transcript.active_cell.is_none());
+    let rendered = cells
+        .iter()
+        .map(|cell| {
+            (
+                cell.display_lines(/*width*/ 100),
+                cell.transcript_lines(/*width*/ 100),
+            )
+        })
+        .collect::<Vec<_>>();
+    insta::assert_snapshot!(
+        "consecutive_inline_diffs",
+        rendered
+            .iter()
+            .filter(|(display, _)| !display.is_empty())
+            .map(|(display, _)| lines_to_single_string(display))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    insta::assert_snapshot!(
+        "consecutive_diff_transcript",
+        rendered
+            .iter()
+            .map(|(_, transcript)| lines_to_single_string(transcript))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
 
     handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
-    let cells = drain_insert_history_cells(&mut rx);
-    let patches = cells
-        .iter()
-        .filter(|cell| cell.as_any().is::<history_cell::PatchHistoryCell>())
-        .collect::<Vec<_>>();
-    assert_eq!(patches.len(), 1);
-    assert!(chat.transcript.active_cell.is_none());
-    let transcript = lines_to_single_string(&patches[0].transcript_lines(/*width*/ 100));
-    assert_eq!(transcript.matches("• Edited").count(), 3);
-    assert!(transcript.contains("updated"));
-    assert!(transcript.contains("third"));
-
     for replay_kind in [
         ReplayKind::ResumeInitialMessages,
         ReplayKind::ThreadSnapshot,
@@ -86,21 +103,24 @@ async fn consecutive_edits_share_one_active_summary_until_turn_completion() {
             replay_kind,
         );
         let replayed = drain_insert_history_cells(&mut replay_rx);
-        assert_eq!(replayed.len(), 1);
         assert_eq!(
-            replayed[0].display_lines(/*width*/ 100),
-            patches[0].display_lines(/*width*/ 100),
-        );
-        assert_eq!(
-            replayed[0].transcript_lines(/*width*/ 100),
-            patches[0].transcript_lines(/*width*/ 100),
+            replayed
+                .iter()
+                .map(|cell| {
+                    (
+                        cell.display_lines(/*width*/ 100),
+                        cell.transcript_lines(/*width*/ 100),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            rendered,
         );
         assert!(replay.transcript.active_cell.is_none());
     }
 }
 
 #[tokio::test]
-async fn command_and_failure_boundaries_end_edit_groups() {
+async fn inline_diffs_preserve_command_and_failure_order() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
     let changes = HashMap::from([(
@@ -131,21 +151,12 @@ async fn command_and_failure_boundaries_end_edit_groups() {
     handle_patch_apply_begin(&mut chat, "last", "turn-1", changes);
     let cells = drain_insert_history_cells(&mut rx);
     insta::assert_snapshot!(
+        "inline_diffs_with_command_and_failure",
         cells
             .iter()
             .map(|cell| lines_to_single_string(&cell.display_lines(/*width*/ 100)))
             .collect::<Vec<_>>()
             .join("\n"),
-        @"
-    • Edited src/example.rs (+1 -1)
-
-    • Ran 1 command
-      └ printf checkpoint
-
-    • Edited src/example.rs (+1 -1)
-
-    ✗ Failed to apply patch
-    "
     );
-    assert_eq!(active_blob(&chat), "• Edited src/example.rs (+1 -1)\n");
+    assert!(chat.transcript.active_cell.is_none());
 }

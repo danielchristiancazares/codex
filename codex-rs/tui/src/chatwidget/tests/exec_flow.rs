@@ -2063,18 +2063,10 @@ async fn apply_patch_events_emit_history_cells() {
         },
     );
     handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes2);
-    assert!(drain_insert_history_cells(&mut rx).is_empty());
-    let cell = chat
-        .transcript
-        .active_cell
-        .as_ref()
-        .expect("apply block cell");
-    assert_eq!(
-        lines_to_single_string(&cell.display_lines(/*width*/ 80)),
-        "• Added foo.txt (+16 -0)\n"
-    );
-    let transcript = lines_to_single_string(&cell.transcript_lines(/*width*/ 80));
-    insta::assert_snapshot!(transcript, @"
+    let cells = drain_insert_history(&mut rx);
+    assert!(!cells.is_empty(), "expected apply block cell to be sent");
+    let blob = lines_to_single_string(cells.last().unwrap());
+    insta::assert_snapshot!(blob, @"
     • Added foo.txt (+16 -0)
          1 +line 1
          2 +line 2
@@ -2149,8 +2141,9 @@ async fn apply_patch_manual_approval_adjusts_header() {
     );
     handle_patch_apply_begin(&mut chat, "c1", "turn-c1", apply_changes);
 
-    assert!(drain_insert_history(&mut rx).is_empty());
-    let blob = active_blob(&chat);
+    let cells = drain_insert_history(&mut rx);
+    assert!(!cells.is_empty(), "expected apply block cell to be sent");
+    let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
         blob.contains("Added foo.txt") || blob.contains("Edited foo.txt"),
         "expected apply summary header for foo.txt: {blob:?}"
@@ -2193,11 +2186,13 @@ async fn apply_patch_manual_flow_snapshot() {
         },
     );
     handle_patch_apply_begin(&mut chat, "c1", "turn-c1", apply_changes);
-    assert!(drain_insert_history(&mut rx).is_empty());
+    let approved_lines = drain_insert_history(&mut rx)
+        .pop()
+        .expect("approved patch cell");
 
     assert_chatwidget_snapshot!(
         "apply_patch_manual_flow_history_approved",
-        active_blob(&chat)
+        lines_to_single_string(&approved_lines)
     );
 }
 

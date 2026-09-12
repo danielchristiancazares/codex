@@ -1284,20 +1284,9 @@ impl ChatWidget {
                         || active_cell
                             .as_any()
                             .is::<history_cell::ComputerActivityCell>()
-                        || active_cell.as_any().is::<history_cell::PatchHistoryCell>()
                 })
             && !cell.transcript_lines(history_width).is_empty()
         {
-            if let Some(patches) = self.transcript.active_cell.as_mut().and_then(|active| {
-                active
-                    .as_any_mut()
-                    .downcast_mut::<history_cell::PatchHistoryCell>()
-            }) {
-                patches.append_transcript(cell);
-                self.bump_active_cell_revision();
-                self.request_redraw();
-                return;
-            }
             self.flush_completed_tool_activity();
         }
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));

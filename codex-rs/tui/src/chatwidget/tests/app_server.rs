@@ -1057,11 +1057,11 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
         /*replay_kind*/ None,
     );
 
-    assert!(drain_insert_history(&mut rx).is_empty());
-    let transcript = active_blob(&chat);
-    assert!(
-        transcript.contains("Added foo.txt") || transcript.contains("Edited foo.txt"),
-        "expected patch summary to include foo.txt, got: {transcript}"
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected one patch history cell");
+    assert_eq!(
+        lines_to_single_string(&cells[0]),
+        "• Added foo.txt (+1 -0)\n    1 +hello\n",
     );
 }
 

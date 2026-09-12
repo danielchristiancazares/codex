@@ -1,4 +1,4 @@
-//! Coverage for patch-apply-failure and image-tool transcript cells.
+//! Coverage for inline patch diffs and patch-apply failures.
 
 use super::*;
 use pretty_assertions::assert_eq;
@@ -54,19 +54,12 @@ fn patch_apply_failure_without_stderr_shows_only_title() {
 }
 
 #[test]
-fn consecutive_patches_combine_file_counts_and_preserve_each_diff() {
-    let first = HashMap::from([(
-        PathBuf::from("src/example.rs"),
-        FileChange::Update {
-            unified_diff: diffy::create_patch("old\n", "first\n").to_string(),
-            move_path: None,
-        },
-    )]);
-    let second = HashMap::from([
+fn patch_history_renders_inline_diff_and_full_transcript() {
+    let changes = HashMap::from([
         (
             PathBuf::from("src/example.rs"),
             FileChange::Update {
-                unified_diff: diffy::create_patch("first\n", "second\nthird\n").to_string(),
+                unified_diff: diffy::create_patch("old\n", "new\n").to_string(),
                 move_path: None,
             },
         ),
@@ -77,25 +70,10 @@ fn consecutive_patches_combine_file_counts_and_preserve_each_diff() {
             },
         ),
     ]);
-    let cwd = Path::new("/project");
-    let reasoning =
-        new_reasoning_summary_block(vec!["Review the remaining edits.".to_string()], cwd);
-    let mut expected_transcript = create_diff_summary(&first, cwd, /*wrap_cols*/ 100);
-    expected_transcript.push(Line::default());
-    expected_transcript.extend(reasoning.transcript_lines(/*width*/ 100));
-    expected_transcript.push(Line::default());
-    expected_transcript.extend(create_diff_summary(&second, cwd, /*wrap_cols*/ 100));
-    let mut group = new_patch_event(first, cwd);
-    group.append_transcript(reasoning);
-    group.append_changes(second);
+    let cell = new_patch_event(changes, Path::new("/project"));
+    let display = cell.display_lines(/*width*/ 80);
 
-    assert_eq!(group.transcript_lines(/*width*/ 100), expected_transcript);
-    insta::assert_snapshot!(
-        render_lines(&group.display_lines(/*width*/ 100)).join("\n"),
-        @"
-    • Edited 2 files (+5 -2)
-      ├ A src/added.rs (+2 -0)
-      └ M src/example.rs (+3 -2)
-    "
-    );
+    assert_eq!(cell.transcript_lines(/*width*/ 80), display);
+    assert_eq!(cell.raw_lines(), plain_lines(display.clone()));
+    insta::assert_snapshot!(render_lines(&display).join("\n"));
 }

@@ -1,7 +1,6 @@
 //! Coverage for history-cell rendering, wrapping, and transcript behavior.
 
 use super::*;
-use crate::diff_model::FileChange;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCall;
 use crate::exec_cell::ExecCell;
@@ -127,65 +126,6 @@ fn streaming_agent_tail_blank_line_uses_one_viewport_row() {
 
   second");
     assert_eq!(cell.desired_height(/*width*/ 80), 3);
-}
-
-#[test]
-fn patch_history_summarizes_files_and_keeps_full_transcript() {
-    let patch = diffy::create_patch("old\n", "new\n").to_string();
-    let changes = HashMap::from([(
-        PathBuf::from("src/example.rs"),
-        FileChange::Update {
-            unified_diff: patch,
-            move_path: None,
-        },
-    )]);
-    let cell = new_patch_event(changes, PathBuf::from("/project").as_path());
-
-    let display = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
-    let transcript = render_lines(&cell.transcript_lines(/*width*/ 80)).join("\n");
-
-    insta::assert_snapshot!("patch_history_file_summary", display);
-    assert!(!display.contains("old"));
-    assert!(!display.contains("new"));
-    assert!(transcript.contains("old"));
-    assert!(transcript.contains("new"));
-}
-
-#[test]
-fn patch_history_file_summary_limits_inline_rows_and_keeps_full_transcript() {
-    let changes = (0..20)
-        .map(|index| {
-            (
-                PathBuf::from(format!("file_{index:02}.rs")),
-                FileChange::Add {
-                    content: format!("line {index}\n"),
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let cwd = PathBuf::from("/project");
-    let cell = new_patch_event(changes.clone(), cwd.as_path());
-
-    assert_eq!(
-        cell.transcript_lines(/*width*/ 80),
-        create_diff_summary(&changes, cwd.as_path(), /*wrap_cols*/ 80),
-    );
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @r###"
-    • Edited 20 files (+20 -0)
-      ├ A file_00.rs (+1 -0)
-      ├ A file_01.rs (+1 -0)
-      ├ A file_02.rs (+1 -0)
-      ├ A file_03.rs (+1 -0)
-      ├ A file_04.rs (+1 -0)
-      ├ A file_05.rs (+1 -0)
-      ├ A file_06.rs (+1 -0)
-      ├ A file_07.rs (+1 -0)
-      ├ A file_08.rs (+1 -0)
-      ├ A file_09.rs (+1 -0)
-      ├ A file_10.rs (+1 -0)
-      ├ A file_11.rs (+1 -0)
-      … Diff preview limited (ctrl + t to view transcript).
-    "###);
 }
 
 fn stdio_server_config(

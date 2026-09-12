@@ -17,19 +17,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_patch_apply_begin_now(&mut self, changes: HashMap<PathBuf, FileChange>) {
         self.flush_answer_stream_with_separator();
-        if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
-            cell.as_any_mut()
-                .downcast_mut::<history_cell::PatchHistoryCell>()
-        }) {
-            cell.append_changes(changes);
-        } else {
-            self.flush_active_cell();
-            self.transcript.active_cell = Some(Box::new(history_cell::new_patch_event(
-                changes,
-                &self.config.cwd,
-            )));
-        }
-        self.bump_active_cell_revision();
+        self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
         self.request_redraw();
     }
 
