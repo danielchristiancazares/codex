@@ -27,6 +27,8 @@ use tree_sitter::LanguageError;
 
 const APPLY_PATCH_COMMANDS: [&str; 2] = ["apply_patch", "applypatch"];
 
+mod powershell;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApplyPatchShell {
     Unix,
@@ -102,9 +104,10 @@ fn extract_apply_patch_from_shell(
     script: &str,
 ) -> std::result::Result<(String, Option<String>), ExtractHeredocError> {
     match shell {
-        ApplyPatchShell::Unix | ApplyPatchShell::PowerShell | ApplyPatchShell::Cmd => {
-            extract_apply_patch_from_bash(script)
-        }
+        ApplyPatchShell::PowerShell => powershell::extract_apply_patch(script)
+            .map(|patch| (patch.to_string(), None))
+            .map_or_else(|| extract_apply_patch_from_bash(script), Ok),
+        ApplyPatchShell::Unix | ApplyPatchShell::Cmd => extract_apply_patch_from_bash(script),
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn rollback_discards_async_hook_context_from_the_removed_turn() -> Result<()> {

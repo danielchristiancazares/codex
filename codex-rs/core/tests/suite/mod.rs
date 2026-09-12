@@ -40,6 +40,7 @@ mod agent_execution;
 mod agent_websocket;
 mod agents_md;
 mod apply_patch_cli;
+mod apply_patch_powershell;
 mod apply_patch_serialization;
 #[cfg(not(target_os = "windows"))]
 mod approvals;
