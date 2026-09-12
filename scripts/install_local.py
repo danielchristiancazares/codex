@@ -171,8 +171,23 @@ def install_package(
 
 def main() -> int:
     argparse.ArgumentParser(description=__doc__).parse_args()
-    spec = TARGET_SPECS[default_target()]
-    npm = shutil.which("npm.cmd" if spec.is_windows else "npm")
+    npm_spec = TARGET_SPECS[default_target()]
+    # Local builds use the workspace toolchain's host. npm's release target only
+    # identifies the payload directory (which is named for musl on Linux).
+    host_target = subprocess.check_output(
+        [os.environ.get("RUSTC", "rustc"), "--print", "host-tuple"],
+        cwd=REPO_ROOT / "codex-rs",
+        text=True,
+    ).strip()
+    build_spec = TARGET_SPECS.get(host_target)
+    if build_spec is None:
+        raise RuntimeError(f"Unsupported Rust host target: {host_target!r}.")
+    if build_spec.dotslash_platform != npm_spec.dotslash_platform:
+        raise RuntimeError(
+            f"Rust host target {host_target!r} does not match the npm platform "
+            f"{npm_spec.dotslash_platform!r}."
+        )
+    npm = shutil.which("npm.cmd" if npm_spec.is_windows else "npm")
     if npm is None:
         raise RuntimeError(
             "npm is required to locate the existing global Codex installation."
@@ -183,8 +198,8 @@ def main() -> int:
     npm_prefix = Path(
         subprocess.check_output([npm, "prefix", "--global"], text=True).strip()
     )
-    installation = find_npm_installation(npm_root, npm_prefix, spec)
-    print(f"Building a release Codex package for {spec.target}", flush=True)
+    installation = find_npm_installation(npm_root, npm_prefix, npm_spec)
+    print(f"Building a release Codex package for {build_spec.target}", flush=True)
     with tempfile.TemporaryDirectory(prefix="codex-local-build-") as temporary:
         package = Path(temporary) / "package"
         subprocess.run(
@@ -192,7 +207,7 @@ def main() -> int:
                 sys.executable,
                 str(REPO_ROOT / "scripts/build_codex_package.py"),
                 "--target",
-                spec.target,
+                build_spec.target,
                 "--cargo-profile",
                 "release",
                 "--package-dir",
@@ -201,7 +216,7 @@ def main() -> int:
             cwd=REPO_ROOT,
             check=True,
         )
-        version = install_package(package, installation, spec)
+        version = install_package(package, installation, build_spec)
     print(f"Installed {version} at {installation.payload}")
     print(f"npm command: {installation.launcher}")
     return 0

@@ -4,10 +4,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
+import install_local
 from codex_package.layout import build_package_dir
 from codex_package.targets import PACKAGE_VARIANTS, TARGET_SPECS, PackageInputs
 from install_local import NpmInstallation, find_npm_installation, install_package
@@ -40,11 +42,12 @@ class LocalInstallTests(unittest.TestCase):
         self.installation = NpmInstallation(self.payload, self.launcher)
         self.before = self.contents(self.payload)
 
-    def build_package(self, destination: Path, version: str):
+    def build_package(self, destination: Path, version: str, *, spec=None):
+        spec = self.spec if spec is None else spec
         inputs = self.root / f"inputs-{version}"
         inputs.mkdir(exist_ok=True)
         binaries = []
-        for name in ["codex", "host", "rg", "runner", "setup"]:
+        for name in ["codex", "host", "rg", "runner", "setup", "bwrap"]:
             binary = inputs / name
             binary.write_bytes(f"{version}-{name}".encode())
             binaries.append(binary)
@@ -52,15 +55,17 @@ class LocalInstallTests(unittest.TestCase):
             destination,
             version,
             PACKAGE_VARIANTS["codex"],
-            self.spec,
+            spec,
             PackageInputs(
                 entrypoint_bin=binaries[0],
                 code_mode_host_bin=binaries[1],
                 rg_bin=binaries[2],
                 zsh_bin=None,
-                bwrap_bin=None,
-                codex_command_runner_bin=binaries[3],
-                codex_windows_sandbox_setup_bin=binaries[4],
+                bwrap_bin=binaries[5] if spec.is_linux else None,
+                codex_command_runner_bin=binaries[3] if spec.is_windows else None,
+                codex_windows_sandbox_setup_bin=binaries[4]
+                if spec.is_windows
+                else None,
             ),
         )
 
@@ -76,6 +81,112 @@ class LocalInstallTests(unittest.TestCase):
         self.assertEqual(self.contents(self.payload), self.before)
         self.assertEqual(list(self.payload.parent.iterdir()), [self.payload])
         self.assertEqual(self.launcher.read_text(), "unchanged npm launcher")
+
+    def test_builds_native_linux_package_in_npm_release_directory(self):
+        for target in [
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-unknown-linux-musl",
+            "aarch64-unknown-linux-musl",
+        ]:
+            with self.subTest(target=target):
+                npm_target = target.replace("-gnu", "-musl")
+                npm_arch = "arm64" if target.startswith("aarch64-") else "x64"
+                npm_root = self.root / target / "npm"
+                npm_prefix = self.root / target / "prefix"
+                package_root = npm_root / "@openai/codex"
+                payload = (
+                    package_root
+                    / f"node_modules/@openai/codex-linux-{npm_arch}/vendor"
+                    / npm_target
+                )
+                (payload / "bin").mkdir(parents=True)
+                (payload / "bin/codex").write_text("old", encoding="utf-8")
+                (payload / "obsolete-resource").write_text("old", encoding="utf-8")
+                (package_root / "package.json").write_text(
+                    json.dumps({"name": "@openai/codex"}), encoding="utf-8"
+                )
+                launcher = npm_prefix / "bin/codex"
+                launcher.parent.mkdir(parents=True)
+                launcher.write_text("unchanged npm launcher", encoding="utf-8")
+                expected_contents = {}
+
+                def build(command, **kwargs):
+                    package = Path(command[command.index("--package-dir") + 1])
+                    package.mkdir()
+                    build_target = command[command.index("--target") + 1]
+                    self.build_package(package, "new", spec=TARGET_SPECS[build_target])
+                    expected_contents.update(self.contents(package))
+
+                with (
+                    mock.patch("install_local.sys.argv", ["install_local.py"]),
+                    mock.patch("install_local.default_target", return_value=npm_target),
+                    mock.patch("install_local.shutil.which", return_value="npm"),
+                    mock.patch(
+                        "install_local.subprocess.check_output",
+                        side_effect=[f"{target}\n", str(npm_root), str(npm_prefix)],
+                    ) as check_output,
+                    mock.patch(
+                        "install_local.subprocess.run", side_effect=build
+                    ) as run,
+                    mock.patch("install_local.codex_version", return_value="new"),
+                    mock.patch("builtins.print"),
+                ):
+                    self.assertEqual(install_local.main(), 0)
+
+                self.assertEqual(
+                    check_output.call_args_list,
+                    [
+                        mock.call(
+                            [os.environ.get("RUSTC", "rustc"), "--print", "host-tuple"],
+                            cwd=install_local.REPO_ROOT / "codex-rs",
+                            text=True,
+                        ),
+                        mock.call(["npm", "root", "--global"], text=True),
+                        mock.call(["npm", "prefix", "--global"], text=True),
+                    ],
+                )
+                run.assert_called_once_with(
+                    [
+                        sys.executable,
+                        str(install_local.REPO_ROOT / "scripts/build_codex_package.py"),
+                        "--target",
+                        target,
+                        "--cargo-profile",
+                        "release",
+                        "--package-dir",
+                        mock.ANY,
+                    ],
+                    cwd=install_local.REPO_ROOT,
+                    check=True,
+                )
+                self.assertEqual(self.contents(payload), expected_contents)
+                self.assertEqual(list(payload.parent.iterdir()), [payload])
+                self.assertEqual(launcher.read_text(), "unchanged npm launcher")
+
+    def test_incompatible_rust_host_stops_before_build_or_install(self):
+        for target, error in [
+            ("unsupported-target", "Unsupported Rust host target"),
+            ("aarch64-unknown-linux-gnu", "does not match the npm platform"),
+            ("x86_64-pc-windows-msvc", "does not match the npm platform"),
+        ]:
+            with (
+                self.subTest(target=target),
+                mock.patch("install_local.sys.argv", ["install_local.py"]),
+                mock.patch(
+                    "install_local.default_target",
+                    return_value="x86_64-unknown-linux-musl",
+                ),
+                mock.patch(
+                    "install_local.subprocess.check_output", return_value=target
+                ) as check_output,
+                mock.patch("install_local.subprocess.run") as run,
+            ):
+                with self.assertRaisesRegex(RuntimeError, error):
+                    install_local.main()
+                check_output.assert_called_once()
+                run.assert_not_called()
+                self.assert_previous_installation()
 
     def test_selects_nested_npm_payload(self):
         hoisted = self.npm_root / "@openai/codex-win32-x64/vendor" / self.spec.target

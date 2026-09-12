@@ -35,10 +35,15 @@ start from the maintained product.
 
 ## Installing this checkout
 
-`just install` builds a release package for the current host with
+`just install` builds a release package for the workspace Rust toolchain's host with
 `scripts/build_codex_package.py`, then updates the native payload of the existing
 global npm `@openai/codex` installation. It includes the code-mode host, bundled
 `rg`, and platform resources. The npm launcher remains in place.
+
+On glibc Linux, the local build uses the native GNU target without requiring a
+musl cross-compilation toolchain. The payload still goes in npm's musl-named
+vendor directory so its launcher can find it; package metadata records the actual
+build target. `just assemble-codex-package` keeps the release target defaults.
 
 The installer verifies the package before replacing the payload and restores the
 previous payload if the replacement or launcher check fails. The global npm
