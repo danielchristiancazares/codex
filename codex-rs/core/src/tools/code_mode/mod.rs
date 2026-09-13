@@ -251,6 +251,7 @@ impl CodeModeService {
 }
 
 pub(super) async fn handle_runtime_response(
+    session: &Session,
     model_info: &codex_protocol::openai_models::ModelInfo,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
@@ -271,7 +272,7 @@ pub(super) async fn handle_runtime_response(
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
             Ok(CapturedOutput::new(
-                &exec.session,
+                session,
                 FunctionToolOutput::from_content(content_items, Some(true)),
                 captured,
                 0,
@@ -289,7 +290,7 @@ pub(super) async fn handle_runtime_response(
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
             Ok(CapturedOutput::new(
-                &exec.session,
+                session,
                 FunctionToolOutput::from_content(content_items, Some(true)),
                 captured,
                 0,
@@ -317,7 +318,7 @@ pub(super) async fn handle_runtime_response(
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
             Ok(CapturedOutput::new(
-                &exec.session,
+                session,
                 FunctionToolOutput::from_content(content_items, Some(success)),
                 captured,
                 0,

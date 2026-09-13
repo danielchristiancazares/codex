@@ -128,7 +128,7 @@ async fn assert_transcript_close_repaints_inline_draft(mut app: App) -> Result<(
     );
     let deferred_history = app.deferred_history_lines.clone();
     assert!(!deferred_history.is_empty());
-    app.apply_raw_output_mode(&mut tui, /*enabled*/ true, /*notify*/ false);
+    app.apply_raw_output_mode(&mut tui, /*enabled*/ true);
     app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
         .await?;
     assert_eq!(app.deferred_history_lines, deferred_history);

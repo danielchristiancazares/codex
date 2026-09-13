@@ -47,6 +47,15 @@ impl SessionConfiguration {
         &mut self,
         config: &mut Config,
     ) -> Result<(), InvalidCapacityRefresh> {
+        let previous = self
+            .original_config_do_not_use
+            .config_layer_stack
+            .effective_config();
+        let current = config.config_layer_stack.effective_config();
+        // Unrelated refreshes must retain explicit caller-provided capacity overrides.
+        if previous.get("model_context_window") == current.get("model_context_window") {
+            return Ok(());
+        }
         CapacityRefresh::from_config(config)?.apply(self, config);
         Ok(())
     }

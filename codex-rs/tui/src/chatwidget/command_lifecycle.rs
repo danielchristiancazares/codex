@@ -369,7 +369,14 @@ impl ChatWidget {
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
         let end_target = match self.transcript.active_cell.as_mut() {
-            Some(cell) if cell.as_any().is::<McpToolCallGroupCell>() => {
+            Some(cell)
+                if cell.as_any().is::<McpToolCallGroupCell>()
+                    || cell.as_any().is::<McpToolCallCell>()
+                    || cell
+                        .as_any()
+                        .downcast_ref::<history_cell::ComputerActivityCell>()
+                        .is_some_and(history_cell::ComputerActivityCell::is_active) =>
+            {
                 ExecEndTarget::OrphanHistoryWhileActiveExec
             }
             Some(cell) => match cell.as_any_mut().downcast_mut::<ExecCell>() {
@@ -377,14 +384,6 @@ impl ChatWidget {
                     ExecEndTarget::ActiveTracked
                 }
                 Some(exec_cell) if exec_cell.is_active() => {
-                    ExecEndTarget::OrphanHistoryWhileActiveExec
-                }
-                None if cell.as_any().is::<McpToolCallCell>()
-                    || cell
-                        .as_any()
-                        .downcast_ref::<history_cell::ComputerActivityCell>()
-                        .is_some_and(history_cell::ComputerActivityCell::is_active) =>
-                {
                     ExecEndTarget::OrphanHistoryWhileActiveExec
                 }
                 Some(exec_cell) => {

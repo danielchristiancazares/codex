@@ -604,16 +604,17 @@ impl OpenAiModelsManager {
             return false;
         }
         // Provider-owned catalogs and visible ChatGPT/OpenAI API-key catalogs are authoritative.
-        let remote_only = self.endpoint_client.remote_catalog_is_authoritative() || (entry
-            .models
-            .iter()
-            .any(|model| model.visibility == ModelVisibility::List)
-            && (self.supports_api_key_discovery()
-                || self.auth_manager.as_ref().is_some_and(|auth_manager| {
-                    auth_manager
-                        .auth_mode()
-                        .is_some_and(AuthMode::has_chatgpt_account)
-                })));
+        let remote_only = self.endpoint_client.remote_catalog_is_authoritative()
+            || (entry
+                .models
+                .iter()
+                .any(|model| model.visibility == ModelVisibility::List)
+                && (self.supports_api_key_discovery()
+                    || self.auth_manager.as_ref().is_some_and(|auth_manager| {
+                        auth_manager
+                            .auth_mode()
+                            .is_some_and(AuthMode::has_chatgpt_account)
+                    })));
         if !remote_only {
             let mut models = load_remote_models_from_file().unwrap_or_default();
             for model in entry.models {

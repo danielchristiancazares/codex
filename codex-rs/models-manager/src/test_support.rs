@@ -18,7 +18,10 @@ pub fn get_model_offline_for_tests(model: Option<&str>) -> String {
     let presets: Vec<ModelPreset> = response
         .models
         .into_iter()
-        .map(|model| ModelPreset::try_from(model).expect("valid model capacity"))
+        .map(|model| {
+            ModelPreset::try_from(model)
+                .unwrap_or_else(|err| panic!("bundled model capacity should be valid: {err}"))
+        })
         .collect();
     presets
         .iter()

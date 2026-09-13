@@ -25,18 +25,16 @@ async fn background_task_sends_pasted_image_with_first_prompt() -> Result<()> {
     image::RgbImage::new(1, 1).save(&image_path)?;
     let pasted_path = pathdiff::diff_paths(&image_path, std::env::current_dir()?)
         .unwrap_or_else(|| image_path.clone());
+    let pasted_text = pasted_path.to_string_lossy().replace('\\', "/");
     let mut view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
-    assert!(view.handle_paste(pasted_path.to_string_lossy().into_owned()));
+    assert!(view.handle_paste(pasted_text.clone()));
     assert!(view.handle_paste("Describe this".into()));
     let rendered_view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
     app.chat_widget
         .show_bottom_pane_view(Box::new(rendered_view));
     insta::assert_snapshot!(
+        "background_task_pasted_image",
         render_bottom_popup(&app.chat_widget, /*width*/ 80)
-            .lines()
-            .find(|line| line.contains("[Image #1]"))
-            .expect("image attachment visible"),
-        @"› [Image #1] Describe this"
     );
     view.handle_key_event(KeyCode::Enter.into());
     let prompt = match events.try_recv()? {
@@ -124,7 +122,7 @@ async fn background_task_sends_pasted_image_with_first_prompt() -> Result<()> {
         })
         .find(|message| message.contains("Reattach images from:"))
         .expect("attachment recovery notice");
-    assert!(notice.contains(&pasted_path.display().to_string()));
+    assert!(notice.contains(&pasted_text));
     server.shutdown().await?;
     proxy.await??;
     Ok(())

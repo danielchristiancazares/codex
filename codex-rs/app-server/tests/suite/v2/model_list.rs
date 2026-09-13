@@ -24,6 +24,7 @@ use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
+use core_test_support::responses::mount_models_once;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -88,11 +89,14 @@ async fn api_key_model_discovery_startup_enablement_respects_user_config(
     let mut bundled = codex_models_manager::bundled_models_response()?.models;
     bundled.sort_by_key(|model| model.priority);
     let mut bundled = ModelPreset::filter_by_auth(
-        bundled.into_iter().map(Into::into).collect(),
+        bundled
+            .into_iter()
+            .map(ModelPreset::try_from)
+            .collect::<Result<Vec<_>, _>>()?,
         /*chatgpt_mode*/ false,
     );
     ModelPreset::mark_default_by_picker_visibility(&mut bundled);
-    let mut remote = vec![ModelPreset::from(remote_model)];
+    let mut remote = vec![ModelPreset::try_from(remote_model)?];
     ModelPreset::mark_default_by_picker_visibility(&mut remote);
     let _: ExperimentalFeatureEnablementSetResponse = mcp
         .request(

@@ -535,20 +535,22 @@ impl App {
                         }
                     }
                 };
-                match startup_draft
-                    .run_until(
-                        tui,
-                        super::provider_switch::reconcile_session_model_environment(
-                            &mut config,
-                            &mut app_server,
-                            &resumed.session,
-                            &mut available_models,
-                        ),
-                    )
-                    .await
-                {
-                    Ok(reconciled) => reconciled?,
-                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                if let Some(resumed) = &resumed {
+                    match startup_draft
+                        .run_until(
+                            tui,
+                            super::provider_switch::reconcile_session_model_environment(
+                                &mut config,
+                                &mut app_server,
+                                &resumed.session,
+                                &mut available_models,
+                            ),
+                        )
+                        .await
+                    {
+                        Ok(reconciled) => reconciled?,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
                 }
                 model_catalog = Arc::new(
                     ModelCatalog::new(available_models.clone())
@@ -660,20 +662,22 @@ impl App {
                         config.model_reasoning_effort = forked.session.reasoning_effort.clone();
                     }
                 }
-                match startup_draft
-                    .run_until(
-                        tui,
-                        super::provider_switch::reconcile_session_model_environment(
-                            &mut config,
-                            &mut app_server,
-                            &forked.session,
-                            &mut available_models,
-                        ),
-                    )
-                    .await
-                {
-                    Ok(reconciled) => reconciled?,
-                    Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                if let Some(forked) = &forked {
+                    match startup_draft
+                        .run_until(
+                            tui,
+                            super::provider_switch::reconcile_session_model_environment(
+                                &mut config,
+                                &mut app_server,
+                                &forked.session,
+                                &mut available_models,
+                            ),
+                        )
+                        .await
+                    {
+                        Ok(reconciled) => reconciled?,
+                        Err(err) => return shutdown_on_startup_error(app_server, err).await,
+                    }
                 }
                 model_catalog = Arc::new(
                     ModelCatalog::new(available_models.clone())

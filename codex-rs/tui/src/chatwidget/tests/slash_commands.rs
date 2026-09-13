@@ -434,6 +434,7 @@ async fn queued_settings_selection_applies_before_next_input() {
     preset.supported_reasoning_efforts.truncate(1);
     let selected_effort = preset.supported_reasoning_efforts[0].effort.clone();
     chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+    use_single_context_window_catalog(&mut chat);
     handle_turn_started(&mut chat, "turn-1");
 
     queue_composer_text_with_tab(&mut chat, "/model");

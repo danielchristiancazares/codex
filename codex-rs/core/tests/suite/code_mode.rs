@@ -181,7 +181,7 @@ fn text_item(items: &[Value], index: usize) -> &str {
 fn extract_running_cell_id(text: &str) -> String {
     text.strip_prefix("Script running with cell ID ")
         .and_then(|rest| rest.split('\n').next())
-        .expect("running header should contain a cell ID")
+        .unwrap_or_else(|| panic!("running header should contain a cell ID: {text}"))
         .to_string()
 }
 
@@ -211,6 +211,9 @@ fn custom_tool_output_body_and_success(
         [only] => (*only).to_string(),
         [_, rest @ ..] => rest.concat(),
     };
+    let output = output
+        .split_once("\nOutput:\n")
+        .map_or(output.clone(), |(_, body)| body.to_string());
     (output, success)
 }
 

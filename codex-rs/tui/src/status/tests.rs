@@ -183,6 +183,7 @@ fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
                 .map(|span| span.content.as_ref())
                 .collect::<String>()
         })
+        .map(|line: String| crate::test_support::sanitize_codex_version(&line))
         .collect()
 }
 
@@ -1809,7 +1810,9 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
     );
     insta::assert_snapshot!(
         "transcript_overlay_status_rate_limit_refresh",
-        format!("before:\n{before}\n\nafter:\n{after}")
+        crate::test_support::sanitize_codex_version(&format!(
+            "before:\n{before}\n\nafter:\n{after}"
+        ))
     );
 }
 

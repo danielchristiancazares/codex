@@ -2172,6 +2172,7 @@ async fn single_line_final_answer_keeps_working_status_until_turn_completion() {
     assert_chatwidget_snapshot!(
         "single_line_final_answer_keeps_working_status_until_turn_completion",
         normalize_snapshot_paths(terminal.backend().vt100().screen().contents())
+            .replace("…/project", "/tmp/project")
     );
     chat.on_task_complete(
         /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
@@ -4882,7 +4883,8 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be recreated");
-    assert_eq!(status.header(), "Checking files");
+    // Assistant output promotes the status until another reasoning delta arrives.
+    assert_eq!(status.header(), "Responding");
 
     chat.on_agent_reasoning_delta(" and preparing a response".to_string());
 

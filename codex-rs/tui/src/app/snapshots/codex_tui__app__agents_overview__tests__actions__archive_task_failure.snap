@@ -9,4 +9,4 @@ expression: "render_bottom_popup(&app.chat_widget, 80)"
 
 › 1. Back to agents
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

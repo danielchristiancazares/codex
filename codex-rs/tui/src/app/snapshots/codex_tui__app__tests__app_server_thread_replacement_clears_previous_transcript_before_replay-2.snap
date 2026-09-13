@@ -1,14 +1,10 @@
 ---
 source: tui/src/app/tests.rs
-assertion_line: 6350
 expression: rendered
 ---
-╭────────────────────────────────────────╮
-│ >_ OpenAI Codex (v0.0.0)               │
-│                                        │
-│ model:     gpt-test   /model to change │
-│ directory: <thread cwd>                │
-╰────────────────────────────────────────╯
-
+  >_ Codex v0.0.0
+  GPT Test  /model to change
+  <thread cwd>
+  Guarded access  /permissions to review
 
 › Next thread prompt

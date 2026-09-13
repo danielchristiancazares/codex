@@ -107,7 +107,7 @@ async fn switching_provider_preserves_draft_and_separate_plan_effort() -> Result
         .respond_with(ResponseTemplate::new(200).set_body_json(ModelsResponse {
             models: vec![target_model],
         }))
-        .expect(2)
+        .expect(2..)
         .mount(&server)
         .await;
 
@@ -299,13 +299,14 @@ requires_openai_auth = true
         app.chat_widget.composer_text_with_pending(),
         "preserve this draft"
     );
-    assert_eq!(
+    // Reattaching the thread can also refresh its catalog in the background.
+    assert!(
         server
             .received_requests()
             .await
             .expect("recorded model requests")
-            .len(),
-        2
+            .len()
+            >= 2
     );
 
     app_server.shutdown().await?;

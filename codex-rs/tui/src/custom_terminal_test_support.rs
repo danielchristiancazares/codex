@@ -12,5 +12,5 @@ pub(crate) fn last_rendered_buffer<B>(terminal: &Terminal<B>) -> &Buffer
 where
     B: Backend<Error = io::Error> + Write,
 {
-    terminal.previous_buffer()
+    &terminal.buffers[1 - terminal.current]
 }

@@ -137,12 +137,12 @@ async fn voice_composer_preserves_normal_colors_across_microphone_states() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            insta::assert_snapshot!(rows, @r"
-            0:
-            1:  voice ● listening ctrl+x mute     /voice stop
-            2:    mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁
-            3:
-            4: › typed
+            insta::assert_snapshot!(rows, @"
+            0: ╭─────────────────────────────────────────────╮
+            1: ┃voice ● listening ctrl+x mute     /voice stop│
+            2: ┃  mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁                   │
+            3: ┃                                             │
+            4: ┃ › typed                                     │
             ");
         }
         buffer
@@ -179,7 +179,7 @@ async fn voice_preserves_the_normal_composer_prompt() {
         chat.update_realtime_footer();
         render_bottom_popup(chat, /*width*/ 80)
             .lines()
-            .filter_map(|line| line.chars().next())
+            .filter_map(|line| line.strip_prefix("┃ ").and_then(|line| line.chars().next()))
             .find(|glyph| matches!(glyph, '›' | '!'))
     };
     for level in 0..=5 {
@@ -201,10 +201,7 @@ async fn voice_preserves_the_normal_composer_prompt() {
         .handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(prompt(&mut chat), Some('›'));
     chat.reset_realtime_conversation();
-    assert_eq!(
-        render_bottom_popup(&chat, /*width*/ 80).chars().next(),
-        Some('›')
-    );
+    assert_eq!(prompt(&mut chat), Some('›'));
 }
 
 #[tokio::test]
@@ -649,17 +646,17 @@ async fn clipped_voice_composer_keeps_the_draft_and_cursor_visible() {
         layouts.push(format!("{height} rows:\n{rows}"));
     }
 
-    insta::assert_snapshot!(layouts.join("\n\n"), @r"
+    insta::assert_snapshot!(layouts.join("\n\n"), @"
     5 rows:
-    › typed
+    ┃ › typed                                     │
 
     6 rows:
-    voice ● listening ctrl+x mute     /voice stop
-    › typed
+    ┃voice ● listening ctrl+x mute     /voice stop│
+    ┃ › typed                                     │
 
     8 rows:
-    voice ● listening ctrl+x mute     /voice stop
-    › typed
+    ┃voice ● listening ctrl+x mute     /voice stop│
+    ┃ › typed                                     │
     ");
 }
 

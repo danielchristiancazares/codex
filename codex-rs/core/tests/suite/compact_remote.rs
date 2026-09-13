@@ -1221,6 +1221,7 @@ async fn remote_compact_v2_rewrites_multiple_trailing_function_call_outputs(
         test_codex()
             .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
             .with_config(|config| {
+                config.base_instructions = Some("Follow the user's instructions.".to_string());
                 config.model_context_window = Some(2_000);
                 config.model_auto_compact_token_limit = Some(200_000);
             }),

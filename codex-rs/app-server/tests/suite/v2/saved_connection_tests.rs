@@ -72,7 +72,7 @@ fn write_config(home: &std::path::Path, server: &MockServer) -> Result<()> {
         home.join("config.toml"),
         format!(
             r#"
-model = "gpt-5.2"
+model = "gpt-5.5"
 model_provider = "openai"
 cli_auth_credentials_store = "file"
 approval_policy = "never"
@@ -149,7 +149,7 @@ async fn saved_connections_prepare_without_activation_restore_and_fork_with_targ
     let mut work_model = codex_models_manager::bundled_models_response()?
         .models
         .into_iter()
-        .find(|model| model.slug == "gpt-5.2")
+        .find(|model| model.slug == "gpt-5.5")
         .unwrap();
     work_model.display_name = "Work account model".to_owned();
     Mock::given(method("GET"))

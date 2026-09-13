@@ -5,7 +5,7 @@ expression: "sanitize_codex_version(&format!(\"{buffer:?}\"))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 48, height: 20 },
     content: [
-        "  >_ Codex v0.0.0                               ",
+        "  >_ Codex v0.0.0                   ",
         "                                                ",
         "  Getting ready…                                ",
         "                                                ",
@@ -31,7 +31,7 @@ Buffer {
         x: 2, y: 0, fg: Rgb(132, 0, 120), bg: Reset, underline: Reset, modifier: BOLD,
         x: 5, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 10, y: 0, fg: Rgb(100, 99, 99), bg: Reset, underline: Reset, modifier: NONE,
-        x: 17, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 29, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 16, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 9, fg: Rgb(132, 0, 120), bg: Reset, underline: Reset, modifier: BOLD,

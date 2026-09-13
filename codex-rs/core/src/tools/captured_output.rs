@@ -10,7 +10,6 @@ use crate::session::session::Session;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ToolResultSources;
 use codex_utils_output_truncation::CaptureId;
 use codex_utils_output_truncation::CaptureReceipt;
 use serde_json::Value;
@@ -104,8 +103,8 @@ impl<T: ToolOutput> ToolOutput for CapturedOutput<T> {
         self.original.post_tool_use_response(call_id, payload)
     }
 
-    fn tool_result_sources(&self) -> Option<ToolResultSources> {
-        self.original.tool_result_sources()
+    fn tool_result_metadata(&self) -> Option<&Value> {
+        self.original.tool_result_metadata()
     }
 
     fn code_mode_result(&self, payload: &ToolPayload) -> Value {

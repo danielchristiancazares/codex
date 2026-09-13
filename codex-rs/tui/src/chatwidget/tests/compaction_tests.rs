@@ -4,7 +4,10 @@ use pretty_assertions::assert_eq;
 fn normalize_compaction_snapshot(text: String) -> String {
     let elapsed = regex_lite::Regex::new(r"\b\d+(?:h \d+m \d+s|m \d+s|s)\b").unwrap();
     elapsed
-        .replace_all(&normalize_snapshot_paths(text), "<elapsed>")
+        .replace_all(
+            &normalize_snapshot_paths(text).replace("…/project", "/tmp/project"),
+            "<elapsed>",
+        )
         .into_owned()
 }
 

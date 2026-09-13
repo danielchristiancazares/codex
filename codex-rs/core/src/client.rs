@@ -1801,12 +1801,6 @@ impl ModelClientSession {
             {
                 crate::guardian::observe_guardian_request(session_telemetry, &request);
             }
-            let mut client_metadata = self
-                .client
-                .build_ws_client_metadata(responses_metadata, model_info.use_responses_lite);
-            if let Some(turn_state) = self.turn_state.get() {
-                client_metadata.insert(X_CODEX_TURN_STATE_HEADER.to_string(), turn_state.clone());
-            }
             let (incremental_request, previous_response_id_from_untraced_warmup) =
                 self.prepare_websocket_request(&request);
             let inference_trace_attempt = if warmup {

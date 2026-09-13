@@ -7,4 +7,4 @@ expression: "render_bottom_popup(&chat, 80)"
 › 1. Whole response  Here is the command:
   2. sh code         echo current
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back

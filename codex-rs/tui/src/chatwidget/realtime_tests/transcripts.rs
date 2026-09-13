@@ -464,10 +464,8 @@ async fn stopping_voice_preserves_the_live_transcript_once() {
             }
         }
         insta::allow_duplicates! {
-            insta::assert_snapshot!(rendered.join("\n"), @r"
-
+            insta::assert_snapshot!(rendered.join("\n"), @"
             › Earlier question
-
             • Earlier answer
             • Answer in progress
             ");

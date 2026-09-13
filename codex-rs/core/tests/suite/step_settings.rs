@@ -618,7 +618,7 @@ async fn tool_result_history_keeps_originating_model_across_switch_and_replay() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn custom_tool_output_replay_preserves_originating_budget() -> Result<()> {
+async fn custom_tool_output_replay_preserves_bounded_capture() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -658,7 +658,7 @@ async fn custom_tool_output_replay_preserves_originating_budget() -> Result<()> 
         .as_str()
         .expect("bounded custom output");
     assert!(live_text.len() < text.len());
-    // A's smaller history budget would truncate this result again without the saved budget.
+    // A's smaller history budget must leave the bounded preview and recovery receipt intact.
     assert_ne!(
         truncate_text(live_text, TruncationPolicy::Tokens(120)),
         live_text
@@ -684,11 +684,11 @@ async fn custom_tool_output_replay_preserves_originating_budget() -> Result<()> 
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.history_truncation_token_limit),
-        Some(480)
+        Some(10_000)
     );
     assert_eq!(
-        serde_json::to_value(&saved.item)?["output"][1]["text"],
-        text
+        serde_json::to_value(&saved.item)?["output"],
+        live_output["output"]
     );
 
     let mut replay_config = test.config.clone();

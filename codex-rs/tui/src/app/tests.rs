@@ -6383,11 +6383,9 @@ async fn app_server_thread_replacement_clears_previous_transcript_before_replay(
         .iter()
         .map(|line| {
             let text = rendered_line_text(line);
-            if text.contains("│ directory: ") {
-                "│ directory: <thread cwd>                │".to_string()
-            } else {
-                text
-            }
+            crate::test_support::sanitize_codex_version(
+                &text.replace(&test_path_display("/tmp/next"), "<thread cwd>"),
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -6434,7 +6432,8 @@ async fn snapshot_thread_switch_discards_queued_previous_history() -> Result<()>
             input_state: None,
         },
         /*resume_restored_queue*/ false,
-    )?;
+    )
+    .await?;
     assert_eq!(app.pending_thread_switch_resets, 1);
     while let Ok(event) = events.try_recv() {
         app.handle_event(&mut tui, &mut app_server, event).await?;

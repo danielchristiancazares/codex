@@ -17,5 +17,6 @@ expression: "render_view_lines(&view, 30)"
 › 1. Verify and approve (y)
   2. Cancel this request (c)
 
-  Press enter to confirm or
-  esc to cancel
+  enter to confirm · esc to
+  cancel
+  ↵ ok · esc back

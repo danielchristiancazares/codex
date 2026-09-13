@@ -4,7 +4,6 @@ use anyhow::Result;
 use codex_core::CodexThread;
 use codex_core::StartThreadOptions;
 use codex_core::TurnInputRequest;
-use codex_features::Feature;
 use codex_login::CodexAuth;
 use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
@@ -28,12 +27,6 @@ const CONTEXT_WINDOW: i64 = 32_000;
 const SUMMARY: &str = "accepted compaction summary";
 
 #[derive(Clone, Copy)]
-enum Compaction {
-    Legacy,
-    V2,
-}
-
-#[derive(Clone, Copy)]
 enum Format {
     Responses,
     Lite,
@@ -45,21 +38,16 @@ enum Trigger {
     Automatic,
 }
 
-fn builder(compaction: Compaction, format: Format) -> TestCodexBuilder {
+fn builder(format: Format) -> TestCodexBuilder {
     test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
-        .with_model_info_override("gpt-5.4", move |model| {
+        .with_model_info_override("gpt-5.5", move |model| {
             model.use_responses_lite = matches!(format, Format::Lite);
         })
         .with_config(move |config| {
             config.base_instructions = Some("Follow the user's instructions.".to_string());
             config.model_context_window = Some(CONTEXT_WINDOW);
             config.model_auto_compact_token_limit = Some(28_000);
-            match compaction {
-                Compaction::Legacy => config.features.disable(Feature::RemoteCompactionV2),
-                Compaction::V2 => config.features.enable(Feature::RemoteCompactionV2),
-            }
-            .expect("configure remote compaction");
         })
 }
 
@@ -130,6 +118,53 @@ async fn assert_request_count(server: &MockServer, expected: usize) {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unchanged_config_preserves_explicit_context_window_between_turns() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+    let mock = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(assistant_response(
+                "first",
+                "first reply",
+                /*tokens*/ 100,
+            )),
+            responses::sse(assistant_response(
+                "second",
+                "second reply",
+                /*tokens*/ 100,
+            )),
+        ],
+    )
+    .await;
+    let test = builder(Format::Responses)
+        .with_config(|config| config.model_context_window = Some(10_000))
+        .build_with_auto_env(&server)
+        .await?;
+    let mut windows = Vec::new();
+    for prompt in ["First turn", "Second turn"] {
+        submit(&test.codex, prompt).await?;
+        let event = wait_for_event(&test.codex, |event| match event {
+            EventMsg::Error(error) => panic!("unexpected turn error: {error:?}"),
+            EventMsg::TokenCount(event) => event
+                .info
+                .as_ref()
+                .is_some_and(|info| info.last_token_usage.total_tokens > 0),
+            _ => false,
+        })
+        .await;
+        let EventMsg::TokenCount(event) = event else {
+            unreachable!();
+        };
+        windows.push(event.info.expect("provider usage").model_context_window);
+        finish(&test.codex).await;
+    }
+    assert_eq!(windows, vec![Some(9_500), Some(9_500)]);
+    assert_eq!(mock.requests().len(), 2);
+    Ok(())
+}
+
 #[traced_test]
 #[test_case(Format::Responses; "responses")]
 #[test_case(Format::Lite; "lite")]
@@ -142,7 +177,7 @@ async fn overestimated_inference_is_sent_once(format: Format) -> Result<()> {
         responses::sse(assistant_response("accepted", "done", /*tokens*/ 100)),
     )
     .await;
-    let mut test = builder(Compaction::Legacy, format)
+    let mut test = builder(format)
         .with_config(|config| config.model_context_window = Some(10_000))
         .build_with_auto_env(&server)
         .await?;
@@ -189,7 +224,7 @@ async fn overestimated_inference_is_sent_once(format: Format) -> Result<()> {
             "schema_tokens=",
             "estimated_tokens=",
             "usable_context_window=9500",
-            "model=gpt-5.4",
+            "model=gpt-5.5",
             "thread_id=",
             "turn_id=",
         ] {
@@ -206,20 +241,12 @@ async fn overestimated_inference_is_sent_once(format: Format) -> Result<()> {
     Ok(())
 }
 
-#[test_case(Compaction::Legacy, Format::Responses, Trigger::Manual; "legacy_manual")]
-#[test_case(Compaction::Legacy, Format::Lite, Trigger::Manual; "legacy_lite_manual")]
-#[test_case(Compaction::V2, Format::Responses, Trigger::Manual; "v2_manual")]
-#[test_case(Compaction::V2, Format::Lite, Trigger::Manual; "v2_lite_manual")]
-#[test_case(Compaction::Legacy, Format::Responses, Trigger::Automatic; "legacy_auto")]
-#[test_case(Compaction::Legacy, Format::Lite, Trigger::Automatic; "legacy_lite_auto")]
-#[test_case(Compaction::V2, Format::Responses, Trigger::Automatic; "v2_auto")]
-#[test_case(Compaction::V2, Format::Lite, Trigger::Automatic; "v2_lite_auto")]
+#[test_case(Format::Responses, Trigger::Manual; "manual")]
+#[test_case(Format::Lite, Trigger::Manual; "lite_manual")]
+#[test_case(Format::Responses, Trigger::Automatic; "auto")]
+#[test_case(Format::Lite, Trigger::Automatic; "lite_auto")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn overestimated_compaction_reaches_provider(
-    compaction: Compaction,
-    format: Format,
-    trigger: Trigger,
-) -> Result<()> {
+async fn overestimated_compaction_reaches_provider(format: Format, trigger: Trigger) -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = MockServer::start().await;
     let history = "history ".repeat(/*n*/ 10_000);
@@ -228,24 +255,14 @@ async fn overestimated_compaction_reaches_provider(
         Trigger::Automatic => 31_000,
     };
     let mut replies = vec![responses::sse(assistant_response("seed", &history, tokens))];
-    let compact = match compaction {
-        Compaction::Legacy => {
-            Some(responses::mount_compact_user_history_with_summary_once(&server, SUMMARY).await)
-        }
-        Compaction::V2 => {
-            replies.push(responses::sse(compaction_response(SUMMARY)));
-            None
-        }
-    };
+    replies.push(responses::sse(compaction_response(SUMMARY)));
     replies.push(responses::sse(assistant_response(
         "continued",
         "done",
         /*tokens*/ 100,
     )));
     let mock = responses::mount_sse_sequence(&server, replies).await;
-    let mut test = builder(compaction, format)
-        .build_with_auto_env(&server)
-        .await?;
+    let mut test = builder(format).build_with_auto_env(&server).await?;
     add_large_tool(&mut test).await?;
 
     submit(&test.codex, "Seed the history.").await?;
@@ -258,10 +275,7 @@ async fn overestimated_compaction_reaches_provider(
     finish(&test.codex).await;
 
     let requests = mock.requests();
-    let compact_body = match compact {
-        Some(compact) => compact.single_request().body_json(),
-        None => requests[1].body_json(),
-    };
+    let compact_body = requests[1].body_json();
     // History alone fits the window; adding the tool description takes it over.
     // The provider receives both intact, then exactly one inference uses its summary.
     assert!(compact_body.to_string().contains(&history));
@@ -277,10 +291,8 @@ async fn overestimated_compaction_reaches_provider(
     Ok(())
 }
 
-#[test_case(Compaction::Legacy; "legacy")]
-#[test_case(Compaction::V2; "v2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unusable_compaction_replacement_stops_turn(compaction: Compaction) -> Result<()> {
+async fn unusable_compaction_replacement_stops_turn() -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = MockServer::start().await;
     let oversized_summary = "x".repeat(/*n*/ 200_000);
@@ -289,18 +301,9 @@ async fn unusable_compaction_replacement_stops_turn(compaction: Compaction) -> R
         "preserve this history",
         /*tokens*/ 31_000,
     ))];
-    let compact = match compaction {
-        Compaction::Legacy => Some(
-            responses::mount_compact_user_history_with_summary_once(&server, &oversized_summary)
-                .await,
-        ),
-        Compaction::V2 => {
-            replies.push(responses::sse(compaction_response(&oversized_summary)));
-            None
-        }
-    };
+    replies.push(responses::sse(compaction_response(&oversized_summary)));
     let mock = responses::mount_sse_sequence(&server, replies).await;
-    let test = builder(compaction, Format::Responses)
+    let test = builder(Format::Responses)
         .build_with_auto_env(&server)
         .await?;
     submit(&test.codex, "Seed the history.").await?;
@@ -318,16 +321,27 @@ async fn unusable_compaction_replacement_stops_turn(compaction: Compaction) -> R
     })
     .await;
     let after = test.codex.conversation_history_snapshot().await;
+    let before = before.items().collect::<Vec<_>>();
+    let after = after.items().collect::<Vec<_>>();
+    assert_eq!(&after[..before.len()], before.as_slice());
+    assert_eq!(after.len(), before.len() + 1);
+    // A failed pre-turn compaction still records the incoming user message.
+    let codex_protocol::models::ResponseItem::Message { role, content, .. } =
+        after.last().expect("incoming user message")
+    else {
+        panic!("expected incoming user message");
+    };
     assert_eq!(
-        after.items().collect::<Vec<_>>(),
-        before.items().collect::<Vec<_>>()
+        (role.as_str(), content.as_slice()),
+        (
+            "user",
+            [codex_protocol::models::ContentItem::InputText {
+                text: "Trigger automatic compaction.".to_string(),
+            }]
+            .as_slice()
+        )
     );
-    match compact {
-        Some(compact) => {
-            compact.single_request();
-        }
-        None => assert_eq!(mock.requests().len(), 2),
-    }
+    assert_eq!(mock.requests().len(), 2);
     assert_request_count(&server, /*expected*/ 2).await;
     Ok(())
 }
@@ -347,7 +361,7 @@ async fn provider_context_rejection_is_not_retried(format: Format) -> Result<()>
         ),
     )
     .await;
-    let mut test = builder(Compaction::Legacy, format)
+    let mut test = builder(format)
         .with_config(|config| config.model_context_window = Some(10_000))
         .build_with_auto_env(&server)
         .await?;
@@ -385,7 +399,7 @@ async fn overestimated_v2_compaction_over_websocket(format: Format) -> Result<()
     ]])
     .await;
     let bootstrap_server = MockServer::start().await;
-    let mut test = builder(Compaction::V2, format)
+    let mut test = builder(format)
         .build_with_auto_env(&bootstrap_server)
         .await?;
     // Only the thread with dynamic tools should open a WebSocket connection.

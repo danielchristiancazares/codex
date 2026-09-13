@@ -476,6 +476,7 @@ async fn reasoning_selection_in_plan_mode_model_switch_does_not_open_scope_promp
     chat.set_collaboration_mask(plan_mask);
     let _ = drain_insert_history(&mut rx);
     set_chatgpt_auth(&mut chat);
+    use_single_context_window_catalog(&mut chat);
 
     let preset = get_available_model(&chat, "gpt-5.6-terra");
     chat.open_reasoning_popup(preset);

@@ -36,7 +36,7 @@ fn live_projection_preserves_pending_calls_and_filters_unsupported_images() {
             internal_chat_message_metadata_passthrough: None,
         },
         metadata: Some(CodexHarnessMetadata {
-            fallback_token_limit_override: Some(32),
+            history_truncation_token_limit: Some(32),
             ..Default::default()
         }),
     };

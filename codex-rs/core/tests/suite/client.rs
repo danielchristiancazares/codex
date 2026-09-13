@@ -774,7 +774,9 @@ set "first_line="
 if not defined first_line exit /b 1
 
 echo(%first_line%
-more +1 tokens.txt > tokens.next
+>tokens.next (
+    for /f "usebackq skip=1 delims=" %%L in ("tokens.txt") do echo(%%L
+)
 move /y tokens.next tokens.txt >nul
 "#,
             )?;
@@ -1601,10 +1603,11 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
         .expect("responses stream to start");
 
     while let Some(event) = stream.next().await {
-        if let Ok(ResponseEvent::Completed { .. }) = event {
-            break;
+        if let ResponseEvent::Completed { .. } = event.expect("provider response event") {
+            return;
         }
     }
+    panic!("provider response ended without completion");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

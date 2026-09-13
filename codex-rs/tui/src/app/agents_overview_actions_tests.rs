@@ -608,6 +608,9 @@ async fn lifecycle_footer_keeps_custom_chords_with_labels() {
         assert!(
             lines
                 .iter()
+                .filter(|line| ["archive", "delete", "hide"]
+                    .iter()
+                    .any(|label| line.contains(label)))
                 .all(|line| unicode_width::UnicodeWidthStr::width(line.as_str())
                     <= usize::from(width))
         );

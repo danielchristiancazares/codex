@@ -9,7 +9,7 @@ Composer: Rect { x: 0, y: 27, width: 132, height: 5 }
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   GPT 5.6 Sol · Default · <WORKSPACE>
 
-Model: Rect { x: 0, y: 19, width: 132, height: 13 }
+Model: Rect { x: 0, y: 20, width: 132, height: 12 }
 
 
   Select Model and Effort
@@ -20,7 +20,6 @@ Model: Rect { x: 0, y: 19, width: 132, height: 13 }
   3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
   4. gpt-5.6-luna           Fast and affordable agentic coding model.
   5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
-  6. gpt-5.2                Optimized for professional work and long-running agents.
 
   ↑/↓ choose · enter confirm · esc back
 
@@ -37,7 +36,7 @@ Reasoning: Rect { x: 0, y: 21, width: 132, height: 11 }
 
   ↑/↓ choose · enter confirm · esc back
 
-Back: Rect { x: 0, y: 19, width: 132, height: 13 }
+Back: Rect { x: 0, y: 20, width: 132, height: 12 }
 
 
   Select Model and Effort
@@ -48,7 +47,6 @@ Back: Rect { x: 0, y: 19, width: 132, height: 13 }
   3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
   4. gpt-5.6-luna           Fast and affordable agentic coding model.
   5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
-  6. gpt-5.2                Optimized for professional work and long-running agents.
 
   ↑/↓ choose · enter confirm · esc back
 
@@ -73,7 +71,7 @@ Composer: Rect { x: 0, y: 27, width: 132, height: 5 }
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   GPT 5.6 Sol · Default · <WORKSPACE>
 
-Model: Rect { x: 0, y: 19, width: 132, height: 13 }
+Model: Rect { x: 0, y: 20, width: 132, height: 12 }
 
 
   Select Model and Effort
@@ -84,7 +82,6 @@ Model: Rect { x: 0, y: 19, width: 132, height: 13 }
   3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
   4. gpt-5.6-luna           Fast and affordable agentic coding model.
   5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
-  6. gpt-5.2                Optimized for professional work and long-running agents.
 
   ↑/↓ choose · enter confirm · esc back
 
@@ -101,7 +98,7 @@ Reasoning: Rect { x: 0, y: 21, width: 132, height: 11 }
 
   ↑/↓ choose · enter confirm · esc back
 
-Back: Rect { x: 0, y: 19, width: 132, height: 13 }
+Back: Rect { x: 0, y: 20, width: 132, height: 12 }
 
 
   Select Model and Effort
@@ -112,7 +109,6 @@ Back: Rect { x: 0, y: 19, width: 132, height: 13 }
   3. gpt-5.6-terra          Balanced agentic coding model for everyday work.
   4. gpt-5.6-luna           Fast and affordable agentic coding model.
   5. gpt-5.5                Frontier model for complex coding, research, and real-world work.
-  6. gpt-5.2                Optimized for professional work and long-running agents.
 
   ↑/↓ choose · enter confirm · esc back
 

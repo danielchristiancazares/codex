@@ -105,12 +105,11 @@ impl HistoryCell for ComputerActivityCell {
             .count();
         let count = self.calls.len();
         let bullet = active
-            .and_then(|index| {
+            .map(|index| {
                 let call = &self.calls[index];
                 activity_indicator(
                     Some(call.start_time),
                     MotionMode::from_animations_enabled(call.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
                 )
             })
             .unwrap_or_else(|| "•".dim());

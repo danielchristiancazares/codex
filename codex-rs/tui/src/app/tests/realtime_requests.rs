@@ -22,20 +22,7 @@ use std::path::Path;
 fn normalize_voice_snapshot_directory(rendered: &str, cwd: &Path) -> String {
     let cwd = cwd.display().to_string();
     let placeholder = "/tmp/project";
-    let padded_placeholder = format!(
-        "{placeholder}{}",
-        " ".repeat(cwd.len().saturating_sub(placeholder.len()))
-    );
-    rendered.replace(&cwd, &padded_placeholder)
-}
-
-#[test]
-fn voice_snapshot_directory_keeps_header_width_for_windows_paths() {
-    let rendered = "│ directory: C:\\tmp\\project              │";
-    assert_eq!(
-        normalize_voice_snapshot_directory(rendered, Path::new("C:\\tmp\\project")),
-        "│ directory: /tmp/project                │"
-    );
+    crate::test_support::sanitize_codex_version(&rendered.replace(&cwd, placeholder))
 }
 
 fn test_agent_message(id: &str, text: &str) -> ThreadItem {
@@ -1648,7 +1635,7 @@ async fn embedded_voice_settings_follow_project_after_thread_switch() -> Result<
             /*width*/ 80,
         );
         assert!(
-            popup.contains(&format!("{} (current)", voice.wire_name())),
+            popup.contains(&format!("{} ✓", voice.wire_name())),
             "{popup}"
         );
         app.try_submit_active_thread_op_via_app_server(
@@ -1720,7 +1707,7 @@ async fn remote_voice_picker_uses_server_catalog_and_falls_back_when_unavailable
             &app.chat_widget,
             /*width*/ 80,
         );
-        assert_eq!(popup.contains("1. maple (current)"), expected_catalog);
+        assert_eq!(popup.contains("maple ✓"), expected_catalog);
         assert_eq!(popup.contains("  3. spruce"), !expected_catalog);
         if expected_catalog {
             insta::assert_snapshot!("remote_voice_picker_server_default", popup);

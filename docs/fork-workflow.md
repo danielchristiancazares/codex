@@ -9,24 +9,25 @@ product branch is the normal path.
 
 ## Branch ownership
 
-| Name                    | Purpose                                                  |
-| ----------------------- | -------------------------------------------------------- |
-| `upstream/main`         | OpenAI development reference                             |
-| `refs/tags/rust-vX.Y.Z` | Selected stable OpenAI release used as the rebase target |
-| `main`                  | Maintained product, with a small series of fork commits  |
-| `origin/main`           | Published product history                                |
-| `backup/*`              | Recovery refs created before substantial history changes |
+| Name               | Purpose                                                          |
+| ------------------ | ---------------------------------------------------------------- |
+| `upstream/main`    | OpenAI development reference                                     |
+| `refs/tags/rust-v*` | Operator-selected tagged OpenAI version used as the rebase target |
+| `main`             | Maintained product, with a small series of fork commits           |
+| `origin/main`     | Published product history                                        |
+| `backup/*`        | Recovery refs created before substantial history changes         |
 
 Local `main` tracks `origin/main`. Ordinary pushes publish to `origin`, and
 `git pull` only fast-forwards from the published fork. Integrate OpenAI changes
-only when adopting a selected, published stable Codex release tag of the form
-`rust-vX.Y.Z`. Alpha, beta, and release-candidate tags are excluded from routine
-syncs. Fetching development commits or discovering a new tag does not trigger a
-rebase.
+only when adopting an operator-selected tagged Codex version (`rust-v*`).
+Alpha, beta, and release-candidate tags are valid targets. Fetching development
+commits or discovering a new tag does not trigger a rebase.
 
-Select the tag from OpenAI's [published releases](https://github.com/openai/codex/releases).
-Confirm it is a completed stable release, then use the explicit `--onto` procedure
-below. Release branches can have different ancestry from `upstream/main`.
+Use the operator's selected tag or resolve their selected commit to its OpenAI
+version tag. OpenAI's [releases page](https://github.com/openai/codex/releases)
+provides release details. Verify the tag and its resolved commit, then use the
+explicit `--onto` procedure below. Release branches can have different ancestry
+from `upstream/main`.
 
 The original fork tip and migration boundaries are recorded in
 [upstream-main-migration.md](upstream-main-migration.md). Keep `main` as the
@@ -120,14 +121,12 @@ The recorded upstream base is currently:
 
 | Field  | Value                                         |
 | ------ | --------------------------------------------- |
-| Source | Operator-selected `upstream/main` snapshot, 2026-09-08 |
-| Commit | `5e3f0ee94b0719ab3d0d05cffaa75163e87668f6` |
+| Source | Operator-selected release `rust-v0.155.0-alpha.3.9`, published 2026-09-11 |
+| Commit | `25b92859c1adcc8031959f17d52f27e579c3e094` |
 
-The operator explicitly selected this development commit for the 2026-09-08
-sync, as a one-off exception to the stable-release policy. Routine syncs continue
-to select published stable release tags. For the next tagged sync, wait for a
-stable release whose history includes this snapshot. After each successful sync,
-update this table with the selected release tag and its resolved commit SHA.
+See [the sync record](upstream-0.155.0-alpha.3.9-sync.md) for integration,
+validation, and recovery details. After each successful sync, update this table
+with the selected release tag and its resolved commit SHA.
 That commit is `OLD_UPSTREAM_BASE` for the next sync; do not infer it from the
 moving `upstream/main` ref.
 

@@ -342,9 +342,10 @@ def test_cancelled_start_interrupts_exact_accepted_turn_and_releases_routes(
             assert {
                 "waiters": client._sync._router._response_waiters,
                 "turns": client._sync._router._turn_notifications,
-                "pending": client._sync._router._pending_turn_notifications,
+                "pending": client._sync._router._pending_turn_requests,
+                "states": client._sync._router._turn_states,
                 "start_locks": client._sync._thread_start_locks,
-            } == {"waiters": {}, "turns": {}, "pending": {}, "start_locks": {}}
+            } == {"waiters": {}, "turns": {}, "pending": {}, "states": {}, "start_locks": {}}
             return transport.messages()
         finally:
             release.set()
@@ -411,8 +412,9 @@ def test_cancelled_turn_cleanup_failure_is_reported_without_interrupting_another
         assert {
             "waiters": client._sync._router._response_waiters,
             "turns": client._sync._router._turn_notifications,
-            "pending": client._sync._router._pending_turn_notifications,
-        } == {"waiters": {}, "turns": {}, "pending": {}}
+            "pending": client._sync._router._pending_turn_requests,
+            "states": client._sync._router._turn_states,
+        } == {"waiters": {}, "turns": {}, "pending": {}, "states": {}}
         return transport.messages()
 
     assert [request["params"] for request in asyncio.run(scenario())] == [

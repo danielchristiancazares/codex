@@ -1,9 +1,9 @@
 ---
 source: tui/src/chatwidget/tests/completion_styling_tests.rs
-expression: normalize_completion_timestamps(& (text))
+expression: normalize_completion_timestamps(text)
 ---
-• Ran echo ready
-  └ ready
+• Ran 1 command
+  └ echo ready
 
 • The change is ready.
 

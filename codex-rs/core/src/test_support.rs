@@ -47,7 +47,10 @@ static TEST_MODEL_PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
     let mut presets: Vec<ModelPreset> = response
         .models
         .into_iter()
-        .map(|model| ModelPreset::try_from(model).expect("valid bundled model preset"))
+        .map(|model| {
+            ModelPreset::try_from(model)
+                .unwrap_or_else(|err| panic!("bundled model capacity should be valid: {err}"))
+        })
         .collect();
     ModelPreset::mark_default_by_picker_visibility(&mut presets);
     presets

@@ -1,6 +1,5 @@
 ---
 source: tui/src/app/tests/realtime_requests.rs
-assertion_line: 1638
 expression: "crate::chatwidget::tests::helpers::render_bottom_popup(&app.chat_widget, 80)"
 ---
   Select voice
@@ -13,6 +12,6 @@ expression: "crate::chatwidget::tests::helpers::render_bottom_popup(&app.chat_wi
   5. vale
   6. breeze
   7. arbor
-› 8. sol (current)
+› 8. sol ✓
 
-  Press enter to confirm or esc to go back
+  ↑/↓ choose · enter confirm · esc back · 8/9 · +1 more ↓

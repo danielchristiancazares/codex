@@ -1320,7 +1320,7 @@ fn vite_plus_update_available_history_cell_snapshot() {
         "9.9.9".to_string(),
         Some(UpdateAction::VitePlusGlobalLatest),
     );
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered = render_lines_with_sanitized_codex_version(&cell.display_lines(/*width*/ 110));
 
     insta::assert_snapshot!(rendered);
 }

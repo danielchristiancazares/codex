@@ -87,10 +87,7 @@ async fn ordinary_follow_up_clears_unanswered_questions_after_accepted_input() {
             assert_answer(op_rx.try_recv().unwrap(), "New prompt");
             insta::assert_snapshot!(
                 "questions_cleared_by_follow_up",
-                render_bottom_popup(&chat, /*width*/ 80)
-                    .lines()
-                    .next()
-                    .unwrap()
+                normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 80))
             );
         }
         chat.add_async_questions("old", &questions());

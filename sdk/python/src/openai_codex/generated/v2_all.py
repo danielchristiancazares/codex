@@ -1058,6 +1058,23 @@ class ConfiguredHookMatcherGroup(BaseModel):
     matcher: str | None = None
 
 
+class ConnectionSelection(Enum):
+    retain = "retain"
+    switch = "switch"
+
+
+class ConnectionText(RootModel[str]):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        str,
+        Field(
+            description="Bounded printable connection metadata, validated when decoding a request."
+        ),
+    ]
+
+
 class ConnectorMetadata(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -2725,6 +2742,13 @@ class ModelListParams(BaseModel):
         int | None,
         Field(description="Optional page size; defaults to a reasonable server-side value.", ge=0),
     ] = None
+    model_provider: Annotated[
+        str | None,
+        Field(
+            alias="modelProvider",
+            description="Optional provider id whose catalog should be listed.",
+        ),
+    ] = None
 
 
 class ModelProviderCapabilitiesReadParams(BaseModel):
@@ -4186,6 +4210,67 @@ class SandboxWorkspaceWrite(BaseModel):
     exclude_tmpdir_env_var: bool | None = False
     network_access: bool | None = False
     writable_roots: list[str] | None = []
+
+
+class SavedConnectionParams1(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["list"]
+    active_provider: Annotated[ConnectionText, Field(alias="activeProvider")]
+
+
+class SavedConnectionParams3(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["prepare"]
+    id: ConnectionText
+
+
+class SavedConnectionParams4(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["select"]
+    id: ConnectionText
+    switch_id: Annotated[ConnectionText, Field(alias="switchId")]
+
+
+class SavedConnectionParams5(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["commit"]
+    switch_id: Annotated[ConnectionText, Field(alias="switchId")]
+
+
+class SavedConnectionParams6(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["restore"]
+    switch_id: Annotated[ConnectionText, Field(alias="switchId")]
+
+
+class SavedConnectionProvider(Enum):
+    openai = "openai"
+    copilot = "copilot"
+
+
+class SelectedSavedConnectionResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    switch_id: Annotated[ConnectionText, Field(alias="switchId")]
+    type: Annotated[Literal["selected"], Field(title="Selectedv2::SavedConnectionResponseType")]
+
+
+class SettledSavedConnectionResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Annotated[Literal["settled"], Field(title="Settledv2::SavedConnectionResponseType")]
 
 
 class DailyScheduledTaskSchedule(BaseModel):
@@ -7779,6 +7864,32 @@ class ConfigurationReasoning(BaseModel):
     effort: ReasoningEffort
 
 
+class BrowserConnectionLoginChallenge(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Annotated[Literal["browser"], Field(title="BrowserConnectionLoginChallengeType")]
+    url: ConnectionText
+
+
+class DeviceCodeConnectionLoginChallenge(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    code: ConnectionText
+    type: Annotated[Literal["deviceCode"], Field(title="DeviceCodeConnectionLoginChallengeType")]
+    url: ConnectionText
+
+
+class ConnectionLoginChallenge(
+    RootModel[BrowserConnectionLoginChallenge | DeviceCodeConnectionLoginChallenge]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: BrowserConnectionLoginChallenge | DeviceCodeConnectionLoginChallenge
+
+
 class InputImageContentItem(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -8408,6 +8519,14 @@ class Model(BaseModel):
         Field(alias="additionalSpeedTiers", description="Deprecated: use `serviceTiers` instead."),
     ] = []
     availability_nux: Annotated[ModelAvailabilityNux | None, Field(alias="availabilityNux")] = None
+    context_window: Annotated[
+        int | None,
+        Field(
+            alias="contextWindow",
+            description="Curated normal context capacity; null selects the provider default.",
+            ge=1,
+        ),
+    ] = None
     default_reasoning_effort: Annotated[ReasoningEffort, Field(alias="defaultReasoningEffort")]
     default_service_tier: Annotated[
         str | None,
@@ -8425,6 +8544,14 @@ class Model(BaseModel):
         "image",
     ]
     is_default: Annotated[bool, Field(alias="isDefault")]
+    max_context_window: Annotated[
+        int | None,
+        Field(
+            alias="maxContextWindow",
+            description="Maximum catalog capacity; null selects the provider default.",
+            ge=1,
+        ),
+    ] = None
     model: str
     model_specialty: Annotated[str | None, Field(alias="modelSpecialty")] = None
     multi_agent_version: Annotated[
@@ -8717,6 +8844,100 @@ class ReviewStartParams(BaseModel):
     ] = None
     target: ReviewTarget
     thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class SavedConnectionInfo(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: ConnectionText
+    name: ConnectionText
+    provider: SavedConnectionProvider
+    selection: ConnectionSelection
+
+
+class SavedConnectionParams2(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    action: Literal["add"]
+    name: ConnectionText
+    provider: SavedConnectionProvider
+
+
+class SavedConnectionParams(
+    RootModel[
+        SavedConnectionParams1
+        | SavedConnectionParams2
+        | SavedConnectionParams3
+        | SavedConnectionParams4
+        | SavedConnectionParams5
+        | SavedConnectionParams6
+    ]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        SavedConnectionParams1
+        | SavedConnectionParams2
+        | SavedConnectionParams3
+        | SavedConnectionParams4
+        | SavedConnectionParams5
+        | SavedConnectionParams6,
+        Field(title="SavedConnectionParams"),
+    ]
+
+
+class ConnectionsSavedConnectionResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    data: list[SavedConnectionInfo]
+    type: Annotated[
+        Literal["connections"], Field(title="Connectionsv2::SavedConnectionResponseType")
+    ]
+
+
+class PreparedSavedConnectionResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    data: list[Model]
+    type: Annotated[Literal["prepared"], Field(title="Preparedv2::SavedConnectionResponseType")]
+
+
+class LoginStartedSavedConnectionResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    challenge: ConnectionLoginChallenge
+    login_id: Annotated[ConnectionText, Field(alias="loginId")]
+    type: Annotated[
+        Literal["loginStarted"], Field(title="LoginStartedv2::SavedConnectionResponseType")
+    ]
+
+
+class SavedConnectionResponse(
+    RootModel[
+        ConnectionsSavedConnectionResponse
+        | PreparedSavedConnectionResponse
+        | SelectedSavedConnectionResponse
+        | LoginStartedSavedConnectionResponse
+        | SettledSavedConnectionResponse
+    ]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        ConnectionsSavedConnectionResponse
+        | PreparedSavedConnectionResponse
+        | SelectedSavedConnectionResponse
+        | LoginStartedSavedConnectionResponse
+        | SettledSavedConnectionResponse,
+        Field(title="SavedConnectionResponse"),
+    ]
 
 
 class HourlyScheduledTaskSchedule(BaseModel):
@@ -10229,6 +10450,17 @@ class McpServerStatusListRequest(BaseModel):
         Literal["mcpServerStatus/list"], Field(title="McpServerStatus/listRequestMethod")
     ]
     params: ListMcpServerStatusParams
+
+
+class SavedConnectionManageRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["savedConnection/manage"], Field(title="SavedConnection/manageRequestMethod")
+    ]
+    params: SavedConnectionParams
 
 
 class AccountLoginStartRequest(BaseModel):
@@ -12172,6 +12404,7 @@ class ClientRequest(
         | McpServerToolCallRequest
         | WindowsSandboxSetupStartRequest
         | WindowsSandboxReadinessRequest
+        | SavedConnectionManageRequest
         | AccountLoginStartRequest
         | AccountLoginCancelRequest
         | AccountLogoutRequest
@@ -12280,6 +12513,7 @@ class ClientRequest(
         | McpServerToolCallRequest
         | WindowsSandboxSetupStartRequest
         | WindowsSandboxReadinessRequest
+        | SavedConnectionManageRequest
         | AccountLoginStartRequest
         | AccountLoginCancelRequest
         | AccountLogoutRequest
