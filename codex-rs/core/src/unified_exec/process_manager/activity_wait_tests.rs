@@ -55,3 +55,30 @@ async fn readiness_delivers_output_queued_before_subscription_and_process_exit()
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn available_collection_drains_output_forwarded_just_after_process_exit() {
+    let output = handles();
+    output.cancellation_token.cancel();
+    let delayed_output = output.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        delayed_output
+            .output_buffer
+            .lock()
+            .await
+            .push_chunk(b"final output");
+        delayed_output.output_notify.notify_waiters();
+        delayed_output.output_closed.store(true, Ordering::Release);
+        delayed_output.output_closed_notify.notify_waiters();
+    });
+
+    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
+        &output,
+        /*pause_state*/ None,
+        Instant::now(),
+    )
+    .await;
+
+    assert_eq!(collected.to_bytes_with_omission_marker(), b"final output");
+}

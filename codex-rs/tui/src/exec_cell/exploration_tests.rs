@@ -39,7 +39,7 @@ fn exploration_cell(commands: &[&str]) -> ExecCell {
 }
 
 #[test]
-fn groups_interleaved_exploration_by_action() {
+fn exploration_preserves_interleaved_command_order() {
     let cell = exploration_cell(&[
         "cat lib.rs && cat endpoint.rs",
         "rg 'CopilotModelProvider::new|fn.*provider|struct.*Provider|codex_home|store_mode' registry.rs",
@@ -61,23 +61,28 @@ fn groups_interleaved_exploration_by_action() {
             .collect_vec(),
         vec![
             "• Explored",
-            "  ├ Read lib.rs, endpoint.rs, types.rs, storage_tests.rs, Cargo.toml, justfile, BUILD.bazel, provider.rs, manager.rs, endpoint.rs, auth_keyring.rs",
-            r"  ├ Searched CopilotModelProvider::new|fn.*provider|struct.*Provider|codex_home|store_mode in registry.rs, pub.*fn new|pub.*fn.*store|codex_home|auth_credentials_store_mode in manager.rs, codex_model_provider::|ModelProviderFactory|build_model_provider|create_model_provider in mod.rs, create_model_provider\( in codex-rs",
-            "  └ Listed .github",
+            "  └ Read lib.rs, endpoint.rs",
+            "    Search CopilotModelProvider::new|fn.*provider|struct.*Provider|codex_home|store_mode in registry.rs",
+            "    Read types.rs, storage_tests.rs",
+            "    Search pub.*fn new|pub.*fn.*store|codex_home|auth_credentials_store_mode in manager.rs",
+            "    Search codex_model_provider::|ModelProviderFactory|build_model_provider|create_model_provider in mod.rs",
+            "    Read Cargo.toml",
+            "    List .github",
+            "    Read justfile, BUILD.bazel, provider.rs, manager.rs, endpoint.rs, auth_keyring.rs",
+            r"    Search create_model_provider\( in codex-rs",
         ]
     );
 
     let mut responsive = Vec::new();
     for width in [40, 80, 120] {
         let lines = cell.display_lines(width);
-        assert!(lines.iter().all(|line| line.width() <= usize::from(width)));
         responsive.push((width, lines.iter().map(render_line_text).collect_vec()));
     }
-    insta::assert_debug_snapshot!("interleaved_exploration_grouped_by_action", responsive);
+    insta::assert_debug_snapshot!("interleaved_exploration", responsive);
 }
 
 #[test]
-fn groups_actions_within_mixed_calls_in_first_seen_order() {
+fn exploration_preserves_action_order_within_mixed_calls() {
     let cell = exploration_cell(&[
         "ls src && cat lib.rs && rg needle src && cat types.rs",
         "rg other tests && ls tests && cat registry.rs",
@@ -89,14 +94,18 @@ fn groups_actions_within_mixed_calls_in_first_seen_order() {
         .join("\n");
     insta::assert_snapshot!(rendered, @r"
     • Explored
-      ├ Listed src, tests
-      ├ Read lib.rs, types.rs, registry.rs
-      └ Searched needle in src, other in tests
+      └ List src
+        Read lib.rs
+        Search needle in src
+        Read types.rs
+        Search other in tests
+        List tests
+        Read registry.rs
     ");
 }
 
 #[test]
-fn grouped_actions_stay_active_until_all_their_calls_finish() {
+fn exploration_header_stays_active_until_all_calls_finish() {
     let mut cell = exploration_cell(&[
         "cat lib.rs",
         "rg needle src",
@@ -119,13 +128,13 @@ fn grouped_actions_stay_active_until_all_their_calls_finish() {
     let completed = cell.display_lines(/*width*/ 80);
 
     insta::assert_debug_snapshot!(
-        "grouped_exploration_lifecycle",
+        "exploration_lifecycle",
         (active, partially_completed, completed)
     );
 }
 
 #[test]
-fn grouped_actions_preserve_command_fallbacks_and_query_paths() {
+fn exploration_preserves_command_fallbacks_and_query_paths() {
     let mut cell = exploration_cell(&["rg needle", "ls", "rg other tests", "ls .github"]);
     cell.calls[0].parsed = vec![ParsedCommand::Search {
         cmd: "rg --files -g '*.rs' src".into(),
@@ -139,8 +148,10 @@ fn grouped_actions_preserve_command_fallbacks_and_query_paths() {
         .join("\n");
     insta::assert_snapshot!(rendered, @r"
     • Explored
-      ├ Searched rg --files -g '*.rs' src, other in tests
-      └ Listed ls, .github
+      └ Search rg --files -g '*.rs' src
+        List ls
+        Search other in tests
+        List .github
     ");
 }
 
@@ -173,7 +184,7 @@ fn powershell_skill_read_snapshot() {
 }
 
 #[test]
-fn exploring_preview_truncates_long_url_like_search_query_without_wrapping() {
+fn exploring_display_does_not_split_long_url_like_search_query() {
     let url_like = "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path";
     let call = ExecCall {
         call_id: "call-id".to_string(),
@@ -201,7 +212,7 @@ fn exploring_preview_truncates_long_url_like_search_query_without_wrapping() {
         rendered,
         vec![
             "• Exploring".to_string(),
-            "  └ Search example.test/api/v1/proj…".to_string(),
+            format!("  └ Search {url_like}"),
         ]
     );
 }

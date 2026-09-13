@@ -1,7 +1,7 @@
 //! Data model for grouped exec-call history cells in the TUI transcript.
 //!
-//! An `ExecCell` can represent overlapping commands, with contiguous read/list/search calls grouped
-//! by action under one "exploring" header. The chat widget relies on stable `call_id` matching to
+//! An `ExecCell` can represent overlapping commands, with contiguous read/list/search calls shown
+//! in command order under one "exploring" header. The chat widget relies on stable `call_id` matching to
 //! route progress and end events into the right cell, and it treats "call id not found" as a real
 //! signal (for example, an orphan end that should render as a separate history entry).
 

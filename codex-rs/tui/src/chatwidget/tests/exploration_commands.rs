@@ -31,10 +31,14 @@ async fn inspection_batch_merges_with_surrounding_exploration() {
         insta::allow_duplicates! {
                                                                             insta::assert_snapshot!(active_blob(&chat), @r"
 • Explored
-  ├ Read before.rs, turn_metadata.rs, guardian_tests.rs, after.rs
-  ├ Searched root_turn|parent_turn in src, struct TurnStartOptions in src,
-  │          required_entry_indices in src
-  └ Ran git diff HEAD -- src/turn_metadata.rs
+  └ Read before.rs
+    Search root_turn|parent_turn in src
+    Search struct TurnStartOptions in src
+    Read turn_metadata.rs
+    Read guardian_tests.rs
+    Search required_entry_indices in src
+    Run git diff HEAD -- src/turn_metadata.rs
+    Read after.rs
 ");
                                                                         }
         chat.flush_active_cell();
@@ -76,13 +80,13 @@ async fn inspection_completion_without_start_uses_exploration_summary() {
     assert!(drain_insert_history_cells(&mut rx).is_empty());
     insta::assert_snapshot!(active_blob(&chat), @r"
 • Explored
-  ├ Searched needle in src
-  └ Ran git diff HEAD
+  └ Search needle in src
+    Run git diff HEAD
 ");
 }
 
 #[tokio::test]
-async fn batch_with_execution_summarizes_commands_and_preserves_full_transcript() {
+async fn batch_with_execution_shows_command_and_output() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
@@ -92,9 +96,9 @@ async fn batch_with_execution_summarizes_commands_and_preserves_full_transcript(
     assert_eq!(cells.len(), 1);
     let display = lines_to_single_string(&cells[0].display_lines(/*width*/ 120));
     insta::assert_snapshot!(display, @r"
-• Ran 2 commands
-  ├ Searched needle in src
-  └ cargo test
+• Ran rg needle src
+  │ cargo test
+  └ test output
 ");
     let transcript = lines_to_single_string(&cells[0].transcript_lines(/*width*/ 120));
     assert!(transcript.contains("rg needle src"));

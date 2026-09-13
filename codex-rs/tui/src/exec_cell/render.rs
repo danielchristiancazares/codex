@@ -30,8 +30,6 @@ use unicode_width::UnicodeWidthStr;
 
 #[path = "exploration.rs"]
 mod exploration;
-#[path = "roster.rs"]
-mod roster;
 
 pub(crate) const TOOL_CALL_MAX_LINES: usize = 5;
 const USER_SHELL_TOOL_CALL_MAX_LINES: usize = 50;
@@ -185,64 +183,50 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CompactCallState {
+enum CallState {
     Active,
     Succeeded,
     Failed,
 }
 
-fn compact_call_state(call: &ExecCall) -> CompactCallState {
+fn call_state(call: &ExecCall) -> CallState {
     if call
         .output
         .as_ref()
         .is_some_and(|output| output.exit_code != 0)
     {
-        CompactCallState::Failed
+        CallState::Failed
     } else if call.duration.is_none() {
-        CompactCallState::Active
+        CallState::Active
     } else {
-        CompactCallState::Succeeded
-    }
-}
-
-fn compact_branch(prefix: &'static str, state: CompactCallState) -> Span<'static> {
-    match state {
-        CompactCallState::Active => prefix.cyan(),
-        CompactCallState::Succeeded => prefix.green(),
-        CompactCallState::Failed => prefix.red(),
+        CallState::Succeeded
     }
 }
 
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if !self.calls.is_empty()
-            && self.calls.iter().all(Self::is_exploring_call)
-            && self
-                .calls
-                .iter()
-                .all(|call| compact_call_state(call) != CompactCallState::Failed)
-        {
-            return self.exploring_display_lines(&self.calls, width);
-        }
-        if self.calls.len() > 1
-            || self.calls.first().is_some_and(|call| {
-                matches!(
-                    call.source,
-                    ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
-                )
-            })
-        {
-            return self.compact_group_display_lines(width);
+        let is_exploration = |call: &ExecCall| {
+            Self::is_exploring_call(call) && call_state(call) != CallState::Failed
+        };
+        let mut calls = self.calls.as_slice();
+        let mut lines = Vec::new();
+        while let Some((call, remaining)) = calls.split_first() {
+            if !lines.is_empty() {
+                lines.push("".into());
+            }
+            if is_exploration(call) {
+                let group_len =
+                    1 + remaining.iter().take_while(|call| is_exploration(call)).count();
+                let (group, remaining) = calls.split_at(group_len);
+                lines.extend(self.exploring_display_lines(group, width));
+                calls = remaining;
+            } else {
+                lines.extend(self.command_display_lines(call, width));
+                calls = remaining;
+            }
         }
 
-        let Some(call) = self.calls.first() else {
-            return Vec::new();
-        };
-        if Self::is_exploring_call(call) {
-            self.exploring_display_lines(&self.calls, width)
-        } else {
-            self.command_display_lines(call, width)
-        }
+        lines
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -308,16 +292,16 @@ impl ExecCell {
 
     fn command_display_lines(&self, call: &ExecCall, width: u16) -> Vec<Line<'static>> {
         let layout = EXEC_DISPLAY_LAYOUT;
-        let state = compact_call_state(call);
+        let state = call_state(call);
         let bullet = match state {
-            CompactCallState::Active => activity_marker(call.start_time, self.animations_enabled()),
-            CompactCallState::Succeeded => "•".green().bold(),
-            CompactCallState::Failed => "•".red().bold(),
+            CallState::Active => activity_marker(call.start_time, self.animations_enabled()),
+            CallState::Succeeded => "•".green().bold(),
+            CallState::Failed => "•".red().bold(),
         };
         let is_interaction = call.is_unified_exec_interaction();
         let title = if is_interaction {
             ""
-        } else if state == CompactCallState::Active {
+        } else if state == CallState::Active {
             "Running"
         } else if call.is_user_shell_command() {
             "You ran"
@@ -652,8 +636,8 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
 );
 
 #[cfg(test)]
-#[path = "roster_tests.rs"]
-mod roster_tests;
+#[path = "command_tests.rs"]
+mod command_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1009,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_command_roster_colors_branches_by_lifecycle_state() {
+    fn command_rows_show_each_lifecycle_state() {
         let mut cell = new_active_exec_command(
             "call-success".to_string(),
             vec![
@@ -1062,17 +1046,20 @@ mod tests {
         assert_eq!(
             lines.iter().map(render_line_text).collect::<Vec<_>>(),
             vec![
-                "• Running 1 of 3 commands · 1 failed",
-                "  ├ printf success",
-                "  ├ printf failed",
-                "  └ printf active",
+                "• Ran printf success",
+                "  └ (no output)",
+                "",
+                "• Ran printf failed",
+                "  └ (no output)",
+                "",
+                "• Running printf active",
             ]
         );
-        insta::assert_debug_snapshot!("compact_command_roster_branch_states", lines);
+        insta::assert_debug_snapshot!("command_lifecycle_states", lines);
     }
 
     #[test]
-    fn compact_command_preview_selects_table_payload_and_preserves_transcript() {
+    fn command_preview_preserves_table_context() {
         let mut cell = new_active_exec_command(
             "call-process".to_string(),
             vec![
@@ -1098,8 +1085,10 @@ mod tests {
         assert_eq!(
             active,
             vec![
-                "• Running 1 command",
-                "  └ Get-Process cargo",
+                "• Running Get-Process cargo",
+                "  └ ",
+                "    Id ProcessName CPU StartTime",
+                "    -- ----------- --- ---------",
                 "    42 cargo 8.1 08:01:02",
             ]
         );
@@ -1117,8 +1106,10 @@ mod tests {
         assert_eq!(
             completed,
             vec![
-                "• Ran 1 command",
-                "  └ Get-Process cargo",
+                "• Ran Get-Process cargo",
+                "  └ ",
+                "    Id ProcessName CPU StartTime",
+                "    -- ----------- --- ---------",
                 "    42 cargo 8.1 08:01:02",
             ]
         );

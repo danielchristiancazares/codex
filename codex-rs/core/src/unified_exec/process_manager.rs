@@ -1505,6 +1505,11 @@ impl UnifiedExecProcessManager {
                 &mut post_exit_deadline,
             )
             .await;
+            exit_signal_received |= cancellation_token.is_cancelled();
+            if exit_signal_received {
+                post_exit_deadline
+                    .get_or_insert_with(|| Instant::now() + POST_EXIT_CLOSE_WAIT_CAP);
+            }
             let drained_output: HeadTailBuffer<MAX_BYTES>;
             let has_drained_output: bool;
             let mut wait_for_output = None;
@@ -1519,20 +1524,14 @@ impl UnifiedExecProcessManager {
             }
 
             if !has_drained_output {
-                exit_signal_received |= cancellation_token.is_cancelled();
                 if exit_signal_received && output_closed.load(std::sync::atomic::Ordering::Acquire)
                 {
-                    break;
-                }
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining == Duration::ZERO {
                     break;
                 }
 
                 if exit_signal_received {
                     let now = Instant::now();
-                    let close_wait_deadline = *post_exit_deadline
-                        .get_or_insert_with(|| now + remaining.min(POST_EXIT_CLOSE_WAIT_CAP));
+                    let close_wait_deadline = post_exit_deadline.unwrap_or(now);
                     let close_wait_remaining = close_wait_deadline.saturating_duration_since(now);
                     if close_wait_remaining == Duration::ZERO {
                         break;
@@ -1550,6 +1549,10 @@ impl UnifiedExecProcessManager {
                     continue;
                 }
 
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining == Duration::ZERO {
+                    break;
+                }
                 let notified = wait_for_output.unwrap_or_else(|| output_notify.notified());
                 tokio::pin!(notified);
                 let exit_notified = cancellation_token.cancelled();
@@ -1566,7 +1569,14 @@ impl UnifiedExecProcessManager {
             collected.push_buffer(drained_output);
 
             exit_signal_received |= cancellation_token.is_cancelled();
-            if Instant::now() >= deadline {
+            if exit_signal_received {
+                let now = Instant::now();
+                let close_wait_deadline = *post_exit_deadline
+                    .get_or_insert_with(|| now + POST_EXIT_CLOSE_WAIT_CAP);
+                if now >= close_wait_deadline {
+                    break;
+                }
+            } else if Instant::now() >= deadline {
                 break;
             }
         }
