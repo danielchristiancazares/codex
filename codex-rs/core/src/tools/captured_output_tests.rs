@@ -1,5 +1,7 @@
 use super::*;
 use crate::session::tests::make_session_and_context;
+use codex_tools::ToolOutput;
+use codex_tools::ToolPayload;
 use codex_utils_output_truncation::CaptureQuery;
 use codex_utils_output_truncation::TruncationPolicy;
 use pretty_assertions::assert_eq;
@@ -34,11 +36,15 @@ async fn failed_terminal_capture_preserves_nested_output_and_hook_payloads() {
     let expected_nested = output.code_mode_result(&payload);
     let expected_hook = output.post_tool_use_response("denied-command", &payload);
     let expected_input = output.post_tool_use_input(&payload);
-    let captured = CapturedOutput::terminal(&session, output).await;
+    let captured = capture_terminal(&session, output).await;
     let mut nested = captured.code_mode_result(&payload);
     let fields = nested.as_object_mut().unwrap();
     let id = fields.remove("output_id").unwrap();
-    uuid::Uuid::parse_str(id.as_str().unwrap()).unwrap();
+    let capture_id = CaptureId::new(
+        uuid::Uuid::parse_str(id.as_str().unwrap())
+            .unwrap()
+            .into_bytes(),
+    );
     assert!(
         fields
             .remove("output_capture")
@@ -61,7 +67,7 @@ async fn failed_terminal_capture_preserves_nested_output_and_hook_payloads() {
         .lock()
         .await
         .read(
-            captured.receipt.id(),
+            &capture_id,
             CaptureQuery::Search(marker.to_string().try_into().unwrap()),
         )
         .unwrap();

@@ -2959,6 +2959,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-context-policy"
+version = "0.155.0-alpha.3.9"
+dependencies = [
+ "codex-context-fragments",
+ "codex-protocol",
+ "codex-utils-output-truncation",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha1 0.10.6",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "codex-core"
 version = "0.155.0-alpha.3.9"
 dependencies = [
@@ -2983,6 +2997,7 @@ dependencies = [
  "codex-config",
  "codex-connectors",
  "codex-context-fragments",
+ "codex-context-policy",
  "codex-core-plugins",
  "codex-diagnostics",
  "codex-exec-server",
@@ -4684,8 +4699,10 @@ dependencies = [
  "codex-extension-items",
  "codex-features",
  "codex-file-system",
+ "codex-history",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "codex-utils-cache",
  "codex-utils-cargo-bin",
  "codex-utils-output-truncation",
  "codex-utils-string",

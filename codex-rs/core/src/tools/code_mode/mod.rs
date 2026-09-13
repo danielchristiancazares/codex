@@ -33,7 +33,8 @@ use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
 use crate::tools::ExecutedToolCalls;
 use crate::tools::call_trace;
-use crate::tools::captured_output::CapturedOutput;
+use crate::tools::captured_output::capture;
+use codex_tools::CapturedOutput;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
@@ -271,7 +272,7 @@ pub(super) async fn handle_runtime_response(
                 model_info.truncation_policy.into(),
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(CapturedOutput::new(
+            Ok(capture(
                 session,
                 FunctionToolOutput::from_content(content_items, Some(true)),
                 captured,
@@ -289,7 +290,7 @@ pub(super) async fn handle_runtime_response(
                 model_info.truncation_policy.into(),
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(CapturedOutput::new(
+            Ok(capture(
                 session,
                 FunctionToolOutput::from_content(content_items, Some(true)),
                 captured,
@@ -317,7 +318,7 @@ pub(super) async fn handle_runtime_response(
                 model_info.truncation_policy.into(),
             );
             prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(CapturedOutput::new(
+            Ok(capture(
                 session,
                 FunctionToolOutput::from_content(content_items, Some(success)),
                 captured,

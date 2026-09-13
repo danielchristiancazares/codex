@@ -16,6 +16,12 @@ use crate::responses_metadata::CodexResponsesMetadata;
 use crate::session::RequestEffortUsage;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use codex_context_policy::CompactionItem;
+use codex_context_policy::CompactionReductionExhausted;
+use codex_context_policy::LocalCompactionReduction;
+use codex_context_policy::ReplacementExceedsWindow;
+use codex_context_policy::fit_compaction_replacement;
+use codex_context_policy::plan_compaction_reduction;
 use codex_history::ResponseItemEnvelope;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
@@ -26,35 +32,11 @@ use codex_protocol::openai_models::InputModality;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
-use codex_utils_output_truncation::truncate_text;
 use futures::StreamExt;
-
-enum RejectionPolicy {
-    ReduceOnce,
-    StopAfterReduction,
-}
-
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("local compaction cannot reduce history further without dropping the newest turn")]
-pub(super) struct CompactionReductionExhausted;
-
-#[derive(Debug, thiserror::Error)]
-#[error("local compaction replacement cannot fit its required context in the model window")]
-pub(super) struct ReplacementExceedsWindow;
 
 pub(super) struct LocalCompactionPlan {
     history: ContextManager,
     compaction_input_items: usize,
-    rejection_policy: RejectionPolicy,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct LocalCompactionReduction {
-    pub(super) removed_groups: usize,
-    pub(super) removed_items: usize,
-    pub(super) estimated_tokens_before: i64,
-    pub(super) estimated_tokens_after: i64,
-    pub(super) target_tokens: i64,
 }
 
 pub(super) struct NonEmptyString(String);
@@ -104,7 +86,6 @@ impl LocalCompactionPlan {
         Self {
             history,
             compaction_input_items,
-            rejection_policy: RejectionPolicy::ReduceOnce,
         }
     }
 
@@ -119,59 +100,30 @@ impl LocalCompactionPlan {
         base_instructions: &BaseInstructions,
         budget: RequestBudget,
     ) -> Result<LocalCompactionReduction, CompactionReductionExhausted> {
-        match std::mem::replace(
-            &mut self.rejection_policy,
-            RejectionPolicy::StopAfterReduction,
-        ) {
-            RejectionPolicy::ReduceOnce => {}
-            RejectionPolicy::StopAfterReduction => return Err(CompactionReductionExhausted),
-        }
-
         let items = self.history.annotated_items();
-        if items.len() <= self.compaction_input_items {
-            return Err(CompactionReductionExhausted);
-        }
-        // The summarization instruction belongs to the newest real turn group.
-        let retained_source_len = items.len().saturating_sub(self.compaction_input_items);
-        let group_starts = item_group_starts(&items[..retained_source_len]);
-        if group_starts.len() <= 1 {
-            return Err(CompactionReductionExhausted);
-        }
-
+        let measured = items
+            .iter()
+            .map(|envelope| CompactionItem {
+                item: &envelope.item,
+                estimated_tokens: estimate_item_token_count(&envelope.item),
+                starts_turn: is_user_turn_boundary(&envelope.item),
+            })
+            .collect::<Vec<_>>();
         let base_tokens =
             i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX);
-        let estimated_tokens_before = base_tokens.saturating_add(estimated_items_tokens(items));
-        let target_tokens = budget.reduced_target(estimated_tokens_before);
-
-        let protected_group_index = group_starts.len() - 1;
-        let mut estimated_tokens_after = estimated_tokens_before;
-        let mut retained_start = 0;
-        let mut removed_groups = 0;
-        for group_index in 0..protected_group_index {
-            if estimated_tokens_after <= target_tokens {
-                break;
-            }
-            let group_start = group_starts[group_index];
-            let group_end = group_starts[group_index + 1];
-            estimated_tokens_after = estimated_tokens_after
-                .saturating_sub(estimated_items_tokens(&items[group_start..group_end]));
-            retained_start = group_end;
-            removed_groups += 1;
-        }
-        if removed_groups == 0 {
-            return Err(CompactionReductionExhausted);
-        }
-
-        let removed_items = retained_start;
-        let retained = items[retained_start..].to_vec();
+        let decision = plan_compaction_reduction(
+            &measured,
+            self.compaction_input_items,
+            base_tokens,
+            budget,
+        )?;
+        let retained = decision
+            .retained_indices
+            .into_iter()
+            .map(|index| items[index].clone())
+            .collect();
         self.history.replace_annotated(retained);
-        Ok(LocalCompactionReduction {
-            removed_groups,
-            removed_items,
-            estimated_tokens_before,
-            estimated_tokens_after,
-            target_tokens,
-        })
+        Ok(decision.reduction)
     }
 
     pub(super) fn build_replacement(
@@ -191,94 +143,32 @@ impl LocalCompactionPlan {
             &self.history.annotated_items()[..retained_source_len],
             identity,
         );
-        // Every candidate includes the preserved instruction/publication envelopes.
-        // Seed each bounded search with a fitting concrete candidate.
-        let summary_token_limit = approx_token_count(summary_text).min(10_000);
-        let mut bounded_summary = canonical_compaction_summary_text("");
-        budget
-            .check(estimated_request_tokens(
-                base_instructions,
-                &replacement_candidate(&initial_context, &[], &bounded_summary, 0),
-            ))
-            .map_err(|_| ReplacementExceedsWindow)?;
-        let mut lower = 0usize;
-        let mut upper = summary_token_limit;
-        while lower <= upper {
-            let allowance = lower + (upper - lower) / 2;
-            let candidate = canonical_compaction_summary_text(&truncate_text(
-                summary_text,
-                TruncationPolicy::Tokens(allowance),
-            ));
-            let items = replacement_candidate(&initial_context, &[], &candidate, 0);
-            if approx_token_count(&candidate) <= 10_000
-                && budget
-                    .check(estimated_request_tokens(base_instructions, &items))
-                    .is_ok()
-            {
-                bounded_summary = candidate;
-                lower = allowance.saturating_add(1);
-            } else if allowance == 0 {
-                break;
-            } else {
-                upper = allowance - 1;
-            }
-        }
-        let mut fitted_items = replacement_candidate(&initial_context, &[], &bounded_summary, 0);
-        let mut lower = 0usize;
-        let mut upper = COMPACT_USER_MESSAGE_MAX_TOKENS;
-        while lower <= upper {
-            let allowance = lower + (upper - lower) / 2;
-            let items = replacement_candidate(
-                &initial_context,
-                &user_messages,
-                &bounded_summary,
-                allowance,
-            );
-            if budget
-                .check(estimated_request_tokens(base_instructions, &items))
-                .is_ok()
-            {
-                fitted_items = items;
-                lower = allowance.saturating_add(1);
-            } else if allowance == 0 {
-                break;
-            } else {
-                upper = allowance - 1;
-            }
-        }
+        let replacement = fit_compaction_replacement(
+            summary_text,
+            COMPACT_USER_MESSAGE_MAX_TOKENS,
+            budget,
+            canonical_compaction_summary_text,
+            |summary, user_message_token_limit| {
+                // Every candidate includes preserved instruction/publication envelopes.
+                let history = build_compacted_history_with_limit(
+                    Vec::new(),
+                    &user_messages,
+                    summary,
+                    user_message_token_limit,
+                );
+                let items = insert_initial_context_before_last_real_user_or_summary(
+                    history,
+                    initial_context.clone(),
+                );
+                let tokens = estimated_request_tokens(base_instructions, &items);
+                (items, tokens)
+            },
+        )?;
         Ok(LocalCompactionReplacement {
-            items: fitted_items,
-            summary_text: NonEmptyString::summary(&bounded_summary),
+            items: replacement.items,
+            summary_text: NonEmptyString::summary(&replacement.summary_text),
         })
     }
-}
-
-fn replacement_candidate(
-    initial_context: &[ResponseItemEnvelope],
-    user_messages: &[super::CompactedUserMessage],
-    summary_text: &str,
-    user_message_token_limit: usize,
-) -> Vec<ResponseItemEnvelope> {
-    let history = build_compacted_history_with_limit(
-        Vec::new(),
-        user_messages,
-        summary_text,
-        user_message_token_limit,
-    );
-    insert_initial_context_before_last_real_user_or_summary(history, initial_context.to_vec())
-}
-
-fn item_group_starts(items: &[ResponseItemEnvelope]) -> Vec<usize> {
-    let mut starts = Vec::new();
-    if !items.is_empty() {
-        starts.push(0);
-    }
-    for (index, envelope) in items.iter().enumerate().skip(1) {
-        if is_user_turn_boundary(&envelope.item) {
-            starts.push(index);
-        }
-    }
-    starts
 }
 
 fn estimated_items_tokens(items: &[ResponseItemEnvelope]) -> i64 {

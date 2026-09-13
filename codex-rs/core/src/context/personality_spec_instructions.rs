@@ -1,5 +1,9 @@
 use super::ContextualUserFragment;
+use codex_guardian_context::truncate_text;
 use codex_protocol::models::ContentItemKind;
+use codex_utils_string::approx_bytes_for_tokens;
+
+pub(super) const MAX_PERSONALITY_SPEC_INSTRUCTIONS_TOKENS: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PersonalitySpecInstructions {
@@ -8,7 +12,18 @@ pub(crate) struct PersonalitySpecInstructions {
 
 impl PersonalitySpecInstructions {
     pub(crate) fn new(spec: impl Into<String>) -> Self {
-        Self { spec: spec.into() }
+        let spec = spec.into();
+        let framing_bytes = Self {
+            spec: String::new(),
+        }
+        .render()
+        .len();
+        let spec_tokens = approx_bytes_for_tokens(MAX_PERSONALITY_SPEC_INSTRUCTIONS_TOKENS)
+            .saturating_sub(framing_bytes)
+            / 4;
+        Self {
+            spec: truncate_text(&spec, spec_tokens),
+        }
     }
 }
 

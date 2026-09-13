@@ -2,33 +2,35 @@
 
 use codex_protocol::openai_models::ModelInfo;
 
+/// The enforcement boundary frozen from the model selected for a request.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum RequestBudget {
+pub enum RequestBudget {
     ProviderEnforced,
     ClientEnforced(u64),
 }
 
+/// Evidence that an estimate fits the selected request budget.
 #[derive(Debug)]
-pub(crate) struct RequestFit;
+pub struct RequestFit;
 
 #[derive(Debug, thiserror::Error)]
 #[error(
     "request estimate of {estimated_tokens} tokens exceeds the {allowed_tokens}-token context window"
 )]
-pub(crate) struct RequestExceedsWindow {
+pub struct RequestExceedsWindow {
     estimated_tokens: i64,
     allowed_tokens: u64,
 }
 
 impl RequestBudget {
-    pub(crate) fn for_model(model: &ModelInfo) -> Self {
+    pub fn for_model(model: &ModelInfo) -> Self {
         match model.usable_context_window() {
             Some(window) => Self::ClientEnforced(u64::try_from(window.max(0)).unwrap_or(u64::MAX)),
             None => Self::ProviderEnforced,
         }
     }
 
-    pub(crate) fn check(self, estimated_tokens: i64) -> Result<RequestFit, RequestExceedsWindow> {
+    pub fn check(self, estimated_tokens: i64) -> Result<RequestFit, RequestExceedsWindow> {
         match self {
             Self::ProviderEnforced => Ok(RequestFit),
             Self::ClientEnforced(allowed_tokens) => {
@@ -44,7 +46,7 @@ impl RequestBudget {
         }
     }
 
-    pub(crate) fn reduced_target(self, estimated_tokens: i64) -> i64 {
+    pub fn reduced_target(self, estimated_tokens: i64) -> i64 {
         let applicable = match self {
             Self::ProviderEnforced => estimated_tokens,
             Self::ClientEnforced(tokens) => {

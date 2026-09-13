@@ -26,7 +26,7 @@ impl ContextManager {
         model_visible_estimate.saturating_sub(raw_estimate)
     }
 
-    pub(super) fn project_model_visible_content(&mut self, input_modalities: &[InputModality]) {
+    pub(crate) fn project_model_visible_content(&mut self, input_modalities: &[InputModality]) {
         let items = Arc::make_mut(&mut self.items);
         citation_projection::strip_hidden_citations(items);
         normalize::strip_images_when_unsupported(input_modalities, items);

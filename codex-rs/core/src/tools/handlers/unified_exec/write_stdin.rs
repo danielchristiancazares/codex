@@ -1,5 +1,5 @@
 use crate::function_tool::FunctionCallError;
-use crate::tools::captured_output::CapturedOutput;
+use crate::tools::captured_output::capture_terminal;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
@@ -134,7 +134,7 @@ impl WriteStdinHandler {
         };
 
         Ok(boxed_tool_output(
-            CapturedOutput::terminal(&session, response).await,
+            capture_terminal(&session, response).await,
         ))
     }
 }

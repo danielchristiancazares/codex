@@ -8,8 +8,11 @@ use codex_utils_cache::sha1_digest;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::response_history::is_model_generated_item;
+
+/// Tracks schemas retained in history and the search awaiting model continuation.
 #[derive(Clone, Debug, Default)]
-pub(super) struct ToolDiscoveryState {
+pub struct ToolDiscoveryState {
     // Keep one fingerprint per retained definition. History replacement rebuilds
     // this index, so eviction cannot republish a schema that is still visible.
     fingerprints: HashSet<[u8; 20]>,
@@ -109,12 +112,12 @@ impl SearchContinuation {
 }
 
 impl ToolDiscoveryState {
-    pub(super) fn note_model_generated_item(&mut self) {
+    fn note_model_generated_item(&mut self) {
         self.continuation = SearchContinuation::ContinueCurrentContext;
     }
 
-    pub(super) fn observe(&mut self, item: &mut ResponseItem) {
-        if super::history::is_model_generated_item(item)
+    pub fn observe(&mut self, item: &mut ResponseItem) {
+        if is_model_generated_item(item)
             && !matches!(
                 item,
                 ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
@@ -123,12 +126,12 @@ impl ToolDiscoveryState {
             self.note_model_generated_item();
         }
         if let ResponseItem::ToolSearchOutput { tools, .. } = item {
-            *tools = codex_tools::bound_tool_search_output(std::mem::take(tools));
+            *tools = crate::bound_tool_search_output(std::mem::take(tools));
         }
         self.deduplicate_response_item(item);
     }
 
-    pub(super) fn deduplicate_response_item(&mut self, item: &mut ResponseItem) {
+    fn deduplicate_response_item(&mut self, item: &mut ResponseItem) {
         self.continuation.observe_search_output(item);
         let ResponseItem::ToolSearchOutput { tools, .. } = item else {
             return;
@@ -175,7 +178,7 @@ impl ToolDiscoveryState {
         *tools = retained;
     }
 
-    pub(super) fn rebuild(&mut self, items: &[ResponseItemEnvelope]) {
+    pub fn rebuild(&mut self, items: &[ResponseItemEnvelope]) {
         let mut rebuilt = Self::default();
         for envelope in items {
             rebuilt.observe(&mut envelope.item.clone());
@@ -184,11 +187,11 @@ impl ToolDiscoveryState {
         *self = rebuilt;
     }
 
-    pub(super) fn restore_pending_output_from(&mut self, previous: &Self) {
+    pub fn restore_pending_output_from(&mut self, previous: &Self) {
         self.continuation.restore_from(&previous.continuation);
     }
 
-    pub(super) fn pending_exchange(
+    pub fn pending_exchange(
         &self,
         items: &[ResponseItemEnvelope],
     ) -> Vec<ResponseItemEnvelope> {
@@ -207,7 +210,8 @@ impl ToolDiscoveryState {
     }
 }
 
-pub(crate) fn strip_tool_search_schemas<'a>(
+/// Removes schema bodies while retaining each search output's envelope.
+pub fn strip_tool_search_schemas<'a>(
     items: impl IntoIterator<Item = &'a mut ResponseItem>,
 ) -> usize {
     let mut stripped = 0;
@@ -223,5 +227,5 @@ pub(crate) fn strip_tool_search_schemas<'a>(
 }
 
 #[cfg(test)]
-#[path = "tool_discovery_tests.rs"]
+#[path = "tool_discovery_state_tests.rs"]
 mod tests;

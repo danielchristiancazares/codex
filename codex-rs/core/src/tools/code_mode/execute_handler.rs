@@ -39,7 +39,7 @@ impl CodeModeExecuteHandler {
         originating_item_id: Option<codex_protocol::ResponseItemId>,
         code: String,
         telemetry: &mut CodeModeToolCallGuard,
-    ) -> Result<crate::tools::captured_output::CapturedOutput<FunctionToolOutput>, FunctionCallError>
+    ) -> Result<codex_tools::CapturedOutput<FunctionToolOutput>, FunctionCallError>
     {
         let args =
             codex_code_mode::parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;

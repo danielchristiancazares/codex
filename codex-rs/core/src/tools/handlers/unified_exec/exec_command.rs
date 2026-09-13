@@ -6,7 +6,7 @@ use crate::exec::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
 use crate::exec_policy::prompt_is_rejected_by_policy;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
-use crate::tools::captured_output::CapturedOutput;
+use crate::tools::captured_output::capture_terminal;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -417,7 +417,7 @@ impl ExecCommandHandler {
                 hook_command: None,
             };
             return Ok(boxed_tool_output(
-                CapturedOutput::terminal(&session, response).await,
+                capture_terminal(&session, response).await,
             ));
         }
 
@@ -485,7 +485,7 @@ impl ExecCommandHandler {
             }
         };
         Ok(boxed_tool_output(
-            CapturedOutput::terminal(&session, response).await,
+            capture_terminal(&session, response).await,
         ))
     }
 }

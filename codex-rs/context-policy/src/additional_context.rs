@@ -8,12 +8,13 @@ use codex_protocol::turn_input::AdditionalContextAction;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::context::AdditionalContextDeveloperFragment;
-use crate::context::AdditionalContextUserFragment;
-use crate::context::ContextualUserFragment;
+use codex_context_fragments::AdditionalContextDeveloperFragment;
+use codex_context_fragments::AdditionalContextUserFragment;
+use codex_context_fragments::ContextualUserFragment;
 
+/// Serializable fingerprints of the publications represented by retained history.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct AdditionalContextSnapshot {
+pub struct AdditionalContextSnapshot {
     entries: BTreeMap<String, AdditionalContextSnapshotEntry>,
 }
 
@@ -45,13 +46,14 @@ impl AdditionalContextTreatment {
     }
 }
 
+/// Suppresses unchanged rendered publications without rewriting earlier messages.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct AdditionalContextStore {
+pub struct AdditionalContextStore {
     snapshot: AdditionalContextSnapshot,
 }
 
 impl AdditionalContextStore {
-    pub(crate) fn merge(&mut self, action: AdditionalContextAction) -> Vec<ResponseItem> {
+    pub fn merge(&mut self, action: AdditionalContextAction) -> Vec<ResponseItem> {
         let values = match action {
             AdditionalContextAction::KeepSourceState => return Vec::new(),
             AdditionalContextAction::PublishSnapshot(values) => values,
@@ -62,7 +64,7 @@ impl AdditionalContextStore {
         items
     }
 
-    pub(crate) fn prepare(
+    pub fn prepare(
         &self,
         values: BTreeMap<String, AdditionalContextEntry>,
     ) -> (Vec<ResponseItem>, AdditionalContextSnapshot) {
@@ -98,19 +100,19 @@ impl AdditionalContextStore {
         )
     }
 
-    pub(crate) fn commit(&mut self, snapshot: AdditionalContextSnapshot) {
+    pub fn commit(&mut self, snapshot: AdditionalContextSnapshot) {
         self.snapshot = snapshot;
     }
 
-    pub(crate) fn snapshot(&self) -> AdditionalContextSnapshot {
+    pub fn snapshot(&self) -> AdditionalContextSnapshot {
         self.snapshot.clone()
     }
 
-    pub(crate) fn restore(&mut self, snapshot: AdditionalContextSnapshot) {
+    pub fn restore(&mut self, snapshot: AdditionalContextSnapshot) {
         self.snapshot = snapshot;
     }
 
-    pub(crate) fn current_keys_and_kinds(&self) -> Vec<(String, AdditionalContextKind)> {
+    pub fn current_keys_and_kinds(&self) -> Vec<(String, AdditionalContextKind)> {
         self.snapshot
             .entries
             .iter()

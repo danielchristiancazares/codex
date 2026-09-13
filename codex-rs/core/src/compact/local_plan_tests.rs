@@ -63,7 +63,7 @@ fn context_rejection_reduces_multiple_complete_turn_groups_once() {
 }
 
 #[test]
-fn replacement_budget_charges_media_only_and_tiny_message_envelopes() {
+fn replacement_budget_fits_media_only_and_tiny_messages() {
     let mut items = Vec::new();
     for index in 0..200 {
         items.push(ResponseItem::Message {
@@ -85,12 +85,12 @@ fn replacement_budget_charges_media_only_and_tiny_message_envelopes() {
             Vec::new(),
             "bounded summary",
             &base_instructions(),
-            RequestBudget::ClientEnforced(400),
+            RequestBudget::ClientEnforced(100),
             CompactedMessageIdentity::Regenerate,
         )
         .expect("a bounded replacement should fit");
 
-    assert!(estimated_request_tokens(&base_instructions(), &replacement.items) <= 400);
+    assert!(estimated_request_tokens(&base_instructions(), &replacement.items) <= 100);
     assert!(replacement.items.len() < items.len());
 }
 

@@ -1,6 +1,7 @@
 //! Shared tool definitions and Responses API tool primitives that can live
 //! outside `codex-core`.
 
+mod captured_output;
 mod code_mode;
 mod dynamic_tool;
 mod function_call_error;
@@ -14,12 +15,14 @@ mod tool_call;
 mod tool_config;
 mod tool_definition;
 mod tool_discovery;
+mod tool_discovery_state;
 mod tool_executor;
 mod tool_output;
 mod tool_payload;
 mod tool_search;
 mod tool_spec;
 
+pub use captured_output::CapturedOutput;
 pub use code_mode::augment_tool_spec_for_code_mode;
 pub use code_mode::code_mode_name_for_tool_name;
 pub use code_mode::collect_code_mode_exec_prompt_tool_definitions;
@@ -49,6 +52,7 @@ pub use request_plugin_install::RequestPluginInstallResult;
 pub use request_plugin_install::all_requested_connectors_picked_up;
 pub use request_plugin_install::build_request_plugin_install_elicitation_request;
 pub use request_plugin_install::verified_connector_install_completed;
+pub use response_history::is_model_generated_item;
 pub use response_history::retain_tail_from_last_n_user_messages;
 pub use response_history::truncate_assistant_output_text_to_token_budget;
 pub use responses_api::FreeformTool;
@@ -94,6 +98,8 @@ pub use tool_discovery::ToolSearchSourceInfo;
 pub use tool_discovery::bound_tool_search_output;
 pub use tool_discovery::collect_request_plugin_install_entries;
 pub use tool_discovery::filter_request_plugin_install_discoverable_tools_for_client;
+pub use tool_discovery_state::ToolDiscoveryState;
+pub use tool_discovery_state::strip_tool_search_schemas;
 pub use tool_executor::ToolExecutor;
 pub use tool_executor::ToolExecutorFuture;
 pub use tool_executor::ToolExposure;
