@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
@@ -25,6 +26,13 @@ use super::credentials::CredentialLoadError;
 
 type CredentialLoader =
     Arc<dyn Fn() -> Result<CopilotCredential, CredentialLoadError> + Send + Sync + 'static>;
+type CredentialRevision = Arc<dyn Fn() -> u64 + Send + Sync + 'static>;
+
+#[derive(Clone)]
+struct LoadedCredential {
+    credential: CopilotCredential,
+    revision: u64,
+}
 
 /// Immutable endpoint material obtained from native GitHub authentication.
 #[derive(Clone)]
@@ -56,6 +64,7 @@ impl fmt::Debug for EndpointSnapshot {
 struct CachedEndpoint {
     snapshot: Arc<EndpointSnapshot>,
     credential: CopilotCredential,
+    credential_revision: u64,
 }
 
 impl fmt::Debug for CachedEndpoint {
@@ -71,7 +80,7 @@ impl fmt::Debug for CachedEndpoint {
 struct EndpointState {
     cached: Option<CachedEndpoint>,
     generation: u64,
-    refresh: Option<Arc<OnceCell<Result<CopilotCredential, String>>>>,
+    refresh: Option<Arc<OnceCell<Result<LoadedCredential, String>>>>,
 }
 
 impl fmt::Debug for EndpointState {
@@ -91,6 +100,7 @@ pub(super) struct CopilotEndpointManager {
     current_generation: AtomicU64,
     rejected_generations: StdMutex<HashSet<u64>>,
     credential_loader: CredentialLoader,
+    credential_revision: CredentialRevision,
 }
 
 impl fmt::Debug for CopilotEndpointManager {
@@ -137,7 +147,7 @@ impl CopilotEndpointManager {
                 )
             };
 
-            let credential = refresh.get_or_init(|| self.load_credential()).await.clone();
+            let loaded = refresh.get_or_init(|| self.load_credential()).await.clone();
             let mut state = self.state.lock().await;
             let owns_refresh = state
                 .refresh
@@ -145,22 +155,25 @@ impl CopilotEndpointManager {
                 .is_some_and(|active| Arc::ptr_eq(active, &refresh));
             if owns_refresh {
                 state.refresh = None;
-                return match credential {
-                    Ok(credential) => self.install_credential(&mut state, credential),
-                    Err(error) => Err(CodexErr::Fatal(error)),
-                };
+                match loaded {
+                    Ok(loaded) if loaded.revision == (self.credential_revision)() => {
+                        return self.install_credential(&mut state, loaded);
+                    }
+                    Ok(_) => continue,
+                    Err(error) => return Err(CodexErr::Fatal(error)),
+                }
             }
             if let Some(snapshot) = self.cached_snapshot(&state) {
                 return Ok(snapshot);
             }
-            match credential {
-                Ok(credential)
+            match loaded {
+                Ok(loaded)
                     if state.cached.as_ref().is_some_and(|cached| {
                         self.is_generation_rejected(cached.snapshot.generation)
-                            && cached.credential == credential
+                            && cached.credential == loaded.credential
                     }) =>
                 {
-                    return Err(rejected_credential_error(credential.source));
+                    return Err(rejected_credential_error(loaded.credential.source));
                 }
                 Ok(_) => {}
                 Err(error) => return Err(CodexErr::Fatal(error)),
@@ -168,19 +181,28 @@ impl CopilotEndpointManager {
         }
     }
 
-    async fn load_credential(&self) -> Result<CopilotCredential, String> {
+    async fn load_credential(&self) -> Result<LoadedCredential, String> {
+        let revision = (self.credential_revision)();
         let credential_loader = Arc::clone(&self.credential_loader);
-        tokio::task::spawn_blocking(move || credential_loader())
+        let credential = tokio::task::spawn_blocking(move || credential_loader())
             .await
             .map_err(|error| format!("load GitHub credential for Copilot: {error}"))?
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        Ok(LoadedCredential {
+            credential,
+            revision,
+        })
     }
 
     fn install_credential(
         &self,
         state: &mut EndpointState,
-        credential: CopilotCredential,
+        loaded: LoadedCredential,
     ) -> codex_protocol::error::Result<Arc<EndpointSnapshot>> {
+        let LoadedCredential {
+            credential,
+            revision,
+        } = loaded;
         if state.cached.as_ref().is_some_and(|cached| {
             self.is_generation_rejected(cached.snapshot.generation)
                 && cached.credential == credential
@@ -200,6 +222,7 @@ impl CopilotEndpointManager {
         state.cached = Some(CachedEndpoint {
             snapshot: Arc::clone(&snapshot),
             credential,
+            credential_revision: revision,
         });
         self.current_generation
             .store(snapshot.generation, Ordering::Release);
@@ -209,6 +232,9 @@ impl CopilotEndpointManager {
 
     fn cached_snapshot(&self, state: &EndpointState) -> Option<Arc<EndpointSnapshot>> {
         let cached = state.cached.as_ref()?;
+        if cached.credential_revision != (self.credential_revision)() {
+            return None;
+        }
         self.prune_rejected_generations(cached.snapshot.generation);
         (!self.is_generation_rejected(cached.snapshot.generation))
             .then(|| Arc::clone(&cached.snapshot))
@@ -245,6 +271,7 @@ impl Default for CopilotEndpointManager {
             current_generation: AtomicU64::new(0),
             rejected_generations: StdMutex::new(HashSet::new()),
             credential_loader: Arc::new(|| super::credentials::load(/*auth_manager*/ None)),
+            credential_revision: Arc::new(|| 0),
         }
     }
 }
@@ -258,26 +285,37 @@ pub(super) fn shared_endpoint_manager(
     };
     // A process can host multiple Codex homes or credential policies. Share refresh/rejection
     // state only among providers using the same resolved authentication manager.
-    type ScopedManagers = Vec<(Weak<AuthManager>, Weak<CopilotEndpointManager>)>;
+    type ScopedManagers = Vec<(
+        Weak<AuthManager>,
+        PathBuf,
+        Weak<CopilotEndpointManager>,
+    )>;
     static MANAGERS: OnceLock<StdMutex<ScopedManagers>> = OnceLock::new();
     let mut managers = MANAGERS
         .get_or_init(StdMutex::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    managers.retain(|(_, manager)| manager.strong_count() != 0);
+    managers.retain(|(_, _, manager)| manager.strong_count() != 0);
     let auth_scope = Arc::downgrade(&auth_manager);
+    let credential_home = auth_manager.connection_credential_home();
     if let Some(manager) = managers
         .iter()
-        .find(|(scope, _)| scope.ptr_eq(&auth_scope))
-        .and_then(|(_, manager)| manager.upgrade())
+        .find(|(scope, home, _)| scope.ptr_eq(&auth_scope) && home == &credential_home)
+        .and_then(|(_, _, manager)| manager.upgrade())
     {
         return manager;
     }
+    let revision_manager = Arc::clone(&auth_manager);
     let manager = Arc::new(CopilotEndpointManager {
         credential_loader: Arc::new(move || super::credentials::load(Some(&auth_manager))),
+        credential_revision: Arc::new(move || revision_manager.credential_revision()),
         ..CopilotEndpointManager::default()
     });
-    managers.push((auth_scope, Arc::downgrade(&manager)));
+    managers.push((
+        auth_scope,
+        credential_home,
+        Arc::downgrade(&manager),
+    ));
     manager
 }
 

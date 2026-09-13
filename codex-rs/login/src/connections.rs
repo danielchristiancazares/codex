@@ -15,7 +15,6 @@ use crate::GitHubCopilotAuth;
 use crate::load_auth_dot_json;
 
 pub(crate) use files::RefreshLease;
-pub(crate) use files::write as atomic_write_json;
 
 const MAX_CONNECTIONS: usize = 64;
 
@@ -268,13 +267,28 @@ impl ConnectionStore {
     }
 
     pub fn remember(&self, connection: &SavedConnection) -> std::io::Result<()> {
-        files::write(
+        crate::credential_file::write_json(
             &self.home.join("connections").join("selected.json"),
             connection,
         )
     }
 
-    pub(crate) fn forget_logged_out_scope(&self, scope: &Path) -> std::io::Result<()> {
+    /// Returns the selected saved credential location when it belongs to `provider`.
+    /// Explicit provider commands otherwise operate on their configured root destination.
+    pub fn credential_home_for_provider(
+        &self,
+        provider: ConnectionProvider,
+    ) -> std::io::Result<PathBuf> {
+        Ok(match self.startup()? {
+            StartupConnection::UseSaved(connection) if connection.provider() == provider => {
+                connection.credential_home(&self.home)
+            }
+            StartupConnection::UseConfigured | StartupConnection::UseSaved(_) => self.home.clone(),
+        })
+    }
+
+    /// Removes registration for a credential location after its provider logs out.
+    pub fn forget_logged_out_scope(&self, scope: &Path) -> std::io::Result<()> {
         let selected_path = self.home.join("connections").join("selected.json");
         match files::read::<SavedConnection>(&selected_path) {
             Ok(selected) if selected.credential_home(&self.home) == scope => {
@@ -441,7 +455,7 @@ impl ConnectionLogin {
             },
         };
         connection.name = self.name;
-        files::write(&self.home.join("connection.json"), &connection)?;
+        crate::credential_file::write_json(&self.home.join("connection.json"), &connection)?;
         Ok(connection)
     }
 }

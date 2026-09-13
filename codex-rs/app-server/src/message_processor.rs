@@ -169,6 +169,7 @@ pub(crate) struct MessageProcessor {
     turn_processor: TurnRequestProcessor,
     windows_sandbox_processor: WindowsSandboxRequestProcessor,
     request_serialization_queues: RequestSerializationQueues,
+    auth_handoff_gate: Arc<tokio::sync::RwLock<()>>,
 }
 
 #[derive(Debug)]
@@ -394,6 +395,7 @@ impl MessageProcessor {
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
         let app_list_shutdown_token = CancellationToken::new();
         let request_serialization_queues = RequestSerializationQueues::default();
+        let auth_handoff_gate = Arc::new(tokio::sync::RwLock::new(()));
         let config_processor = ConfigRequestProcessor::new(
             outgoing.clone(),
             config_manager.clone(),
@@ -414,6 +416,7 @@ impl MessageProcessor {
             outgoing.clone(),
             Arc::clone(&config),
             config_manager.clone(),
+            Arc::clone(&auth_handoff_gate),
         );
         let apps_processor = AppsRequestProcessor::new(
             auth_manager.clone(),
@@ -607,6 +610,7 @@ impl MessageProcessor {
             turn_processor,
             windows_sandbox_processor,
             request_serialization_queues,
+            auth_handoff_gate,
         }
     }
 
@@ -1014,6 +1018,16 @@ impl MessageProcessor {
             _ => None,
         };
         let serialization_scope = codex_request.serialization_scope();
+        let waits_for_auth_handoff = matches!(
+            codex_request,
+            ClientRequest::TurnStart { .. }
+                | ClientRequest::TurnSteer { .. }
+                | ClientRequest::ReviewStart { .. }
+                | ClientRequest::ThreadCompactStart { .. }
+                | ClientRequest::ThreadShellCommand { .. }
+                | ClientRequest::ThreadQueueStart { .. }
+                | ClientRequest::ThreadRealtimeStart { .. }
+        );
         let error_request_id = connection_request_id.clone();
         let rpc_gate = Arc::clone(&session.rpc_gate);
         let processor = Arc::clone(self);
@@ -1022,6 +1036,15 @@ impl MessageProcessor {
             rpc_gate,
             async move {
                 let _turn_admission = turn_admission;
+                let _auth_handoff_guard = if waits_for_auth_handoff {
+                    Some(
+                        Arc::clone(&processor.auth_handoff_gate)
+                            .read_owned()
+                            .await,
+                    )
+                } else {
+                    None
+                };
                 // Runtime changes already admitted before drain finish normally. Turn work
                 // still waiting in serialization must observe the newly closed gate.
                 if recheck_turn_admission && let Err(error) = processor.turn_admission.admit() {

@@ -19,6 +19,7 @@ use codex_login::ServerOptions;
 use codex_login::is_workload_identity_selected;
 use codex_login::login_with_access_token;
 use codex_login::login_with_api_key;
+use codex_login::logout_configured_with_revoke;
 use codex_login::logout_with_revoke;
 use codex_login::run_device_code_login;
 use codex_login::run_login_server;
@@ -125,7 +126,7 @@ async fn clear_existing_auth_before_login(
     auth_keyring_backend_kind: AuthKeyringBackendKind,
     auth_route_config: &AuthRouteConfig,
 ) {
-    if let Err(err) = logout_with_revoke(
+    if let Err(err) = logout_configured_with_revoke(
         codex_home,
         auth_credentials_store_mode,
         auth_keyring_backend_kind,
@@ -589,6 +590,9 @@ fn safe_format_key(key: &str) -> String {
 mod tests {
     use codex_config::types::AuthCredentialsStoreMode;
     use codex_login::AuthKeyringBackendKind;
+    use codex_login::ConnectionProvider;
+    use codex_login::ConnectionStore;
+    use codex_login::NonEmptyString;
     use codex_login::load_auth_dot_json;
     use codex_login::login_with_api_key;
     use pretty_assertions::assert_eq;
@@ -623,6 +627,50 @@ mod tests {
         )
         .expect("load auth after cleanup");
         assert_eq!(auth, None);
+    }
+
+    #[tokio::test]
+    async fn pre_login_cleanup_preserves_the_selected_saved_account() {
+        let codex_home = tempdir().expect("create temporary Codex home");
+        let mode = AuthCredentialsStoreMode::File;
+        let keyring = AuthKeyringBackendKind::default();
+        login_with_api_key(codex_home.path(), "sk-existing", mode, keyring)
+            .expect("save configured auth");
+        let route = codex_login::test_support::transport_default_auth_route_config();
+        let store = ConnectionStore::new(
+            codex_home.path().to_path_buf(),
+            mode,
+            keyring,
+            route.clone(),
+        );
+        let login = store
+            .begin_login(
+                ConnectionProvider::Copilot,
+                NonEmptyString::new("saved github").expect("valid account name"),
+            )
+            .expect("begin saved account login");
+        std::fs::write(
+            login.home().join("copilot-auth.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "github_token": "saved-token",
+                "machine_id": "a".repeat(64),
+            }))
+            .expect("serialize saved credential"),
+        )
+        .expect("write saved credential");
+        let saved = login.finish().expect("finish saved account login");
+        store.remember(&saved).expect("select saved account");
+
+        clear_existing_auth_before_login(codex_home.path(), mode, keyring, &route).await;
+
+        assert_eq!(
+            load_auth_dot_json(codex_home.path(), mode, keyring)
+                .expect("load configured auth"),
+            None
+        );
+        assert_eq!(store.resolve(saved.id()).expect("saved account remains"), saved);
+        assert!(codex_home.path().join("connections/selected.json").exists());
     }
 
     #[test]

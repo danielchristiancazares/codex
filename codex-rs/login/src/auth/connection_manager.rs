@@ -105,6 +105,7 @@ impl Drop for ConnectionRollback {
                     .write()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = scope.clone();
                 self.manager.set_cached_auth(cache.auth.clone());
+                self.manager.mark_credential_revision_changed();
             }
         }
     }
@@ -164,6 +165,7 @@ impl AuthManager {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             CredentialScope::configured(self.codex_home.clone());
+        self.mark_credential_revision_changed();
         self.reload().await;
         Ok(())
     }
@@ -213,6 +215,15 @@ impl AuthManager {
         }
         let store = self.connection_store();
         let connection = store.resolve(id)?;
+        if connection.provider() == ConnectionProvider::Copilot
+            && ["GITHUB_COPILOT_API_TOKEN", "COPILOT_GITHUB_TOKEN"]
+                .into_iter()
+                .any(|name| read_non_empty_env_var(name).is_some())
+        {
+            return Err(std::io::Error::other(
+                "Account switching requires removing the explicit GitHub Copilot token environment override.",
+            ));
+        }
         store.validate(&connection)?;
         let manager = Arc::new(
             Self::new_from_auth_config(
@@ -287,6 +298,7 @@ impl AuthManager {
                 provider: prepared.connection.provider(),
             };
         self.set_cached_auth(prepared.manager.auth_cached());
+        self.mark_credential_revision_changed();
         Ok(ActivatedConnection {
             connection: prepared.connection,
             rollback,

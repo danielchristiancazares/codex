@@ -54,6 +54,7 @@ impl ConnectionSwitches {
         id: ConnectionText,
         target: ConnectionText,
     ) -> Result<(), JSONRPCErrorError> {
+        let _handoff_guard = processor.auth_handoff_gate.write().await;
         match &self.state {
             SwitchState::FinishHandoff { request, .. }
                 if request.owner == owner && request.id == id && request.target == target =>

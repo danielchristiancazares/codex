@@ -181,9 +181,15 @@ impl App {
         }
 
         let agents = self.agent_navigation.ordered_threads();
+        let closed_agents = agents
+            .iter()
+            .filter_map(|(id, agent)| agent.is_closed.then_some(*id))
+            .collect::<HashSet<_>>();
         let another_thread_is_active = self.thread_event_channels.iter().any(|(id, channel)| {
             let store = channel.store.try_lock();
-            *id != thread_id && !store.is_ok_and(|store| store.active_turn_id().is_none())
+            *id != thread_id
+                && !closed_agents.contains(id)
+                && !store.is_ok_and(|store| store.active_turn_id().is_none())
         });
         if another_thread_is_active
             || agents
@@ -221,7 +227,11 @@ impl App {
             return;
         }
 
-        let mut tracked_ids: HashSet<_> = channels.keys().copied().collect();
+        let mut tracked_ids: HashSet<_> = channels
+            .keys()
+            .copied()
+            .filter(|id| !closed_agents.contains(id))
+            .collect();
         for (id, agent) in &agents {
             tracked_ids.extend((!agent.is_closed).then_some(*id));
         }
@@ -298,9 +308,15 @@ impl App {
             }
         };
         let agents = self.agent_navigation.ordered_threads();
+        let closed_agents = agents
+            .iter()
+            .filter_map(|(id, agent)| agent.is_closed.then_some(*id))
+            .collect::<HashSet<_>>();
         let another_thread_is_active = self.thread_event_channels.iter().any(|(id, channel)| {
             let store = channel.store.try_lock();
-            *id != thread_id && !store.is_ok_and(|store| store.active_turn_id().is_none())
+            *id != thread_id
+                && !closed_agents.contains(id)
+                && !store.is_ok_and(|store| store.active_turn_id().is_none())
         });
         if another_thread_is_active
             || agents
@@ -312,7 +328,12 @@ impl App {
             );
             return;
         }
-        let mut tracked_ids: HashSet<_> = self.thread_event_channels.keys().copied().collect();
+        let mut tracked_ids: HashSet<_> = self
+            .thread_event_channels
+            .keys()
+            .copied()
+            .filter(|id| !closed_agents.contains(id))
+            .collect();
         for (id, agent) in agents {
             tracked_ids.extend((!agent.is_closed).then_some(id));
         }

@@ -93,6 +93,7 @@ pub(crate) struct AccountRequestProcessor {
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
     connection_switches: Arc<Mutex<connections::ConnectionSwitches>>,
+    auth_handoff_gate: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl AccountRequestProcessor {
@@ -102,6 +103,7 @@ impl AccountRequestProcessor {
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         config_manager: ConfigManager,
+        auth_handoff_gate: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
             auth_manager,
@@ -111,6 +113,7 @@ impl AccountRequestProcessor {
             config_manager,
             active_login: Arc::new(Mutex::new(None)),
             connection_switches: Arc::new(Mutex::new(connections::ConnectionSwitches::new())),
+            auth_handoff_gate,
         }
     }
 

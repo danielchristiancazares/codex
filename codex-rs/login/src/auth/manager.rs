@@ -1027,6 +1027,40 @@ pub async fn logout_with_revoke(
     Ok(removed)
 }
 
+/// Clears only the configured OpenAI login destination before a replacement login starts.
+/// Saved-account selection and credentials remain intact until the replacement login succeeds.
+pub async fn logout_configured_with_revoke(
+    codex_home: &Path,
+    auth_credentials_store_mode: AuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    auth_route_config: &AuthRouteConfig,
+) -> std::io::Result<bool> {
+    let _lease = connections::CredentialLease::acquire(
+        codex_home.to_path_buf(),
+        auth_credentials_store_mode,
+    )
+    .await?;
+    let auth_dot_json = match load_auth_dot_json(
+        codex_home,
+        auth_credentials_store_mode,
+        keyring_backend_kind,
+    ) {
+        Ok(auth_dot_json) => auth_dot_json,
+        Err(err) => {
+            tracing::warn!("failed to load configured auth before login cleanup: {err}");
+            None
+        }
+    };
+    if let Err(err) = revoke_auth_tokens(auth_dot_json.as_ref(), auth_route_config).await {
+        tracing::warn!("failed to revoke configured auth tokens before login: {err}");
+    }
+    logout_all_stores(
+        codex_home,
+        auth_credentials_store_mode,
+        keyring_backend_kind,
+    )
+}
+
 /// Writes an `auth.json` that contains only the API key.
 pub fn login_with_api_key(
     codex_home: &Path,
@@ -2086,6 +2120,7 @@ impl UnauthorizedRecovery {
 pub struct AuthManager {
     codex_home: PathBuf,
     credential_home: RwLock<connections::CredentialScope>,
+    credential_revision: AtomicU64,
     inner: RwLock<CachedAuth>,
     auth_change_tx: watch::Sender<u64>,
     auth_change_state_tx: watch::Sender<AuthChangeState>,
@@ -2228,6 +2263,7 @@ impl AuthManager {
                 permanent_refresh_failure: None,
             }),
             auth_change_tx,
+            credential_revision: AtomicU64::new(0),
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
             enable_codex_api_key_env,
             auth_credentials_store_mode,
@@ -2266,6 +2302,7 @@ impl AuthManager {
             ))),
             inner: RwLock::new(cached),
             auth_change_tx,
+            credential_revision: AtomicU64::new(0),
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
@@ -2298,6 +2335,7 @@ impl AuthManager {
             codex_home,
             inner: RwLock::new(cached),
             auth_change_tx,
+            credential_revision: AtomicU64::new(0),
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
@@ -2334,6 +2372,7 @@ impl AuthManager {
             ))),
             inner: RwLock::new(cached),
             auth_change_tx,
+            credential_revision: AtomicU64::new(0),
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
@@ -2368,6 +2407,7 @@ impl AuthManager {
                 permanent_refresh_failure: None,
             }),
             auth_change_tx,
+            credential_revision: AtomicU64::new(0),
             auth_change_state_tx: watch::channel(AuthChangeState::default()).0,
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
@@ -2401,6 +2441,15 @@ impl AuthManager {
     /// Subscribes to cached auth changes that can affect request recovery.
     pub fn auth_change_receiver(&self) -> watch::Receiver<u64> {
         self.auth_change_tx.subscribe()
+    }
+
+    /// Monotonic revision for the credential location or contents selected by this manager.
+    pub fn credential_revision(&self) -> u64 {
+        self.credential_revision.load(Ordering::Acquire)
+    }
+
+    fn mark_credential_revision_changed(&self) {
+        self.credential_revision.fetch_add(1, Ordering::Release);
     }
 
     /// Subscribes to credential and owner revisions published together, including when changes coalesce.
@@ -2968,6 +3017,7 @@ impl AuthManager {
                     .copilot_auth()
                     .logout()
                     .map_err(std::io::Error::other)?;
+                self.mark_credential_revision_changed();
                 self.connection_store()
                     .forget_logged_out_scope(&self.connection_credential_home())?;
                 return Ok(removed);
@@ -3001,6 +3051,7 @@ impl AuthManager {
                     .copilot_auth()
                     .logout()
                     .map_err(std::io::Error::other)?;
+                self.mark_credential_revision_changed();
                 self.connection_store()
                     .forget_logged_out_scope(&self.connection_credential_home())?;
                 return Ok(removed);

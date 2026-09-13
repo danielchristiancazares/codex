@@ -1,12 +1,10 @@
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub(super) fn read<T: DeserializeOwned>(path: &Path) -> std::io::Result<T> {
@@ -20,26 +18,6 @@ pub(super) fn read<T: DeserializeOwned>(path: &Path) -> std::io::Result<T> {
     }
     serde_json::from_slice(&bytes)
         .map_err(|_| std::io::Error::other("Invalid connection metadata."))
-}
-
-pub(crate) fn write<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| std::io::Error::other("Connection path requires a parent."))?;
-    std::fs::create_dir_all(parent)?;
-    let temporary = parent.join(format!(".connection-{:032x}.tmp", rand::random::<u128>()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&temporary)?;
-    file.write_all(&serde_json::to_vec(value)?)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(temporary, path)
 }
 
 /// Cross-process authority over one credential scope's refresh sequence.

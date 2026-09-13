@@ -201,7 +201,7 @@ impl AuthStorageBackend for FileAuthStorage {
 
     fn save(&self, auth_dot_json: &AuthDotJson) -> std::io::Result<()> {
         let auth_file = get_auth_file(&self.codex_home);
-        crate::connections::atomic_write_json(&auth_file, auth_dot_json)
+        crate::credential_file::write_json(&auth_file, auth_dot_json)
     }
 
     fn delete(&self) -> std::io::Result<bool> {

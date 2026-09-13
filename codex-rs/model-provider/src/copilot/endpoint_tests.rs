@@ -1,9 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
+use codex_login::ConnectionProvider;
+use codex_login::NonEmptyString;
 use codex_models_manager::manager::ModelsEndpointClient;
 use codex_models_manager::manager::ModelsEndpointResponse;
 use codex_models_manager::manager::ModelsManager;
@@ -39,6 +42,140 @@ fn endpoint_managers_share_auth_state_only_within_the_same_runtime() {
     assert!(!Arc::ptr_eq(&first, &other_runtime));
 }
 
+#[tokio::test]
+async fn endpoint_manager_changes_with_the_selected_saved_credential_scope() {
+    let home = tempfile::tempdir().expect("temporary Codex home");
+    let auth_manager = AuthManager::from_auth_for_testing_with_home(
+        codex_login::CodexAuth::from_api_key("openai-token"),
+        home.path().to_path_buf(),
+    );
+    let store = auth_manager.connection_store();
+    let mut saved = Vec::new();
+    for (name, token, machine) in [
+        ("copilot a", "copilot-token-a", "a".repeat(64)),
+        ("copilot b", "copilot-token-b", "b".repeat(64)),
+    ] {
+        let login = store
+            .begin_login(
+                ConnectionProvider::Copilot,
+                NonEmptyString::new(name).expect("valid account name"),
+            )
+            .expect("begin saved Copilot login");
+        std::fs::write(
+            login.home().join("copilot-auth.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "github_token": token,
+                "machine_id": machine,
+            }))
+            .expect("serialize Copilot credential"),
+        )
+        .expect("write Copilot credential");
+        saved.push(login.finish().expect("finish saved Copilot login"));
+    }
+
+    let first = auth_manager
+        .prepare_saved_connection(saved[0].id())
+        .await
+        .expect("prepare first account");
+    auth_manager
+        .activate_saved_connection(first)
+        .await
+        .expect("activate first account")
+        .commit()
+        .expect("commit first account");
+    let first_manager = shared_endpoint_manager(Some(Arc::clone(&auth_manager)));
+    let first_endpoint = first_manager.endpoint().await.expect("first endpoint");
+
+    let second = auth_manager
+        .prepare_saved_connection(saved[1].id())
+        .await
+        .expect("prepare second account");
+    auth_manager
+        .activate_saved_connection(second)
+        .await
+        .expect("activate second account")
+        .commit()
+        .expect("commit second account");
+    let second_manager = shared_endpoint_manager(Some(Arc::clone(&auth_manager)));
+    let second_endpoint = second_manager.endpoint().await.expect("second endpoint");
+
+    assert!(!Arc::ptr_eq(&first_manager, &second_manager));
+    assert_eq!(
+        (
+            first_endpoint
+                .headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            second_endpoint
+                .headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+        ),
+        (Some("Bearer copilot-token-a"), Some("Bearer copilot-token-b"))
+    );
+
+    auth_manager.logout().await.expect("log out selected account");
+    let error = second_manager
+        .endpoint()
+        .await
+        .expect_err("logged-out credential must invalidate a warm endpoint");
+    assert!(error.to_string().contains("requires"));
+    assert!(!error.to_string().contains("copilot-token-b"));
+}
+
+#[tokio::test]
+async fn models_timeout_includes_response_body_decoding() {
+    use std::io::Read;
+    use std::io::Write;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let address = listener.local_addr().expect("test server address");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept models request");
+        let mut request = [0u8; 4096];
+        let mut received = 0;
+        while received < request.len() {
+            let read = stream
+                .read(&mut request[received..])
+                .expect("read models request");
+            if read == 0 {
+                break;
+            }
+            received += read;
+            if request[..received]
+                .windows(4)
+                .any(|window| window == b"\r\n\r\n")
+            {
+                break;
+            }
+        }
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 128\r\n\r\n{\"data\":",
+            )
+            .expect("write partial models response");
+        stream.flush().expect("flush partial models response");
+        std::thread::sleep(Duration::from_millis(150));
+    });
+    let manager = Arc::new(manager_with_credential(credential(
+        "copilot-secret",
+        &format!("http://{address}"),
+    )));
+    let endpoint = CopilotModelsEndpoint::new(manager);
+
+    let error = endpoint
+        .list_models_with_timeout(
+            HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            Duration::from_millis(30),
+        )
+        .await
+        .expect_err("partial response body should time out");
+
+    assert_eq!(error.to_string(), CodexErr::Timeout.to_string());
+    server.join().expect("join test server");
+}
+
 fn credential(token: &str, base_url: &str) -> CopilotCredential {
     CopilotCredential {
         token: token.to_string(),
@@ -56,6 +193,7 @@ fn manager_with_loader(
         current_generation: AtomicU64::new(0),
         rejected_generations: StdMutex::new(HashSet::new()),
         credential_loader: Arc::new(loader),
+        credential_revision: Arc::new(|| 0),
     }
 }
 

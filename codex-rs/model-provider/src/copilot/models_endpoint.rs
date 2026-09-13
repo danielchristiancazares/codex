@@ -121,6 +121,27 @@ impl CopilotModelsEndpoint {
         &self,
         http_client_factory: HttpClientFactory,
     ) -> CoreResult<ModelsEndpointResponse> {
+        self.list_models_with_timeout(http_client_factory, MODELS_REFRESH_TIMEOUT)
+            .await
+    }
+
+    pub(super) async fn list_models_with_timeout(
+        &self,
+        http_client_factory: HttpClientFactory,
+        timeout_duration: Duration,
+    ) -> CoreResult<ModelsEndpointResponse> {
+        timeout(
+            timeout_duration,
+            self.list_models_with_body(http_client_factory),
+        )
+        .await
+        .map_err(|_| CodexErr::Timeout)?
+    }
+
+    async fn list_models_with_body(
+        &self,
+        http_client_factory: HttpClientFactory,
+    ) -> CoreResult<ModelsEndpointResponse> {
         let mut endpoint = self.endpoint_manager.endpoint().await?;
         let mut url = format!("{}/models", endpoint.base_url);
         let client = HttpClientBuilder::new()
@@ -263,12 +284,11 @@ async fn send_models_request(
     url: &str,
     headers: HeaderMap,
 ) -> CoreResult<HttpResponse> {
-    timeout(
-        MODELS_REFRESH_TIMEOUT,
-        client.get(url).headers(headers).send(),
-    )
+    client
+        .get(url)
+        .headers(headers)
+        .send()
     .await
-    .map_err(|_| CodexErr::Timeout)?
     .map_err(|error| CodexErr::Fatal(format!("Copilot models request: {error}")))
 }
 

@@ -137,7 +137,7 @@ impl CopilotCredentialStore {
     }
 
     fn save_file(&self, encoded: &str) -> Result<(), GitHubCopilotAuthError> {
-        file_storage::save(&self.file_path, encoded).map_err(|error| {
+        crate::credential_file::write(&self.file_path, encoded.as_bytes()).map_err(|error| {
             GitHubCopilotAuthError::persistence(format!(
                 "save GitHub Copilot credential in {}: {error}",
                 self.file_path.display()
