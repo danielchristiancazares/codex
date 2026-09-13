@@ -241,6 +241,7 @@ mod plugin_selection;
 mod realtime_history;
 mod retained_context;
 mod review;
+mod rollback;
 mod rollout_budget;
 mod rollout_reconstruction;
 #[allow(clippy::module_inception)]

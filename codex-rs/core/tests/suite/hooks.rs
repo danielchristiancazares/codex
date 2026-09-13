@@ -381,7 +381,8 @@ print(json.dumps({{
         "additionalContext": f"async context for {{prompt}}"
     }}
 }}), flush=True)
-Path(r"{finished_path}").write_text(prompt, encoding="utf-8")
+with Path(r"{finished_path}").open("a", encoding="utf-8") as finished:
+    finished.write(prompt + "\\n")
 "#,
         started_path = started_path.display(),
         finished_path = finished_path.display(),
