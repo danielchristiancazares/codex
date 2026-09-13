@@ -270,6 +270,7 @@ mod user_verification;
 mod user_verification_errors;
 mod user_verification_requests;
 mod viewport_history;
+mod windows_sandbox_setup;
 mod working_directory;
 
 use self::agent_navigation::AgentNavigationDirection;
@@ -283,6 +284,7 @@ use self::side::SideParentStatusChange;
 use self::side::SideThreadState;
 use self::startup_prompts::*;
 use self::thread_events::*;
+use self::windows_sandbox_setup::WindowsSandboxState;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
 const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;

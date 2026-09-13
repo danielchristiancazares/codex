@@ -373,6 +373,7 @@ impl ChatWidget {
         let legacy_preset = preset;
         let retry_preset = elevated_preset.clone();
         let retry_profile_selection = profile_selection.clone();
+        let retry_origin_thread_id = self.thread_id();
         let elevated_profile_selection = profile_selection.clone();
         let legacy_profile_selection = profile_selection;
         let quit_otel = self.session_telemetry.clone();
@@ -444,6 +445,7 @@ impl ChatWidget {
             on_cancel: setup_choice_is_required.then(|| {
                 Box::new(move |tx: &AppEventSender| {
                     tx.send(AppEvent::OpenWindowsSandboxFallbackPrompt {
+                        origin_thread_id: retry_origin_thread_id,
                         preset: retry_preset.clone(),
                         profile_selection: retry_profile_selection.clone(),
                     });

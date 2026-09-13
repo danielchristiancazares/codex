@@ -1,17 +1,15 @@
 //! Interactive tool request surfaces for `ChatWidget`.
 //!
 //! This module owns approval, permission, elicitation, and user-input prompts
-//! that block on user decisions.
+//! that block on user decisions. Prompts wait for streamed text, then bypass
+//! incomplete MCP groups that may need those decisions to finish.
 
 use super::*;
 
 impl ChatWidget {
     pub(super) fn on_exec_approval_request(&mut self, _id: String, ev: ExecApprovalRequestEvent) {
-        self.defer_or_handle(
-            ev,
-            InterruptManager::push_exec_approval,
-            Self::handle_exec_approval_now,
-        );
+        self.interrupts.push_exec_approval(ev);
+        self.flush_interrupt_queue();
     }
 
     pub(crate) fn on_apply_patch_approval_request(
@@ -19,11 +17,8 @@ impl ChatWidget {
         _id: String,
         ev: ApplyPatchApprovalRequestEvent,
     ) {
-        self.defer_or_handle(
-            ev,
-            InterruptManager::push_apply_patch_approval,
-            Self::handle_apply_patch_approval_now,
-        );
+        self.interrupts.push_apply_patch_approval(ev);
+        self.flush_interrupt_queue();
     }
 
     /// Handle guardian review lifecycle events for the current thread.
@@ -257,27 +252,18 @@ impl ChatWidget {
         request_id: AppServerRequestId,
         params: McpServerElicitationRequestParams,
     ) {
-        self.defer_or_handle(
-            (request_id, params),
-            |q, (request_id, params)| q.push_elicitation(request_id, params),
-            |s, (request_id, params)| s.handle_elicitation_request_now(request_id, params),
-        );
+        self.interrupts.push_elicitation(request_id, params);
+        self.flush_interrupt_queue();
     }
 
     pub(super) fn on_request_user_input(&mut self, ev: ToolRequestUserInputParams) {
-        self.defer_or_handle(
-            ev,
-            InterruptManager::push_user_input,
-            Self::handle_request_user_input_now,
-        );
+        self.interrupts.push_user_input(ev);
+        self.flush_interrupt_queue();
     }
 
     pub(super) fn on_request_permissions(&mut self, ev: RequestPermissionsEvent) {
-        self.defer_or_handle(
-            ev,
-            InterruptManager::push_request_permissions,
-            Self::handle_request_permissions_now,
-        );
+        self.interrupts.push_request_permissions(ev);
+        self.flush_interrupt_queue();
     }
 
     pub(crate) fn handle_exec_approval_now(&mut self, ev: ExecApprovalRequestEvent) {

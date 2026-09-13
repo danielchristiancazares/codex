@@ -5,6 +5,7 @@
 //! visible through streamed output so elapsed time and the interrupt key remain
 //! available until the turn lifecycle reports completion.
 
+use super::interrupts::InterruptPriority;
 use super::*;
 
 fn latest_summary_line(text: &str) -> Option<String> {
@@ -524,7 +525,12 @@ impl ChatWidget {
 
     pub(super) fn flush_interrupt_queue(&mut self) {
         loop {
-            let Some(interrupt) = self.interrupts.pop_front() else {
+            let priority = if self.active_mcp_group_has_incomplete_members() {
+                InterruptPriority::InteractivePrompts
+            } else {
+                InterruptPriority::ArrivalOrder
+            };
+            let Some(interrupt) = self.interrupts.pop_next(priority) else {
                 break;
             };
             if !self.can_handle_queued_interrupt_now(&interrupt) {
@@ -542,7 +548,8 @@ impl ChatWidget {
         if !self.active_mcp_group_has_incomplete_members() {
             return true;
         }
-        interrupt.starts_groupable_mcp_call()
+        interrupt.is_prompt()
+            || interrupt.starts_groupable_mcp_call()
             || interrupt
                 .mcp_completion_call_id()
                 .is_some_and(|call_id| self.active_mcp_group_owns_call(call_id))
@@ -556,9 +563,10 @@ impl ChatWidget {
         push: impl FnOnce(&mut InterruptManager, T),
         handle: impl FnOnce(&mut Self, T),
     ) {
-        // Preserve deterministic FIFO across queued interrupts: once anything
+        // Preserve deterministic FIFO for lifecycle activity: once anything
         // is queued due to an active write cycle, continue queueing until the
         // queue is flushed to avoid reordering (e.g., ExecEnd before ExecBegin).
+        // Interactive prompts enter the queue separately and can bypass blocked MCP activity.
         if self.stream_controller.is_some()
             || self.plan_stream_controller.is_some()
             || !self.interrupts.is_empty()

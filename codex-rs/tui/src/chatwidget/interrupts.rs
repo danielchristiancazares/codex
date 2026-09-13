@@ -55,6 +55,11 @@ pub(crate) struct InterruptManager {
     queue: VecDeque<QueuedInterrupt>,
 }
 
+pub(crate) enum InterruptPriority {
+    ArrivalOrder,
+    InteractivePrompts,
+}
+
 impl InterruptManager {
     pub(crate) fn new() -> Self {
         Self {
@@ -69,16 +74,7 @@ impl InterruptManager {
 
     /// Excludes lifecycle events that never claim protected interactive input.
     pub(crate) fn has_pending_prompt(&self) -> bool {
-        self.queue.iter().any(|interrupt| {
-            matches!(
-                interrupt,
-                QueuedInterrupt::ExecApproval(_)
-                    | QueuedInterrupt::ApplyPatchApproval(_)
-                    | QueuedInterrupt::Elicitation { .. }
-                    | QueuedInterrupt::RequestPermissions(_)
-                    | QueuedInterrupt::RequestUserInput(_)
-            )
-        })
+        self.queue.iter().any(QueuedInterrupt::is_prompt)
     }
 
     pub(crate) fn push_exec_approval(&mut self, ev: ExecApprovalRequestEvent) {
@@ -176,8 +172,20 @@ impl InterruptManager {
         self.queue.len() != original_len
     }
 
-    pub(crate) fn pop_front(&mut self) -> Option<QueuedInterrupt> {
-        self.queue.pop_front()
+    /// A running MCP group can depend on a prompt queued behind unrelated activity.
+    /// Preserve prompt order while letting those decisions unblock the group.
+    pub(crate) fn pop_next(&mut self, priority: InterruptPriority) -> Option<QueuedInterrupt> {
+        match priority {
+            InterruptPriority::ArrivalOrder => self.queue.pop_front(),
+            InterruptPriority::InteractivePrompts => {
+                let index = self
+                    .queue
+                    .iter()
+                    .position(QueuedInterrupt::is_prompt)
+                    .unwrap_or(0);
+                self.queue.remove(index)
+            }
+        }
     }
 
     pub(crate) fn push_front(&mut self, interrupt: QueuedInterrupt) {
@@ -186,6 +194,25 @@ impl InterruptManager {
 }
 
 impl QueuedInterrupt {
+    pub(crate) fn is_prompt(&self) -> bool {
+        match self {
+            Self::ExecApproval(_)
+            | Self::ApplyPatchApproval(_)
+            | Self::Elicitation { .. }
+            | Self::RequestPermissions(_)
+            | Self::RequestUserInput(_) => true,
+            Self::ItemStarted(_)
+            | Self::ItemCompleted(_)
+            | Self::PatchApplyBegin(_)
+            | Self::ViewImage(_)
+            | Self::ImageGenerationBegin
+            | Self::ImageGenerationEnd { .. }
+            | Self::WebSearchBegin(_)
+            | Self::WebSearchEnd { .. }
+            | Self::CollabEvent(_) => false,
+        }
+    }
+
     pub(crate) fn handle_now(self, chat: &mut ChatWidget) {
         match self {
             QueuedInterrupt::ExecApproval(ev) => chat.handle_exec_approval_now(ev),

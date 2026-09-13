@@ -1271,6 +1271,7 @@ pub(crate) enum AppEvent {
     /// Open the Windows sandbox fallback prompt after declining or failing elevation.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     OpenWindowsSandboxFallbackPrompt {
+        origin_thread_id: Option<ThreadId>,
         preset: ApprovalPreset,
         profile_selection: Option<PermissionProfileSelection>,
     },
@@ -1292,6 +1293,7 @@ pub(crate) enum AppEvent {
     /// Enable the Windows sandbox feature and switch to Agent mode.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     EnableWindowsSandboxForAgentMode {
+        origin_thread_id: Option<ThreadId>,
         preset: ApprovalPreset,
         mode: WindowsSandboxEnableMode,
         profile_selection: Option<PermissionProfileSelection>,

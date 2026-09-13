@@ -343,8 +343,10 @@ impl ChatWidget {
                     if crate::windows_sandbox::sandbox_setup_is_complete(
                         self.config.codex_home.as_path(),
                     ) {
+                        let origin_thread_id = self.thread_id();
                         return vec![Box::new(move |tx| {
                             tx.send(AppEvent::EnableWindowsSandboxForAgentMode {
+                                origin_thread_id,
                                 preset: preset.clone(),
                                 mode: WindowsSandboxEnableMode::Elevated,
                                 profile_selection: profile_selection.clone(),
