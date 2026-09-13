@@ -1197,7 +1197,13 @@ impl ChatWidget {
                 self.realtime_conversation.interruption_acknowledged_until =
                     Some(Instant::now() + INTERRUPTION_ACKNOWLEDGMENT);
             }
-            self.suppress_realtime_speaker();
+            if interrupted {
+                self.suppress_realtime_speaker();
+            } else {
+                // A quiet turn has no old playback to interrupt. Leave ingress open so a reply
+                // whose audio leads its caption does not lose its first packets.
+                self.release_realtime_speaker();
+            }
         }
         if active
             && role == "assistant"
@@ -1372,6 +1378,17 @@ impl ChatWidget {
             return;
         }
         let has_text = !text.trim().is_empty();
+        if role == "assistant"
+            && has_text
+            && self
+                .realtime_conversation
+                .assistant_transcript_generation
+                .is_none()
+        {
+            // A final-only caption owns the current voice input just like its first delta would.
+            self.realtime_conversation.assistant_transcript_generation =
+                Some(self.realtime_conversation.input_generation);
+        }
         if role == "assistant" && has_text {
             // appendSpeech's RPC acknowledgement only means the request was
             // queued. A subsequent assistant caption is the closest signal

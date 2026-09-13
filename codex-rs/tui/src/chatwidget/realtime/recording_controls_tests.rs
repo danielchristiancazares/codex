@@ -511,6 +511,34 @@ async fn voice_acknowledges_only_a_real_interruption_once() {
 }
 
 #[tokio::test]
+async fn voice_keeps_quiet_turn_audio_open_and_final_only_caption_releases_interruption() {
+    let (mut chat, _sender, _events, _ops) = make_chatwidget_manual_with_sender().await;
+    activate_voice(&mut chat);
+
+    chat.suppress_realtime_speaker();
+    chat.on_realtime_transcript_delta("user".to_string(), "hello".to_string());
+    assert_eq!(
+        chat.realtime_conversation.speaker_suppression_generation,
+        None
+    );
+    chat.on_realtime_transcript_done("user".to_string(), "hello".to_string());
+
+    chat.realtime_conversation.speaker_level = 3;
+    chat.on_realtime_transcript_delta("user".to_string(), "wait".to_string());
+    assert_eq!(
+        chat.realtime_conversation.speaker_suppression_generation,
+        Some(chat.realtime_conversation.input_generation)
+    );
+    chat.on_realtime_transcript_done("user".to_string(), "wait".to_string());
+    chat.on_realtime_transcript_done("assistant".to_string(), "ready".to_string());
+
+    assert_eq!(
+        chat.realtime_conversation.speaker_suppression_generation,
+        None
+    );
+}
+
+#[tokio::test]
 async fn voice_terminal_title_tracks_capture_activity_and_user_settings() {
     let (mut chat, _sender, _events, _ops) = make_chatwidget_manual_with_sender().await;
     let thread_id = activate_voice(&mut chat);

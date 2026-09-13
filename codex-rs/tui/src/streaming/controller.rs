@@ -187,7 +187,8 @@ impl StreamCore {
     /// transcript cell.
     fn finalize_remaining(&mut self) -> CoreFinalization {
         let (mut remaining, deferred_rows_reflow) = self.deferred_rows.take();
-        remaining.extend(self.state.drain_n(/*max_lines*/ usize::MAX));
+        let had_deferred_rows = !remaining.is_empty();
+        let mut queued = self.state.drain_n(/*max_lines*/ usize::MAX);
         let source = self.state.collector.finalize_and_take_source();
         let rendered = render_source(
             &source,
@@ -196,8 +197,28 @@ impl StreamCore {
             self.render_mode,
             self.inline_visualization_context.as_ref(),
         );
-        let tail_start = self.enqueued_stable_len.min(rendered.len());
-        remaining.extend(rendered.into_iter().skip(tail_start));
+        let first_changed_row = self
+            .render
+            .lines
+            .iter()
+            .zip(&rendered)
+            .position(|(before, after)| before != after)
+            .unwrap_or_else(|| self.render.lines.len().min(rendered.len()));
+        let queued_render_changed = !had_deferred_rows
+            && self.layout_bound_source_region.is_none()
+            && first_changed_row >= self.emitted_stable_len
+            && first_changed_row < self.enqueued_stable_len;
+        if queued_render_changed {
+            // Final source can join an unterminated soft continuation onto a row that was already
+            // queued. Keep only the unchanged queued prefix, then emit the canonical suffix.
+            queued.truncate(first_changed_row.saturating_sub(self.emitted_stable_len));
+            remaining.extend(queued);
+            remaining.extend(rendered.into_iter().skip(first_changed_row));
+        } else {
+            remaining.extend(queued);
+            let tail_start = self.enqueued_stable_len.min(rendered.len());
+            remaining.extend(rendered.into_iter().skip(tail_start));
+        }
         CoreFinalization {
             remaining_rows: remaining,
             canonical_source: source,
@@ -862,6 +883,28 @@ mod tests {
             1,
             "expected the streamed heading to be emitted once: {streamed:?}",
         );
+    }
+
+    #[test]
+    fn finalization_replaces_a_queued_file_link_row_changed_by_a_soft_continuation() {
+        let mut ctrl = stream_controller(Some(/*width*/ 80));
+        ctrl.push("- [binary](README.md)\n");
+        assert!(ctrl.queued_lines() > 0);
+        ctrl.push("  : core is the agent/business logic");
+
+        let rendered = ctrl
+            .finalize()
+            .unobserved_cell
+            .expect("finalized message")
+            .transcript_lines(u16::MAX)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(rendered.matches("binary").count(), 1);
+        assert_eq!(rendered.matches("agent/business logic").count(), 1);
+        insta::assert_snapshot!(rendered);
     }
 
     fn collect_plan_streamed_lines(deltas: &[&str], width: Option<usize>) -> Vec<String> {
