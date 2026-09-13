@@ -33,9 +33,11 @@ use codex_model_provider::ProviderUnauthorizedRecovery;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
+use codex_model_provider_info::COPILOT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::create_oss_provider_with_base_url;
+use codex_model_provider_info::built_in_model_providers;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
@@ -126,6 +128,21 @@ fn test_model_client_with_thread_id(
 
 fn test_model_provider() -> SharedModelProvider {
     test_model_client(SessionSource::Cli).state.provider.clone()
+}
+
+#[test]
+fn copilot_websocket_failures_do_not_permanently_enable_http_fallback() {
+    let mut client = test_model_client(SessionSource::Cli);
+    let provider = built_in_model_providers(/*openai_base_url*/ None)
+        .remove(COPILOT_PROVIDER_ID)
+        .expect("built-in Copilot provider");
+    Arc::get_mut(&mut client.state)
+        .expect("test client should have unique session state")
+        .provider = create_model_provider(provider, /*auth_manager*/ None);
+
+    assert!(client.responses_websocket_enabled());
+    assert!(!client.force_http_fallback(&test_session_telemetry(), &test_model_info()));
+    assert!(client.responses_websocket_enabled());
 }
 
 fn test_responses_metadata_for_client(

@@ -1,8 +1,9 @@
-//! Commits a complete capacity-picker selection through the existing settings boundary.
+//! Commits model-picker selections through one settings and persistence operation.
 
 use super::App;
 use crate::app_event::AppEvent;
 use crate::app_server_session::AppServerSession;
+use crate::config_update::format_config_error;
 use crate::legacy_core::config::Config;
 use codex_app_server_protocol::ConfigEdit;
 use codex_protocol::openai_models::ContextWindowCapacity;
@@ -10,6 +11,15 @@ use codex_protocol::openai_models::ReasoningEffort;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NonEmptyString(String);
+
+impl NonEmptyString {
+    fn new(model: &str) -> Result<Self, InvalidModelSelection> {
+        if model.trim().is_empty() {
+            return Err(InvalidModelSelection);
+        }
+        Ok(Self(model.to_owned()))
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("the selected model must have a nonempty name")]
@@ -30,10 +40,10 @@ impl ModelSelectionScope {
         }
     }
 
-    fn apply(self, app: &mut App, effort: ReasoningEffort) {
+    fn apply(self, app: &mut App, effort: Option<ReasoningEffort>) {
         match self {
             Self::Global => {}
-            Self::GlobalAndPlan => app.on_update_plan_mode_reasoning_effort(Some(effort)),
+            Self::GlobalAndPlan => app.on_update_plan_mode_reasoning_effort(effort),
         }
     }
 }
@@ -78,7 +88,7 @@ impl ContextWindowSelection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ModelSelection {
     model: NonEmptyString,
-    effort: ReasoningEffort,
+    effort: Option<ReasoningEffort>,
     scope: ModelSelectionScope,
 }
 
@@ -88,12 +98,20 @@ impl ModelSelection {
         effort: ReasoningEffort,
         scope: ModelSelectionScope,
     ) -> Result<Self, InvalidModelSelection> {
-        if model.trim().is_empty() {
-            return Err(InvalidModelSelection);
-        }
         Ok(Self {
-            model: NonEmptyString(model.to_owned()),
-            effort,
+            model: NonEmptyString::new(model)?,
+            effort: Some(effort),
+            scope,
+        })
+    }
+
+    pub(crate) fn with_default_reasoning(
+        model: &str,
+        scope: ModelSelectionScope,
+    ) -> Result<Self, InvalidModelSelection> {
+        Ok(Self {
+            model: NonEmptyString::new(model)?,
+            effort: None,
             scope,
         })
     }
@@ -102,8 +120,8 @@ impl ModelSelection {
         &self.model.0
     }
 
-    pub(crate) fn effort(&self) -> &ReasoningEffort {
-        &self.effort
+    pub(crate) fn effort(&self) -> Option<&ReasoningEffort> {
+        self.effort.as_ref()
     }
 
     pub(crate) fn commit(self, context_window: ContextWindowSelection) -> ModelSelectionCommit {
@@ -146,16 +164,15 @@ impl App {
 
         let model_changed = self.chat_widget.current_model() != model
             || self.chat_widget.current_collaboration_mode().model() != model;
-        let defaults = if effort == ReasoningEffort::Ultra {
+        let defaults = if effort == Some(ReasoningEffort::Ultra) {
             // Ultra remains conversation-scoped; the saved ordinary effort is preserved.
-            match self.on_apply_advanced_reasoning(&model, effort.clone()) {
-                Some(default_effort) => ModelDefaults::Save(default_effort),
-                None => ModelDefaults::Retain,
-            }
+            ModelDefaults::Conversation(
+                self.on_apply_advanced_reasoning(&model, ReasoningEffort::Ultra),
+            )
         } else {
             self.config.model = Some(model.clone());
             self.chat_widget.set_model(&model);
-            self.on_update_reasoning_effort(Some(effort.clone()));
+            self.on_update_reasoning_effort(effort.clone());
             ModelDefaults::Save(effort.clone())
         };
         scope.apply(self, effort.clone());
@@ -164,10 +181,10 @@ impl App {
             .apply_context_window_selection(context_window);
 
         if model_changed {
-            self.sync_active_thread_model_setting(app_server, model.clone(), Some(effort.clone()))
+            self.sync_active_thread_model_setting(app_server, model.clone(), effort.clone())
                 .await;
         } else if let Some(mut params) =
-            self.active_thread_reasoning_setting_update_params(Some(effort))
+            self.active_thread_reasoning_setting_update_params(effort)
         {
             params.collaboration_mode = Some(self.chat_widget.effective_collaboration_mode());
             self.send_thread_settings_update(app_server, params).await;
@@ -187,8 +204,8 @@ impl App {
 }
 
 enum ModelDefaults {
-    Save(ReasoningEffort),
-    Retain,
+    Save(Option<ReasoningEffort>),
+    Conversation(Option<ReasoningEffort>),
 }
 
 impl ModelDefaults {
@@ -203,19 +220,33 @@ impl ModelDefaults {
         match self {
             Self::Save(effort) => app.app_event_tx.send(AppEvent::PersistModelSelection {
                 model: model.0,
-                effort: Some(effort),
+                effort,
                 context_window,
                 scope,
             }),
-            Self::Retain => {
-                let mut edits = Vec::new();
+            Self::Conversation(default_effort) => {
+                let model = model.0;
+                let mut edits = default_effort.as_ref().map_or_else(Vec::new, |effort| {
+                    crate::config_update::build_model_selection_edits(&model, Some(effort))
+                });
                 context_window.append_edits(&mut edits);
                 if let Err(error) = app
-                    .persist_model_defaults(app_server.request_handle(), edits, "context window")
+                    .persist_model_defaults(
+                        app_server.request_handle(),
+                        edits,
+                        "default model and reasoning effort",
+                    )
                     .await
                 {
+                    let error = format_config_error(&error);
+                    tracing::error!(%error, "failed to persist conversation model");
                     app.chat_widget
-                        .add_error_message(format!("Failed to save context window: {error}"));
+                        .add_error_message(format!("Failed to save default model: {error}"));
+                } else {
+                    app.chat_widget.add_info_message(
+                        format!("Model changed to {model} ultra for this conversation"),
+                        /*hint*/ None,
+                    );
                 }
             }
         }

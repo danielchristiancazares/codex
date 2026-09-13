@@ -282,13 +282,21 @@ impl ChatWidget {
         effort_for_action: Option<ReasoningEffortConfig>,
         should_prompt_plan_mode_scope: bool,
     ) -> Vec<SelectionAction> {
+        if model_for_action != LUNA_RESERVE_MODEL
+            && (!should_prompt_plan_mode_scope
+                || effort_for_action == Some(ReasoningEffortConfig::Ultra))
+        {
+            return self.context_window_stage(
+                &model_for_action,
+                effort_for_action,
+                ModelSelectionScope::Global,
+            );
+        }
         let warning = effort_for_action
             .as_ref()
             .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
         let thread_id = self.thread_id();
-        let selected_model = model_for_action.clone();
-        let selected_effort = effort_for_action.clone();
-        let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+        vec![Box::new(move |tx| {
             if model_for_action == LUNA_RESERVE_MODEL {
                 // Reserve is temporary: update the active task without persisting a model default.
                 if let Some(thread_id) = thread_id {
@@ -297,24 +305,10 @@ impl ChatWidget {
                         effort: effort_for_action.clone(),
                     });
                 }
-            } else if effort_for_action == Some(ReasoningEffortConfig::Ultra) {
-                tx.send(AppEvent::ApplyAdvancedReasoning {
-                    model: model_for_action.clone(),
-                    effort: ReasoningEffortConfig::Ultra,
-                });
-            } else if should_prompt_plan_mode_scope {
+            } else {
                 tx.send(AppEvent::OpenPlanReasoningScopePrompt {
                     model: model_for_action.clone(),
                     effort: effort_for_action.clone(),
-                });
-            } else {
-                tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-                tx.send(AppEvent::UpdateReasoningEffort(effort_for_action.clone()));
-                tx.send(AppEvent::PersistModelSelection {
-                    model: model_for_action.clone(),
-                    effort: effort_for_action.clone(),
-                    context_window: Default::default(),
-                    scope: Default::default(),
                 });
             }
             if let Some(warning) = warning.clone() {
@@ -322,21 +316,7 @@ impl ChatWidget {
                     history_cell::new_warning_event(warning),
                 )));
             }
-        })];
-        if selected_model != LUNA_RESERVE_MODEL
-            && (!should_prompt_plan_mode_scope
-                || selected_effort == Some(ReasoningEffortConfig::Ultra))
-            && let Some(effort) = selected_effort.as_ref()
-        {
-            self.context_window_stage(
-                &selected_model,
-                effort,
-                ModelSelectionScope::Global,
-                actions,
-            )
-        } else {
-            actions
-        }
+        })]
     }
 
     fn should_prompt_plan_mode_reasoning_scope(
@@ -422,35 +402,8 @@ impl ChatWidget {
                 }
             }
         })];
-        let selected_model = model.clone();
-        let selected_effort = effort.clone();
-        let all_modes_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::UpdateModel(model.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(effort.clone()));
-            tx.send(AppEvent::UpdatePlanModeReasoningEffort(effort.clone()));
-            tx.send(AppEvent::PersistPlanModeReasoningEffort(effort.clone()));
-            tx.send(AppEvent::PersistModelSelection {
-                model: model.clone(),
-                effort: effort.clone(),
-                context_window: Default::default(),
-                scope: Default::default(),
-            });
-            if let Some(warning) = warning.clone() {
-                tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_warning_event(warning),
-                )));
-            }
-        })];
-
-        let all_modes_actions = match selected_effort.as_ref() {
-            Some(effort) => self.context_window_stage(
-                &selected_model,
-                effort,
-                ModelSelectionScope::GlobalAndPlan,
-                all_modes_actions,
-            ),
-            None => all_modes_actions,
-        };
+        let all_modes_actions =
+            self.context_window_stage(&model, effort, ModelSelectionScope::GlobalAndPlan);
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(PLAN_MODE_REASONING_SCOPE_TITLE.to_string()),

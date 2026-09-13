@@ -157,6 +157,11 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         ProviderCapabilities::default()
     }
 
+    /// Returns whether a failed Responses WebSocket may fall back to HTTP for this provider.
+    fn allows_http_fallback(&self) -> bool {
+        true
+    }
+
     /// Returns the preferred model used for automatic approval review.
     ///
     /// Providers that require backend-specific model IDs should override this.

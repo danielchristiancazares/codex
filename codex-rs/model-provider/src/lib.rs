@@ -1,10 +1,12 @@
 mod amazon_bedrock;
 mod auth;
 mod bearer_auth_provider;
+mod catalog;
 mod copilot;
 mod models_endpoint;
 mod models_identity;
 mod provider;
+mod scoped_catalog;
 mod shared_state;
 pub mod test_support;
 
@@ -18,6 +20,9 @@ pub use auth::auth_provider_from_auth_manager;
 pub use auth::unauthenticated_auth_provider;
 pub use bearer_auth_provider::BearerAuthProvider;
 pub use bearer_auth_provider::BearerAuthProvider as CoreAuthProvider;
+pub use catalog::ModelCatalogSettings;
+pub use catalog::build_models_manager;
+pub use catalog::build_preview_models_manager;
 pub use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 pub use codex_model_provider_info::AMAZON_BEDROCK_RUNTIME_PROVIDER_ID;
 pub use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
@@ -34,5 +39,4 @@ pub use provider::ProviderUnauthorizedRecovery;
 pub use provider::RemoteCompactionSupport;
 pub use provider::SharedModelProvider;
 pub use provider::create_model_provider;
-mod scoped_catalog;
 pub use scoped_catalog::ScopedModelCatalog;

@@ -271,18 +271,10 @@ impl CatalogRequestProcessor {
                                 "model provider `{model_provider}` is not configured"
                             ))
                         })?;
-                    let use_provider_cache =
-                        provider_info.is_openai() || provider_info.is_copilot();
-                    let provider =
-                        create_model_provider(provider_info, Some(thread_manager.auth_manager()));
-                    if use_provider_cache {
-                        provider.models_manager(
-                            thread_manager.auth_manager().connection_credential_home(),
-                            /*config_model_catalog*/ None,
-                        )
-                    } else {
-                        provider.models_manager_without_cache(/*config_model_catalog*/ None)
-                    }
+                    codex_model_provider::build_preview_models_manager(
+                        provider_info,
+                        thread_manager.auth_manager(),
+                    )
                 }
             }
             None => thread_manager.get_models_manager_for_config(&config),

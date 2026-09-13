@@ -22,25 +22,42 @@ impl ChatWidget {
     pub(super) fn context_window_stage(
         &self,
         model: &str,
-        effort: &ReasoningEffortConfig,
+        effort: Option<ReasoningEffortConfig>,
         scope: ModelSelectionScope,
-        default_actions: Vec<SelectionAction>,
     ) -> Vec<SelectionAction> {
-        let (normal, maximum) = self.catalog_context_windows(model);
-        normal.select(
-            maximum,
-            || default_actions,
-            |_, _| match ModelSelection::new(model, effort.clone(), scope) {
-                Ok(selection) => vec![Box::new(move |tx: &AppEventSender| {
-                    tx.send(AppEvent::OpenContextWindowPicker(selection.clone()));
-                }) as SelectionAction],
-                Err(error) => vec![Box::new(move |tx: &AppEventSender| {
+        let selection = match effort {
+            Some(effort) => ModelSelection::new(model, effort, scope),
+            None => ModelSelection::with_default_reasoning(model, scope),
+        };
+        let selection = match selection {
+            Ok(selection) => selection,
+            Err(error) => {
+                return vec![Box::new(move |tx: &AppEventSender| {
                     tx.send(AppEvent::InsertHistoryCell(Box::new(
                         history_cell::new_error_event(error.to_string()),
                     )));
-                }) as SelectionAction],
-            },
-        )
+                })];
+            }
+        };
+        let warning = selection
+            .effort()
+            .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
+        let (normal, maximum) = self.catalog_context_windows(model);
+        let choose_capacity = normal.select(maximum, || false, |_, _| true);
+        vec![Box::new(move |tx: &AppEventSender| {
+            if choose_capacity {
+                tx.send(AppEvent::OpenContextWindowPicker(selection.clone()));
+            } else {
+                tx.send(AppEvent::CommitModelSelection(
+                    selection.clone().commit(ContextWindowSelection::default()),
+                ));
+                if let Some(warning) = warning.clone() {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_warning_event(warning),
+                    )));
+                }
+            }
+        })]
     }
 
     pub(crate) fn open_context_window_picker(&mut self, selection: ModelSelection) {
@@ -90,7 +107,9 @@ impl ContextWindowStep {
                     .into_iter()
                     .map(|(label, capacity)| {
                         let selection = choice.clone();
-                        let warning = chat.ultra_reasoning_concurrency_warning(selection.effort());
+                        let warning = selection
+                            .effort()
+                            .and_then(|effort| chat.ultra_reasoning_concurrency_warning(effort));
                         let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                             tx.send(AppEvent::CommitModelSelection(
                                 selection

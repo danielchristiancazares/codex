@@ -108,6 +108,10 @@ impl ModelProvider for CopilotModelProvider {
         }
     }
 
+    fn allows_http_fallback(&self) -> bool {
+        false
+    }
+
     fn auth_manager(&self) -> Option<Arc<AuthManager>> {
         None
     }

@@ -401,13 +401,18 @@ pub fn build_models_manager(
     config: &Config,
     auth_manager: Arc<AuthManager>,
 ) -> SharedModelsManager {
-    let credential_home = auth_manager.connection_credential_home();
-    let provider = create_model_provider(config.model_provider.clone(), Some(auth_manager));
-    let manager = provider.models_manager(credential_home, config.model_catalog.clone());
-    manager.set_api_key_model_discovery_enabled(
-        config.features.enabled(Feature::ApiKeyModelDiscovery),
-    );
-    manager
+    codex_model_provider::build_models_manager(
+        config.model_provider.clone(),
+        auth_manager,
+        model_catalog_settings(config),
+    )
+}
+
+fn model_catalog_settings(config: &Config) -> codex_model_provider::ModelCatalogSettings {
+    codex_model_provider::ModelCatalogSettings {
+        model_catalog: config.model_catalog.clone(),
+        api_key_model_discovery_enabled: config.features.enabled(Feature::ApiKeyModelDiscovery),
+    }
 }
 
 pub fn thread_store_from_config(
@@ -850,7 +855,7 @@ impl ThreadManager {
         self.state.models_manager.for_provider(
             &config.model_provider,
             &self.state.auth_manager,
-            || build_models_manager(config, self.state.auth_manager.clone()),
+            model_catalog_settings(config),
         )
     }
 
@@ -2123,11 +2128,11 @@ impl ThreadManagerState {
         } else {
             codex_sandboxing::WindowsSandboxProxySettingsMode::Reconcile
         };
-        let models_manager =
-            self.models_manager
-                .for_provider(&config.model_provider, &auth_manager, || {
-                    build_models_manager(&config, auth_manager.clone())
-                });
+        let models_manager = self.models_manager.for_provider(
+            &config.model_provider,
+            &auth_manager,
+            model_catalog_settings(&config),
+        );
         let (session, io) = Session::spawn(SessionSpawnArgs {
             config,
             allow_provider_model_fallback,
