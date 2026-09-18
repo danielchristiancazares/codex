@@ -161,6 +161,18 @@ Use `retry_on_overload(...)` for transient overload failures (`ServerBusyError`)
 Do not blindly retry all errors. For `InvalidParamsError` or
 `MethodNotFoundError`, fix the input or use the runtime pinned by the SDK.
 
+## Does cancelling an async call stop its turn?
+
+Cancelling a turn start withdraws requests that are still queued. If the
+runtime already accepted the turn, the SDK attempts to interrupt that exact
+turn in the background and logs cleanup failures. Keep the client transport
+open for cleanup; cancellation cannot undo inference that already occurred.
+
+Once you have a turn handle, use `await turn.interrupt()` to stop execution.
+Cancelling event consumption alone does not request interruption. Async
+overload retry backoff is cancellable and does not schedule another attempt
+after cancellation.
+
 ## Common pitfalls
 
 - Starting a new thread for every prompt when you wanted continuity.

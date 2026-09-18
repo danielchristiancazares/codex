@@ -4,11 +4,11 @@ import asyncio
 import threading
 from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextvars import copy_context
 from typing import AsyncIterator, Callable, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 
+from ._async_request import call_cancellable
 from ._goal import _GoalOperationState
 from ._message_router import _TurnSubscription
 from .client import CodexClient, CodexConfig
@@ -45,6 +45,7 @@ from .generated.v2_all import (
     TurnSteerResponse,
 )
 from .models import InitializeResponse, JsonObject, Notification
+from .retry import _retry_on_overload_async
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ParamsT = ParamSpec("ParamsT")
@@ -137,11 +138,9 @@ class AsyncCodexClient:
         response_model: type[ModelT],
     ) -> ModelT:
         """Send a typed JSON-RPC request through the wrapped sync client."""
-        return await self._call_sync(
-            self._sync.request,
-            method,
-            params,
-            response_model=response_model,
+        return await call_cancellable(
+            lambda: self._sync.request(method, params, response_model=response_model),
+            self._cancel_started_turn,
         )
 
     async def account_login_start(
@@ -295,7 +294,7 @@ class AsyncCodexClient:
         input_items: list[JsonObject] | JsonObject | str,
         params: V2TurnStartParams | JsonObject | None = None,
     ) -> TurnStartResponse:
-        """Start a turn, releasing an unclaimed result if the caller is cancelled."""
+        """Start a turn, withdrawing queued work or interrupting a cancelled acceptance."""
         return (await self._start_turn(thread_id, input_items, params, for_handle=False))[0]
 
     async def _start_turn(
@@ -305,25 +304,24 @@ class AsyncCodexClient:
         params: V2TurnStartParams | JsonObject | None,
         for_handle: bool,
     ) -> tuple[TurnStartResponse, _TurnSubscription | None]:
-        operation = _TURN_START_EXECUTOR.submit(
-            copy_context().run, self._sync._start_turn, thread_id, input_items, params, for_handle
+        def discard_result(result: tuple[TurnStartResponse, _TurnSubscription | None]) -> None:
+            _, subscription = result
+            if subscription is not None:
+                subscription.close()
+
+        return await call_cancellable(
+            lambda: self._sync._start_turn(thread_id, input_items, params, for_handle),
+            self._cancel_started_turn,
+            executor=_TURN_START_EXECUTOR,
+            discard_result=discard_result,
         )
+
+    def _cancel_started_turn(self, thread_id: str, turn_id: str) -> None:
+        self._sync.register_turn_notifications(turn_id)
         try:
-            return await asyncio.wrap_future(operation)
-        except asyncio.CancelledError:
-
-            def discard_cancelled_result(
-                completed: Future[tuple[TurnStartResponse, _TurnSubscription | None]],
-            ) -> None:
-                try:
-                    _, subscription = completed.result()
-                except BaseException:
-                    return
-                if subscription is not None:
-                    subscription.close()
-
-            operation.add_done_callback(discard_cancelled_result)
-            raise
+            self._sync.turn_interrupt(thread_id, turn_id)
+        finally:
+            self._sync.unregister_turn_notifications(turn_id)
 
     async def turn_interrupt(self, thread_id: str, turn_id: str) -> TurnInterruptResponse:
         """Interrupt a turn using the wrapped sync client."""
@@ -357,12 +355,9 @@ class AsyncCodexClient:
         initial_delay_s: float = 0.25,
         max_delay_s: float = 2.0,
     ) -> ModelT:
-        """Send a typed request with the sync client's overload retry policy."""
-        return await self._call_sync(
-            self._sync.request_with_retry_on_overload,
-            method,
-            params,
-            response_model=response_model,
+        """Retry overload failures with backoff that stops when this await is cancelled."""
+        return await _retry_on_overload_async(
+            lambda: self.request(method, params, response_model=response_model),
             max_attempts=max_attempts,
             initial_delay_s=initial_delay_s,
             max_delay_s=max_delay_s,
@@ -402,7 +397,8 @@ class AsyncCodexClient:
         params: V2TurnStartParams | JsonObject | None = None,
     ) -> AsyncIterator[AgentMessageDeltaNotification]:
         """Stream text deltas from one turn without monopolizing the event loop."""
-        iterator = self._sync.stream_text(thread_id, text, params)
+        started = await self.turn_start(thread_id, text, params)
+        iterator = self._sync._stream_turn_text(started.turn.id)
         while True:
             has_value, chunk = await asyncio.to_thread(
                 self._next_from_iterator,
