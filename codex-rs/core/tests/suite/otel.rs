@@ -509,7 +509,7 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
                 line.contains("codex.sse_event")
                     && line.contains("event.kind=response.completed")
                     && line.contains("error.message")
-                    && line.contains("failed to parse ResponseCompleted")
+                    && line.contains("invalid response.completed event")
             })
             .map(|_| Ok(()))
             .unwrap_or(Err("missing codex.sse_event".to_string()))

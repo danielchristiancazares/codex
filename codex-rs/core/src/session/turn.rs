@@ -1620,6 +1620,16 @@ async fn run_sampling_request(
                     }
                     return Err(err);
                 }
+                CodexErrorDetails::IncompleteResponse(failure) => {
+                    // The server already charged for this attempt; account for it once
+                    // before surfacing the terminal failure instead of sampling again.
+                    failure
+                        .record_usage(|usage| {
+                            sess.update_token_usage_info(&turn_context, Some(usage))
+                        })
+                        .await;
+                    return Err(err);
+                }
                 _ => err,
             },
         };

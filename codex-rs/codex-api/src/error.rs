@@ -13,6 +13,12 @@ pub enum ApiError {
     Api { status: StatusCode, message: String },
     #[error("stream error: {0}")]
     Stream(String),
+    /// Terminal `response.incomplete`; carries the reported usage for accounting.
+    #[error(transparent)]
+    IncompleteResponse(codex_protocol::IncompleteResponse),
+    /// Terminal malformed required event; carries bounded raw diagnostics.
+    #[error(transparent)]
+    ResponseProtocol(codex_protocol::ResponseProtocolFailure),
     #[error("context window exceeded")]
     ContextWindowExceeded,
     #[error("quota exceeded")]

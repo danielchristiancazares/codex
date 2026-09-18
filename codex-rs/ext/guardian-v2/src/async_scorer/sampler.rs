@@ -232,6 +232,8 @@ impl LunaSampler {
             | LunaSamplerError::InputTooLarge
             | LunaSamplerError::Api(
                 ApiError::Transport(TransportError::Build(_))
+                | ApiError::IncompleteResponse(_)
+                | ApiError::ResponseProtocol(_)
                 | ApiError::ContextWindowExceeded
                 | ApiError::QuotaExceeded
                 | ApiError::UsageNotIncluded

@@ -92,6 +92,18 @@ pub enum CodexErrorDetails {
     /// The Session loop treats this as a transient error and will automatically retry the turn.
     #[error("stream disconnected before completion: {0}")]
     Stream(String),
+    /// The server finished the response without completing it (`response.incomplete`).
+    ///
+    /// This is a terminal server decision, not a transport interruption, so the turn
+    /// must not be retried.
+    #[error(transparent)]
+    IncompleteResponse(crate::IncompleteResponse),
+    /// A required Responses stream event could not be decoded.
+    ///
+    /// Sampling the same request again would not repair a malformed stream, so this is
+    /// terminal as well.
+    #[error(transparent)]
+    ResponseProtocol(crate::ResponseProtocolFailure),
     /// A retryable upstream rate limit received inside the response stream.
     #[error("rate limit exceeded: {0}")]
     RateLimitExceeded(String),
@@ -376,6 +388,8 @@ impl CodexErr {
             | CodexErrorDetails::Interrupted
             | CodexErrorDetails::EnvVar(_)
             | CodexErrorDetails::Fatal(_)
+            | CodexErrorDetails::IncompleteResponse(_)
+            | CodexErrorDetails::ResponseProtocol(_)
             | CodexErrorDetails::UsageNotIncluded
             | CodexErrorDetails::QuotaExceeded
             | CodexErrorDetails::InvalidImageRequest()

@@ -11,6 +11,7 @@ use crate::rate_limits::parse_rate_limit_event;
 use crate::safety_buffering::treatment_from_headers;
 use crate::sse::ResponsesStreamEvent;
 use crate::sse::process_responses_event;
+use crate::sse::responses::response_protocol_api_error;
 use crate::telemetry::WebsocketEventMetadata;
 use crate::telemetry::WebsocketTelemetry;
 use codex_client::TransportError;
@@ -39,7 +40,6 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tracing::Instrument;
 use tracing::Span;
-use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::instrument;
@@ -781,8 +781,13 @@ async fn run_websocket_response_stream(
                 let event = match event_result {
                     Ok(event) => event,
                     Err(err) => {
-                        debug!("failed to parse websocket event: {err}, data: {text}");
-                        continue;
+                        // A frame that is not even valid JSON cannot be recovered by
+                        // reading further; fail the response with bounded diagnostics.
+                        return Err(response_protocol_api_error(
+                            "invalid_json",
+                            &text,
+                            &err.to_string(),
+                        ));
                     }
                 };
                 emit_responses_websocket_timing_event(
@@ -858,7 +863,7 @@ async fn run_websocket_response_stream(
                         "response event consumer dropped".to_string(),
                     ));
                 }
-                match process_responses_event(event) {
+                match process_responses_event(event, &text) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
                         let _ = tx_event.send(Ok(event)).await;
@@ -873,7 +878,11 @@ async fn run_websocket_response_stream(
                 }
             }
             Message::Binary(_) => {
-                return Err(ApiError::Stream("unexpected binary websocket event".into()));
+                return Err(response_protocol_api_error(
+                    "binary_frame",
+                    "",
+                    "unexpected binary websocket event",
+                ));
             }
             Message::Close(_) => {
                 return Err(ApiError::Stream(
