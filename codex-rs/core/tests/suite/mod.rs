@@ -141,6 +141,7 @@ mod reasoning_effort_override;
 mod remote_env;
 mod remote_models;
 mod request_compression;
+mod request_estimate;
 #[cfg(not(target_os = "windows"))]
 mod request_permissions;
 #[cfg(not(target_os = "windows"))]
@@ -178,6 +179,7 @@ mod stream_error_allows_next_turn;
 mod stream_no_completed;
 mod subagent_notifications;
 mod subagent_service_tier;
+mod token_accounting;
 mod token_budget;
 mod token_usage_rollout;
 mod tool_harness;

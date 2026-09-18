@@ -54,7 +54,17 @@ async fn context_window_token_status_with_config(
     config: &Config,
     model_info: &ModelInfo,
 ) -> ContextWindowTokenStatus {
-    let active_context_tokens = sess.get_total_token_usage().await;
+    let (mut history, server_reasoning_included) = {
+        let state = sess.state.lock().await;
+        (state.history.clone(), state.server_reasoning_included())
+    };
+    // Stored usage already measures the submitted prompt or a model-visible recount.
+    // Project only the history used for additional local estimates; subtracting the
+    // full history's projection delta would discount previously counted content again.
+    history.project_model_visible_content(&model_info.input_modalities);
+    let active_context_tokens = history
+        .get_total_token_usage(server_reasoning_included)
+        .max(0);
 
     // Count either the full active context or only the tokens added after the initial prefix.
     let (auto_compact_scope_tokens, auto_compact_scope_limit, auto_compact_window_prefill_tokens) =
@@ -119,3 +129,7 @@ async fn context_window_token_status_with_config(
         token_limit_reached,
     }
 }
+
+#[cfg(test)]
+#[path = "context_window_tests.rs"]
+mod tests;

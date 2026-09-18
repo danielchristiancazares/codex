@@ -25,6 +25,8 @@
 //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
 //! fails, normal stream retry/fallback logic handles recovery on the same turn.
 
+mod request_estimate;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -872,6 +874,7 @@ impl ModelClient {
             client_metadata: Some(responses_metadata.client_metadata()),
             access_programs: None,
         };
+        request_estimate::record(&request, model_info, responses_metadata);
         Ok(request)
     }
 
