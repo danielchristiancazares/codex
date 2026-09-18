@@ -173,7 +173,14 @@ async fn code_mode_model_output_uses_structured_host_timing(
     let seconds = Duration::from_nanos(code_mode_host_duration_ns).as_secs_f32();
     let seconds = (seconds * 10.0).round() / 10.0;
     assert_eq!(
-        output["output"][0]["text"],
+        output["output"][0]["text"]
+            .as_str()
+            .context("text output")?
+            .strip_prefix("Captured output ")
+            .context("capture receipt")?
+            .split_once('\n')
+            .context("capture receipt header")?
+            .1,
         format!("{status}\nWall time {seconds:.1} seconds\nOutput:\n")
     );
     Ok(())

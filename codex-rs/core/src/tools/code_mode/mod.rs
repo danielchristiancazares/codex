@@ -31,6 +31,7 @@ use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
 use crate::tools::ExecutedToolCalls;
+use crate::tools::captured_output::capture;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
@@ -39,6 +40,7 @@ use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
 use crate::unified_exec::resolve_max_tokens;
 use codex_protocol::openai_models::ToolMode;
+use codex_tools::CapturedOutput;
 use codex_tools::ToolName;
 use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -248,11 +250,12 @@ impl CodeModeService {
 }
 
 pub(super) async fn handle_runtime_response(
+    session: &Session,
     model_info: &codex_protocol::openai_models::ModelInfo,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
     wall_time: Duration,
-) -> Result<FunctionToolOutput, String> {
+) -> Result<CapturedOutput<FunctionToolOutput>, String> {
     let script_status = format_script_status(&response);
     let supports_original = can_request_original_image_detail(model_info);
 
@@ -260,16 +263,38 @@ pub(super) async fn handle_runtime_response(
         RuntimeResponse::Yielded { content_items, .. } => {
             let mut content_items = into_function_call_output_content_items(content_items);
             sanitize_image_detail_items(supports_original, &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
+            let captured = capture_text(&content_items);
+            content_items = truncate_code_mode_result(
+                content_items,
+                max_output_tokens,
+                model_info.truncation_policy.into(),
+            );
             prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
+            Ok(capture(
+                session,
+                FunctionToolOutput::from_content(content_items, Some(true)),
+                captured,
+                0,
+            )
+            .await)
         }
         RuntimeResponse::Terminated { content_items, .. } => {
             let mut content_items = into_function_call_output_content_items(content_items);
             sanitize_image_detail_items(supports_original, &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
+            let captured = capture_text(&content_items);
+            content_items = truncate_code_mode_result(
+                content_items,
+                max_output_tokens,
+                model_info.truncation_policy.into(),
+            );
             prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
+            Ok(capture(
+                session,
+                FunctionToolOutput::from_content(content_items, Some(true)),
+                captured,
+                0,
+            )
+            .await)
         }
         RuntimeResponse::Result {
             content_items,
@@ -284,14 +309,35 @@ pub(super) async fn handle_runtime_response(
                     text: format!("Script error:\n{error_text}"),
                 });
             }
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, wall_time);
-            Ok(FunctionToolOutput::from_content(
+            let captured = capture_text(&content_items);
+            content_items = truncate_code_mode_result(
                 content_items,
-                Some(success),
-            ))
+                max_output_tokens,
+                model_info.truncation_policy.into(),
+            );
+            prepend_script_status(&mut content_items, &script_status, wall_time);
+            Ok(capture(
+                session,
+                FunctionToolOutput::from_content(content_items, Some(success)),
+                captured,
+                0,
+            )
+            .await)
         }
     }
+}
+
+fn capture_text(items: &[FunctionCallOutputContentItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            FunctionCallOutputContentItem::InputText { text } => Some(text.as_str()),
+            FunctionCallOutputContentItem::InputImage { .. }
+            | FunctionCallOutputContentItem::InputAudio { .. }
+            | FunctionCallOutputContentItem::EncryptedContent { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn format_script_status(response: &RuntimeResponse) -> String {
@@ -323,9 +369,16 @@ fn prepend_script_status(
 fn truncate_code_mode_result(
     items: Vec<FunctionCallOutputContentItem>,
     max_output_tokens: Option<usize>,
+    history_policy: TruncationPolicy,
 ) -> Vec<FunctionCallOutputContentItem> {
-    let max_output_tokens = resolve_max_tokens(max_output_tokens);
-    let policy = TruncationPolicy::Tokens(max_output_tokens);
+    // Leave room for the script status and recovery receipt within the 10K item cap.
+    let max_output_tokens = resolve_max_tokens(max_output_tokens).min(9_500);
+    let requested_policy = TruncationPolicy::Tokens(max_output_tokens);
+    let policy = if requested_policy.byte_budget() <= history_policy.byte_budget() {
+        requested_policy
+    } else {
+        history_policy
+    };
     if items
         .iter()
         .all(|item| matches!(item, FunctionCallOutputContentItem::InputText { .. }))
@@ -524,7 +577,7 @@ mod tests {
         }];
 
         assert_eq!(
-            truncate_code_mode_result(items, Some(5)),
+            truncate_code_mode_result(items, Some(5), super::TruncationPolicy::Tokens(10_000)),
             vec![FunctionCallOutputContentItem::InputText {
                 text: concat!(
                     "Warning: truncated output (original token count: 10)\n",
@@ -543,7 +596,7 @@ mod tests {
         }];
 
         assert_eq!(
-            truncate_code_mode_result(items, Some(5)),
+            truncate_code_mode_result(items, Some(5), super::TruncationPolicy::Tokens(10_000)),
             vec![FunctionCallOutputContentItem::InputText {
                 text: "[omitted 1 audio items ...]".to_string(),
             }]

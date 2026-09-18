@@ -1,4 +1,5 @@
 use crate::function_tool::FunctionCallError;
+use crate::tools::captured_output::capture_terminal;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
@@ -117,7 +118,9 @@ impl WriteStdinHandler {
                 FunctionCallError::RespondToModel(message)
             })?;
 
-        Ok(boxed_tool_output(response))
+        Ok(boxed_tool_output(
+            capture_terminal(&session, response).await,
+        ))
     }
 }
 

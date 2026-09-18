@@ -3392,6 +3392,17 @@
       },
       "type": "object"
     },
+    "ReadOutputToolConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether to expose retained-output retrieval to the model.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "RealtimeAudioToml": {
       "additionalProperties": false,
       "properties": {
@@ -3935,6 +3946,9 @@
       "properties": {
         "experimental_request_user_input": {
           "$ref": "#/definitions/ExperimentalRequestUserInput"
+        },
+        "read_output": {
+          "$ref": "#/definitions/ReadOutputToolConfig"
         },
         "update_plan": {
           "$ref": "#/definitions/UpdatePlanToolConfig"

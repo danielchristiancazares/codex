@@ -123,6 +123,7 @@ mod multi_exec_server_sandbox;
 mod network_approval;
 mod openai_file_mcp;
 mod otel;
+mod output_recovery;
 mod override_updates;
 mod pending_input;
 mod permissions_messages;

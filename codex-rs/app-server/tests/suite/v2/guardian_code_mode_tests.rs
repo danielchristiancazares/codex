@@ -50,8 +50,8 @@ async fn model_guardian_policy_scores_code_mode_cells(
                                 .into_iter()
                                 .flatten()
                                 .filter_map(|item| item["text"].as_str())
+                                .flat_map(str::lines)
                                 .find_map(|text| text.strip_prefix("Script running with cell ID "))
-                                .and_then(|text| text.lines().next())
                                 .expect("first cell yielded");
                             vec![
                                 responses::ev_response_created("poll"),

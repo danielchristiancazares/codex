@@ -1,5 +1,14 @@
 //! Shared byte/token truncation for tool and exec output.
 
+mod captured_output;
+pub use captured_output::CaptureId;
+pub use captured_output::CaptureQuery;
+pub use captured_output::CaptureRange;
+pub use captured_output::CaptureReceipt;
+pub use captured_output::CapturedOutputStore;
+pub use captured_output::NonEmptyString;
+pub use captured_output::SearchText;
+
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;

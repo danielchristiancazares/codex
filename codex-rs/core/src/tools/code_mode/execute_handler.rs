@@ -38,7 +38,7 @@ impl CodeModeExecuteHandler {
         originating_item_id: Option<codex_protocol::ResponseItemId>,
         code: String,
         telemetry: &mut CodeModeToolCallGuard,
-    ) -> Result<FunctionToolOutput, FunctionCallError> {
+    ) -> Result<codex_tools::CapturedOutput<FunctionToolOutput>, FunctionCallError> {
         let args =
             codex_code_mode::parse_exec_source(&code).map_err(FunctionCallError::RespondToModel)?;
         let exec = ExecContext {
@@ -142,6 +142,7 @@ impl CodeModeExecuteHandler {
             .code_mode_host_duration()
             .unwrap_or_else(|| started_at.elapsed());
         handle_runtime_response(
+            &exec.session,
             &step_context.settings.model_info,
             response,
             args.max_output_tokens,
