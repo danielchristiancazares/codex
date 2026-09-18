@@ -3783,6 +3783,7 @@ async fn manual_compact_retries_after_context_window_error() {
         &server,
         vec![
             user_turn.clone(),
+            user_turn,
             compact_failed.clone(),
             compact_succeeds.clone(),
         ],
@@ -3796,16 +3797,18 @@ async fn manual_compact_retries_after_context_window_error() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().codex;
+    let codex = builder.build_with_auto_env(&server).await.unwrap().codex;
 
-    codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "first turn".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await
-        .unwrap();
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    for text in ["old turn ".repeat(/*n*/ 5_000), "newest turn".to_owned()] {
+        codex
+            .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+                text,
+                text_elements: Vec::new(),
+            }]))
+            .await
+            .unwrap();
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    }
 
     codex.submit(Op::Compact).await.unwrap();
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
@@ -3818,12 +3821,12 @@ async fn manual_compact_retries_after_context_window_error() {
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        3,
-        "expected user turn and two compact attempts"
+        4,
+        "expected two user turns and two compact attempts"
     );
 
-    let compact_attempt = requests[1].body_json();
-    let retry_attempt = requests[2].body_json();
+    let compact_attempt = requests[2].body_json();
+    let retry_attempt = requests[3].body_json();
 
     let compact_input = compact_attempt["input"]
         .as_array()
@@ -3839,21 +3842,11 @@ async fn manual_compact_retries_after_context_window_error() {
         compact_contains_prompt, retry_contains_prompt,
         "compact attempts should consistently include or omit the summarization prompt"
     );
+    assert!(retry_input.len() + 1 < compact_input.len());
     assert_eq!(
-        retry_input.len(),
-        compact_input.len().saturating_sub(1),
-        "retry should drop exactly one history item (before {} vs after {})",
-        compact_input.len(),
-        retry_input.len()
+        requests[3].message_input_texts("user"),
+        vec!["newest turn", SUMMARIZATION_PROMPT]
     );
-    if let (Some(first_before), Some(first_after)) = (compact_input.first(), retry_input.first()) {
-        assert_ne!(
-            first_before, first_after,
-            "retry should drop the oldest conversation item"
-        );
-    } else {
-        panic!("expected non-empty compact inputs");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4278,7 +4271,7 @@ async fn snapshot_request_shape_mid_turn_continuation_compaction() {
 
     let server = start_mock_server().await;
 
-    let context_window = 100;
+    let context_window = 32_000;
     let limit = context_window * 90 / 100;
     let over_limit_tokens = context_window * 95 / 100 + 1;
 
@@ -4467,7 +4460,7 @@ async fn auto_compact_body_after_prefix_ignores_starting_window_prefix() {
         .with_config(move |config| {
             config.model_provider = model_provider;
             set_test_compact_prompt(config);
-            config.model_context_window = Some(1_000);
+            config.model_context_window = Some(32_000);
             config.model_auto_compact_token_limit = Some(100);
             config.model_auto_compact_token_limit_scope =
                 AutoCompactTokenLimitScope::BodyAfterPrefix;
@@ -4614,11 +4607,15 @@ async fn auto_compact_body_after_prefix_still_caps_at_context_window() {
 
     let first_turn = sse(vec![
         ev_assistant_message("m1", FIRST_REPLY),
-        ev_completed_with_usage("r1", /*input_tokens*/ 80, /*output_tokens*/ 5),
+        ev_completed_with_usage(
+            "r1", /*input_tokens*/ 80_000, /*output_tokens*/ 5_000,
+        ),
     ]);
     let second_turn = sse(vec![
         ev_assistant_message("m2", SECOND_LARGE_REPLY),
-        ev_completed_with_usage("r2", /*input_tokens*/ 98, /*output_tokens*/ 1),
+        ev_completed_with_usage(
+            "r2", /*input_tokens*/ 98_000, /*output_tokens*/ 1_000,
+        ),
     ]);
     let auto_compact_turn = sse(vec![
         ev_assistant_message("m3", AUTO_SUMMARY_TEXT),
@@ -4639,8 +4636,8 @@ async fn auto_compact_body_after_prefix_still_caps_at_context_window() {
         .with_config(move |config| {
             config.model_provider = model_provider;
             set_test_compact_prompt(config);
-            config.model_context_window = Some(100);
-            config.model_auto_compact_token_limit = Some(200);
+            config.model_context_window = Some(100_000);
+            config.model_auto_compact_token_limit = Some(200_000);
             config.model_auto_compact_token_limit_scope =
                 AutoCompactTokenLimitScope::BodyAfterPrefix;
         })
@@ -4997,7 +4994,7 @@ async fn snapshot_request_shape_pre_turn_compaction_context_window_exceeded() {
     ]);
     let mut responses = vec![first_turn];
     responses.extend(
-        (0..5).map(|_| {
+        (0..2).map(|_| {
             sse_failed(
                 "compact-failed",
                 "context_length_exceeded",
@@ -5045,9 +5042,10 @@ async fn snapshot_request_shape_pre_turn_compaction_context_window_exceeded() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
-    assert!(
-        requests.len() >= 2,
-        "expected first turn and at least one compaction request"
+    assert_eq!(
+        requests.len(),
+        3,
+        "compaction retries one reduced history plan"
     );
 
     insta::assert_snapshot!(
@@ -5214,7 +5212,7 @@ async fn mid_turn_compaction_keeps_the_creation_time_global_instructions() -> Re
         vec![
             responses::sse(vec![
                 responses::ev_function_call("call-1", "unsupported_tool", "{}"),
-                responses::ev_completed_with_tokens("first-response", /*total_tokens*/ 96),
+                responses::ev_completed_with_tokens("first-response", /*total_tokens*/ 31_000),
             ]),
             responses::sse(vec![
                 responses::ev_assistant_message("compact-message", "summary"),
@@ -5240,8 +5238,8 @@ async fn mid_turn_compaction_keeps_the_creation_time_global_instructions() -> Re
         .with_home(Arc::clone(&home))
         .with_config(move |config| {
             config.model_provider = provider;
-            config.model_context_window = Some(100);
-            config.model_auto_compact_token_limit = Some(90);
+            config.model_context_window = Some(32_000);
+            config.model_auto_compact_token_limit = Some(30_000);
         });
     let test = builder.build(&server).await?;
 
