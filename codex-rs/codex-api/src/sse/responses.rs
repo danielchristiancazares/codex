@@ -632,7 +632,6 @@ async fn process_sse_with_treatment(
     safety_buffering_treatment: SafetyBufferingTreatment,
 ) {
     let mut stream = stream.eventsource();
-    let mut response_error: Option<ApiError> = None;
     let mut last_server_model: Option<String> = None;
 
     loop {
@@ -653,10 +652,11 @@ async fn process_sse_with_treatment(
                 return;
             }
             Ok(None) => {
-                let error = response_error.unwrap_or(ApiError::Stream(
-                    "stream closed before response.completed".into(),
-                ));
-                let _ = tx_event.send(Err(error)).await;
+                let _ = tx_event
+                    .send(Err(ApiError::Stream(
+                        "stream closed before response.completed".into(),
+                    )))
+                    .await;
                 return;
             }
             Err(_) => {
@@ -744,18 +744,14 @@ async fn process_sse_with_treatment(
             }
             Ok(None) => {}
             Err(error) => {
-                let error = error.into_api_error();
-                if matches!(
-                    error,
-                    ApiError::IncompleteResponse(_) | ApiError::ResponseProtocol(_)
-                ) {
-                    // Terminal failures are delivered immediately: nothing after them can
-                    // change the outcome, and waiting for EOF would let an idle timeout or
-                    // transport error replace the terminal classification.
-                    let _ = tx_event.send(Err(error)).await;
-                    return;
-                }
-                response_error = Some(error);
+                // Every parsed failure (`response.failed`, `response.incomplete`, or a
+                // protocol error) is terminal for this response: nothing after it can
+                // change the outcome. Deliver it now and stop reading. Waiting for EOF
+                // let an idle timeout or a later transport error replace the parsed
+                // classification and its retry delay with a generic retryable stream
+                // error. The retry classification itself is unchanged.
+                let _ = tx_event.send(Err(error.into_api_error())).await;
+                return;
             }
         };
     }
@@ -829,6 +825,10 @@ fn rate_limit_regex() -> &'static regex_lite::Regex {
 #[cfg(test)]
 #[path = "responses_terminal_tests.rs"]
 mod terminal_tests;
+
+#[cfg(test)]
+#[path = "responses_failure_tests.rs"]
+mod failure_tests;
 
 #[cfg(test)]
 mod tests {
