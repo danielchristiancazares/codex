@@ -16,6 +16,7 @@ use crate::protocol::v2;
 use codex_experimental_api_macros::ExperimentalApi;
 use serde::Deserialize;
 use serde::Serialize;
+use strum_macros::AsRefStr;
 use strum_macros::Display;
 
 /// Authentication mode for OpenAI-backed providers.
@@ -1671,6 +1672,7 @@ macro_rules! server_notification_definitions {
             Clone,
             JsonSchema,
             TS,
+            AsRefStr,
             Display,
             ExperimentalApi,
         )]
@@ -4584,6 +4586,48 @@ mod tests {
             reason,
             Some("item/commandExecution/requestApproval.additionalPermissions")
         );
+    }
+
+    #[test]
+    fn server_notification_as_ref_matches_display_and_wire_method() -> Result<()> {
+        // `AsRefStr` and `Display` are both generated from the same strum attributes, so the
+        // borrowed name must match the owned name and the serde `method` tag used on the wire.
+        // Cover the macro-generated wire names, an experimental variant, a payload defined in
+        // this module, and the variant that spells its strum attribute out by hand.
+        let notifications = [
+            ServerNotification::ThreadClosed(v2::ThreadClosedNotification {
+                thread_id: "thread-1".to_string(),
+            }),
+            ServerNotification::ThreadQueueChanged(v2::ThreadQueueChangedNotification {
+                thread_id: "thread-1".to_string(),
+            }),
+            ServerNotification::Warning(v2::WarningNotification {
+                thread_id: None,
+                message: "warning".to_string(),
+            }),
+            ServerNotification::FuzzyFileSearchSessionCompleted(
+                FuzzyFileSearchSessionCompletedNotification {
+                    session_id: "session-1".to_string(),
+                },
+            ),
+            ServerNotification::AccountLoginCompleted(v2::AccountLoginCompletedNotification {
+                login_id: None,
+                success: true,
+                error: None,
+                onboarding_entrypoint: None,
+            }),
+        ];
+        for notification in notifications {
+            let wire_method = serde_json::to_value(&notification)?
+                .get("method")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .expect("server notifications serialize with a method tag");
+            let borrowed_method: &str = notification.as_ref();
+            assert_eq!(borrowed_method, wire_method);
+            assert_eq!(notification.to_string(), wire_method);
+        }
+        Ok(())
     }
 }
 
