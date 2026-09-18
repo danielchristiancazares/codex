@@ -48,6 +48,7 @@ use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::unified_exec::MIN_YIELD_TIME_MS;
+use crate::unified_exec::PollCollection;
 use crate::unified_exec::ProcessEntry;
 use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
@@ -86,6 +87,8 @@ use codex_shell_command::is_dangerous_command::DangerousCommandPlatform;
 use codex_tools::ToolName;
 use codex_utils_output_truncation::approx_tokens_from_byte_count;
 use codex_utils_path_uri::PathUri;
+
+mod activity_wait;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -960,7 +963,10 @@ impl UnifiedExecProcessManager {
             }
         };
         let start = Instant::now();
-        let deadline = start + Duration::from_millis(yield_time_ms);
+        let deadline = match request.collection {
+            PollCollection::Available => start,
+            PollCollection::UntilDeadline => start + Duration::from_millis(yield_time_ms),
+        };
         let collected_output =
             Self::collect_output_until_deadline(&output, pause_state, deadline).await;
         let wall_time = Instant::now().saturating_duration_since(start);
@@ -1499,6 +1505,10 @@ impl UnifiedExecProcessManager {
                 &mut post_exit_deadline,
             )
             .await;
+            exit_signal_received |= cancellation_token.is_cancelled();
+            if exit_signal_received {
+                post_exit_deadline.get_or_insert_with(|| Instant::now() + POST_EXIT_CLOSE_WAIT_CAP);
+            }
             let drained_output: HeadTailBuffer<MAX_BYTES>;
             let has_drained_output: bool;
             let mut wait_for_output = None;
@@ -1513,20 +1523,14 @@ impl UnifiedExecProcessManager {
             }
 
             if !has_drained_output {
-                exit_signal_received |= cancellation_token.is_cancelled();
                 if exit_signal_received && output_closed.load(std::sync::atomic::Ordering::Acquire)
                 {
-                    break;
-                }
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining == Duration::ZERO {
                     break;
                 }
 
                 if exit_signal_received {
                     let now = Instant::now();
-                    let close_wait_deadline = *post_exit_deadline
-                        .get_or_insert_with(|| now + remaining.min(POST_EXIT_CLOSE_WAIT_CAP));
+                    let close_wait_deadline = post_exit_deadline.unwrap_or(now);
                     let close_wait_remaining = close_wait_deadline.saturating_duration_since(now);
                     if close_wait_remaining == Duration::ZERO {
                         break;
@@ -1544,6 +1548,10 @@ impl UnifiedExecProcessManager {
                     continue;
                 }
 
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining == Duration::ZERO {
+                    break;
+                }
                 let notified = wait_for_output.unwrap_or_else(|| output_notify.notified());
                 tokio::pin!(notified);
                 let exit_notified = cancellation_token.cancelled();
@@ -1560,7 +1568,14 @@ impl UnifiedExecProcessManager {
             collected.push_buffer(drained_output);
 
             exit_signal_received |= cancellation_token.is_cancelled();
-            if Instant::now() >= deadline {
+            if exit_signal_received {
+                let now = Instant::now();
+                let close_wait_deadline =
+                    *post_exit_deadline.get_or_insert_with(|| now + POST_EXIT_CLOSE_WAIT_CAP);
+                if now >= close_wait_deadline {
+                    break;
+                }
+            } else if Instant::now() >= deadline {
                 break;
             }
         }

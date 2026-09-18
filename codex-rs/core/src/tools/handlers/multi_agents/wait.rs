@@ -3,6 +3,9 @@ use crate::agent::status::is_final;
 use crate::session::session::Session;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v1;
+use crate::tools::runtime_wait::ExecutionScope;
+use crate::tools::runtime_wait::InputWakeup;
+use crate::tools::runtime_wait::WaitPolicy;
 use codex_protocol::error::CodexErrorDetails;
 use codex_tools::ToolSpec;
 use futures::FutureExt;
@@ -10,11 +13,7 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::watch::Receiver;
-use tokio::time::Instant;
-
-use tokio::time::timeout_at;
 
 #[derive(Default)]
 pub(crate) struct Handler {
@@ -65,6 +64,7 @@ impl Handler {
         } = invocation;
         let arguments = function_arguments(payload)?;
         let args: WaitArgs = parse_arguments(&arguments)?;
+        args.timeout_ms.require_positive_deadline()?;
         let receiver_thread_ids = parse_agent_id_targets(args.targets)?;
         let mut receiver_agents = Vec::with_capacity(receiver_thread_ids.len());
         let mut target_by_thread_id = HashMap::with_capacity(receiver_thread_ids.len());
@@ -89,15 +89,7 @@ impl Handler {
             });
         }
 
-        let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS);
-        let timeout_ms = match timeout_ms {
-            ms if ms <= 0 => {
-                return Err(FunctionCallError::RespondToModel(
-                    "timeout_ms must be greater than zero".to_owned(),
-                ));
-            }
-            ms => ms.clamp(MIN_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
-        };
+        let activity = InputWakeup::subscribe(&session, &turn).await;
 
         session
             .emit_turn_item_started(
@@ -157,7 +149,7 @@ impl Handler {
         }
 
         let statuses = if !initial_final_statuses.is_empty() {
-            initial_final_statuses
+            Ok(initial_final_statuses)
         } else {
             let mut futures = FuturesUnordered::new();
             for (id, rx) in status_rxs.into_iter() {
@@ -165,17 +157,31 @@ impl Handler {
                 futures.push(wait_for_final_status(session, id, rx));
             }
             let mut results = Vec::new();
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-            loop {
-                match timeout_at(deadline, futures.next()).await {
-                    Ok(Some(Some(result))) => {
+            let deadline = args
+                .timeout_ms
+                .expired(MIN_WAIT_TIMEOUT_MS as u64, MAX_WAIT_TIMEOUT_MS as u64);
+            tokio::pin!(deadline);
+            let activity = activity.wait();
+            tokio::pin!(activity);
+            let wait_result = loop {
+                tokio::select! {
+                    result = futures.next() => match result {
+                    Some(Some(result)) => {
                         results.push(result);
-                        break;
+                        break Ok(());
                     }
-                    Ok(Some(None)) => continue,
-                    Ok(None) | Err(_) => break,
+                    Some(None) => continue,
+                    None => break Ok(()),
+                    },
+                    _ = &mut deadline => break Ok(()),
+                    activity = &mut activity => {
+                        break Err(match activity {
+                            Ok(_) => FunctionCallError::RespondToModel("Wait interrupted by new input.".into()),
+                            Err(error) => error,
+                        });
+                    }
                 }
-            }
+            };
             if !results.is_empty() {
                 loop {
                     match futures.next().now_or_never() {
@@ -185,23 +191,13 @@ impl Handler {
                     }
                 }
             }
-            results
+            wait_result.map(|()| results)
         };
 
-        let timed_out = statuses.is_empty();
-        let statuses_by_id = statuses.clone().into_iter().collect::<HashMap<_, _>>();
-        let result = WaitAgentResult {
-            status: statuses
-                .into_iter()
-                .filter_map(|(thread_id, status)| {
-                    target_by_thread_id
-                        .get(&thread_id)
-                        .cloned()
-                        .map(|target| (target, status))
-                })
-                .collect(),
-            timed_out,
-        };
+        let statuses_by_id = statuses.as_ref().map_or_else(
+            |_| HashMap::new(),
+            |statuses| statuses.iter().cloned().collect::<HashMap<_, _>>(),
+        );
 
         session
             .emit_turn_item_completed(
@@ -221,6 +217,19 @@ impl Handler {
             )
             .await;
 
+        let statuses = statuses?;
+        let result = WaitAgentResult {
+            timed_out: statuses.is_empty(),
+            status: statuses
+                .into_iter()
+                .filter_map(|(thread_id, status)| {
+                    target_by_thread_id
+                        .get(&thread_id)
+                        .cloned()
+                        .map(|target| (target, status))
+                })
+                .collect(),
+        };
         Ok(boxed_tool_output(result))
     }
 }
@@ -268,6 +277,10 @@ fn wait_receiver_agents(
 }
 
 impl CoreToolRuntime for Handler {
+    fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::Coordination
+    }
+
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
@@ -277,7 +290,8 @@ impl CoreToolRuntime for Handler {
 struct WaitArgs {
     #[serde(default)]
     targets: Vec<String>,
-    timeout_ms: Option<i64>,
+    #[serde(default)]
+    timeout_ms: WaitPolicy,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]

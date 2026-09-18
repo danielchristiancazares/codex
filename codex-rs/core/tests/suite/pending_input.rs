@@ -571,7 +571,7 @@ async fn queue_only_agent_mail_wakes_sleeping_root_with_previous_turn_context() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
+async fn quiet_wait_agent_suspends_inference_until_steering() {
     const WAIT_CALL_ID: &str = "wait-call";
     const INITIAL_PROMPT: &str = "wait for an agent";
     const STEER_PROMPT: &str = "stop waiting and continue";
@@ -583,7 +583,7 @@ async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
             WAIT_CALL_ID,
             MULTI_AGENT_V2_NAMESPACE,
             "wait_agent",
-            r#"{"timeout_ms":10000}"#,
+            r#"{}"#,
         )),
         chunk(ev_completed("resp-1")),
     ];
@@ -596,6 +596,8 @@ async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
                 .features
                 .enable(Feature::MultiAgentV2)
                 .expect("test config should allow feature update");
+            config.multi_agent_v2.min_wait_timeout_ms = 1;
+            config.multi_agent_v2.default_wait_timeout_ms = 20;
         })
         .build_with_streaming_server(&server)
         .await
@@ -608,6 +610,12 @@ async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
     })
     .await;
 
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        server.requests().await.len(),
+        1,
+        "quiet waits must not cause another model request"
+    );
     steer_user_input(&codex, STEER_PROMPT).await;
     wait_for_turn_complete(&codex).await;
 

@@ -3025,7 +3025,7 @@ async fn multi_agent_v2_wait_agent_accepts_explicit_timeout_at_configured_min() 
 }
 
 #[tokio::test]
-async fn multi_agent_v2_wait_agent_uses_configured_default_timeout() {
+async fn multi_agent_v2_wait_agent_stays_suspended_until_mailbox_activity() {
     let (session, mut turn) = make_session_and_context().await;
     let mut config = (*turn.config).clone();
     config
@@ -3039,48 +3039,52 @@ async fn multi_agent_v2_wait_agent_uses_configured_default_timeout() {
     let session = Arc::new(session);
     let turn = Arc::new(turn);
 
-    let early = timeout(
-        Duration::from_millis(/*millis*/ 20),
-        WaitAgentHandlerV2::default().handle(invocation(
-            session.clone(),
-            turn.clone(),
-            "wait_agent",
-            function_payload(json!({})),
-        )),
-    )
-    .await;
+    let handler = WaitAgentHandlerV2::default();
+    let wait = handler.handle(invocation(
+        session.clone(),
+        turn.clone(),
+        "wait_agent",
+        function_payload(json!({})),
+    ));
+    tokio::pin!(wait);
+    let early = timeout(Duration::from_millis(/*millis*/ 120), &mut wait).await;
     assert!(
         early.is_err(),
-        "wait_agent should not return before the configured default timeout"
+        "quiet waits should remain in the runtime beyond the former default timeout"
     );
 
-    let output = timeout(
-        Duration::from_secs(/*secs*/ 1),
-        WaitAgentHandlerV2::default().handle(invocation(
-            session,
-            turn,
-            "wait_agent",
-            function_payload(json!({})),
-        )),
-    )
-    .await
-    .expect("configured default should be shorter than the test timeout")
-    .expect("wait_agent should succeed");
+    session
+        .input_queue
+        .enqueue_mailbox_communication(
+            InterAgentCommunication::new(
+                AgentPath::root().join("worker").expect("worker path"),
+                AgentPath::root(),
+                Vec::new(),
+                "worker completed".to_string(),
+                /*trigger_turn*/ false,
+            ),
+            Default::default(),
+        )
+        .await;
+    let output = timeout(Duration::from_secs(/*secs*/ 1), &mut wait)
+        .await
+        .expect("mailbox activity should resume the pending call")
+        .expect("wait_agent should succeed");
     let (content, success) = expect_text_output(output);
     let result: crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult =
         serde_json::from_str(&content).expect("wait_agent result should be json");
     assert_eq!(
         result,
         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
-            message: "Wait timed out.".to_string(),
-            timed_out: true,
+            message: "Wait completed.".to_string(),
+            timed_out: false,
         }
     );
     assert_eq!(success, None);
 }
 
 #[tokio::test]
-async fn multi_agent_v2_wait_agent_allows_zero_configured_timeout() {
+async fn multi_agent_v2_wait_agent_allows_explicit_zero_configured_timeout() {
     let (session, mut turn) = make_session_and_context().await;
     let mut config = (*turn.config).clone();
     config
@@ -3100,7 +3104,7 @@ async fn multi_agent_v2_wait_agent_allows_zero_configured_timeout() {
             session,
             turn,
             "wait_agent",
-            function_payload(json!({})),
+            function_payload(json!({"timeout_ms": 0})),
         )),
     )
     .await

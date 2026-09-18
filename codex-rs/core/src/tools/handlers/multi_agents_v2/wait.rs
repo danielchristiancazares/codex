@@ -2,11 +2,11 @@ use super::*;
 use crate::session::InputQueueActivity;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v2;
+use crate::tools::runtime_wait::ExecutionScope;
+use crate::tools::runtime_wait::InputWakeup;
+use crate::tools::runtime_wait::WaitPolicy;
 use codex_tools::ToolSpec;
 use std::collections::HashMap;
-use std::time::Duration;
-use tokio::time::Instant;
-use tokio::time::timeout_at;
 
 #[derive(Default)]
 pub(crate) struct Handler {
@@ -52,26 +52,8 @@ impl Handler {
         let args: WaitArgs = parse_arguments(&arguments)?;
         let min_timeout_ms = turn.config.multi_agent_v2.min_wait_timeout_ms;
         let max_timeout_ms = turn.config.multi_agent_v2.max_wait_timeout_ms;
-        let default_timeout_ms = turn.config.multi_agent_v2.default_wait_timeout_ms;
-        let requested_timeout_ms = args.timeout_ms;
-        let timeout_ms = match requested_timeout_ms {
-            Some(ms) if ms > max_timeout_ms => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "timeout_ms must be at most {max_timeout_ms}"
-                )));
-            }
-            Some(ms) => ms.max(min_timeout_ms),
-            None => default_timeout_ms,
-        };
-
-        let turn_state = session
-            .input_queue
-            .turn_state_for_sub_id(&session.active_turn, &turn.sub_id)
-            .await;
-        let (mut activity_rx, pending_activity) = session
-            .input_queue
-            .subscribe_activity(turn_state.as_deref())
-            .await;
+        args.timeout_ms.validate_maximum(max_timeout_ms as u64)?;
+        let activity = InputWakeup::subscribe(&session, &turn).await;
 
         session
             .emit_turn_item_started(
@@ -91,9 +73,16 @@ impl Handler {
             )
             .await;
 
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-        let outcome = wait_for_activity(&mut activity_rx, pending_activity, deadline).await;
-        let result = WaitAgentResult::from_outcome(outcome, requested_timeout_ms, timeout_ms);
+        let outcome = tokio::select! {
+            biased;
+            activity = activity.wait() => match activity? {
+                InputQueueActivity::Mailbox => WaitOutcome::MailboxActivity,
+                InputQueueActivity::Steer => WaitOutcome::Steered,
+            },
+            _ = args.timeout_ms.expired(min_timeout_ms as u64, max_timeout_ms as u64) => WaitOutcome::TimedOut,
+        };
+        let result =
+            WaitAgentResult::from_outcome(outcome, &args.timeout_ms, min_timeout_ms as u64);
 
         session
             .emit_turn_item_completed(
@@ -118,6 +107,10 @@ impl Handler {
 }
 
 impl CoreToolRuntime for Handler {
+    fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::Coordination
+    }
+
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
     }
@@ -126,7 +119,8 @@ impl CoreToolRuntime for Handler {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WaitArgs {
-    timeout_ms: Option<i64>,
+    #[serde(default)]
+    timeout_ms: WaitPolicy,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -136,22 +130,13 @@ pub(crate) struct WaitAgentResult {
 }
 
 impl WaitAgentResult {
-    fn from_outcome(
-        outcome: WaitOutcome,
-        requested_timeout_ms: Option<i64>,
-        timeout_ms: i64,
-    ) -> Self {
+    fn from_outcome(outcome: WaitOutcome, policy: &WaitPolicy, minimum_ms: u64) -> Self {
         let message = match outcome {
             WaitOutcome::MailboxActivity => "Wait completed.",
             WaitOutcome::Steered => "Wait interrupted by new input.",
             WaitOutcome::TimedOut => "Wait timed out.",
         };
-        let message = match requested_timeout_ms {
-            Some(requested_timeout_ms) if requested_timeout_ms < timeout_ms => format!(
-                "{message}\n\nRequested timeout of {requested_timeout_ms}ms was clamped to the minimum of {timeout_ms}ms."
-            ),
-            Some(_) | None => message.to_string(),
-        };
+        let message = policy.describe_clamping(message, minimum_ms);
         Self {
             message,
             timed_out: outcome == WaitOutcome::TimedOut,
@@ -182,24 +167,4 @@ enum WaitOutcome {
     MailboxActivity,
     Steered,
     TimedOut,
-}
-
-async fn wait_for_activity(
-    activity_rx: &mut tokio::sync::watch::Receiver<InputQueueActivity>,
-    pending_activity: Option<InputQueueActivity>,
-    deadline: Instant,
-) -> WaitOutcome {
-    if let Some(activity) = pending_activity {
-        return match activity {
-            InputQueueActivity::Mailbox => WaitOutcome::MailboxActivity,
-            InputQueueActivity::Steer => WaitOutcome::Steered,
-        };
-    }
-    match timeout_at(deadline, activity_rx.changed()).await {
-        Ok(Ok(())) => match *activity_rx.borrow_and_update() {
-            InputQueueActivity::Mailbox => WaitOutcome::MailboxActivity,
-            InputQueueActivity::Steer => WaitOutcome::Steered,
-        },
-        Ok(Err(_)) | Err(_) => WaitOutcome::TimedOut,
-    }
 }

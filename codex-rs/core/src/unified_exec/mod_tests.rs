@@ -330,6 +330,7 @@ async fn write_stdin(
                 "write".to_string(),
             ),
             WriteStdinRequest {
+                collection: super::PollCollection::UntilDeadline,
                 process_id,
                 input,
                 yield_time_ms,
