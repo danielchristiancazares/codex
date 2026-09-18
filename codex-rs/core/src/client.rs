@@ -715,21 +715,6 @@ impl ModelClient {
         extra_headers
     }
 
-    fn build_ws_client_metadata(
-        &self,
-        responses_metadata: &CodexResponsesMetadata,
-        use_responses_lite: bool,
-    ) -> HashMap<String, String> {
-        let mut client_metadata = responses_metadata.client_metadata();
-        if use_responses_lite {
-            client_metadata.insert(
-                WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY.to_string(),
-                "true".to_string(),
-            );
-        }
-        client_metadata
-    }
-
     async fn generate_attestation_header_for(&self) -> Option<HeaderValue> {
         if !self.state.include_attestation {
             return None;
@@ -1759,12 +1744,6 @@ impl ModelClientSession {
             {
                 crate::guardian::observe_guardian_request(session_telemetry, &request);
             }
-            let mut client_metadata = self
-                .client
-                .build_ws_client_metadata(responses_metadata, model_info.use_responses_lite);
-            if let Some(turn_state) = self.turn_state.get() {
-                client_metadata.insert(X_CODEX_TURN_STATE_HEADER.to_string(), turn_state.clone());
-            }
             let (incremental_request, previous_response_id_from_untraced_warmup) =
                 self.prepare_websocket_request(&request);
             let inference_trace_attempt = if warmup {
@@ -1799,6 +1778,19 @@ impl ModelClientSession {
                     .prepare_response_items_for_request(&mut request.input);
                 Some(original_item_ids)
             };
+            // Reuse the client metadata map that `build_responses_request` already built
+            // instead of rebuilding it (and cloning it again through `From<&request>`).
+            // The websocket payload owns it from here, extended with the websocket-only keys.
+            let mut client_metadata = request.client_metadata.take().unwrap_or_default();
+            if model_info.use_responses_lite {
+                client_metadata.insert(
+                    WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY.to_string(),
+                    "true".to_string(),
+                );
+            }
+            if let Some(turn_state) = self.turn_state.get() {
+                client_metadata.insert(X_CODEX_TURN_STATE_HEADER.to_string(), turn_state.clone());
+            }
             let mut ws_payload = ResponseCreateWsRequest {
                 previous_response_id,
                 input: incremental_items.as_deref().unwrap_or(&request.input),

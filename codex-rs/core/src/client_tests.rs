@@ -712,7 +712,7 @@ fn build_subagent_headers_sets_internal_memory_consolidation_label() {
 }
 
 #[test]
-fn build_ws_client_metadata_includes_window_lineage_and_turn_metadata() {
+fn responses_request_metadata_includes_window_lineage_and_turn_metadata() {
     let parent_thread_id = ThreadId::new();
     let client = test_model_client(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id,
@@ -731,8 +731,18 @@ fn build_ws_client_metadata_includes_window_lineage_and_turn_metadata() {
         Some(parent_thread_id),
         TestCodexResponsesRequestKind::Turn,
     );
-    let client_metadata =
-        client.build_ws_client_metadata(&responses_metadata, /*use_responses_lite*/ false);
+    let client_metadata = client
+        .build_responses_request(
+            &Prompt::default(),
+            &test_model_info(),
+            /*effort*/ None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            /*service_tier*/ None,
+            &responses_metadata,
+        )
+        .expect("responses request")
+        .client_metadata
+        .expect("request metadata reused by the WebSocket payload");
     let parent_thread_id = parent_thread_id.to_string();
     let turn_metadata: serde_json::Value = serde_json::from_str(
         client_metadata
