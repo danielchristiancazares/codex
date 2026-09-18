@@ -39,6 +39,7 @@ members = [
     "config",
     "config-schema",
     "context-fragments",
+    "context-policy",
     "shell-command",
     "shell-escalation",
     "skills",
@@ -200,6 +201,7 @@ codex-connectors = { path = "connectors" }
 codex-agent-extension = { path = "ext/agent" }
 codex-connectors-extension = { path = "ext/connectors" }
 codex-context-fragments = { path = "context-fragments" }
+codex-context-policy = { path = "context-policy" }
 codex-core = { path = "core" }
 codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }

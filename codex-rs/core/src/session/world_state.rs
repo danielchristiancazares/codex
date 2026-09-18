@@ -92,6 +92,9 @@ impl Session {
             String::new()
         };
         let mut world_state = WorldState::default();
+        world_state.add_section(crate::context::world_state::AdditionalContextState::new(
+            self.state.lock().await.additional_context.snapshot(),
+        ));
         world_state.add_section(ModelInstructionsState::new(
             &model_info.slug,
             previous_model.as_deref(),

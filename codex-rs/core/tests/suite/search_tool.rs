@@ -1069,6 +1069,7 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
 
     let server = start_mock_server().await;
     let search_call_id = "tool-search-1";
+    let repeated_search_call_id = "tool-search-repeat";
     let dynamic_call_id = "dyn-search-call-1";
     let tool_name = "automation_update";
     let tool_description = "Create, update, view, or delete recurring automations.";
@@ -1087,6 +1088,14 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
                     }),
                 ),
                 ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-repeat"),
+                ev_tool_search_call(
+                    repeated_search_call_id,
+                    &json!({"query": "recurring automations", "limit": 8}),
+                ),
+                ev_completed("resp-repeat"),
             ]),
             sse(vec![
                 ev_response_created("resp-2"),
@@ -1192,7 +1201,16 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
     .await;
 
     let requests = mock.requests();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        tool_search_output_tools(&requests[2], repeated_search_call_id),
+        Vec::<Value>::new()
+    );
+    assert_eq!(
+        tool_search_output_tools(&requests[2], search_call_id),
+        tool_search_output_tools(&requests[1], search_call_id),
+        "the surviving definition must remain unchanged",
+    );
 
     let first_request_body = requests[0].body_json();
     let first_request_tools = tool_names(&first_request_body);
@@ -1244,7 +1262,7 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
         "follow-up request should rely on tool_search_output history, not tool injection: {second_request_tools:?}"
     );
 
-    let output = requests[2]
+    let output = requests[3]
         .function_call_output(dynamic_call_id)
         .get("output")
         .cloned()
@@ -1255,7 +1273,7 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
         FunctionCallOutputPayload::from_text("dynamic-search-ok".to_string())
     );
 
-    let third_request_body = requests[2].body_json();
+    let third_request_body = requests[3].body_json();
     let third_request_tools = tool_names(&third_request_body);
     assert!(
         !third_request_tools.iter().any(|name| name == tool_name),
@@ -1736,34 +1754,27 @@ async fn tool_search_matches_mcp_tools_by_distinct_name_description_and_schema_t
     Ok(())
 }
 
+#[test_case::test_case("tool-search-dynamic-name", "quasar_ping_beacon"; "name")]
+#[test_case::test_case("tool-search-dynamic-spaces", "quasar ping beacon"; "spaced_name")]
+#[test_case::test_case("tool-search-dynamic-description", "saffron metronome"; "description")]
+#[test_case::test_case("tool-search-dynamic-namespace", "orbit_ops"; "namespace")]
+#[test_case::test_case("tool-search-dynamic-schema", "chrono_spec"; "schema")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tool_search_matches_dynamic_tools_by_name_description_namespace_and_schema_terms()
--> Result<()> {
+async fn tool_search_matches_dynamic_tools_by_name_description_namespace_and_schema_terms(
+    call_id: &str,
+    query: &str,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let query_cases = [
-        ("tool-search-dynamic-name", "quasar_ping_beacon"),
-        ("tool-search-dynamic-spaces", "quasar ping beacon"),
-        ("tool-search-dynamic-description", "saffron metronome"),
-        ("tool-search-dynamic-namespace", "orbit_ops"),
-        ("tool-search-dynamic-schema", "chrono_spec"),
-    ];
     let mock = mount_sse_sequence(
         &server,
         vec![
-            sse(std::iter::once(ev_response_created("resp-1"))
-                .chain(query_cases.into_iter().map(|(call_id, query)| {
-                    ev_tool_search_call(
-                        call_id,
-                        &json!({
-                            "query": query,
-                            "limit": 8,
-                        }),
-                    )
-                }))
-                .chain(std::iter::once(ev_completed("resp-1")))
-                .collect()),
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_tool_search_call(call_id, &json!({"query": query, "limit": 8})),
+                ev_completed("resp-1"),
+            ]),
             sse(vec![
                 ev_response_created("resp-2"),
                 ev_assistant_message("msg-1", "done"),
@@ -1823,24 +1834,16 @@ async fn tool_search_matches_dynamic_tools_by_name_description_namespace_and_sch
     let requests = mock.requests();
     assert_eq!(requests.len(), 2);
 
-    for call_id in [
-        "tool-search-dynamic-name",
-        "tool-search-dynamic-spaces",
-        "tool-search-dynamic-description",
-        "tool-search-dynamic-namespace",
-        "tool-search-dynamic-schema",
-    ] {
-        assert!(
-            tool_search_output_has_namespace_child(
-                &requests[1],
-                call_id,
-                "orbit_ops",
-                "quasar_ping_beacon"
-            ),
-            "expected query {call_id} to surface the quasar_ping_beacon tool: {:?}",
-            tool_search_output_tools(&requests[1], call_id)
-        );
-    }
+    assert!(
+        tool_search_output_has_namespace_child(
+            &requests[1],
+            call_id,
+            "orbit_ops",
+            "quasar_ping_beacon"
+        ),
+        "expected query {call_id} to surface the quasar_ping_beacon tool: {:?}",
+        tool_search_output_tools(&requests[1], call_id)
+    );
 
     Ok(())
 }

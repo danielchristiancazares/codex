@@ -220,6 +220,7 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 
+mod additional_context;
 mod code_mode_warning;
 pub(crate) mod context_window;
 mod environment;
@@ -233,6 +234,7 @@ mod mcp;
 mod mcp_prewarm;
 mod mcp_refresh;
 mod mcp_runtime;
+mod model_capacity_refresh;
 pub(crate) mod multi_agents;
 mod realtime_history;
 mod retained_context;
@@ -247,6 +249,7 @@ pub(crate) mod step_settings;
 mod thread_settings;
 pub(crate) mod time_reminder;
 mod token_budget;
+mod token_recount;
 pub(crate) mod turn;
 pub(crate) mod turn_context;
 mod turn_input;
@@ -1542,6 +1545,12 @@ impl Session {
                 if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                } else {
+                    self.recount_token_usage(
+                        &turn_context,
+                        token_recount::TokenUsageDelivery::SeedSession,
+                    )
+                    .await;
                 }
                 self.state.lock().await.latest_token_usage_record =
                     Self::last_token_usage_record_from_rollout(&rollout_items);
@@ -1659,7 +1668,11 @@ impl Session {
             state
                 .history
                 .restore_review_context(Some(&retained_context), guardian_history.as_ref());
+            state
+                .additional_context
+                .restore(crate::state::AdditionalContextSnapshot::default());
             if let Some(world_state) = world_state_baseline {
+                world_state.restore_additional_context(&mut state.additional_context);
                 state.history.set_world_state_baseline(world_state);
             }
             let fallback_ids = state.auto_compact_window_ids();
@@ -1956,6 +1969,12 @@ impl Session {
                 .with_user_layer_from(&next_config.config_layer_stack);
             config.tool_suggest =
                 resolve_tool_suggest_config_from_layer_stack(&config.config_layer_stack);
+            if let Err(error) = state
+                .session_configuration
+                .refresh_model_capacity(&mut config)
+            {
+                warn!(%error, "retaining the last valid numeric model capacity");
+            }
             config.mcp_servers = next_config.mcp_servers.clone();
             config.mcp_optional_startup_grace = next_config.mcp_optional_startup_grace;
             config.mcp_oauth_credentials_store_mode = next_config.mcp_oauth_credentials_store_mode;
@@ -3903,6 +3922,19 @@ impl Session {
         world_state_baseline: Option<Arc<WorldState>>,
         metadata: CompactedHistoryMetadata,
     ) {
+        let (replacement, additional_context_snapshot) = self
+            .rehydrate_additional_context_for_compaction(items)
+            .await;
+        items = replacement;
+        let mut additional_context_baseline = WorldState::default();
+        additional_context_baseline.add_section(
+            crate::context::world_state::AdditionalContextState::new(additional_context_snapshot),
+        );
+        let mut persisted_baseline = match world_state_baseline {
+            Some(world_state) => world_state.snapshot(),
+            None => crate::context::world_state::WorldStateSnapshot::default(),
+        };
+        persisted_baseline.apply_merge_patch(&additional_context_baseline.snapshot().into_object());
         for envelope in &mut items {
             Self::assign_missing_response_item_id(&mut envelope.item);
         }
@@ -3939,7 +3971,7 @@ impl Session {
         // overtaking the current settings snapshot while its checkpoint is written.
         let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
         // Compaction starts a new history window, so its WorldState baseline must be full.
-        let mut world_state_item = None;
+        let world_state_item = WorldStateItem::full(persisted_baseline.clone().into_object());
         {
             let mut state = self.state.lock().await;
             state.replace_annotated_history(
@@ -3950,18 +3982,12 @@ impl Session {
             compacted_item.guardian_history = state.history.guardian_history_checkpoint();
             compacted_item.retained_context = Some(state.history.retained_context().clone());
             state.reasoning_effort_pin = ReasoningEffortPin::Compacted;
-            if let Some(world_state) = world_state_baseline {
-                let snapshot = world_state.snapshot();
-                world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
-                state.history.set_world_state_baseline(snapshot);
-            }
+            state.history.set_world_state_baseline(persisted_baseline);
         }
 
         let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
         // Persist the baseline after the replacement history that established it.
-        if let Some(world_state_item) = world_state_item {
-            rollout_items.push(RolloutItem::WorldState(world_state_item));
-        }
+        rollout_items.push(RolloutItem::WorldState(world_state_item));
         if let Some(turn_context_item) = reference_context_item {
             rollout_items.push(RolloutItem::TurnContext(turn_context_item));
         }
@@ -4586,43 +4612,11 @@ impl Session {
     }
 
     pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
-        let history = self.clone_history().await;
-        let base_instructions = self.get_base_instructions().await;
-        let Some(estimated_total_tokens) =
-            history.estimate_token_count_with_base_instructions(&base_instructions)
-        else {
-            return;
-        };
-        {
-            let mut state = self.state.lock().await;
-            let mut info = state.token_info().unwrap_or(TokenUsageInfo {
-                total_token_usage: TokenUsage::default(),
-                last_token_usage: TokenUsage::default(),
-                model_context_window: None,
-            });
-
-            info.last_token_usage = TokenUsage {
-                input_tokens: 0,
-                cached_input_tokens: 0,
-                cache_write_input_tokens: 0,
-                output_tokens: 0,
-                reasoning_output_tokens: 0,
-                total_tokens: estimated_total_tokens.max(0),
-                codex_rollout_budget_units: None,
-            };
-
-            if let Some(model_context_window) = turn_context.model_context_window() {
-                info.model_context_window = Some(model_context_window);
-            }
-
-            state.set_token_info(Some(info));
-        }
-        self.set_auto_compact_window_estimated_prefill_for_scope(
+        self.recount_token_usage(
             turn_context,
-            estimated_total_tokens,
+            token_recount::TokenUsageDelivery::NotifyClients,
         )
         .await;
-        self.send_token_count_event(turn_context).await;
     }
 
     pub(crate) async fn update_rate_limits(

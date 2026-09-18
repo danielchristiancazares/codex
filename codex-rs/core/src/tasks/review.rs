@@ -4,6 +4,8 @@ use codex_prompts::render_review_exit_interrupted;
 use codex_prompts::render_review_exit_success;
 use codex_protocol::ResponseItemId;
 use codex_protocol::config_types::WebSearchMode;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::ExitedReviewModeItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::BaseInstructionsProvenance;
@@ -255,21 +257,20 @@ pub(crate) async fn exit_review_mode(
     });
     session.emit_turn_item_started(ctx.as_ref(), &item).await;
     session.emit_turn_item_completed(ctx.as_ref(), item).await;
-    session
-        .record_response_item_and_emit_turn_item(
-            ctx.as_ref(),
-            ctx.model_info(),
-            ResponseItem::Message {
-                id: Some(ResponseItemId::new("msg")),
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: assistant_message,
-                }],
-                phase: None,
-                internal_chat_message_metadata_passthrough: None,
-            },
-        )
-        .await;
+    // Findings are already in the user-action envelope above. Keep the client
+    // lifecycle (including persisted transcript events) without a duplicate prompt item.
+    let item = TurnItem::AgentMessage(AgentMessageItem {
+        id: uuid::Uuid::now_v7().to_string(),
+        content: vec![AgentMessageContent::Text {
+            text: assistant_message,
+        }],
+        questions: None,
+        phase: None,
+        memory_citation: None,
+        delivery: None,
+    });
+    session.emit_turn_item_started(ctx.as_ref(), &item).await;
+    session.emit_turn_item_completed(ctx.as_ref(), item).await;
 
     // Review turns can run before any regular user turn, so explicitly
     // materialize rollout persistence. Do this after emitting review output so

@@ -3,6 +3,8 @@
 //! checkpoint replay and source-call rollback share their live lifecycle.
 //! Oversized instructions keep an incomplete excerpt for bounded root review, including
 //! sources recovered from legacy Guardian checkpoints before their raw history is dropped.
+use codex_tools::ToolDiscoveryState;
+use codex_tools::is_model_generated_item;
 
 #[path = "history_user_authorization.rs"]
 mod user_authorization;
@@ -65,6 +67,9 @@ use std::sync::LazyLock;
 
 use crate::context::GuardianContextMode;
 
+#[path = "history_token_projection.rs"]
+mod token_projection;
+
 /// Transcript of thread history
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContextManager {
@@ -96,6 +101,7 @@ pub(crate) struct ContextManager {
     reference_context_item: Option<TurnContextItem>,
     /// World state most recently appended to model-visible history.
     world_state_baseline: Option<WorldStateSnapshot>,
+    tool_discovery: ToolDiscoveryState,
 }
 
 struct SharedConversationHistory {
@@ -184,6 +190,7 @@ impl ContextManager {
             ),
             reference_context_item: None,
             world_state_baseline: None,
+            tool_discovery: ToolDiscoveryState::default(),
         }
     }
 
@@ -372,6 +379,7 @@ impl ContextManager {
                     .unwrap_or_else(|| with_serialization_allowance(policy));
                 truncate_function_output_payload(output, policy, estimate_audio_token_count);
             }
+            self.tool_discovery.observe(&mut processed.item);
             if let Some(review_history) = &mut self.review_history
                 && !matches!(item, ResponseItem::Message { role, content, .. }
                 if role == "user" && is_contextual_user_message_content(content))
@@ -416,6 +424,10 @@ impl ContextManager {
     /// Returns annotated history items without cloning their response payloads.
     pub(crate) fn annotated_items(&self) -> &[ResponseItemEnvelope] {
         &self.items
+    }
+
+    pub(crate) fn pending_tool_search_exchange(&self) -> Vec<ResponseItemEnvelope> {
+        self.tool_discovery.pending_exchange(&self.items)
     }
 
     /// Returns raw items in the history and consumes the snapshot.
@@ -465,26 +477,13 @@ impl ContextManager {
         Some(base_tokens.saturating_add(items_tokens))
     }
 
-    pub(crate) fn remove_first_item(&mut self) {
-        if !self.items.is_empty() {
-            // Remove the oldest item (front of the list). Items are ordered from
-            // oldest → newest, so index 0 is the first entry recorded.
-            let items = Arc::make_mut(&mut self.items);
-            let removed = items.remove(0);
-            // If the removed item participates in a call/output pair, also remove
-            // its corresponding counterpart to keep the invariants intact without
-            // running a full normalization pass.
-            normalize::remove_corresponding_for(items, &removed.item);
-            self.world_state_baseline = None;
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn replace(&mut self, items: Vec<ResponseItem>) {
         self.replace_annotated(items.into_iter().map(ResponseItemEnvelope::new).collect());
     }
 
     pub(crate) fn replace_annotated(&mut self, items: Vec<ResponseItemEnvelope>) {
+        self.tool_discovery.rebuild(&items);
         self.retained_context = Arc::default();
         self.user_message_revision = self.user_message_revision.saturating_add(1);
         if let Some(review_history) = &mut self.review_history {
@@ -500,6 +499,7 @@ impl ContextManager {
 
     /// Compaction changes the model's history without changing the user's authorization.
     pub(crate) fn replace_compacted(&mut self, items: Vec<ResponseItemEnvelope>) {
+        self.tool_discovery.rebuild(&items);
         if self.guardian_context_mode == GuardianContextMode::Legacy
             && self.review_history.is_none()
         {
@@ -669,7 +669,10 @@ impl ContextManager {
             .items
             .iter()
             .rposition(|envelope| is_model_generated_item(&envelope.item))
-            .map_or(self.items.len(), |index| index.saturating_add(1));
+            .map_or_else(
+                || self.token_info.as_ref().map_or(0, |_| self.items.len()),
+                |index| index.saturating_add(1),
+            );
         self.items[start..].iter().map(|envelope| &envelope.item)
     }
 
@@ -713,11 +716,7 @@ impl ContextManager {
         // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);
 
-        // strip images when model does not support them
-        normalize::strip_images_when_unsupported(input_modalities, items);
-
-        // strip audio when model does not support it
-        normalize::strip_audio_when_unsupported(input_modalities, items);
+        self.project_model_visible_content(input_modalities);
     }
 
     /// Walk backward from a rollback cut and trim contiguous pre-turn context-update items.
@@ -1089,28 +1088,6 @@ fn encrypted_function_output_estimate_adjustment(item: &ResponseItem) -> (i64, i
     }
 
     (payload_bytes, replacement_bytes)
-}
-
-fn is_model_generated_item(item: &ResponseItem) -> bool {
-    match item {
-        ResponseItem::Message { role, .. } => role == "assistant",
-        ResponseItem::Reasoning { .. }
-        | ResponseItem::FunctionCall { .. }
-        | ResponseItem::ToolSearchCall { .. }
-        | ResponseItem::WebSearchCall { .. }
-        | ResponseItem::ImageGenerationCall { .. }
-        | ResponseItem::CustomToolCall { .. }
-        | ResponseItem::LocalShellCall { .. }
-        | ResponseItem::Compaction { .. }
-        | ResponseItem::ContextCompaction { .. } => true,
-        ResponseItem::ConfigurationUpdate { .. } | ResponseItem::CompactionTrigger { .. } => false,
-        ResponseItem::AdditionalTools { .. }
-        | ResponseItem::FunctionCallOutput { .. }
-        | ResponseItem::ToolSearchOutput { .. }
-        | ResponseItem::CustomToolCallOutput { .. }
-        | ResponseItem::AgentMessage { .. }
-        | ResponseItem::Other => false,
-    }
 }
 
 pub(crate) fn is_user_turn_boundary(item: &ResponseItem) -> bool {

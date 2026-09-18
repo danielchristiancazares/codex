@@ -226,7 +226,7 @@ async fn additional_context_trust_controls_message_role() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn additional_context_is_deduplicated_between_turns_while_retained() -> Result<()> {
+async fn additional_context_is_deduplicated_across_omitted_turns_while_retained() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -240,9 +240,14 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
         sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
     )
     .await;
+    let third_request = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-3"), ev_completed("resp-3")]),
+    )
+    .await;
     let test = test_codex()
         .with_config(|config| config.include_environment_context = false)
-        .build(&server)
+        .build_with_auto_env(&server)
         .await?;
     let additional_context = BTreeMap::from([(
         "browser_info".to_string(),
@@ -267,9 +272,20 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
     .await;
 
     test.codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "second turn".to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+    wait_for_event_match(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_)).then_some(())
+    })
+    .await;
+
+    test.codex
         .start_or_steer_turn(
             TurnInputRequest::user_input(vec![UserInput::Text {
-                text: "second turn".to_string(),
+                text: "third turn".to_string(),
                 text_elements: Vec::new(),
             }])
             .with_additional_context(additional_context),
@@ -293,6 +309,15 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
             "<external_browser_info>same tab</external_browser_info>",
             "first turn",
             "second turn",
+        ]
+    );
+    assert_eq!(
+        third_request.single_request().message_input_texts("user"),
+        vec![
+            "<external_browser_info>same tab</external_browser_info>",
+            "first turn",
+            "second turn",
+            "third turn",
         ]
     );
 
