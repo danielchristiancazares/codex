@@ -526,7 +526,6 @@ async fn process_sse_with_treatment(
     safety_buffering_treatment: SafetyBufferingTreatment,
 ) {
     let mut stream = stream.eventsource();
-    let mut response_error: Option<ApiError> = None;
     let mut last_server_model: Option<String> = None;
 
     loop {
@@ -553,9 +552,7 @@ async fn process_sse_with_treatment(
                 return;
             }
             Ok(None) => {
-                let error = response_error.unwrap_or(ApiError::Stream(
-                    "stream closed before response.completed".into(),
-                ));
+                let error = ApiError::Stream("stream closed before response.completed".into());
                 let _ = tx_event.send(Err(error)).await;
                 return;
             }
@@ -635,16 +632,18 @@ async fn process_sse_with_treatment(
             }
             Ok(None) => {}
             Err(error) => {
-                let error = error.into_api_error();
-                if matches!(error, ApiError::FlexUnavailable) {
-                    let _ = tx_event.send(Err(error)).await;
-                    return;
-                }
-                response_error = Some(error);
+                // The response has ended. Waiting for EOF can replace its failure
+                // classification and retry delay with a later transport error.
+                let _ = tx_event.send(Err(error.into_api_error())).await;
+                return;
             }
         };
     }
 }
+
+#[cfg(test)]
+#[path = "responses_failure_tests.rs"]
+mod failure_tests;
 
 #[cfg(test)]
 mod tests {
