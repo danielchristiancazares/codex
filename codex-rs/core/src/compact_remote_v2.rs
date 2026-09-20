@@ -302,7 +302,6 @@ async fn run_remote_compact_task_inner_impl(
         owned_client_session: _owned_client_session,
     } = attempt;
     if let Some(token_usage) = token_usage {
-        sess.record_rollout_budget_usage(&token_usage)?;
         analytics_details.active_context_tokens_before = Some(token_usage.input_tokens);
         analytics_details.compaction_summary_tokens = Some(token_usage.output_tokens);
         analytics_details.cached_input_tokens = Some(token_usage.cached_input_tokens);
@@ -483,6 +482,10 @@ async fn collect_compaction_output(
                     usage_metadata.as_ref(),
                 )
                 .await;
+                // Charge completed requests even when their compaction output is invalid.
+                if let Some(token_usage) = token_usage.as_ref() {
+                    sess.record_rollout_budget_usage(token_usage)?;
+                }
                 completed_response_id = Some(response_id);
                 completed_token_usage = token_usage;
                 break;
@@ -1281,3 +1284,7 @@ mod tests {
 #[cfg(test)]
 #[path = "compact_remote_v2_image_budget_tests.rs"]
 mod image_budget_tests;
+
+#[cfg(test)]
+#[path = "compact_remote_v2_budget_tests.rs"]
+mod budget_tests;
