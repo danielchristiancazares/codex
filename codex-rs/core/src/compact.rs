@@ -826,7 +826,20 @@ async fn drain_to_completed(
                 });
             }
             Ok(_) => continue,
-            Err(e) => return Err(e),
+            Err(e) => {
+                if let CodexErrorDetails::IncompleteResponse(failure) = e.details() {
+                    let result = sess
+                        .record_incomplete_response_usage(
+                            turn_context,
+                            &turn_context.initial_settings,
+                            failure,
+                        )
+                        .await;
+                    sess.send_token_count_event(turn_context).await;
+                    result?;
+                }
+                return Err(e);
+            }
         }
     }
 }
