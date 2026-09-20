@@ -243,6 +243,7 @@ mod mcp_runtime;
 pub(crate) mod multi_agents;
 mod plugin_selection;
 mod realtime_history;
+mod response_failure;
 mod retained_context;
 mod review;
 mod rollout_budget;
@@ -4582,18 +4583,7 @@ impl Session {
         let Some(usage) = usage else {
             return;
         };
-        let record = self.state.lock().await.record_token_usage(
-            self.thread_id,
-            &turn_context.sub_id,
-            self.session_id(),
-            turn_context
-                .turn_metadata_state
-                .root_turn_id()
-                .unwrap_or_else(|| turn_context.sub_id.clone()),
-            response_id.to_string(),
-            usage,
-        );
-        self.persist_rollout_items(&[RolloutItem::TokenUsageRecord(record)])
+        self.record_response_token_usage(turn_context, response_id, usage)
             .await;
     }
 

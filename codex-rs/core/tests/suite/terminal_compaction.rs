@@ -1,5 +1,6 @@
 //! Terminal failure and usage handling for local and remote compaction.
 
+use super::terminal_response::incomplete_response_event;
 use anyhow::Result;
 use codex_core::TurnInputRequest;
 use codex_protocol::protocol::EventMsg;
@@ -19,6 +20,7 @@ use wiremock::matchers::path;
 
 #[test_case::test_case("credit_balance_exhausted"; "quota")]
 #[test_case::test_case("invalid_prompt"; "invalid_request")]
+#[test_case::test_case("max_output_tokens"; "incomplete")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_compaction_does_not_retry_terminal_failure(code: &str) -> Result<()> {
     use codex_protocol::protocol::Op;
@@ -56,13 +58,17 @@ async fn local_compaction_does_not_retry_terminal_failure(code: &str) -> Result<
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
-    let terminal_event = json!({
-        "type": "response.failed",
-        "response": {
-            "id": "failed-compaction",
-            "error": {"code": code, "message": "terminal compaction failure"}
-        }
-    });
+    let terminal_event = if code == "max_output_tokens" {
+        incomplete_response_event(code)
+    } else {
+        json!({
+            "type": "response.failed",
+            "response": {
+                "id": "failed-compaction",
+                "error": {"code": code, "message": "terminal compaction failure"}
+            }
+        })
+    };
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(

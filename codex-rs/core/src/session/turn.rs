@@ -2559,7 +2559,22 @@ async fn try_run_sampling_request(
 
         let event = match event {
             Some(Ok(event)) => event,
-            Some(Err(err)) => break Err(err),
+            Some(Err(err)) => {
+                if let CodexErrorDetails::IncompleteResponse(failure) = err.details() {
+                    should_emit_token_count |= failure.token_usage.is_some();
+                    if let Err(accounting_error) = sess
+                        .record_incomplete_response_usage(
+                            &turn_context,
+                            &step_context.settings,
+                            failure,
+                        )
+                        .await
+                    {
+                        break Err(accounting_error);
+                    }
+                }
+                break Err(err);
+            }
             None => {
                 break Err(CodexErr::Stream(
                     "stream closed before response.completed".into(),

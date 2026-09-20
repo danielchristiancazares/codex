@@ -484,8 +484,33 @@ pub fn process_responses_event(
                     .and_then(Value::as_str)
             });
             let reason = reason.unwrap_or("unknown");
-            let message = format!("Incomplete response returned, reason: {reason}");
-            return Err(ResponsesEventError::Api(ApiError::Stream(message)));
+            let response_id = event
+                .response
+                .as_ref()
+                .and_then(|response| response.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let token_usage = event
+                .response
+                .as_ref()
+                .and_then(|response| response.get("usage"))
+                .filter(|usage| !usage.is_null())
+                .and_then(|usage| {
+                    match serde_json::from_value::<ResponseCompletedUsage>(usage.clone()) {
+                        Ok(usage) => Some(usage.into()),
+                        Err(error) => {
+                            tracing::warn!("failed to decode incomplete response usage: {error}");
+                            None
+                        }
+                    }
+                });
+            return Err(ResponsesEventError::Api(ApiError::IncompleteResponse(
+                Box::new(codex_protocol::IncompleteResponse {
+                    reason: reason.to_string(),
+                    response_id,
+                    token_usage,
+                }),
+            )));
         }
         "response.completed" => {
             if let Some(resp_val) = event.response {
