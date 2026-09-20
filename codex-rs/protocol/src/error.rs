@@ -99,6 +99,9 @@ pub enum CodexErrorDetails {
         "stream disconnected before completion: Incomplete response returned, reason: content_filter"
     )]
     ContentFilter,
+    /// A provider-declared terminal result that must not be resampled as transport recovery.
+    #[error(transparent)]
+    IncompleteResponse(Box<crate::IncompleteResponse>),
     /// A retryable upstream rate limit received inside the response stream.
     #[error("rate limit exceeded: {0}")]
     RateLimitExceeded(String),
@@ -395,6 +398,7 @@ impl CodexErr {
             | CodexErrorDetails::Fatal(_)
             | CodexErrorDetails::UsageNotIncluded
             | CodexErrorDetails::QuotaExceeded
+            | CodexErrorDetails::IncompleteResponse(_)
             | CodexErrorDetails::InvalidImageRequest()
             | CodexErrorDetails::InvalidRequest(_)
             | CodexErrorDetails::InvalidPrompt { .. }

@@ -16,6 +16,8 @@ pub enum ApiError {
     Stream(String),
     #[error("stream error: Incomplete response returned, reason: content_filter")]
     ContentFilter,
+    #[error(transparent)]
+    IncompleteResponse(Box<codex_protocol::IncompleteResponse>),
     #[error("context window exceeded")]
     ContextWindowExceeded,
     #[error("quota exceeded")]

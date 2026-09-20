@@ -422,6 +422,17 @@ async fn run_remote_compaction_request_v2(
         match result {
             Ok(compaction_output) => return Ok(compaction_output),
             Err(err) => {
+                if let CodexErrorDetails::IncompleteResponse(failure) = err.details() {
+                    let result = sess
+                        .record_incomplete_response_usage(
+                            turn_context,
+                            &step_context.settings,
+                            failure,
+                        )
+                        .await;
+                    sess.send_token_count_event(turn_context).await;
+                    result?;
+                }
                 handle_response_stream_error(
                     &mut retry_state,
                     max_retries,

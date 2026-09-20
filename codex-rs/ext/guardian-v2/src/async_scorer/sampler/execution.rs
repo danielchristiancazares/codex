@@ -97,6 +97,7 @@ impl SamplingExecution {
                 | ApiError::RateLimit(_)
                 | ApiError::InvalidRequest { .. }
                 | ApiError::InvalidPrompt { .. }
+                | ApiError::IncompleteResponse(_)
                 | ApiError::MisalignmentPolicyViolation { .. }
                 | ApiError::CyberPolicy { .. }
                 | ApiError::BioPolicy { .. },
