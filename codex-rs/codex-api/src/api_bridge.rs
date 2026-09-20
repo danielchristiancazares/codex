@@ -21,6 +21,7 @@ use serde_json::Value;
 
 pub fn map_api_error(err: ApiError) -> CodexErr {
     let retry_after = match &err {
+        ApiError::IncompleteResponse(_) => return map_api_error_details(err),
         ApiError::Retryable { retry_after, .. }
         | ApiError::RateLimitExceeded { retry_after, .. }
         | ApiError::ServerOverloaded { retry_after }
@@ -58,6 +59,9 @@ fn map_api_error_details(err: ApiError) -> CodexErr {
         ApiError::Stream(msg) => CodexErr::Stream(msg),
         ApiError::ServerOverloaded { .. } => CodexErr::ServerOverloaded,
         ApiError::FlexUnavailable => CodexErr::new(CodexErrorDetails::FlexUnavailable),
+        ApiError::IncompleteResponse(failure) => {
+            CodexErrorDetails::IncompleteResponse(failure).into()
+        }
         ApiError::Api { status, message } => {
             let user_message = api_error_user_message(status, &message);
             CodexErr::UnexpectedStatus(UnexpectedResponseError {

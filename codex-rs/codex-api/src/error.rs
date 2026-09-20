@@ -14,6 +14,8 @@ pub enum ApiError {
     Api { status: StatusCode, message: String },
     #[error("stream error: {0}")]
     Stream(String),
+    #[error(transparent)]
+    IncompleteResponse(Box<codex_protocol::IncompleteResponse>),
     #[error("context window exceeded")]
     ContextWindowExceeded,
     #[error("quota exceeded")]
