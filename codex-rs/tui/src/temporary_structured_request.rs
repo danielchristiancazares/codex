@@ -304,9 +304,10 @@ pub(crate) async fn run_temporary_structured_turn(
     .await
     .unwrap_or_else(|_| Err(eyre!("temporary structured turn timed out")));
 
-    // Give interruption its own deadline so cancellation near the response timeout
-    // still gets a chance to stop the hidden turn.
-    if cancellation.is_cancelled()
+    // Abandoned responses must stop the hidden turn before detaching. A timeout
+    // or collector error does not cancel the caller-provided cancellation token.
+    // Give interruption its own deadline even when the response deadline elapsed.
+    if (result.is_err() || cancellation.is_cancelled())
         && let Some(turn_id) = turn_id
     {
         let interrupt =
@@ -336,3 +337,7 @@ pub(crate) async fn run_temporary_structured_turn(
 #[cfg(test)]
 #[path = "temporary_structured_request_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "temporary_structured_cleanup_tests.rs"]
+mod cleanup_tests;

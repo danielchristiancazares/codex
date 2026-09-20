@@ -1017,7 +1017,10 @@ impl App {
                 } else {
                     current_executable
                 };
-                let output = tokio::process::Command::new(executable)
+                let mut command = tokio::process::Command::new(executable);
+                #[cfg(windows)]
+                command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+                let output = command
                     .args(["app-server", "daemon", "start"])
                     .output()
                     .await

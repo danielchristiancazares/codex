@@ -279,6 +279,8 @@ impl LocalStdioServerLauncher {
             let mut command = Command::new(&resolved_program);
             command.current_dir(&cwd).envs(&envs).args(&args);
             command.process_mode(ProcessMode::NewGroup);
+            #[cfg(windows)]
+            command.no_console();
             command
         };
         #[cfg(windows)]

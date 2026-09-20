@@ -33,6 +33,7 @@ pub async fn run_windows_app_open_or_install(
 async fn codex_app_is_installed() -> anyhow::Result<bool> {
     // This package identity is stable across Codex- and ChatGPT-branded builds.
     let output = Command::new("powershell.exe")
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .arg("-NoProfile")
         .arg("-Command")
         .arg(
@@ -51,6 +52,7 @@ async fn codex_app_is_installed() -> anyhow::Result<bool> {
 
 async fn open_url(url: &str) -> anyhow::Result<()> {
     let status = Command::new("powershell.exe")
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .arg("-NoProfile")
         .arg("-Command")
         .arg("& { param($target) Start-Process -FilePath $target }")

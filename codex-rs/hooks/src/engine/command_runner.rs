@@ -234,11 +234,11 @@ pub(crate) async fn run_command(
     let mut process_tree_job = JobObject::create().ok();
     #[cfg(windows)]
     let child = match process_tree_job.as_ref() {
-        Some(job) => match job.spawn_contained(&mut command) {
+        Some(job) => match job.spawn_contained_no_console(&mut command) {
             Ok(child) => Ok(child),
             Err(_) => {
                 process_tree_job = None;
-                command.creation_flags(0);
+                command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
                 command.spawn()
             }
         },
@@ -358,7 +358,9 @@ impl Drop for ProcessTreeGuard {
             if let Some(job) = self.job.as_ref() {
                 let _ = job.terminate();
             } else {
+                use std::os::windows::process::CommandExt;
                 let _ = std::process::Command::new("taskkill")
+                    .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
                     .args(["/PID", &process_id.to_string(), "/T", "/F"])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
@@ -429,6 +431,8 @@ fn build_command(
     command.envs(environment.iter().cloned());
     command.envs(env);
     scrub_non_inheritable_env_vars(command.as_std_mut());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     command
 }
 
@@ -464,3 +468,7 @@ fn default_shell_command(environment: &[(OsString, OsString)]) -> Command {
 #[cfg(test)]
 #[path = "command_runner_tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "command_console_windows_tests.rs"]
+mod windows_console_tests;

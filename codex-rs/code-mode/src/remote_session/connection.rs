@@ -157,6 +157,9 @@ impl Connection {
         let mut command = Command::new(host_program);
         #[cfg(unix)]
         command.process_group(0);
+        // The host communicates through pipes, including when launched by a detached daemon.
+        #[cfg(windows)]
+        command.creation_flags(/*flags*/ 0x0800_0000); // CREATE_NO_WINDOW
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

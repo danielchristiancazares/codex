@@ -172,6 +172,8 @@ impl AwsCredentialExport {
         }
 
         let mut command = Command::new(program);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         command
             .args(self.config.args.iter().map(Deref::deref))
             .stdin(Stdio::null())
@@ -248,3 +250,7 @@ impl AwsCredentialsProvider for AwsCredentialExport {
 #[cfg(test)]
 #[path = "credential_export_tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "credential_console_windows_tests.rs"]
+mod windows_console_tests;
