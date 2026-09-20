@@ -332,5 +332,7 @@ pub(crate) fn command_from_argv(
     command.env_clear();
     command.envs(environment);
     scrub_non_inheritable_env_vars(command.as_std_mut());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     Some(command)
 }

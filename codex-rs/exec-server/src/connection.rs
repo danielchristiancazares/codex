@@ -251,8 +251,10 @@ fn kill_direct_child(child_process: &mut Child, action: &str) {
 
 #[cfg(windows)]
 fn kill_windows_process_tree(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
     let pid = pid.to_string();
     match std::process::Command::new("taskkill")
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .args(["/PID", pid.as_str(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

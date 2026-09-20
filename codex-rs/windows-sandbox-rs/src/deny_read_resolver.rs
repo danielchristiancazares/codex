@@ -101,6 +101,11 @@ pub fn resolve_windows_deny_read_paths(
 
 fn ripgrep_files(scan_plan: &GlobScanPlan) -> Result<Option<Vec<PathBuf>>, String> {
     let mut command = Command::new("rg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     command
         .arg("--files")
         .arg("--hidden")

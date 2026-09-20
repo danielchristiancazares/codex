@@ -6,6 +6,62 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
+#[cfg(windows)]
+#[tokio::test]
+async fn git_process_has_no_console_window() {
+    const DETACHED_PROBE: &str = "CODEX_GIT_CONSOLE_TEST_DETACHED";
+    if std::env::var_os(DETACHED_PROBE).is_none() {
+        // Match the daemon's detached process, with no hidden console to inherit.
+        let mut parent = Command::new(std::env::current_exe().expect("test executable"));
+        parent
+            .args([
+                "--exact",
+                "git_process::tests::git_process_has_no_console_window",
+                "--nocapture",
+            ])
+            .env(DETACHED_PROBE, "1")
+            .creation_flags(/*flags*/ 0x0000_0008) // DETACHED_PROCESS
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(Duration::from_secs(/*secs*/ 60), parent.output())
+            .await
+            .expect("console probe timed out")
+            .expect("run detached console probe");
+        assert!(
+            output.status.success(),
+            "detached console probe failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("git-console-probe-completed"));
+        return;
+    }
+
+    let mut command = Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        r#"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class GitConsoleProbe { [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); }'; [GitConsoleProbe]::GetConsoleWindow().ToInt64()"#,
+    ]);
+    let (child, process_tree) = spawn_git_command(&mut command).expect("spawn console probe");
+    let output = wait_for_git_command_with_timeout_output(
+        child,
+        process_tree,
+        Duration::from_secs(/*secs*/ 30),
+    )
+    .await
+    .expect("wait for console probe");
+    assert!(output.status.success(), "console probe failed: {output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .expect("console probe output")
+            .trim(),
+        "0",
+        "background Git processes must have no console window"
+    );
+    println!("git-console-probe-completed");
+}
+
 #[derive(Clone, Copy)]
 enum GitWrapperLifetime {
     WaitForChild,

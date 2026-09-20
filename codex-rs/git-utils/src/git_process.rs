@@ -41,13 +41,14 @@ fn spawn_git_command(command: &mut Command) -> Option<(Child, KillGitProcessTree
         .stderr(Stdio::piped());
 
     #[cfg(windows)]
-    let (child, job) = match JobObject::create()
-        .and_then(|job| job.spawn_contained(command).map(|child| (child, job)))
-    {
+    let (child, job) = match JobObject::create().and_then(|job| {
+        job.spawn_contained_no_console(command)
+            .map(|child| (child, job))
+    }) {
         Ok((child, job)) => (child, Some(job)),
         Err(_) => {
-            // A failed contained spawn leaves CREATE_SUSPENDED on the command.
-            command.creation_flags(0);
+            // Clear CREATE_SUSPENDED after a failed contained spawn, retaining window suppression.
+            command.creation_flags(/*flags*/ 0x0800_0000); // CREATE_NO_WINDOW
             (command.spawn().ok()?, None)
         }
     };

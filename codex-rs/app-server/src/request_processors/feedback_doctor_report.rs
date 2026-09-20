@@ -107,6 +107,8 @@ pub(crate) async fn doctor_feedback_report(
 
 fn doctor_command(executable: &Path, cwd: &Path, codex_home: &Path) -> Command {
     let mut command = Command::new(executable);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     command
         .arg("--cd")
         .arg(cwd)

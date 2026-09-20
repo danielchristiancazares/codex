@@ -828,6 +828,8 @@ fn stdio_command_process(stdio_command: &StdioExecServerCommand) -> Command {
     command.args(&stdio_command.args);
     command.envs(&stdio_command.env);
     scrub_non_inheritable_env_vars(command.as_std_mut());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     if let Some(cwd) = &stdio_command.cwd {
         command.current_dir(cwd);
     }
@@ -839,3 +841,7 @@ fn stdio_command_process(stdio_command: &StdioExecServerCommand) -> Command {
 #[cfg(test)]
 #[path = "client_transport_tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "console_windows_tests.rs"]
+mod windows_console_tests;

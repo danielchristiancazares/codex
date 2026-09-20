@@ -998,6 +998,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("MCP_TEST_CONSOLE_STATE_FILE") {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        // SAFETY: This only inspects the current process's console association.
+        let attached = !unsafe { GetConsoleWindow() }.is_null();
+        std::fs::write(path, if attached { "attached" } else { "none" })?;
+    }
+
     eprintln!("starting rmcp test server");
     if let Ok(pid_file) = std::env::var("MCP_TEST_PID_FILE") {
         std::fs::write(pid_file, std::process::id().to_string())?;

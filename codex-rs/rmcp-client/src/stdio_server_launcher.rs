@@ -288,6 +288,8 @@ impl LocalStdioServerLauncher {
             // handles and needs a handle allowlist in the shared spawn backend.
             #[cfg(unix)]
             command.descriptor_policy(DescriptorPolicy::Explicit);
+            #[cfg(windows)]
+            command.no_console();
             command
         };
         #[cfg(windows)]
