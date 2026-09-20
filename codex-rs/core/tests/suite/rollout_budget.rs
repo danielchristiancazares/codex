@@ -402,7 +402,9 @@ async fn compaction_budget_exhaustion_fails_without_retry(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restates_the_current_remainder_after_compaction() -> Result<()> {
+#[test_case(false; "local")]
+#[test_case(true; "remote v2")]
+async fn restates_the_current_remainder_after_compaction(remote_v2: bool) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -415,7 +417,17 @@ async fn restates_the_current_remainder_after_compaction() -> Result<()> {
             ]),
             sse(vec![
                 ev_response_created("resp-compact"),
-                ev_assistant_message("msg-compact", "compact summary"),
+                if remote_v2 {
+                    json!({
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "compaction",
+                            "encrypted_content": "compact summary",
+                        }
+                    })
+                } else {
+                    ev_assistant_message("msg-compact", "compact summary")
+                },
                 ev_completed_with_tokens("resp-compact", /*total_tokens*/ 10),
             ]),
             sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
@@ -423,7 +435,9 @@ async fn restates_the_current_remainder_after_compaction() -> Result<()> {
     )
     .await;
     let mut model_provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
-    model_provider.name = "OpenAI-compatible test provider".to_string();
+    if !remote_v2 {
+        model_provider.name = "OpenAI-compatible test provider".to_string();
+    }
     model_provider.base_url = Some(format!("{}/v1", server.uri()));
     model_provider.supports_websockets = false;
     let test = test_codex()
@@ -463,5 +477,65 @@ async fn restates_the_current_remainder_after_compaction() -> Result<()> {
         "the current remainder should follow the compaction summary"
     );
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[test_case(0; "missing output")]
+#[test_case(2; "duplicated output")]
+async fn invalid_remote_compaction_usage_is_charged_before_next_turn(
+    output_count: usize,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut compact_events = vec![ev_response_created("invalid-compact")];
+    for _ in 0..output_count {
+        compact_events.push(json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "compaction",
+                "encrypted_content": "encrypted-summary",
+            }
+        }));
+    }
+    compact_events.push(ev_completed_with_tokens("invalid-compact", 15));
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(compact_events),
+            sse(vec![
+                ev_response_created("next-turn"),
+                ev_completed("next-turn"),
+            ]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config.rollout_budget = Some(rollout_budget());
+        })
+        .build(&server)
+        .await?;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::Error(error)
+            if error.message.contains("expected exactly one compaction output item"))
+    })
+    .await;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    test.submit_turn("continue after failed compaction").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2, "invalid compaction must not retry");
+    assert_eq!(
+        rollout_budget_texts(&requests[1]),
+        vec![rollout_budget_message(85)],
+        "the next turn must include usage from the rejected completed compaction"
+    );
     Ok(())
 }
