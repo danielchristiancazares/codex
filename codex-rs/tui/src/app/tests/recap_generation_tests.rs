@@ -315,10 +315,17 @@ async fn manual_recap_works_when_auto_recap_disabled() -> Result<()> {
         },
     };
     app.request_recap(&app_server, thread_id, RecapTrigger::Manual);
-    let stale = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), app_event_rx.recv())
-        .await?
-        .expect("recap completion before disconnect");
-    assert!(matches!(stale, AppEvent::RecapStarted { .. }));
+    let stale = loop {
+        let event = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), app_event_rx.recv())
+            .await?
+            .expect("recap completion before disconnect");
+        if matches!(event, AppEvent::RecapStarted { .. }) {
+            break event;
+        }
+        // Cancellation can finish the previous worker before the replacement starts.
+        assert!(matches!(event, AppEvent::RecapGenerated { .. }));
+        app.handle_event(&mut tui, &mut app_server, event).await?;
+    };
     assert!(app.begin_reconnect());
     app.handle_event(&mut tui, &mut app_server, stale).await?;
     while app_event_rx.try_recv().is_ok() {}
