@@ -209,7 +209,7 @@ pub(crate) async fn start_structured_turn(
 
 /// Return the latest assistant message when the requested turn completes.
 pub(crate) async fn collect_structured_response(
-    mut notifications: UnboundedReceiver<ServerNotification>,
+    notifications: &mut UnboundedReceiver<ServerNotification>,
     turn_id: &str,
 ) -> color_eyre::Result<String> {
     let mut response = None;
@@ -283,7 +283,7 @@ pub(crate) async fn run_temporary_structured_turn(
     prompt: String,
     output_schema: Value,
     effort: Option<ReasoningEffort>,
-    notifications: UnboundedReceiver<ServerNotification>,
+    mut notifications: UnboundedReceiver<ServerNotification>,
     cancellation: CancellationToken,
 ) -> color_eyre::Result<String> {
     let mut turn_id = None;
@@ -306,15 +306,30 @@ pub(crate) async fn run_temporary_structured_turn(
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => Err(eyre!("temporary structured turn cancelled")),
-            result = collect_structured_response(notifications, &turn.turn.id) => result,
+            result = collect_structured_response(&mut notifications, &turn.turn.id) => result,
         }
     })
     .await
     .unwrap_or_else(|_| Err(eyre!("temporary structured turn timed out")));
 
-    // Give interruption its own deadline so cancellation near the response timeout
-    // still gets a chance to stop the hidden turn.
-    if cancellation.is_cancelled()
+    // Admission can succeed even when the turn/start acknowledgement is lost.
+    // Keep the notification receiver alive through the deadline so cleanup can
+    // recover the admitted turn identity without submitting the prompt again.
+    if turn_id.is_none() && result.is_err() {
+        while let Ok(notification) = notifications.try_recv() {
+            if let ServerNotification::TurnStarted(started) = notification
+                && started.thread_id == thread_id
+            {
+                turn_id = Some(started.turn.id);
+                break;
+            }
+        }
+    }
+
+    // Abandoned responses must stop the hidden turn before detaching. A timeout
+    // or collector error does not cancel the caller-provided cancellation token.
+    // Give interruption its own deadline even when the response deadline elapsed.
+    if (result.is_err() || cancellation.is_cancelled())
         && let Some(turn_id) = turn_id
     {
         let interrupt =
@@ -344,3 +359,6 @@ pub(crate) async fn run_temporary_structured_turn(
 #[cfg(test)]
 #[path = "temporary_structured_request_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "temporary_structured_start_tests.rs"]
+mod start_tests;
