@@ -245,6 +245,55 @@ async fn incomplete_response_usage_enforces_rollout_budget_without_retry() -> Re
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn incomplete_response_without_usage_preserves_pending_rate_limits() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let mut incomplete = incomplete_response_event("content_filter");
+    incomplete["response"]["usage"] = serde_json::Value::Null;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-codex-primary-used-percent", "12.5")
+                .insert_header("x-codex-primary-window-minutes", "10")
+                .set_body_raw(sse(vec![incomplete]), "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+    let test = test_codex()
+        .with_config(|config| config.model_provider.stream_max_retries = Some(0))
+        .build_with_auto_env(&server)
+        .await?;
+    let events = submit_and_collect_events(&test).await?;
+    let snapshots = events
+        .iter()
+        .filter_map(|event| match event {
+            EventMsg::TokenCount(event) => event.rate_limits.as_ref(),
+            _ => None,
+        })
+        .filter_map(|limits| limits.primary.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "pending rate limits must reach the client"
+    );
+    assert_eq!(snapshots[0].used_percent, 12.5);
+    assert_eq!(snapshots[0].window_minutes, Some(10));
+    assert_eq!(
+        server
+            .received_requests()
+            .await
+            .expect("recorded requests")
+            .iter()
+            .filter(|request| request.method == "POST" && request.url.path() == "/v1/responses")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
 pub(super) fn incomplete_response_event(reason: &str) -> serde_json::Value {
     json!({
         "type": "response.incomplete",
