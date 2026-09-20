@@ -4,6 +4,7 @@
 use std::time::Duration;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tokio_util::sync::DropGuard;
 
 use super::App;
 use crate::app_event::AppEvent;
@@ -120,6 +121,9 @@ impl App {
         }
 
         if !self.local_settings.tui.auto_recap {
+            if self.recap.in_flight_trigger == Some(RecapTrigger::Automatic) {
+                self.clear_recap_request(RecapTrigger::Automatic);
+            }
             return;
         }
         let Some(deadline) = self.recap.next_check_deadline() else {
@@ -329,6 +333,8 @@ impl App {
 
         let request_handle = app_server.request_handle();
         let event_sender = self.app_event_tx.clone();
+        let cancellation = CancellationToken::new();
+        self.recap.in_flight_cancellation = Some(cancellation.clone().drop_guard());
         let task = tokio::spawn(async move {
             let result = run_temporary_structured_turn(
                 request_handle,
@@ -337,7 +343,7 @@ impl App {
                 recap_output_schema(),
                 /*effort*/ None,
                 receiver,
-                CancellationToken::new(),
+                cancellation,
             )
             .await
             .map_err(|error| error.to_string());
@@ -446,10 +452,13 @@ pub(super) struct RecapState {
     in_flight_trigger: Option<RecapTrigger>,
     in_flight_thread_id: Option<ThreadId>,
     in_flight_request: Option<JoinHandle<()>>,
+    in_flight_cancellation: Option<DropGuard>,
 }
 
 impl RecapState {
     fn clear_in_flight_request(&mut self) {
+        // Cancel inference while allowing the task to interrupt and unsubscribe its thread.
+        self.in_flight_cancellation.take();
         self.in_flight_request_id = None;
         self.in_flight_trigger = None;
         self.in_flight_thread_id = None;
@@ -506,6 +515,7 @@ impl RecapState {
     }
 
     pub(super) fn note_turn_finished(&mut self, status: &TurnStatus, now: Instant) {
+        self.in_flight_cancellation.take();
         if matches!(status, TurnStatus::Completed) {
             self.completed_turns += 1;
         }
@@ -569,10 +579,15 @@ impl Drop for RecapState {
             task.abort();
         }
 
-        // Let an in-flight request finish so it can unsubscribe its temporary thread.
+        // Dropping the cancellation guard stops inference; the task remains alive
+        // long enough to interrupt and unsubscribe its temporary thread.
     }
 }
 
 #[cfg(test)]
 #[path = "recap_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "recap_cancellation_tests.rs"]
+mod cancellation_tests;
