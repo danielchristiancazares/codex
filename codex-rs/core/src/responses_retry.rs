@@ -92,7 +92,6 @@ pub(crate) async fn handle_response_stream_error(
         return Ok(());
     }
 
-    // TODO(anp): Respect server retry advice before issuing the fallback HTTP request.
     if retry_state.retries >= max_retries
         && client_session.try_switch_fallback_transport(
             &turn_context.session_telemetry,
@@ -107,6 +106,11 @@ pub(crate) async fn handle_response_stream_error(
         )
         .await;
         retry_state.retries = 0;
+        // The server's cooldown also applies to the fallback transport.
+        if let Some(delay) = err.server_retry_delay().filter(|delay| !delay.is_zero()) {
+            codex_client::record_retry!(retry_count, delay, operation);
+            tokio::time::sleep(delay).await;
+        }
         return Ok(());
     }
 

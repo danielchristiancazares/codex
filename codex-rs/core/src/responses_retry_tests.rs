@@ -41,3 +41,116 @@ async fn sampling_retry_logs_stream_error_context() {
         "sampling_error=stream disconnected before completion: websocket closed by server before response.completed"
     ));
 }
+
+#[test_case::test_case(ResponsesStreamRequest::Sampling; "sampling")]
+#[test_case::test_case(ResponsesStreamRequest::RemoteCompactionV2; "compaction")]
+#[tokio::test]
+async fn transport_fallback_respects_server_retry_delay(request: ResponsesStreamRequest) {
+    let (session, turn_context, _events) =
+        crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
+            codex_login::CodexAuth::from_api_key("Test API Key"),
+            Vec::new(),
+            |config| config.model_provider.supports_websockets = true,
+        )
+        .await;
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = super::ResponsesStreamRetryState {
+        retries: 1,
+        ..Default::default()
+    };
+    let delay = Duration::from_secs(5);
+    let error = CodexErr::Stream("slow down".to_string()).with_retry_delay(delay);
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+
+    super::handle_response_stream_error(
+        &mut retry_state,
+        /*max_retries*/ 1,
+        error,
+        &mut client_session,
+        &session,
+        &turn_context,
+        request,
+    )
+    .await
+    .expect("fallback should allow a request after the advised delay");
+
+    assert!(
+        started.elapsed() >= delay,
+        "fallback must wait at least the advised delay"
+    );
+    pretty_assertions::assert_eq!(retry_state.retries, 0);
+    assert!(!session.services.model_client.responses_websocket_enabled());
+}
+
+#[test_case::test_case(None; "no_advice")]
+#[test_case::test_case(Some(Duration::ZERO); "zero_advice")]
+#[tokio::test]
+async fn transport_fallback_without_positive_advice_is_immediate(advice: Option<Duration>) {
+    let (session, turn_context, _events) =
+        crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
+            codex_login::CodexAuth::from_api_key("Test API Key"),
+            Vec::new(),
+            |config| config.model_provider.supports_websockets = true,
+        )
+        .await;
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = super::ResponsesStreamRetryState::default();
+    let error = CodexErr::Stream("connection closed".to_string());
+    let error = match advice {
+        Some(delay) => error.with_retry_delay(delay),
+        None => error,
+    };
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+
+    super::handle_response_stream_error(
+        &mut retry_state,
+        /*max_retries*/ 0,
+        error,
+        &mut client_session,
+        &session,
+        &turn_context,
+        ResponsesStreamRequest::Sampling,
+    )
+    .await
+    .expect("fallback should recover immediately without positive server advice");
+
+    pretty_assertions::assert_eq!(started.elapsed(), Duration::ZERO);
+    pretty_assertions::assert_eq!(retry_state.retries, 0);
+    assert!(!session.services.model_client.responses_websocket_enabled());
+}
+
+#[tokio::test]
+async fn terminal_error_with_server_advice_never_switches_transport() {
+    let (session, turn_context, _events) =
+        crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
+            codex_login::CodexAuth::from_api_key("Test API Key"),
+            Vec::new(),
+            |config| config.model_provider.supports_websockets = true,
+        )
+        .await;
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = super::ResponsesStreamRetryState::default();
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+
+    let error = super::handle_response_stream_error(
+        &mut retry_state,
+        /*max_retries*/ 0,
+        CodexErr::QuotaExceeded.with_retry_delay(Duration::from_secs(5)),
+        &mut client_session,
+        &session,
+        &turn_context,
+        ResponsesStreamRequest::Sampling,
+    )
+    .await
+    .expect_err("terminal quota errors must not retry");
+
+    assert!(matches!(
+        error.details(),
+        codex_protocol::error::CodexErrorDetails::QuotaExceeded
+    ));
+    pretty_assertions::assert_eq!(started.elapsed(), Duration::ZERO);
+    assert!(session.services.model_client.responses_websocket_enabled());
+}
