@@ -106,7 +106,7 @@ async fn preserves_custom_permissions_and_disables_required_mcp_servers() -> col
 
 #[tokio::test]
 async fn returns_latest_matching_assistant_message() {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
     sender
         .send(agent_message_notification("other-turn", "ignore me"))
         .expect("send unrelated assistant message");
@@ -126,7 +126,7 @@ async fn returns_latest_matching_assistant_message() {
         .send(turn_completed_notification("turn-1", TurnStatus::Completed))
         .expect("send matching completion");
 
-    let response = collect_structured_response(receiver, "turn-1")
+    let response = collect_structured_response(&mut receiver, "turn-1")
         .await
         .expect("collect structured response");
 
@@ -135,12 +135,12 @@ async fn returns_latest_matching_assistant_message() {
 
 #[tokio::test]
 async fn rejects_failed_turn() {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
     sender
         .send(turn_completed_notification("turn-1", TurnStatus::Failed))
         .expect("send failed completion");
 
-    let error = collect_structured_response(receiver, "turn-1")
+    let error = collect_structured_response(&mut receiver, "turn-1")
         .await
         .expect_err("failed turn should not produce a response");
 
@@ -152,12 +152,12 @@ async fn rejects_failed_turn() {
 
 #[tokio::test]
 async fn rejects_completion_without_assistant_message() {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
     sender
         .send(turn_completed_notification("turn-1", TurnStatus::Completed))
         .expect("send completion");
 
-    let error = collect_structured_response(receiver, "turn-1")
+    let error = collect_structured_response(&mut receiver, "turn-1")
         .await
         .expect_err("completion without assistant message should fail");
 
@@ -169,10 +169,10 @@ async fn rejects_completion_without_assistant_message() {
 
 #[tokio::test]
 async fn rejects_closed_notification_channel() {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
     drop(sender);
 
-    let error = collect_structured_response(receiver, "turn-1")
+    let error = collect_structured_response(&mut receiver, "turn-1")
         .await
         .expect_err("closed notification channel should fail");
 
@@ -184,7 +184,7 @@ async fn rejects_closed_notification_channel() {
 
 #[tokio::test]
 async fn rejects_oversized_assistant_message() {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
     let oversized = "x".repeat(STRUCTURED_RESPONSE_MAX_BYTES + 1);
     sender
         .send(agent_message_notification("turn-1", &oversized))
@@ -193,7 +193,7 @@ async fn rejects_oversized_assistant_message() {
         .send(turn_completed_notification("turn-1", TurnStatus::Completed))
         .expect("send matching completion");
 
-    let error = collect_structured_response(receiver, "turn-1")
+    let error = collect_structured_response(&mut receiver, "turn-1")
         .await
         .expect_err("oversized assistant message should be rejected");
 
