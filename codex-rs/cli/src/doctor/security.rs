@@ -237,6 +237,8 @@ async fn endpoint_products() -> EndpointInspection {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn product_command(program: impl AsRef<OsStr>, args: &[&str]) -> Option<Output> {
     let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     command
         .args(args)
         .stdin(Stdio::null())

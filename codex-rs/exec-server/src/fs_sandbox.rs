@@ -530,6 +530,8 @@ pub(crate) fn spawn_command(
         return Err(invalid_request("fs sandbox command was empty".to_string()));
     };
     let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.no_console();
     #[cfg(unix)]
     if let Some(arg0) = arg0 {
         command.arg0(arg0);

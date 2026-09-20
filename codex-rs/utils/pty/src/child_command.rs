@@ -89,6 +89,8 @@ pub struct Command {
     pub(crate) stdout_file: Option<std::os::fd::OwnedFd>,
     #[cfg(unix)]
     pub(crate) stderr_file: Option<std::os::fd::OwnedFd>,
+    #[cfg(windows)]
+    windows_creation_flags: u32,
     #[cfg(unix)]
     pub(crate) arg0: Option<OsString>,
 }
@@ -103,8 +105,6 @@ impl Command {
             .stdin(TokioStdio::piped())
             .stdout(TokioStdio::piped())
             .stderr(TokioStdio::piped());
-        #[cfg(windows)]
-        inner.creation_flags(CREATE_NO_WINDOW);
         Self {
             inner,
             #[cfg(unix)]
@@ -122,6 +122,8 @@ impl Command {
             stdout_file: None,
             #[cfg(unix)]
             stderr_file: None,
+            #[cfg(windows)]
+            windows_creation_flags: CREATE_NO_WINDOW,
             #[cfg(unix)]
             arg0: None,
         }
@@ -243,16 +245,23 @@ impl Command {
     /// Set the Windows process creation flags, replacing any previously selected flags.
     #[cfg(windows)]
     pub fn creation_flags(&mut self, flags: u32) -> &mut Self {
-        self.inner.creation_flags(flags);
+        self.windows_creation_flags = flags;
         self
     }
+
+    /// Run a Windows console executable without allocating or inheriting a console.
+    /// Its stdin, stdout, and stderr remain available through their configured pipes.
+    #[cfg(windows)]
+    pub fn no_console(&mut self) -> &mut Self {
+        self.windows_creation_flags |= CREATE_NO_WINDOW;
+        self
+    }
+
     /// Preserve Job Object assignment before the child begins executing on Windows.
     #[cfg(windows)]
     pub fn prepare_suspended_spawn(&mut self, job: &crate::JobObject) {
         job.prepare_suspended_spawn(&mut self.inner);
-        // Tokio's creation_flags replaces, rather than adds to, the flags.
-        self.inner
-            .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        self.windows_creation_flags |= CREATE_SUSPENDED;
     }
 
     /// Reject original inputs that std replaced with a NUL-free placeholder.
@@ -346,6 +355,10 @@ impl Command {
             ChildDropPolicy::KillAndReap => None,
             ChildDropPolicy::ReapOnly => Some(crate::child::reaper::sender()?),
         };
+        // creation_flags replaces previous flags. Apply the complete Windows mask
+        // after job preparation so neither setting can discard the other.
+        #[cfg(windows)]
+        self.inner.creation_flags(self.windows_creation_flags);
         let mut child = self.inner.spawn()?;
         Ok(Child {
             stdin: child.stdin.take(),
@@ -384,3 +397,7 @@ mod descriptor_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "linux_child_tests.rs"]
 mod linux_tests;
+
+#[cfg(all(test, windows))]
+#[path = "windows_child_tests.rs"]
+mod windows_tests;

@@ -103,6 +103,8 @@ struct CachedExternalBearerToken {
 async fn run_provider_auth_command(config: &ModelProviderAuthInfo) -> io::Result<String> {
     let program = resolve_provider_auth_program(&config.command, &config.cwd)?;
     let mut command = Command::new(&program);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     command
         .args(config.args.iter().map(Deref::deref))
         .current_dir(config.cwd.as_path())
@@ -157,6 +159,10 @@ async fn run_provider_auth_command(config: &ModelProviderAuthInfo) -> io::Result
 
     Ok(access_token)
 }
+
+#[cfg(all(test, windows))]
+#[path = "external_bearer_console_windows_tests.rs"]
+mod windows_console_tests;
 
 fn resolve_provider_auth_program(command: &str, cwd: &Path) -> io::Result<PathBuf> {
     let path = Path::new(command);

@@ -76,6 +76,10 @@ fn materialize_npm_plugin_source_with_command(
     Ok((plugin_root, tempdir))
 }
 
+#[cfg(all(test, windows))]
+#[path = "npm_console_windows_tests.rs"]
+mod windows_console_tests;
+
 fn pack_npm_package(
     destination: &Path,
     package: &str,
@@ -88,6 +92,11 @@ fn pack_npm_package(
         |version| format!("{package}@{version}"),
     );
     let mut command = Command::new(npm_command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     command
         .current_dir(destination)
         .arg("pack")

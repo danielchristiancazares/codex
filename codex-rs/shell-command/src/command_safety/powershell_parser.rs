@@ -113,7 +113,7 @@ struct PowershellParserProcess {
 
 impl PowershellParserProcess {
     fn spawn(executable: &str) -> std::io::Result<Self> {
-        let mut command = Command::new(executable);
+        let mut command = Command::from(crate::powershell::background_command(executable));
         command
             .args([
                 "-NoLogo",

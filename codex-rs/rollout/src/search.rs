@@ -71,7 +71,10 @@ async fn ripgrep_rollout_paths(
         return Ok(Some(HashSet::new()));
     }
 
-    let output = match Command::new(rg_command)
+    let mut command = Command::new(rg_command);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let output = match command
         .arg("-l")
         .arg("--fixed-strings")
         .arg("--ignore-case")
@@ -368,3 +371,7 @@ fn char_end_after(text: &str, byte_index: usize, chars_after: usize) -> usize {
         .map(|(offset, _)| byte_index.saturating_add(offset))
         .unwrap_or(text.len())
 }
+
+#[cfg(all(test, windows))]
+#[path = "search_console_windows_tests.rs"]
+mod windows_console_tests;
