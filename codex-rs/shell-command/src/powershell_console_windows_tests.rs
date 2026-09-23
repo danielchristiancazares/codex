@@ -13,7 +13,11 @@ unsafe extern "system" {
 #[ignore = "runs as a child process of the console regression"]
 fn console_probe() {
     // SAFETY: This only queries the current process's console association.
-    let console = if unsafe { GetConsoleWindow() }.is_null() { "none" } else { "attached" };
+    let console = if unsafe { GetConsoleWindow() }.is_null() {
+        "none"
+    } else {
+        "attached"
+    };
     println!("shell-console-probe={console}");
     eprintln!("shell-console-stderr");
 }
@@ -41,7 +45,10 @@ fn background_shell_helper_does_not_allocate_console_from_detached_parent() -> a
     let output = super::background_command(&program).args(args).output()?;
     assert!(output.status.success(), "Shell helper failed: {output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("shell-console-stderr"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("shell-console-probe=none"), "Shell helper allocated a console: {output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("shell-console-probe=none"),
+        "Shell helper allocated a console: {output:?}"
+    );
     println!("shell-console-check-completed");
     Ok(())
 }
