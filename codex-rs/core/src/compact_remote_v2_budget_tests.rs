@@ -13,12 +13,13 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TokenUsage;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 async fn budget_session(limit_tokens: i64) -> (Session, TurnContext) {
     let (mut sess, turn_context) = make_session_and_context().await;
-    sess.services.agent_control = LocalAgentControl::new(
+    let agent_control = LocalAgentControl::new(
         std::sync::Weak::default(),
         default_thread_id_generator(),
         Some(RolloutBudgetConfig {
@@ -28,13 +29,16 @@ async fn budget_session(limit_tokens: i64) -> (Session, TurnContext) {
             prefill_token_weight: 1.0,
         }),
     );
+    sess.services.local_agent_runtime = agent_control.runtime.clone();
+    sess.services.agent_control = Arc::new(agent_control);
     (sess, turn_context)
 }
 
-fn remaining_budget(sess: &Session) -> i64 {
+async fn remaining_budget(sess: &Session) -> i64 {
     sess.services
         .agent_control
         .pending_budget_reminder(sess.thread_id(), "compaction-budget-test")
+        .await
         .expect("configured budget")
         .remaining_tokens
 }
@@ -87,7 +91,7 @@ async fn assert_invalid_compaction_charges_budget(count: usize) {
             .await;
     let error = result.err().expect("invalid compaction output");
     assert!(matches!(error.details(), CodexErrorDetails::Fatal(_)));
-    assert_eq!(remaining_budget(&sess), 85, "output item count {count}");
+    assert_eq!(remaining_budget(&sess).await, 85, "output item count {count}");
 }
 
 #[tokio::test]
@@ -106,7 +110,7 @@ async fn completed_compaction_charges_budget_once_for_valid_output() {
     let result =
         collect_compaction_output(&sess, &turn_context, completed_stream(1, Some(usage()))).await;
     assert!(result.is_ok());
-    assert_eq!(remaining_budget(&sess), 85);
+    assert_eq!(remaining_budget(&sess).await, 85);
 }
 
 #[tokio::test]
@@ -121,7 +125,7 @@ async fn completed_compaction_enforces_budget_before_output_validation() {
             error.details(),
             CodexErrorDetails::SessionBudgetExceeded
         ));
-        assert_eq!(remaining_budget(&sess), 0);
+        assert_eq!(remaining_budget(&sess).await, 0);
     }
 }
 
@@ -133,7 +137,7 @@ async fn completed_compaction_uses_server_budget_units() {
     let result =
         collect_compaction_output(&sess, &turn_context, completed_stream(0, Some(usage))).await;
     assert!(result.is_err());
-    assert_eq!(remaining_budget(&sess), 93);
+    assert_eq!(remaining_budget(&sess).await, 93);
 }
 
 #[tokio::test]
@@ -141,7 +145,7 @@ async fn compaction_without_usage_leaves_budget_unchanged() {
     let (sess, turn_context) = budget_session(100).await;
     let result = collect_compaction_output(&sess, &turn_context, completed_stream(1, None)).await;
     assert!(result.is_ok());
-    assert_eq!(remaining_budget(&sess), 100);
+    assert_eq!(remaining_budget(&sess).await, 100);
     let result = collect_compaction_output(
         &sess,
         &turn_context,
@@ -149,5 +153,5 @@ async fn compaction_without_usage_leaves_budget_unchanged() {
     )
     .await;
     assert!(result.is_err());
-    assert_eq!(remaining_budget(&sess), 100);
+    assert_eq!(remaining_budget(&sess).await, 100);
 }
