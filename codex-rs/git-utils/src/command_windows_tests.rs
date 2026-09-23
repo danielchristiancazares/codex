@@ -13,14 +13,19 @@ unsafe extern "system" {
 #[ignore = "runs as a child process of the console regression"]
 fn console_probe() {
     // SAFETY: This only queries the current process's console association.
-    let console = if unsafe { GetConsoleWindow() }.is_null() { "none" } else { "attached" };
+    let console = if unsafe { GetConsoleWindow() }.is_null() {
+        "none"
+    } else {
+        "attached"
+    };
     println!("git-console-probe={console}");
     eprintln!("git-console-stderr");
 }
 
 #[test]
 fn background_git_does_not_allocate_console_from_detached_parent() -> anyhow::Result<()> {
-    const TEST: &str = "command::windows_tests::background_git_does_not_allocate_console_from_detached_parent";
+    const TEST: &str =
+        "command::windows_tests::background_git_does_not_allocate_console_from_detached_parent";
     if std::env::var_os(CHILD).is_none() {
         let output = Command::new(std::env::current_exe()?)
             .creation_flags(0x0000_0008) // DETACHED_PROCESS
@@ -41,7 +46,10 @@ fn background_git_does_not_allocate_console_from_detached_parent() -> anyhow::Re
     let output = super::git_command(&program).args(args).output()?;
     assert!(output.status.success(), "Git helper failed: {output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("git-console-stderr"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("git-console-probe=none"), "Git helper allocated a console: {output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("git-console-probe=none"),
+        "Git helper allocated a console: {output:?}"
+    );
     println!("git-console-check-completed");
     Ok(())
 }

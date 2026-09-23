@@ -10,7 +10,6 @@ use std::io::Write;
 use std::process::Child;
 use std::process::ChildStdin;
 use std::process::ChildStdout;
-use std::process::Command;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -113,7 +112,7 @@ struct PowershellParserProcess {
 
 impl PowershellParserProcess {
     fn spawn(executable: &str) -> std::io::Result<Self> {
-        let mut command = Command::from(crate::powershell::background_command(executable));
+        let mut command = crate::powershell::background_command(executable);
         command
             .args([
                 "-NoLogo",

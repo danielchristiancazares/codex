@@ -89,7 +89,8 @@ async fn check_abandoned_turn(abandonment: Abandonment) -> color_eyre::Result<()
     ));
     let turn_id = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if let Some(AppServerEvent::ServerNotification(notification)) = app_server.next_event().await
+            if let Some(AppServerEvent::ServerNotification(notification)) =
+                app_server.next_event().await
                 && let ServerNotification::TurnStarted(started) = notification.as_ref()
                 && started.thread_id == thread_id
             {
@@ -108,19 +109,21 @@ async fn check_abandoned_turn(abandonment: Abandonment) -> color_eyre::Result<()
         Abandonment::Deadline => {}
         Abandonment::ClosedNotifications => drop(sender),
         Abandonment::OversizedResponse => {
-            sender.send(ServerNotification::ItemCompleted(ItemCompletedNotification {
-                item: ThreadItem::AgentMessage {
-                    id: "oversized".to_string(),
-                    text: "x".repeat(STRUCTURED_RESPONSE_MAX_BYTES + 1),
-                    phase: None,
-                    memory_citation: None,
-                    delivery: None,
-                    questions: None,
+            sender.send(ServerNotification::ItemCompleted(
+                ItemCompletedNotification {
+                    item: ThreadItem::AgentMessage {
+                        id: "oversized".to_string(),
+                        text: "x".repeat(STRUCTURED_RESPONSE_MAX_BYTES + 1),
+                        phase: None,
+                        memory_citation: None,
+                        delivery: None,
+                        questions: None,
+                    },
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    completed_at_ms: 0,
                 },
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                completed_at_ms: 0,
-            }))?;
+            ))?;
         }
     }
     let mut outcome = None;
@@ -149,7 +152,10 @@ async fn check_abandoned_turn(abandonment: Abandonment) -> color_eyre::Result<()
     .await;
     // Always close the fixture, including when the original implementation leaks its turn.
     app_server.shutdown().await?;
-    assert!(observed.is_ok(), "abandoned {abandonment:?} turn kept running after its caller returned");
+    assert!(
+        observed.is_ok(),
+        "abandoned {abandonment:?} turn kept running after its caller returned"
+    );
     assert!(outcome.expect("request outcome").is_err());
     assert!(interrupted);
     assert_eq!(response.requests().len(), 1);
