@@ -52,10 +52,13 @@ async fn failed_response_preserves_retry_delay_before_transport_failure() {
     match rx.recv().await {
         Some(Err(ApiError::RateLimitExceeded {
             message: actual,
-            delay,
+            retry_after,
         })) => assert_eq!(
-            (actual.as_str(), delay),
-            (message, Some(Duration::from_millis(11054)))
+            (
+                actual.as_str(),
+                retry_after.expect("server retry deadline").remaining_delay()
+            ),
+            (message, Duration::from_millis(11054))
         ),
         result => panic!("expected the original rate-limit failure, got {result:?}"),
     }
@@ -93,7 +96,9 @@ async fn incomplete_response_preserves_usage_and_is_not_retryable() {
         .await
         .expect("terminal result")
         .expect_err("incomplete response");
-    let error = crate::api_bridge::map_api_error(error).with_retry_delay(Duration::from_secs(1));
+    let error = crate::api_bridge::map_api_error(error).with_retry_after(
+        codex_http_client::RetryAfter::from_delay(Duration::from_secs(1)).expect("retry deadline"),
+    );
     assert_eq!(error.retry_delay(/*retry_count*/ 1), None);
     let codex_protocol::error::CodexErrorDetails::IncompleteResponse(failure) = error.details()
     else {

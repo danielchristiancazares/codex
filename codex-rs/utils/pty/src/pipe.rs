@@ -149,7 +149,7 @@ async fn spawn_process_with_stdin_mode(
     let mut command = Command::new(program);
     // Pipe-backed commands must stay windowless when their parent has no console.
     #[cfg(windows)]
-    command.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
+    command.no_console();
     #[cfg(unix)]
     if let Some(arg0) = arg0 {
         command.arg0(arg0);

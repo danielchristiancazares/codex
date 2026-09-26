@@ -128,7 +128,7 @@ impl App {
             });
             return;
         };
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
         self.temporary_structured_requests
             .insert(temporary_thread_id, sender);
         let events = self.app_event_tx.clone();
@@ -155,7 +155,7 @@ impl App {
                 tokio::select! {
                     biased;
                     _ = request.cancellation.cancelled() => Err(eyre!("suggestion cancelled or timed out")),
-                    result = collect_structured_response(receiver, &response.turn.id) => result,
+                    result = collect_structured_response(&mut receiver, &response.turn.id) => result,
                 }
             }.await;
             if result.is_err()
