@@ -81,6 +81,7 @@ fn response_stream(events: Vec<CodexResult<ResponseEvent>>) -> ResponseStream {
     ResponseStream {
         rx_event,
         consumer_dropped: CancellationToken::new(),
+        interrupt: None,
     }
 }
 
@@ -91,7 +92,11 @@ async fn assert_invalid_compaction_charges_budget(count: usize) {
             .await;
     let error = result.err().expect("invalid compaction output");
     assert!(matches!(error.details(), CodexErrorDetails::Fatal(_)));
-    assert_eq!(remaining_budget(&sess).await, 85, "output item count {count}");
+    assert_eq!(
+        remaining_budget(&sess).await,
+        85,
+        "output item count {count}"
+    );
 }
 
 #[tokio::test]
