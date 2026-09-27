@@ -39,7 +39,7 @@ enum Launch {
     WithoutJob,
     NoConsoleBeforeJob,
     NoConsoleAfterJob,
-    DefaultConsole,
+    DefaultNoConsole,
 }
 
 async fn check_launch(launch: Launch) -> Result<()> {
@@ -48,7 +48,7 @@ async fn check_launch(launch: Launch) -> Result<()> {
             Launch::WithoutJob => "no_console_without_job_preserves_piped_stdio",
             Launch::NoConsoleBeforeJob => "no_console_survives_job_preparation",
             Launch::NoConsoleAfterJob => "no_console_after_job_preparation_preserves_suspension",
-            Launch::DefaultConsole => "default_command_keeps_console_behavior",
+            Launch::DefaultNoConsole => "default_command_is_windowless",
         };
         let mut parent = tokio::process::Command::new(std::env::current_exe()?);
         parent
@@ -96,7 +96,7 @@ async fn check_launch(launch: Launch) -> Result<()> {
             command.no_console();
             Some(job)
         }
-        Launch::DefaultConsole => None,
+        Launch::DefaultNoConsole => None,
     };
     let mut child = command.spawn()?;
     if let Some(job) = &job {
@@ -125,13 +125,9 @@ async fn check_launch(launch: Launch) -> Result<()> {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("probe-stdout pipe round trip"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("probe-stderr"));
-    let expected = match launch {
-        Launch::DefaultConsole => "attached",
-        Launch::WithoutJob | Launch::NoConsoleBeforeJob | Launch::NoConsoleAfterJob => "none",
-    };
     assert_eq!(
         std::fs::read_to_string(temp.path().join("console"))?,
-        expected,
+        "none",
         "{launch:?}"
     );
     println!("console-policy-check-completed");
@@ -154,6 +150,6 @@ async fn no_console_after_job_preparation_preserves_suspension() -> Result<()> {
 }
 
 #[tokio::test]
-async fn default_command_keeps_console_behavior() -> Result<()> {
-    check_launch(Launch::DefaultConsole).await
+async fn default_command_is_windowless() -> Result<()> {
+    check_launch(Launch::DefaultNoConsole).await
 }

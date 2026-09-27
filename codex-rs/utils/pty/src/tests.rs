@@ -18,7 +18,11 @@ use crate::spawn_pty_process;
 mod windows_tests;
 
 pub(super) fn find_python() -> Option<String> {
-    for candidate in ["python3", "python"] {
+    #[cfg(windows)]
+    let candidates = ["python", "python3"];
+    #[cfg(not(windows))]
+    let candidates = ["python3", "python"];
+    for candidate in candidates {
         if let Ok(output) = std::process::Command::new(candidate)
             .args(["-c", "import sys; print(sys.executable)"])
             .env("PYTHONIOENCODING", "utf-8")

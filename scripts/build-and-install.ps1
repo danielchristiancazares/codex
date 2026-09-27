@@ -95,13 +95,8 @@ function Get-ExecutableArchitecture {
 }
 
 [System.IO.DirectoryInfo]$repository = Get-Item -LiteralPath "$PSScriptRoot/.."
-[System.IO.FileInfo]$launcher = Get-Command codex -ErrorAction Stop | Select-Object -First 1 | ForEach-Object {
-    if ($_.CommandType -in 'Application', 'ExternalScript') {
-        $_.Source
-    } else {
-        throw 'The codex command must resolve to an executable or an npm launcher.'
-    }
-}
+[System.IO.FileInfo]$launcher = Get-Command codex -All -CommandType Application, ExternalScript -ErrorAction Stop |
+    Select-Object -First 1 | ForEach-Object Source
 [System.IO.FileInfo]$installedCodex = switch ($launcher.Extension) {
     '.exe' { Get-Item -LiteralPath $launcher.FullName }
     { $_ -in '.ps1', '.cmd' } {

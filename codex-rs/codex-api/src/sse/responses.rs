@@ -441,7 +441,9 @@ pub fn process_responses_event(
                             match serde_json::from_value::<ResponseCompletedUsage>(usage.clone()) {
                                 Ok(usage) => Some(usage.into()),
                                 Err(error) => {
-                                    tracing::warn!("failed to decode incomplete response usage: {error}");
+                                    tracing::warn!(
+                                        "failed to decode incomplete response usage: {error}"
+                                    );
                                     None
                                 }
                             }

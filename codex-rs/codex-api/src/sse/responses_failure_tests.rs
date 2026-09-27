@@ -56,7 +56,9 @@ async fn failed_response_preserves_retry_delay_before_transport_failure() {
         })) => assert_eq!(
             (
                 actual.as_str(),
-                retry_after.expect("server retry deadline").remaining_delay()
+                retry_after
+                    .expect("server retry deadline")
+                    .remaining_delay()
             ),
             (message, Duration::from_millis(11054))
         ),
@@ -120,6 +122,57 @@ async fn incomplete_response_preserves_usage_and_is_not_retryable() {
     );
     assert!(rx.recv().await.is_none());
     task.await.expect("SSE reader should exit");
+}
+
+#[test]
+fn interrupted_response_preserves_usage_and_allows_continuation() {
+    let usage = json!({
+        "input_tokens": 120,
+        "input_tokens_details": {"cached_tokens": 30, "cache_write_tokens": 2},
+        "output_tokens": 50,
+        "output_tokens_details": {"reasoning_tokens": 40},
+        "total_tokens": 170
+    });
+    let event = serde_json::from_value(json!({
+        "type": "response.incomplete",
+        "response": {
+            "id": "resp-interrupted",
+            "incomplete_details": {"reason": "interrupted"},
+            "end_turn": true,
+            "usage": usage,
+            "usage_metadata": {"amount": "0.01"}
+        }
+    }))
+    .expect("parse event");
+    let Some(ResponseEvent::Completed {
+        response_id,
+        token_usage,
+        usage_metadata,
+        end_turn,
+    }) = process_responses_event(event).expect("interrupted response allows continuation")
+    else {
+        panic!("expected completion for the interrupted response");
+    };
+    assert_eq!(
+        (response_id, token_usage, usage_metadata, end_turn),
+        (
+            "resp-interrupted".to_string(),
+            Some(TokenUsage {
+                input_tokens: 120,
+                cached_input_tokens: 30,
+                cache_write_input_tokens: 2,
+                output_tokens: 50,
+                reasoning_output_tokens: 40,
+                total_tokens: 170,
+                codex_rollout_budget_units: None,
+            }),
+            Some(ResponseUsageMetadata {
+                amount: Some("0.01".to_string()),
+                metadata: Some(usage),
+            }),
+            Some(false),
+        )
+    );
 }
 
 #[test]
